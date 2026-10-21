@@ -75,10 +75,17 @@ function verifyMd5(code: string): void {
     }
 }
 
+function verifyClass(code: string): void {
+    const logs = runInSandbox(code);
+    if (!logs.some((line) => line.includes("123"))) {
+        throw new Error(`class 执行结果不正确,期望输出包含 123,实际输出:\n${logs.join("\n")}`);
+    }
+}
+
 function main(): void {
     const samples: Sample[] = [
         { abc: "md5.abc", expected: "md5.js", verify: verifyMd5 },
-        { abc: "class.abc", expected: "class.js" },
+        { abc: "class.abc", expected: "class.js", verify: verifyClass },
     ];
 
     for (const sample of samples) {

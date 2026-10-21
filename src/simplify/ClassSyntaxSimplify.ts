@@ -2,7 +2,7 @@ import { Program } from "@babel/types";
 import { ISimplify } from "./ISimplify";
 import traverse, { NodePath } from "@babel/traverse";
 import * as TYPE from "@babel/types";
-import { walkNode } from "./AstUtils";
+import { collectIdentifierNames, isPureExpression, walkNode } from "./AstUtils";
 
 /**
  * 处理 __defineGetter__ / __defineSetter__ 以及单表达式 class。
@@ -65,6 +65,38 @@ export class ClassSyntaxSimplify implements ISimplify {
             return true;
         });
         return found;
+    }
+
+    private moveConstructorAssignmentToField(clazz: TYPE.ClassExpression, name: string): boolean {
+        const constructor = clazz.body.body.find((member): member is TYPE.ClassMethod =>
+            TYPE.isClassMethod(member) && member.kind === "constructor");
+        if (!constructor || constructor.body.body.length !== 1) return false;
+        const statement = constructor.body.body[0];
+        if (!TYPE.isExpressionStatement(statement) || !TYPE.isAssignmentExpression(statement.expression)) return false;
+        const assign = statement.expression;
+        if (assign.operator !== "=" || !TYPE.isMemberExpression(assign.left)
+            || !TYPE.isThisExpression(assign.left.object)) return false;
+        const property = assign.left.property;
+        const leftName = TYPE.isIdentifier(property) ? property.name
+            : (TYPE.isStringLiteral(property) ? property.value : "");
+        if (leftName !== name) return false;
+        if (!isPureExpression(assign.right)) return false;
+        if (collectIdentifierNames(assign.right).size > 0) return false;
+
+        let hasThis = false;
+        walkNode(assign.right, (node) => {
+            if (TYPE.isThisExpression(node)) {
+                hasThis = true;
+                return false;
+            }
+            return true;
+        });
+        if (hasThis) return false;
+
+        clazz.body.body.push(TYPE.classProperty(TYPE.identifier(name), assign.right));
+        const index = clazz.body.body.indexOf(constructor);
+        if (index >= 0) clazz.body.body.splice(index, 1);
+        return true;
     }
 
     private findClass(path: NodePath<TYPE.CallExpression>, gsd: GetterSetterDesc): void {
@@ -176,9 +208,10 @@ export class ClassSyntaxSimplify implements ISimplify {
 
                 this.findClass(value, gsd);
                 if (!gsd.clazz) return;
-                // 构造器/方法里已经有 this.x = ... 时,直接加 getter 会把赋值变成 TypeError
-                // (class 字段初始化和普通 assignment 语义不同),保守跳过访问器转换。
-                if (this.classWritesThisProperty(gsd.clazz, gsd.name)) return;
+                // 构造器里 this.x = ... 与 class getter 冲突时,能安全改写为 class field 就改写;
+                // 否则保守跳过访问器转换。
+                if (this.classWritesThisProperty(gsd.clazz, gsd.name)
+                    && !this.moveConstructorAssignmentToField(gsd.clazz, gsd.name)) return;
 
                 const functionStatement = gsd.funcName ? this.findFunctionStatement(value, gsd.funcName) : null;
                 const func = functionStatement && TYPE.isExpressionStatement(functionStatement.node)
