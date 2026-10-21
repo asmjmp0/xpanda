@@ -1,0 +1,25 @@
+{
+  "name": "xpanda",
+  "version": "1.0.0",
+  "description": "xpanda decompiler - pure TypeScript implementation of the HarmonyOS .abc (Panda bytecode) decompiler",
+  "main": "src/index.ts",
+  "scripts": {
+    "gen:opcodes": "tsx scripts/gen-opcodes.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx test/decompile.test.ts",
+    "xpanda": "tsx src/cli.ts"
+  },
+  "dependencies": {
+    "@babel/generator": "^7.23.9",
+    "@babel/parser": "^7.23.9",
+    "@babel/traverse": "^7.23.9",
+    "@babel/types": "^7.23.9",
+    "js-yaml": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^20.19.43",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  }
+}

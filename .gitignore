@@ -1,39 +1,13 @@
-.gradle
-build/
-!gradle/wrapper/gradle-wrapper.jar
-!**/src/main/**/build/
-core/src/main/js/node_modules
-core/src/main/js/package-lock.json
-
-### IntelliJ IDEA ###
-.idea/
-*.iws
-*.iml
-*.ipr
+# Node / TypeScript
+node_modules/
+package-lock.json
+dist/
 out/
-!**/src/main/**/out/
+test_out/
 
-### Eclipse ###
-.apt_generated
-.classpath
-.factorypath
-.project
-.settings
-.springBeans
-.sts4-cache
-bin/
-!**/src/main/**/bin/
-!**/src/test/**/bin/
-
-### NetBeans ###
-/nbproject/private/
-/nbbuild/
-/dist/
-/nbdist/
-/.nb-gradle/
-
-### VS Code ###
-.vscode/
-
-### Mac OS ###
+# macOS
 .DS_Store
+
+# IDE
+.idea/
+.vscode/
