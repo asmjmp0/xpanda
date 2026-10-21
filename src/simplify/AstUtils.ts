@@ -1,0 +1,352 @@
+import * as TYPE from "@babel/types";
+
+/**
+ * simplify 阶段共用的 AST 判定与遍历工具。
+ *
+ * 这里的实现刻意不依赖 Babel traverse:在 2MB 级别的 AST 上,频繁 traverse/generate
+ * 是旧优化器最主要的性能瓶颈。所有工具函数都只做一次线性遍历。
+ *
+ * @Author: jmp0
+ */
+
+/** 编译器生成的临时变量:acc / vN / local_X_Y */
+export function isTempName(name: string): boolean {
+    return name === "acc" || /^v\d+$/.test(name) || /^local_\d+_\d+$/.test(name) || /^catchAcc\d*$/.test(name)
+        || /^panda_jmp0_reserved_param_p\d+$/.test(name);
+}
+
+export function isFunctionLike(node: TYPE.Node | null | undefined): boolean {
+    return !!node && (
+        TYPE.isFunctionDeclaration(node) ||
+        TYPE.isFunctionExpression(node) ||
+        TYPE.isArrowFunctionExpression(node) ||
+        TYPE.isObjectMethod(node) ||
+        TYPE.isClassMethod(node) ||
+        TYPE.isClassPrivateMethod(node)
+    );
+}
+
+export function isClassLike(node: TYPE.Node | null | undefined): boolean {
+    return !!node && (TYPE.isClassDeclaration(node) || TYPE.isClassExpression(node));
+}
+
+/** 遍历子树;返回 false 时跳过该节点的子节点 */
+export function walkNode(
+    node: TYPE.Node | null | undefined,
+    visit: (node: TYPE.Node, parent: TYPE.Node | null, key: string | null) => boolean | void,
+    parent: TYPE.Node | null = null,
+    key: string | null = null,
+): void {
+    if (!node || typeof (node as any).type !== "string") return;
+    if (visit(node, parent, key) === false) return;
+    const keys = (TYPE.VISITOR_KEYS as any)[node.type] as string[] | undefined;
+    if (!keys) return;
+    for (const k of keys) {
+        const value = (node as any)[k];
+        if (Array.isArray(value)) {
+            for (const child of value) {
+                if (child && typeof child.type === "string") walkNode(child, visit, node, k);
+            }
+        } else if (value && typeof value.type === "string") {
+            walkNode(value, visit, node, k);
+        }
+    }
+}
+
+const PURE_STRING_METHODS = new Set([
+    "charAt", "charCodeAt", "codePointAt", "startsWith", "endsWith", "includes",
+    "indexOf", "lastIndexOf", "localeCompare", "toLowerCase", "toUpperCase",
+    "trim", "trimStart", "trimEnd", "padStart", "padEnd", "repeat",
+]);
+
+const PURE_MATH_METHODS = new Set([
+    "abs", "acos", "acosh", "asin", "asinh", "atan", "atan2", "atanh", "cbrt",
+    "ceil", "clz32", "cos", "cosh", "exp", "expm1", "floor", "fround", "hypot",
+    "imul", "log", "log10", "log1p", "log2", "max", "min", "pow", "round",
+    "sign", "sin", "sinh", "sqrt", "tan", "tanh", "trunc",
+]);
+
+const PURE_GLOBAL_CALLS = new Set([
+    "parseInt", "parseFloat", "isNaN", "isFinite", "encodeURI", "decodeURI",
+    "encodeURIComponent", "decodeURIComponent", "escape", "unescape",
+]);
+
+/**
+ * 判断是否是常见的内置纯函数调用(字符串只读方法 / Math / 全局转换函数)。
+ * 这类调用可以安全复制/删除,用于把 charCodeAt 之类的临时变量内联掉。
+ */
+export function isPureBuiltinCall(node: TYPE.CallExpression): boolean {
+    const callee = node.callee;
+    if (TYPE.isIdentifier(callee)) return PURE_GLOBAL_CALLS.has(callee.name);
+    if (!TYPE.isMemberExpression(callee) || callee.optional) return false;
+    const object = callee.object;
+    const property = callee.property;
+    const name = !callee.computed && TYPE.isIdentifier(property) ? property.name
+        : (TYPE.isStringLiteral(property) ? property.value : null);
+    if (!name) return false;
+    if (TYPE.isIdentifier(object) && object.name === "Math") return PURE_MATH_METHODS.has(name);
+    return PURE_STRING_METHODS.has(name);
+}
+
+/**
+ * 表达式是否可以在不改变语义的前提下重复求值。
+ * 成员访问可能触发 getter,因此不算 dup-safe。
+ */
+export function isDupSafe(node: TYPE.Node | null | undefined): boolean {
+    if (!node) return false;
+    switch (node.type) {
+        case "Identifier":
+        case "StringLiteral":
+        case "NumericLiteral":
+        case "BooleanLiteral":
+        case "NullLiteral":
+        case "BigIntLiteral":
+        case "DecimalLiteral":
+        case "ThisExpression":
+        case "Super":
+            return true;
+        case "UnaryExpression":
+            return (node as TYPE.UnaryExpression).operator !== "delete"
+                && isDupSafe((node as TYPE.UnaryExpression).argument);
+        case "BinaryExpression":
+        case "LogicalExpression": {
+            const n = node as TYPE.BinaryExpression | TYPE.LogicalExpression;
+            return isDupSafe(n.left) && isDupSafe(n.right);
+        }
+        case "ConditionalExpression": {
+            const n = node as TYPE.ConditionalExpression;
+            return isDupSafe(n.test) && isDupSafe(n.consequent) && isDupSafe(n.alternate);
+        }
+        case "SequenceExpression":
+            return (node as TYPE.SequenceExpression).expressions.every(isDupSafe);
+        case "TemplateLiteral": {
+            const n = node as TYPE.TemplateLiteral;
+            return n.expressions.every(isDupSafe);
+        }
+        case "ParenthesizedExpression":
+            return isDupSafe((node as any).expression);
+        default:
+            return false;
+    }
+}
+
+/** 可以安全克隆到使用处的表达式:dup-safe + 成员访问链(不复制调用/构造)。 */
+export function isCopyable(node: TYPE.Node | null | undefined): boolean {
+    if (!node) return false;
+    if (isDupSafe(node)) return true;
+    switch (node.type) {
+        case "UnaryExpression":
+            return (node as TYPE.UnaryExpression).operator !== "delete"
+                && isCopyable((node as TYPE.UnaryExpression).argument);
+        case "BinaryExpression":
+        case "LogicalExpression": {
+            const n = node as TYPE.BinaryExpression | TYPE.LogicalExpression;
+            return isCopyable(n.left) && isCopyable(n.right);
+        }
+        case "ConditionalExpression": {
+            const n = node as TYPE.ConditionalExpression;
+            return isCopyable(n.test) && isCopyable(n.consequent) && isCopyable(n.alternate);
+        }
+        case "SequenceExpression":
+            return (node as TYPE.SequenceExpression).expressions.every(isCopyable);
+        case "TemplateLiteral":
+            return (node as TYPE.TemplateLiteral).expressions.every(isCopyable);
+        case "MemberExpression":
+        case "OptionalMemberExpression": {
+            const n = node as TYPE.MemberExpression;
+            return isCopyable(n.object as TYPE.Node)
+                && (!n.computed || isCopyable(n.property as TYPE.Node));
+        }
+        case "ParenthesizedExpression":
+            return isCopyable((node as any).expression);
+        default:
+            return false;
+    }
+}
+
+/** 统计子树节点数,超过 limit 立即停止(用于防止复制传播导致表达式指数膨胀)。 */
+export function nodeSize(node: TYPE.Node | null | undefined, limit: number = Number.MAX_SAFE_INTEGER): number {
+    if (!node) return 0;
+    let count = 0;
+    const stack: TYPE.Node[] = [node];
+    while (stack.length > 0) {
+        const current = stack.pop()!;
+        if (!current || typeof (current as any).type !== "string") continue;
+        count++;
+        if (count >= limit) return count;
+        const keys = (TYPE.VISITOR_KEYS as any)[current.type] as string[] | undefined;
+        if (!keys) continue;
+        for (const key of keys) {
+            const value = (current as any)[key];
+            if (Array.isArray(value)) {
+                for (const child of value) {
+                    if (child && typeof child.type === "string") stack.push(child);
+                }
+            } else if (value && typeof value.type === "string") {
+                stack.push(value);
+            }
+        }
+    }
+    return count;
+}
+
+/** 表达式求值是否没有可观察副作用(可用于删除死赋值)。 */
+export function isPureExpression(node: TYPE.Node | null | undefined): boolean {
+    if (!node) return true;
+    switch (node.type) {
+        case "Identifier":
+        case "StringLiteral":
+        case "NumericLiteral":
+        case "BooleanLiteral":
+        case "NullLiteral":
+        case "BigIntLiteral":
+        case "DecimalLiteral":
+        case "RegExpLiteral":
+        case "ThisExpression":
+        case "Super":
+            return true;
+        case "UnaryExpression":
+            return (node as TYPE.UnaryExpression).operator !== "delete"
+                && isPureExpression((node as TYPE.UnaryExpression).argument);
+        case "BinaryExpression":
+        case "LogicalExpression": {
+            const n = node as TYPE.BinaryExpression | TYPE.LogicalExpression;
+            return isPureExpression(n.left) && isPureExpression(n.right);
+        }
+        case "ConditionalExpression": {
+            const n = node as TYPE.ConditionalExpression;
+            return isPureExpression(n.test) && isPureExpression(n.consequent) && isPureExpression(n.alternate);
+        }
+        case "SequenceExpression":
+            return (node as TYPE.SequenceExpression).expressions.every(isPureExpression);
+        case "TemplateLiteral":
+            return (node as TYPE.TemplateLiteral).expressions.every(isPureExpression);
+        case "MemberExpression":
+        case "OptionalMemberExpression": {
+            const n = node as TYPE.MemberExpression;
+            return isPureExpression(n.object)
+                && (!n.computed || isPureExpression(n.property));
+        }
+        case "ArrayExpression":
+            return (node as TYPE.ArrayExpression).elements.every((e) =>
+                e == null || (TYPE.isSpreadElement(e) ? isPureExpression(e.argument) : isPureExpression(e as TYPE.Expression)));
+        case "ObjectExpression":
+            return (node as TYPE.ObjectExpression).properties.every((prop) => {
+                if (TYPE.isSpreadElement(prop)) return isPureExpression(prop.argument);
+                if (TYPE.isObjectProperty(prop)) {
+                    return (!prop.computed || isPureExpression(prop.key as TYPE.Expression))
+                        && isPureExpression(prop.value as TYPE.Expression);
+                }
+                return false;
+            });
+        case "FunctionExpression":
+        case "ArrowFunctionExpression":
+            return true;
+        case "CallExpression":
+            return isPureBuiltinCall(node as TYPE.CallExpression)
+                && (node as TYPE.CallExpression).arguments.every((arg) =>
+                    TYPE.isSpreadElement(arg) ? isPureExpression(arg.argument) : isPureExpression(arg as TYPE.Expression));
+        case "ParenthesizedExpression":
+            return isPureExpression((node as any).expression);
+        default:
+            // ClassExpression 可能带 static block / computed key;NewExpression 可能执行构造器
+            return false;
+    }
+}
+
+/** 函数/类表达式作为语句保留时,后续 pass 会把它转换为声明。 */
+export function isDeclarationValue(node: TYPE.Node | null | undefined): boolean {
+    return !!node && (TYPE.isFunctionExpression(node) || TYPE.isClassExpression(node)
+        || TYPE.isArrowFunctionExpression(node));
+}
+
+/** 判断 obj.next().value 结构(用于 for-of / 迭代器识别),不再调用 generator。 */
+export function isNextValue(node: TYPE.Node | null | undefined): boolean {
+    if (!TYPE.isMemberExpression(node) || node.computed) return false;
+    if (!TYPE.isIdentifier(node.property) || node.property.name !== "value") return false;
+    if (!TYPE.isCallExpression(node.object)) return false;
+    const callee = node.object.callee;
+    if (!TYPE.isMemberExpression(callee) || callee.computed) return false;
+    return TYPE.isIdentifier(callee.property) && callee.property.name === "next";
+}
+
+export function isDoneMember(node: TYPE.Node | null | undefined): boolean {
+    return !!node && TYPE.isMemberExpression(node) && !node.computed
+        && TYPE.isIdentifier(node.property) && node.property.name === "done";
+}
+
+/** 收集子树中所有标识符名字(用于依赖记录,宁可多收集)。 */
+export function collectIdentifierNames(node: TYPE.Node | null | undefined): Set<string> {
+    const names = new Set<string>();
+    walkNode(node, (n) => {
+        if (TYPE.isIdentifier(n)) names.add(n.name);
+        // 不进入嵌套函数体:闭包里的局部变量与当前作用域无关
+        if (isFunctionLike(n) || isClassLike(n)) return false;
+    });
+    return names;
+}
+
+/** 收集子树中被写入的变量名(跳过嵌套函数/类,它们有独立作用域)。 */
+export function collectAssignedNames(node: TYPE.Node | null | undefined, out: Set<string> = new Set()): Set<string> {
+    walkNode(node, (n) => {
+        if (isFunctionLike(n) || isClassLike(n)) return false;
+        if (TYPE.isAssignmentExpression(n)) {
+            addPatternNames(n.left, out);
+        } else if (TYPE.isUpdateExpression(n)) {
+            if (TYPE.isIdentifier(n.argument)) out.add(n.argument.name);
+        } else if (TYPE.isVariableDeclarator(n)) {
+            addPatternNames(n.id, out);
+        } else if (TYPE.isForInStatement(n) || TYPE.isForOfStatement(n)) {
+            addPatternNames(n.left, out);
+        }
+        return true;
+    }, null, null);
+    return out;
+}
+
+export function addPatternNames(node: TYPE.Node | null | undefined, out: Set<string>): void {
+    if (!node) return;
+    if (TYPE.isIdentifier(node)) {
+        out.add(node.name);
+    } else if (TYPE.isRestElement(node)) {
+        addPatternNames(node.argument, out);
+    } else if (TYPE.isAssignmentPattern(node)) {
+        addPatternNames(node.left, out);
+    } else if (TYPE.isArrayPattern(node)) {
+        for (const e of node.elements) addPatternNames(e, out);
+    } else if (TYPE.isObjectPattern(node)) {
+        for (const prop of node.properties) {
+            if (TYPE.isRestElement(prop)) addPatternNames(prop.argument, out);
+            else addPatternNames(prop.value, out);
+        }
+    }
+}
+
+/** 从语句/表达式中读取变量名(用于活跃性判断)。 */
+export function collectReadNames(node: TYPE.Node | null | undefined): Set<string> {
+    const names = new Set<string>();
+    const visit = (n: TYPE.Node, parent: TYPE.Node | null, key: string | null): boolean | void => {
+        if (isFunctionLike(n) || isClassLike(n)) return false;
+        if (TYPE.isIdentifier(n)) {
+            if (parent && TYPE.isReferenced(n, parent)) names.add(n.name);
+            return;
+        }
+    };
+    walkNode(node, visit);
+    return names;
+}
+
+/** 将字符串形式的语句节点转换为表达式语句,方便替换。 */
+export function toExpressionStatement(node: TYPE.Expression): TYPE.ExpressionStatement {
+    return TYPE.expressionStatement(node);
+}
+
+export function isNodeEqual(a: TYPE.Node | null | undefined, b: TYPE.Node | null | undefined): boolean {
+    if (a === b) return true;
+    if (!a || !b) return false;
+    try {
+        return TYPE.isNodesEquivalent(a, b);
+    } catch {
+        return false;
+    }
+}

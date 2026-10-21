@@ -1,7 +1,0 @@
-rootProject.name = 'pandaParser'
-include 'opcode_gen'
-include 'core'
-include 'api'
-include 'asm'
-include 'gui'
-
