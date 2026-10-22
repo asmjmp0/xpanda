@@ -22,9 +22,10 @@
 | `src/codegen/CodeGenerator.ts` | AST 生成入口(包装 `src/ast/`) |
 | `src/ast/` | `NodeFactory` / `NodeUtils`(Babel AST 工具) |
 | `src/simplify/` | 优化器流水线(`SimplifyExport`、`TempVariableSimplify`、`ConditionSimplify`、`SyntaxRewriteSimplify`、`ClassSyntaxSimplify`、`HighLevelGrammarSimplify`、`AstUtils`、`NormalizeDeclarations`) |
+| `src/parallel/` | 按类并行的 simplify worker 池(`ParallelDecompiler.ts` 调度、`simplify-worker.ts` worker 入口) |
 | `src/mcp/` | MCP Server(`server.ts` stdio 入口、`registry.ts` 会话注册表、`tools/` 七个工具),文档见 [docs/MCP.md](docs/MCP.md) |
 | `src/PandaDecompiler.ts` | 对外总入口(库 API) |
-| `src/cli.ts` | CLI:`decompile <file.abc> [-o outDir] [--no-simplify] [--stdout] [--quiet]` |
+| `src/cli.ts` | CLI:`decompile <file.abc> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N]` |
 | `resources/isa.yaml` | ArkCompiler 指令集描述(v24.0.0.0) |
 | `scripts/gen-opcodes.ts` | 生成 `src/disasm/opcodes.ts` |
 | `test/` | 集成测试 + 样本(`md5.abc`、`class.abc`、`aes.abc`、`bilibili_open.abc`) |
@@ -43,6 +44,9 @@ npm run gen:opcodes        # isa.yaml → src/disasm/opcodes.ts
 
 # 快速验证小样本
 npx tsx src/cli.ts decompile test/resources/md5.abc -o out --quiet
+
+# 大文件按类并行 simplify(worker_threads)
+npx tsx src/cli.ts decompile test/resources/bilibili_open.abc -o out -j 4 --quiet
 
 # 跳过优化器,验证解析/反汇编改动
 npx tsx src/cli.ts decompile test/resources/bilibili_open.abc -o out --no-simplify --quiet
@@ -63,6 +67,7 @@ npm run test:mcp
 3. 注释与文档使用中文,保持现有风格(类头 `@Author: jmp0`)。
 4. 不要引入 CI 配置或改变依赖结构,除非用户要求。
 5. 优化器 pass 返回 `boolean` 表示是否修改 AST,由 `SimplifyExport` 定点迭代;不要在 pass 内保留过程日志。
+6. **单类输出必须是该类的纯函数**:不要引入跨类的可变状态(全局计数器、按偏移共享的可变缓存等),否则 `-j` 并行结果与串行不一致。生成名计数器在 `PandaDecompiler.decompileRaw()` 里按类复位;`test/decompile.test.ts` 有串行/并行一致性回归。
 
 ## 常见任务怎么做
 

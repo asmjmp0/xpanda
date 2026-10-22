@@ -6,6 +6,8 @@ export { PandaFile, ENTRY_FUNCTION_MAIN } from "./file/PandaFile";
 export { PandaClass } from "./file/clazz/PandaClass";
 export { PandaMethod } from "./file/method/PandaMethod";
 export { PandaDecompiler } from "./PandaDecompiler";
+export { decompileClassesParallel, resolveJobs } from "./parallel/ParallelDecompiler";
+export type { ParallelDecompileOptions } from "./parallel/ParallelDecompiler";
 export { PandaLexical } from "./disasm/PandaLexical";
 export { PandaDisAssembler } from "./disasm/PandaDisAssembler";
 export { PandaIRCFG, PandaIRBasicBlock } from "./disasm/ir";

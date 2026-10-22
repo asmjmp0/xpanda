@@ -26,6 +26,8 @@ export class PandaDecompiler {
 
     /** decompileRaw 等价:输出 AST JSON */
     private decompileRaw(pandaClass: PandaClass): string {
+        // 生成名计数按类复位,保证单类输出不依赖处理顺序(并行反编译的前提)
+        this.methodHandler.reset();
         const pandaLexical = new PandaLexical(pandaClass);
         const factory = this.codeGenerator.getNodeFactory();
         const utils = this.codeGenerator.getNodeUtils();
@@ -149,11 +151,22 @@ export class PandaDecompiler {
 
     /** 单类反编译(不 simplify) */
     decompileClassRaw(pandaClass: PandaClass): string {
+        const out = this.decompileClassAst(pandaClass);
+        if (out.length === 0) return "";
+        const object = JSON.parse(out);
+        return NodeFactory.generate(object);
+    }
+
+    /**
+     * 单类 AST JSON(不做 simplify)。
+     * 拆出该步骤是为了让 simplify 能在 worker 线程执行:AST JSON 自包含,可跨线程传递。
+     * 无 func_main_0 或反汇编失败时返回 ""。
+     */
+    decompileClassAst(pandaClass: PandaClass): string {
         const out = this.decompileRaw(pandaClass);
         if (out.length === 0) return "";
         if (out === "//no function main..." || out.startsWith("//decompile failed")) return "";
-        const object = JSON.parse(out);
-        return NodeFactory.generate(object);
+        return out;
     }
 
     /** 全文件反编译(带 simplify),返回按类分段的结果 */

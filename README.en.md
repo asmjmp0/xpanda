@@ -240,7 +240,7 @@ npm install
 CLI:
 
 ```bash
-npx tsx src/cli.ts decompile <file.abc> [-o outDir] [--no-simplify] [--stdout] [--quiet]
+npx tsx src/cli.ts decompile <file.abc> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N]
 ```
 
 | Option | Description |
@@ -249,12 +249,16 @@ npx tsx src/cli.ts decompile <file.abc> [-o outDir] [--no-simplify] [--stdout] [
 | `--no-simplify` | Skip the optimizer and emit raw decompiler output; faster |
 | `--stdout` | Print the result to stdout instead of writing files |
 | `--quiet` | Suppress progress logs |
+| `-j, --jobs N` | Number of workers that run simplify per class; `0` = auto (CPU-1, max 4) |
 
 Examples:
 
 ```bash
 # Full decompilation (with optimizer)
 npx tsx src/cli.ts decompile app.abc -o out --quiet
+
+# Per-class parallelism for large files (worker_threads)
+npx tsx src/cli.ts decompile app.abc -o out -j 4 --quiet
 
 # Inspect raw output without optimization
 npx tsx src/cli.ts decompile app.abc -o out --no-simplify --quiet
@@ -263,12 +267,14 @@ npx tsx src/cli.ts decompile app.abc -o out --no-simplify --quiet
 npx tsx src/cli.ts decompile app.abc --stdout --quiet
 ```
 
-For large files, raise the heap limit:
+For large files, raise the heap limit and enable per-class parallelism:
 
 ```bash
 NODE_OPTIONS=--max-old-space-size=4096 \
-  npx tsx src/cli.ts decompile app.abc -o out --quiet
+  npx tsx src/cli.ts decompile app.abc -o out -j 4 --quiet
 ```
+
+`-j` only parallelizes simplify (>99% of per-class time); parsing and disassembly stay on the main thread. A single huge class peaks at ~1.4GB during simplify; workers default to a 3GB heap limit, configurable via `XPANDA_WORKER_HEAP_MB`.
 
 ## Programmatic API
 

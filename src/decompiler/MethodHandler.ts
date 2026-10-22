@@ -28,6 +28,15 @@ export class PandaDecompilerMethodHandler {
         return this.incNum++;
     }
 
+    /**
+     * 复位生成名计数器。
+     * `panda_jmp0_reserved_class_N` / `reserved_anonymous_N` 只在一个类的输出内可见,
+     * 按类复位后单类输出与处理顺序、是否并行无关(多线程反编译依赖该确定性)。
+     */
+    reset(): void {
+        this.incNum = 0;
+    }
+
     getCodeGenerator(): CodeGenerator {
         return this.codeGenerator;
     }

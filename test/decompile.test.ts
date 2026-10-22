@@ -2,8 +2,9 @@ import * as fs from "fs";
 import * as path from "path";
 import * as vm from "vm";
 import * as crypto from "crypto";
-import { PandaFile } from "../src/file/PandaFile";
+import { PandaFile, ENTRY_FUNCTION_MAIN } from "../src/file/PandaFile";
 import { PandaDecompiler } from "../src/PandaDecompiler";
+import { decompileClassesParallel } from "../src/parallel/ParallelDecompiler";
 import { NodeFactory } from "../src/ast/NodeFactory";
 import { SimplifyExport } from "../src/simplify/SimplifyExport";
 
@@ -172,7 +173,38 @@ function f() {
     }
 }
 
-function main(): void {
+/**
+ * 回归:按类并行反编译必须与串行逐字一致。
+ * 用 bilibili_open.abc 里的几个小类(避开数秒级的大类)验证:
+ *   1. 单类输出与处理顺序/worker 数量无关(生成名计数器按类复位);
+ *   2. worker 与主线程简化器结果一致。
+ */
+async function verifyParallelDeterminism(): Promise<void> {
+    const abcPath = path.join(__dirname, "resources", "bilibili_open.abc");
+    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
+    const small = pandaFile.getAllClasses()
+        .filter((clazz) => clazz.pandaMethods.has(ENTRY_FUNCTION_MAIN))
+        .filter((clazz) => {
+            let bytes = 0;
+            for (const method of clazz.pandaMethods.values()) bytes += method.methodCode?.codeSize ?? 0;
+            return bytes > 0 && bytes < 2000;
+        })
+        .slice(0, 4);
+    if (small.length < 2) throw new Error("bilibili_open.abc: 小类样本不足,无法验证并行一致性");
+
+    const serial = new PandaDecompiler();
+    const expected = small.map((clazz) => serial.decompileClass(clazz));
+    const parallel = await decompileClassesParallel(new PandaDecompiler(), small, { jobs: 2 });
+
+    for (let i = 0; i < small.length; i++) {
+        const actual = parallel[i] ?? "";
+        if (actual !== expected[i]) {
+            throw new Error(`并行/串行结果不一致: ${small[i].name.content}\n${firstDifference(expected[i], actual)}`);
+        }
+    }
+}
+
+async function main(): Promise<void> {
     console.log("[test] simplify return liveness");
     verifyReturnValueLiveness();
     console.log("    ok");
@@ -183,6 +215,10 @@ function main(): void {
 
     console.log("[test] simplify duplicate construction");
     verifyNoDuplicateConstruction();
+    console.log("    ok");
+
+    console.log("[test] parallel determinism (worker_threads)");
+    await verifyParallelDeterminism();
     console.log("    ok");
 
     const samples: Sample[] = [
@@ -215,4 +251,7 @@ function main(): void {
     console.log("ALL TESTS PASSED");
 }
 
-main();
+main().catch((e) => {
+    console.error(e);
+    process.exit(1);
+});

@@ -240,7 +240,7 @@ npm install
 CLI:
 
 ```bash
-npx tsx src/cli.ts decompile <file.abc> [-o outDir] [--no-simplify] [--stdout] [--quiet]
+npx tsx src/cli.ts decompile <file.abc> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N]
 ```
 
 | 参数 | 说明 |
@@ -249,12 +249,16 @@ npx tsx src/cli.ts decompile <file.abc> [-o outDir] [--no-simplify] [--stdout] [
 | `--no-simplify` | 跳过优化器,输出原始反编译结果,速度更快 |
 | `--stdout` | 把结果输出到标准输出,不落盘 |
 | `--quiet` | 关闭过程日志 |
+| `-j, --jobs N` | 按类并行 simplify 的 worker 数;`0` 表示自动(CPU-1,上限 4) |
 
 示例:
 
 ```bash
 # 完整反编译(含优化器)
 npx tsx src/cli.ts decompile app.abc -o out --quiet
+
+# 大文件按类并行(worker_threads)
+npx tsx src/cli.ts decompile app.abc -o out -j 4 --quiet
 
 # 只看反编译结果,不优化
 npx tsx src/cli.ts decompile app.abc -o out --no-simplify --quiet
@@ -263,12 +267,14 @@ npx tsx src/cli.ts decompile app.abc -o out --no-simplify --quiet
 npx tsx src/cli.ts decompile app.abc --stdout --quiet
 ```
 
-大文件建议加堆:
+大文件建议加堆并开启按类并行:
 
 ```bash
 NODE_OPTIONS=--max-old-space-size=4096 \
-  npx tsx src/cli.ts decompile app.abc -o out --quiet
+  npx tsx src/cli.ts decompile app.abc -o out -j 4 --quiet
 ```
+
+`-j` 只并行 simplify(单类耗时占比 >99%);解析与反汇编仍在主线程。单个超大类的 simplify 峰值约 1.4GB,worker 默认堆上限 3GB,可用 `XPANDA_WORKER_HEAP_MB` 调整。
 
 ## 编程 API
 

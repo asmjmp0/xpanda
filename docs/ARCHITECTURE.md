@@ -37,6 +37,7 @@ src/
   codegen/      CodeGenerator(包装 ast/ 的 NodeFactory/NodeUtils)
   ast/          Babel AST 构建(NodeFactory/NodeUtils)
   simplify/     优化器流水线
+  parallel/     按类并行的 worker 调度(worker 内只跑 simplify)
   PandaDecompiler.ts  对外总入口
   cli.ts        命令行入口
 scripts/gen-opcodes.ts   isa.yaml → src/disasm/opcodes.ts 生成器
@@ -45,7 +46,7 @@ test/                    集成测试、样本与快照
 docs/ARCHITECTURE.md     本文档
 ```
 
-依赖方向:`cli / PandaDecompiler → decompiler → disasm → file → codec`;`decompiler / codegen → ast`;`SimplifyExport → simplify`。
+依赖方向:`cli / PandaDecompiler → decompiler → disasm → file → codec`;`decompiler / codegen → ast`;`SimplifyExport → simplify`;`parallel → PandaDecompiler / file`。
 
 ## 3. 文件格式层 `src/file/`
 
@@ -128,13 +129,20 @@ NormalizeDeclarations
 - **CLI `src/cli.ts`**:
 
 ```bash
-npx tsx src/cli.ts decompile <file.abc> [-o outDir] [--no-simplify] [--stdout] [--quiet]
+npx tsx src/cli.ts decompile <file.abc> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N]
 ```
 
 按类名(`Lpkg/Name;` → `pkg/Name.js`)落盘。
 
-- **编程 API `src/index.ts`**:`PandaFile`、`PandaDecompiler`(`decompile` / `decompileClass` / `decompileClassRaw` / `saveFile`)、`PandaLexical`、`PandaDisAssembler`、opcode 表。
-- 当前为顺序处理;大文件可用 `--no-simplify` 跳过优化器,或自行在外层按类并行。
+- **并行反编译 `src/parallel/`**:
+  - 入口 `decompileClassesParallel(decompiler, classes, { jobs })`,CLI 用 `-j N` 开启(`-j 0` 自动 = CPU-1,上限 4);
+  - 主线程负责解析 `.abc`、反汇编、词法分析与 AST 构建(360 类合计约 1.1s,占全量 ~1%),worker 只接收自包含的 AST JSON 并跑 simplify(AST 构建后单类耗时可占 99%);
+  - 派发按类指令字节数从大到小、worker 空闲即派发,减少尾部等待;结果按类序回填,与完成顺序无关;
+  - `PandaDecompiler.decompileRaw()` 每类复位 `MethodHandler` 生成名计数器(`panda_jmp0_reserved_class_N`),因此单类输出与处理顺序、jobs 数量无关,串行/并行逐字一致;
+  - worker 崩溃时该类自动降级到主线程 simplify,连续失败 2 次后剩余类全部主线程串行;每 worker 默认堆上限 3GB(`XPANDA_WORKER_HEAP_MB`),单个超大类的 simplify 峰值约 1.4GB,并发数不宜超过 4。
+
+- **编程 API `src/index.ts`**:`PandaFile`、`PandaDecompiler`(`decompile` / `decompileClass` / `decompileClassRaw` / `decompileClassAst` / `saveFile`)、`decompileClassesParallel` / `resolveJobs`、`PandaLexical`、`PandaDisAssembler`、opcode 表。
+- 实测(`bilibili_open.abc`,5.5MB / 385 类 / 5871 方法):解析 36ms、串行 81s、`-j 4` 49s(约 1.66x);瓶颈是单类 simplify 的内存/GC 带宽,而非解析或反汇编。
 
 ## 8. 验证与测试
 
@@ -160,3 +168,4 @@ npm run typecheck
 3. 前缀指令占 2 字节;新增指令 kind 映射时使用 isa.yaml 的 `sig` 首词。
 4. 运行时只需 Node.js ≥ 18;`typescript` / `tsx` 仅开发期使用。
 5. 降级输出可能包含 `decompiler_goto`、`break` 作用域问题或 `export ... from` 语法,解析时需要对应的 parser 配置。
+6. **单类输出必须是该类的纯函数**:不要引入跨类的可变状态(全局计数器、按偏移共享的可变缓存等),否则 `-j` 并行结果会与串行不一致。生成名计数器已按类复位。
