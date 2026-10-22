@@ -14,4 +14,11 @@ export { PandaIRCFG, PandaIRBasicBlock } from "./disasm/ir";
 export { OPCODES, OPCODE_BY_CODE, OPCODE_FLAG, BYTECODE_VERSION } from "./disasm/opcodes";
 export { NodeFactory, NodeUtils } from "./ast";
 export { SimplifyExport } from "./simplify/SimplifyExport";
+export { ResourceIndexFile } from "./res/ResourceIndexFile";
+export { ResourceItem } from "./res/ResourceItem";
+export { ResourceUtils } from "./res/ResourceUtils";
+export {
+    ResourceKeyType,
+    ResourceResType,
+} from "./res/ResourceEnums";
 export { PandaParseException, PandaDecompileException } from "./PandaParseException";
