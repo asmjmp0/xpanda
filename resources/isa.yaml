@@ -1,4 +1,4 @@
-# Copyright (c) 2021-2022 Huawei Device Co., Ltd.
+# Copyright (c) 2021-2026 Huawei Device Co., Ltd.
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -107,13 +107,13 @@ chapters:
 
 # File format and ISA versioning
 min_version: 0.0.0.2
-version: 13.0.1.0
+version: 24.0.0.0
 
 # 0 is default value, alaways reflects to the newest version.
-# Due to historical reasons, bytecode version is upgraded to 13.0.1.0 in API18.
-api_version_map: [[0, 13.0.1.0], [9, 9.0.0.0], [10, 9.0.0.0], [11, 11.0.2.0], [12, 12.0.6.0], [13, 12.0.6.0],
+# Due to historical reasons, bytecode version is upgraded to 24.0.0.0 in API24.
+api_version_map: [[0, 24.0.0.0], [9, 9.0.0.0], [10, 9.0.0.0], [11, 11.0.2.0], [12, 12.0.6.0], [13, 12.0.6.0],
                   [14, 12.0.6.0], [15, 12.0.6.0], [16, 12.0.6.0], [17, 12.0.6.0], [18, 13.0.1.0], [19, 13.0.1.0],
-                  [20, 13.0.1.0]]
+                  [20, 13.0.1.0], [21, 13.0.1.0], [22, 13.0.1.0], [23, 13.0.1.0], [24, 24.0.0.0]]
 
 # When delete bytecode or having any incompatible modification on bytecode,
 # please add the incompatible version in this list for prompting error message.
@@ -170,12 +170,12 @@ properties:
     description: The throw instruction can throw an excepton only if certain conditions are met.
   - tag: range_0
     description: Indicates that the instruction takes some consective registers as inputs.
-      The start register of these consective inputs is the last register of the instruction.
-      The number of consective inputs is the last immediate of the instruction.
+                 The start register of these consective inputs is the last register of the instruction.
+                 The number of consective inputs is the last immediate of the instruction.
   - tag: range_1
     description: Indicates that the instruction takes some consective registers as inputs.
-      The start register of these consective inputs is the last register of the instruction.
-      The number of consective inputs is the last immediate of the instruction plus 1.
+                 The start register of these consective inputs is the last register of the instruction.
+                 The number of consective inputs is the last immediate of the instruction plus 1.
   - tag: no_side_effect
     description: The instruction doesn't have side effects. Can be safely optimized by bytecode optimizer.
 
@@ -275,12 +275,12 @@ verification:
     description: Instruction valid only for dynamically-typed language context.
 
 isa_information:
-  - description: The last encoding number of various ISA. It should be maintained as long as ISA changes.
-    last_opcode_idx: 0xdc
-    last_throw_prefixed_opcode_idx: 0x09
-    last_wide_prefixed_opcode_idx: 0x13
-    last_deprecated_prefixed_opcode_idx: 0x2e
-    last_callruntime_prefixed_opcode_idx: 0x1b
+    - description: The last encoding number of various ISA. It should be maintained as long as ISA changes.
+      last_opcode_idx: 0xe1
+      last_throw_prefixed_opcode_idx: 0x09
+      last_wide_prefixed_opcode_idx: 0x14
+      last_deprecated_prefixed_opcode_idx: 0x2e
+      last_callruntime_prefixed_opcode_idx: 0x1b
 
 prefixes:
   - name: throw
@@ -572,8 +572,8 @@ groups:
         opcode_idx: [0xb8]
         format: [op_v1_8_v2_8_v3_8]
 
-  - title: binary operations
-    description: binary operations
+  - title: binary operations 
+    description: binary operations 
     verification:
       - none
     exceptions:
@@ -678,7 +678,7 @@ groups:
         format: [op_imm_8_v_8]
         properties: [jit_ic_slot, one_slot, eight_bit_ic]
 
-  - title: unary operations
+  - title: unary operations 
     description: unary operations
     verification:
       - none
@@ -1170,6 +1170,37 @@ groups:
         format: [pref_op_imm_16_v_8]
         prefix: wide
         properties: [range_0]
+      - sig: callthis0withname imm:u8, string_id, v:in:top
+        acc: inout:top
+        opcode_idx: [0xdd]
+        format: [op_imm_8_id_16_v_8]
+        properties: [jit_ic_slot, two_slot, eight_bit_ic, string_id]
+      - sig: callthis1withname imm:u8, string_id, v1:in:top, v2:in:top
+        acc: inout:top
+        opcode_idx: [0xde]
+        format: [op_imm_8_id_16_v1_8_v2_8]
+        properties: [jit_ic_slot, two_slot, eight_bit_ic, string_id]
+      - sig: callthis2withname imm:u8, string_id, v1:in:top, v2:in:top, v3:in:top
+        acc: inout:top
+        opcode_idx: [0xdf]
+        format: [op_imm_8_id_16_v1_8_v2_8_v3_8]
+        properties: [jit_ic_slot, two_slot, eight_bit_ic, string_id]
+      - sig: callthis3withname imm:u8, string_id, v1:in:top, v2:in:top, v3:in:top, v4:in:top
+        acc: inout:top
+        opcode_idx: [0xe0]
+        format: [op_imm_8_id_16_v1_8_v2_8_v3_8_v4_8]
+        properties: [jit_ic_slot, two_slot, eight_bit_ic, string_id]
+      - sig: callthisrangewithname imm1:u8, imm2:u8, string_id, v:in:top
+        acc: inout:top
+        opcode_idx: [0xe1]
+        format: [op_imm1_8_imm2_8_id_16_v_8]
+        properties: [jit_ic_slot, two_slot, eight_bit_ic, range_0, string_id]
+      - sig: wide.callthisrangewithname imm:u16, string_id, v:in:top
+        acc: inout:top
+        opcode_idx: [0x14]
+        format: [pref_op_imm_16_id_16_v_8]
+        prefix: wide
+        properties: [range_1, string_id]
 
   - title: definition instuctions
     description: instructions which define object

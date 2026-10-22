@@ -8,7 +8,7 @@
 
 把 `.abc` 文件反编译成可读的 JavaScript 源码:还原类、方法、函数、控制流、模块 import/export,并通过优化器清理编译器生成的寄存器临时变量。
 
-支持字节码版本:`13.0.1.0`。
+支持字节码版本:`24.0.0.0`。
 
 ## 反编译结果
 
@@ -321,7 +321,7 @@ src/
   mcp/          MCP Server(stdio,供 AI 客户端接入)
   PandaDecompiler.ts  对外总入口
   cli.ts        命令行
-resources/isa.yaml      ArkCompiler 指令集描述(v13.0.1.0)
+resources/isa.yaml      ArkCompiler 指令集描述(v24.0.0.0)
 scripts/gen-opcodes.ts  isa.yaml → src/disasm/opcodes.ts
 test/                   集成测试、样本与快照
 docs/                   架构文档、MCP 文档
@@ -367,6 +367,13 @@ test/expected/class.js
   - 指令 kind 未注册 handle。
 - 降级输出可能包含 `break` 作用域问题,或使用 `export ... from` 语法,需要对应的 parser 插件才能解析。
 - 优化器以语义等价和可读性为目标。
+
+## 参考实现
+
+字节码格式与指令执行语义参考 OpenHarmony ArkCompiler 官方仓库:
+
+- [arkcompiler_runtime_core](https://gitee.com/openharmony/arkcompiler_runtime_core) — ISA 指令集定义(`isa/isa.yaml`)、字节码文件格式与验证器;
+- [arkcompiler_ets_runtime](https://gitee.com/openharmony/arkcompiler_ets_runtime) — 动态语言解释器实现(各指令的执行语义,如 `callthis*withname` 系列)。
 
 ## License
 

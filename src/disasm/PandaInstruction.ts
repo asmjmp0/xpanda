@@ -196,7 +196,9 @@ function buildKindMap(): Map<string, InstructionKind> {
 
     put("call", "callarg0", "callarg1", "callargs1", "callargs2", "callargs3",
         "callrange", "wide.callrange", "callthis0", "callthis1", "callthis2", "callthis3",
-        "callthisrange", "wide.callthisrange", "apply");
+        "callthisrange", "wide.callthisrange", "apply",
+        "callthis0withname", "callthis1withname", "callthis2withname", "callthis3withname",
+        "callthisrangewithname", "wide.callthisrangewithname");
     put("superCall", "supercallthisrange", "supercallarrowrange",
         "wide.supercallthisrange", "wide.supercallarrowrange");
     put("superCallSpread", "supercallspread");
@@ -574,10 +576,16 @@ export class PandaInstruction {
         } else if (name === "callargs3") {
             (this as any).thisObj = null;
             (this as any).callParams = [this.params[1], this.params[2], this.params[3]];
-        } else if (name === "callrange" || name === "wide.callrange") {
+        } else if (name === "callrange") {
             (this as any).thisObj = null;
             const size = (this.params[1] as PandaInstructionIMM).imm;
             const base = this.params[2] as PandaInstructionVReg;
+            (this as any).callParams = rangeVRegs(method, base.index, size);
+        } else if (name === "wide.callrange") {
+            // 格式 PREF_IMM16_V8:操作数为 [size, base]
+            (this as any).thisObj = null;
+            const size = (this.params[0] as PandaInstructionIMM).imm;
+            const base = this.params[1] as PandaInstructionVReg;
             (this as any).callParams = rangeVRegs(method, base.index, size);
         } else if (name === "callthis0") {
             (this as any).thisObj = this.params[1];
@@ -591,22 +599,52 @@ export class PandaInstruction {
         } else if (name === "callthis3") {
             (this as any).thisObj = this.params[1];
             (this as any).callParams = [this.params[2], this.params[3], this.params[4]];
-        } else if (name === "callthisrange" || name === "wide.callthisrange") {
-            const thisObj = this.params[2];
+        } else if (name === "callthisrange") {
+            // 格式 IMM8_IMM8_V8:操作数为 [ic, size, this],size 为实参个数(regs 从 thisObj+1 开始)
+            const thisObj = this.params[2] as PandaInstructionVReg;
             (this as any).thisObj = thisObj;
             const size = (this.params[1] as PandaInstructionIMM).imm;
-            (this as any).callParams = rangeVRegs(method, (thisObj as PandaInstructionVReg).index + 1, size);
+            (this as any).callParams = rangeVRegs(method, thisObj.index + 1, size);
+        } else if (name === "wide.callthisrange") {
+            // 格式 PREF_IMM16_V8:操作数为 [size, this]
+            const thisObj = this.params[1] as PandaInstructionVReg;
+            (this as any).thisObj = thisObj;
+            const size = (this.params[0] as PandaInstructionIMM).imm;
+            (this as any).callParams = rangeVRegs(method, thisObj.index + 1, size);
         } else if (name === "apply") {
             (this as any).thisObj = this.params[1];
             (this as any).callParams = [this.params[2]];
             (this as any).apply = true;
-        }
-        // callthisrange 的第二个参数是 size(regs 从 thisObj+1 开始),wide.callthisrange 顺序不同
-        if (name === "wide.callthisrange") {
-            const thisObj = this.params[2];
-            const size = (this.params[1] as PandaInstructionIMM).imm;
+        } else if (name === "callthis0withname") {
+            // withname 系列:运行时语义与对应无 name 版本一致(acc=函数对象,v=this),
+            // string_id 仅供运行时 IC/报错信息使用,不影响反编译输出。
+            // 格式 IMM8_ID16_V8:操作数为 [ic, name, this]
+            (this as any).thisObj = this.params[2];
+            (this as any).callParams = [];
+        } else if (name === "callthis1withname") {
+            // 格式 IMM8_ID16_V8_V8:操作数为 [ic, name, this, a0]
+            (this as any).thisObj = this.params[2];
+            (this as any).callParams = [this.params[3]];
+        } else if (name === "callthis2withname") {
+            // 格式 IMM8_ID16_V8_V8_V8:操作数为 [ic, name, this, a0, a1]
+            (this as any).thisObj = this.params[2];
+            (this as any).callParams = [this.params[3], this.params[4]];
+        } else if (name === "callthis3withname") {
+            // 格式 IMM8_ID16_V8_V8_V8_V8:操作数为 [ic, name, this, a0, a1, a2]
+            (this as any).thisObj = this.params[2];
+            (this as any).callParams = [this.params[3], this.params[4], this.params[5]];
+        } else if (name === "callthisrangewithname") {
+            // 格式 IMM8_IMM8_ID16_V8:操作数为 [ic, size, name, this],size 为实参个数
+            const thisObj = this.params[3] as PandaInstructionVReg;
             (this as any).thisObj = thisObj;
-            (this as any).callParams = rangeVRegs(method, (thisObj as PandaInstructionVReg).index + 1, size);
+            const size = (this.params[1] as PandaInstructionIMM).imm;
+            (this as any).callParams = rangeVRegs(method, thisObj.index + 1, size);
+        } else if (name === "wide.callthisrangewithname") {
+            // 格式 PREF_IMM16_ID16_V8:操作数为 [size, name, this]
+            const thisObj = this.params[2] as PandaInstructionVReg;
+            (this as any).thisObj = thisObj;
+            const size = (this.params[0] as PandaInstructionIMM).imm;
+            (this as any).callParams = rangeVRegs(method, thisObj.index + 1, size);
         }
     }
 

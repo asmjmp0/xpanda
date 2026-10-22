@@ -1,10 +1,10 @@
 /**
  * 本文件由 scripts/gen-opcodes.ts 依据 resources/isa.yaml 生成,请勿手工修改!!!
  * 重新生成: npm run gen:opcodes
- * 支持的字节码版本: 13.0.1.0
+ * 支持的字节码版本: 24.0.0.0
  */
 
-export const BYTECODE_VERSION = '13.0.1.0';
+export const BYTECODE_VERSION = '24.0.0.0';
 
 export const OPCODE_FLAG = {
     TYPE_ID: 0x1,
@@ -82,6 +82,11 @@ export const FORMAT_PARAM_SIZE: Record<string, number> = {
     "IMM8_V8_V8_V8": 4,
     "PREF_V8_V8_V8_V8": 4,
     "IMM8_V8_V8_V8_V8": 5,
+    "IMM8_ID16_V8_V8": 5,
+    "IMM8_ID16_V8_V8_V8": 6,
+    "IMM8_ID16_V8_V8_V8_V8": 7,
+    "IMM8_IMM8_ID16_V8": 5,
+    "PREF_IMM16_ID16_V8": 5,
     "V8_V8_V8_V8": 4,
     "IMM8_ID16_ID16_IMM16_V8": 8,
     "IMM16_ID16_ID16_IMM16_V8": 9,
@@ -279,6 +284,12 @@ export const OPCODES: OpcodeInfo[] = [
     { name: "wide.supercallthisrange", code: 1789, format: "PREF_IMM16_V8", flags: 0x31000000 },
     { name: "supercallarrowrange", code: 187, format: "IMM8_IMM8_V8", flags: 0x311A0000 },
     { name: "wide.supercallarrowrange", code: 2045, format: "PREF_IMM16_V8", flags: 0x31000000 },
+    { name: "callthis0withname", code: 221, format: "IMM8_ID16_V8", flags: 0x301A0004 },
+    { name: "callthis1withname", code: 222, format: "IMM8_ID16_V8_V8", flags: 0x301A0004 },
+    { name: "callthis2withname", code: 223, format: "IMM8_ID16_V8_V8_V8", flags: 0x301A0004 },
+    { name: "callthis3withname", code: 224, format: "IMM8_ID16_V8_V8_V8_V8", flags: 0x301A0004 },
+    { name: "callthisrangewithname", code: 225, format: "IMM8_IMM8_ID16_V8", flags: 0x311A0004 },
+    { name: "wide.callthisrangewithname", code: 5373, format: "PREF_IMM16_ID16_V8", flags: 0x32000004 },
     { name: "definegettersetterbyvalue", code: 188, format: "V8_V8_V8_V8", flags: 0x30000000 },
     { name: "definefunc", code: 51, format: "IMM8_ID16_IMM8", flags: 0x30450002 },
     { name: "definefunc", code: 116, format: "IMM16_ID16_IMM8", flags: 0x30450002 },

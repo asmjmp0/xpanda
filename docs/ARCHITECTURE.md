@@ -40,7 +40,7 @@ src/
   PandaDecompiler.ts  对外总入口
   cli.ts        命令行入口
 scripts/gen-opcodes.ts   isa.yaml → src/disasm/opcodes.ts 生成器
-resources/isa.yaml       ArkCompiler 指令集描述(v13.0.1.0)
+resources/isa.yaml       ArkCompiler 指令集描述(v24.0.0.0)
 test/                    集成测试、样本与快照
 docs/ARCHITECTURE.md     本文档
 ```

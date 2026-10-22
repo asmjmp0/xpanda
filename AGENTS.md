@@ -4,7 +4,7 @@
 
 ## 项目是什么
 
-**xpanda** —— 鸿蒙 HarmonyOS `.abc`(Panda / ArkCompiler 字节码)反编译器,**纯 TypeScript** 实现(Node.js ≥ 18)。支持字节码版本 `13.0.1.0`。架构详情见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+**xpanda** —— 鸿蒙 HarmonyOS `.abc`(Panda / ArkCompiler 字节码)反编译器,**纯 TypeScript** 实现(Node.js ≥ 18)。支持字节码版本 `24.0.0.0`(向后兼容 13.0.1.0)。架构详情见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
 ## 环境要求
 
@@ -25,7 +25,7 @@
 | `src/mcp/` | MCP Server(`server.ts` stdio 入口、`registry.ts` 会话注册表、`tools/` 七个工具),文档见 [docs/MCP.md](docs/MCP.md) |
 | `src/PandaDecompiler.ts` | 对外总入口(库 API) |
 | `src/cli.ts` | CLI:`decompile <file.abc> [-o outDir] [--no-simplify] [--stdout] [--quiet]` |
-| `resources/isa.yaml` | ArkCompiler 指令集描述(v13.0.1.0) |
+| `resources/isa.yaml` | ArkCompiler 指令集描述(v24.0.0.0) |
 | `scripts/gen-opcodes.ts` | 生成 `src/disasm/opcodes.ts` |
 | `test/` | 集成测试 + 样本(`md5.abc`、`class.abc`、`aes.abc`、`bilibili_open.abc`) |
 | `test/expected/` | 反编译输出快照(`md5.js`、`class.js`、`aes.js`) |

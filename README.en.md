@@ -8,7 +8,7 @@ A decompiler for HarmonyOS `.abc` files (Panda / ArkCompiler bytecode), written 
 
 It turns `.abc` files back into readable JavaScript: classes, methods, functions, control flow and module `import`/`export` are restored, and an optimizer pipeline cleans up the register temporaries emitted by the compiler.
 
-Supported bytecode version: `13.0.1.0`.
+Supported bytecode version: `24.0.0.0`.
 
 ## Decompilation results
 
@@ -321,7 +321,7 @@ src/
   mcp/          MCP server (stdio, for AI client integration)
   PandaDecompiler.ts  public entry point
   cli.ts        command line interface
-resources/isa.yaml      ArkCompiler instruction set description (v13.0.1.0)
+resources/isa.yaml      ArkCompiler instruction set description (v24.0.0.0)
 scripts/gen-opcodes.ts  isa.yaml → src/disasm/opcodes.ts
 test/                   integration tests, sample files and snapshots
 docs/                   architecture documentation, MCP documentation
@@ -367,6 +367,13 @@ The output for `md5.abc` is also executed, and `md5("admin")` is checked against
   - an instruction kind with no registered handle.
 - Degraded output may contain `break` scoping issues, or use `export ... from` syntax that requires the matching parser plugin.
 - The optimizer targets semantic equivalence and readability.
+
+## References
+
+Bytecode format and instruction semantics follow the official OpenHarmony ArkCompiler repositories:
+
+- [arkcompiler_runtime_core](https://gitee.com/openharmony/arkcompiler_runtime_core) — ISA definitions (`isa/isa.yaml`), bytecode file format, and verifier;
+- [arkcompiler_ets_runtime](https://gitee.com/openharmony/arkcompiler_ets_runtime) — the dynamic-language interpreter implementation (execution semantics of each instruction, e.g. the `callthis*withname` family).
 
 ## License
 

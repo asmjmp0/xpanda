@@ -5,6 +5,9 @@ dist/
 out/
 test_out/
 
+# 参考仓库(runtime 实现,不参与构建)
+reference/
+
 # macOS
 .DS_Store
 
