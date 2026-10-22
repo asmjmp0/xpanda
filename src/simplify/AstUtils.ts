@@ -329,6 +329,10 @@ export function collectReadNames(node: TYPE.Node | null | undefined): Set<string
         if (isFunctionLike(n) || isClassLike(n)) return false;
         if (TYPE.isIdentifier(n)) {
             if (parent && TYPE.isReferenced(n, parent)) names.add(n.name);
+            // 复合赋值(x += y / x |= y)左侧也会读取旧值;Babel 的 isReferenced 对赋值左值统一返回 false
+            else if (parent && TYPE.isAssignmentExpression(parent) && parent.left === n && parent.operator !== "=") {
+                names.add(n.name);
+            }
             return;
         }
     };

@@ -84,7 +84,7 @@ export class PandaLexical {
         if (pre && pre.kind === "store") {
             this.addTypeInfo(block.getParent(), pre.destObj!.toString(), type);
         } else if (pre && pre.kind === "loadLex") {
-            this.addTypeInfo(block.getParent(), pre.toSignature(), type);
+            this.addTypeInfo(block.getParent(), pre.toSignature(this.getLevel(block.getParent(), pre.pc)), type);
         } else if (pre && pre.kind === "mov") {
             this.addTypeInfo(block.getParent(), pre.destObj!.toString(), type);
         }

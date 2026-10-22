@@ -771,10 +771,11 @@ export class PandaInstruction {
         }
     }
 
-    /** loadLex 的签名(用于类型推断) */
-    toSignature(): string {
+    /** loadLex 的签名(用于类型推断);传入当前层级时以“绝对目标层级”为 key,避免兄弟作用域同名冲突 */
+    toSignature(baseLevel?: number): string {
         const name = this.isSendAble ? "sendable" : "local";
-        return name + "_" + this.lexLevel + "_" + this.lexIndex;
+        const level = baseLevel === undefined ? this.lexLevel : baseLevel - this.lexLevel - 1;
+        return name + "_" + level + "_" + this.lexIndex;
     }
 
     getPC(): number { return this.pc; }

@@ -21,7 +21,7 @@
 | `src/decompiler/` | `StructureAnalysis.ts`(Region 归约核心)、`statements.ts`、`MethodHandler.ts`(HANDLES 分发)、`SimpleAnalysis.ts`、`ValueGraph.ts`、`DominatorGraph.ts` |
 | `src/codegen/CodeGenerator.ts` | AST 生成入口(包装 `src/ast/`) |
 | `src/ast/` | `NodeFactory` / `NodeUtils`(Babel AST 工具) |
-| `src/simplify/` | 优化器流水线(`SimplifyExport`、`TempVariableSimplify`、`SyntaxRewriteSimplify`、`ClassSyntaxSimplify`、`HighLevelGrammarSimplify`、`AstUtils`、`NormalizeDeclarations`) |
+| `src/simplify/` | 优化器流水线(`SimplifyExport`、`TempVariableSimplify`、`ConditionSimplify`、`SyntaxRewriteSimplify`、`ClassSyntaxSimplify`、`HighLevelGrammarSimplify`、`AstUtils`、`NormalizeDeclarations`) |
 | `src/mcp/` | MCP Server(`server.ts` stdio 入口、`registry.ts` 会话注册表、`tools/` 七个工具),文档见 [docs/MCP.md](docs/MCP.md) |
 | `src/PandaDecompiler.ts` | 对外总入口(库 API) |
 | `src/cli.ts` | CLI:`decompile <file.abc> [-o outDir] [--no-simplify] [--stdout] [--quiet]` |

@@ -8,7 +8,16 @@
 
 把 `.abc` 文件反编译成可读的 JavaScript 源码:还原类、方法、函数、控制流、模块 import/export,并通过优化器清理编译器生成的寄存器临时变量。
 
-支持字节码版本:`24.0.0.0`。
+支持字节码版本:`24.0.0.0`(向后兼容 `13.0.1.0`)。
+
+## 特性
+
+- **纯 TypeScript、零原生依赖**:解析 `.abc` 并输出可直接阅读、可直接运行的 JavaScript;
+- **类与函数还原**:类字段、访问器、原型方法、闭包、词法环境(`local` / `sendable` env);
+- **控制流还原**:`if/else`、`while/do-while`、`for`、`try/catch` 等;结构化失败时自动降级为带标签的线性输出;
+- **模块还原**:ES Module 的 `import` / `export`;
+- **Babel AST 优化器**:寄存器临时变量复制传播、死存储消除、函数/类语法还原、调用形式重写、复合赋值折叠;
+- **MCP Server**:可接入 Claude Code、OpenCode、Cursor 等 AI 客户端按需分析 `.abc`。
 
 ## 反编译结果
 
@@ -54,8 +63,8 @@ new Test().test();
   function rhex(p0) {
     let v3, v4;
     v3 = 0;
-    for (v4 = ""; v3 < 4; v3 = v3 + 1) {
-      v4 = v4 + ("0123456789abcdef"[p0 >> v3 * 8 + 4 & 15] + "0123456789abcdef"[p0 >> v3 * 8 & 15]);
+    for (v4 = ""; v3 < 4; v3 += 1) {
+      v4 += "0123456789abcdef"[p0 >> v3 * 8 + 4 & 15] + "0123456789abcdef"[p0 >> v3 * 8 & 15];
     }
     return v4;
   }
@@ -65,10 +74,8 @@ new Test().test();
   function md5blk(p0) {
     let v8, v9, v11;
     v8 = 0;
-    for (v9 = []; v8 < 64; v8 = v8 + 4) {
-      v11 = p0.charCodeAt(v8);
-      v11 = v11 + (p0.charCodeAt(v8 + 1) << 8);
-      v11 = v11 + (p0.charCodeAt(v8 + 2) << 16);
+    for (v9 = []; v8 < 64; v8 += 4) {
+      v11 = p0.charCodeAt(v8) + (p0.charCodeAt(v8 + 1) << 8) + (p0.charCodeAt(v8 + 2) << 16);
       v9[v8 >> 2] = v11 + (p0.charCodeAt(v8 + 3) << 24);
     }
     return v9;
@@ -80,18 +87,18 @@ new Test().test();
     }
     globalThis.txt = "";
     v2 = [1732584193, -271733879, -1732584194, 271733878];
-    for (v3 = 64; v3 <= p0.length; v3 = v3 + 64) {
+    for (v3 = 64; v3 <= p0.length; v3 += 64) {
       md5cycle(v2, md5blk(p0.substring(v3 - 64, v3)));
     }
     v0 = p0.substring(v3 - 64);
     v3 = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-    for (v8 = 0; v8 < v0.length; v8 = v8 + 1) {
+    for (v8 = 0; v8 < v0.length; v8 += 1) {
       v3[v8 >> 2] = v3[v8 >> 2] | v0.charCodeAt(v8) << (v8 % 4 << 3);
     }
     v3[v8 >> 2] = v3[v8 >> 2] | 128 << (v8 % 4 << 3);
     if (v8 > 55) {
       md5cycle(v2, v3);
-      for (v4 = 0; v4 < 16; v4 = v4 + 1) {
+      for (v4 = 0; v4 < 16; v4 += 1) {
         v3[v4] = 0;
       }
     }
@@ -104,7 +111,7 @@ new Test().test();
   }
   function hex(p0) {
     let v0;
-    for (v0 = 0; v0 < p0.length; v0 = v0 + 1) {
+    for (v0 = 0; v0 < p0.length; v0 += 1) {
       p0[v0] = rhex(p0[v0]);
     }
     return p0.join("");
@@ -202,6 +209,22 @@ new Test().test();
 ```
 
 </details>
+
+### `test/expected/aes.js`
+
+完整结果见 [`test/expected/aes.js`](test/expected/aes.js)。优化器会把 `acc` 累加链还原成复合赋值:
+
+```js
+v9 <<= 2;
+v9 |= v10 >> 4;
+v10 &= 15;
+v10 <<= 4;
+v10 |= v11 >> 2;
+v7 += String.fromCharCode(v9);
+if (v11 !== 64) {
+  v7 += String.fromCharCode(v10);
+}
+```
 
 ## 环境要求
 
@@ -321,7 +344,7 @@ src/
   mcp/          MCP Server(stdio,供 AI 客户端接入)
   PandaDecompiler.ts  对外总入口
   cli.ts        命令行
-resources/isa.yaml      ArkCompiler 指令集描述(v24.0.0.0)
+resources/isa.yaml      ArkCompiler 指令集描述(v24.0.0.0,兼容 v13.0.1.0)
 scripts/gen-opcodes.ts  isa.yaml → src/disasm/opcodes.ts
 test/                   集成测试、样本与快照
 docs/                   架构文档、MCP 文档
@@ -342,10 +365,22 @@ docs/                   架构文档、MCP 文档
   → JavaScript 输出
 ```
 
+## 优化器
+
+`SimplifyExport` 以定点迭代方式运行,直到 AST 不再变化(最多 5 轮):
+
+- `ReservedIdentifierSimplifier`:清理 `panda_jmp0_reserved_*` 占位符;
+- `TempVariableSimplify`:临时变量(`acc` / `vN` / `local_L_i`)复制传播、死存储消除、闭包函数声明提升;区分 `acc` 的新旧版本,支持 `acc = f(); acc = x + acc; y = acc` → `y = x + f()`,并修正 `if` 分支赋值被误判为死存储的问题;
+- `ConditionSimplify`:把 `if` 条件中无条件求值的逗号表达式前缀提升为语句,清理只用于条件计算的临时赋值,并把 `x === null || x === undefined` 合并为 `x == null`;
+- `SyntaxRewriteSimplify`:调用形式重写、函数表达式转声明、条件/循环清理,并在流水线末尾统一折叠复合赋值(`x = x + y` → `x += y`);
+- `ClassSyntaxSimplify` / `HighLevelGrammarSimplify`:类语法与高阶语法还原。
+
+`PandaLexical` 先解析每个方法的词法环境:闭包从定义处的层级开始,`newlexenv` / `stlexvar` / `ldlexvar` 统一换算为绝对层级,再据此还原 `local_L_i` / `sendable_L_i` 变量。
+
 ## 测试
 
 ```bash
-npm test           # 反编译 md5.abc / class.abc,与快照逐字比较并做 Babel 再解析
+npm test           # 反编译 md5.abc / class.abc / aes.abc,快照比较 + Babel 再解析 + 执行校验
 npm run test:mcp   # MCP Server 端到端测试(子进程 + JSON-RPC)
 npm run typecheck  # tsc --noEmit
 ```
@@ -355,9 +390,10 @@ npm run typecheck  # tsc --noEmit
 ```text
 test/expected/md5.js
 test/expected/class.js
+test/expected/aes.js
 ```
 
-`md5.abc` 的输出还会实际执行,并校验 `md5("admin")` 与 Node `crypto` 的结果一致。
+`md5.abc` 的输出会实际执行,并校验 `md5("admin")` 与 Node `crypto` 的结果一致;`aes.abc` 的输出也会执行加解密自检。
 
 ## 已知限制
 
@@ -365,7 +401,7 @@ test/expected/class.js
   - 单方法超过 500 个基本块;
   - `jeq/jne/jstricteq/jnstricteq` 指令;
   - 指令 kind 未注册 handle。
-- 降级输出可能包含 `break` 作用域问题,或使用 `export ... from` 语法,需要对应的 parser 插件才能解析。
+- 降级输出会把词法环境声明提升到函数顶部,以支持跨 `label` 访问;但仍可能包含裸 `break` 作用域问题,或使用 `export ... from` 语法,需要对应的 parser 插件才能解析。
 - 优化器以语义等价和可读性为目标。
 
 ## 参考实现

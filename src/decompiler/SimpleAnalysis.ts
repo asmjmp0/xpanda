@@ -2,6 +2,7 @@ import type { PandaIRCFG } from "../disasm/PandaIRCFG";
 import type { PandaLexical } from "../disasm/PandaLexical";
 import { LinearPandaStatement } from "./statements";
 import type { PandaDecompilerMethodHandler } from "./MethodHandler";
+import * as TYPE from "@babel/types";
 
 /**
  * 结构化失败时的降级方案(移植自 Java SimpleAnalysis)
@@ -95,5 +96,57 @@ export class SimpleAnalysis {
             const labeledStatementNode = factory.labeledStatementNode(statement.block.name, blockStatementNode);
             utils.insertNodeToBody(labeledStatementNode as any, astNode);
         }
+        this.hoistLexicalDeclarations(astNode);
+    }
+
+    /**
+     * SimpleAnalysis 下每个 IR 块都是独立的 `label: { ... }`,而 newLexEnv 的
+     * `let local_L_i` 会落在入口块里,后面的 label 就访问不到它(块级作用域)。
+     * 这里把所有词法环境变量声明提升到函数体顶部,并合并同名声明。
+     */
+    private hoistLexicalDeclarations(astNode: any): void {
+        const body: TYPE.Statement[] = astNode.body;
+        const names: string[] = [];
+        const seen = new Set<string>();
+
+        const walk = (node: any): void => {
+            if (!node || typeof node.type !== "string") return;
+            if (TYPE.isFunction(node) || TYPE.isClass(node)) return;
+            if (TYPE.isVariableDeclaration(node)) {
+                node.declarations = node.declarations.filter((declarator: TYPE.VariableDeclarator) => {
+                    if (!TYPE.isIdentifier(declarator.id) || declarator.init) return true;
+                    if (!/^(local|sendable)_\d+_\d+$/.test(declarator.id.name)) return true;
+                    if (!seen.has(declarator.id.name)) {
+                        seen.add(declarator.id.name);
+                        names.push(declarator.id.name);
+                    }
+                    return false;
+                });
+            }
+            for (const key of TYPE.VISITOR_KEYS[node.type] ?? []) {
+                const value = node[key];
+                if (Array.isArray(value)) {
+                    for (const child of value) walk(child);
+                    node[key] = value.filter((child: any) =>
+                        !(TYPE.isVariableDeclaration(child) && child.declarations.length === 0));
+                } else {
+                    walk(value);
+                }
+            }
+        };
+        for (const statement of body) walk(statement);
+        astNode.body = body.filter((statement: any) =>
+            !(TYPE.isVariableDeclaration(statement) && statement.declarations.length === 0));
+
+        if (names.length === 0) return;
+        const declarators = names.map((name) => TYPE.variableDeclarator(TYPE.identifier(name), null));
+        // 跳过 import 和指令 prologue,不要破坏 "use strict" 等语义
+        let insertAt = 0;
+        while (insertAt < astNode.body.length) {
+            const statement = astNode.body[insertAt];
+            if (!TYPE.isImportDeclaration(statement) && !(TYPE.isExpressionStatement(statement) && (statement as any).directive)) break;
+            insertAt++;
+        }
+        astNode.body.splice(insertAt, 0, TYPE.variableDeclaration("let", declarators));
     }
 }

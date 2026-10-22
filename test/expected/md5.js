@@ -10,8 +10,8 @@
   function rhex(p0) {
     let v3, v4;
     v3 = 0;
-    for (v4 = ""; v3 < 4; v3 = v3 + 1) {
-      v4 = v4 + ("0123456789abcdef"[p0 >> v3 * 8 + 4 & 15] + "0123456789abcdef"[p0 >> v3 * 8 & 15]);
+    for (v4 = ""; v3 < 4; v3 += 1) {
+      v4 += "0123456789abcdef"[p0 >> v3 * 8 + 4 & 15] + "0123456789abcdef"[p0 >> v3 * 8 & 15];
     }
     return v4;
   }
@@ -21,10 +21,8 @@
   function md5blk(p0) {
     let v8, v9, v11;
     v8 = 0;
-    for (v9 = []; v8 < 64; v8 = v8 + 4) {
-      v11 = p0.charCodeAt(v8);
-      v11 = v11 + (p0.charCodeAt(v8 + 1) << 8);
-      v11 = v11 + (p0.charCodeAt(v8 + 2) << 16);
+    for (v9 = []; v8 < 64; v8 += 4) {
+      v11 = p0.charCodeAt(v8) + (p0.charCodeAt(v8 + 1) << 8) + (p0.charCodeAt(v8 + 2) << 16);
       v9[v8 >> 2] = v11 + (p0.charCodeAt(v8 + 3) << 24);
     }
     return v9;
@@ -36,18 +34,18 @@
     }
     globalThis.txt = "";
     v2 = [1732584193, -271733879, -1732584194, 271733878];
-    for (v3 = 64; v3 <= p0.length; v3 = v3 + 64) {
+    for (v3 = 64; v3 <= p0.length; v3 += 64) {
       md5cycle(v2, md5blk(p0.substring(v3 - 64, v3)));
     }
     v0 = p0.substring(v3 - 64);
     v3 = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-    for (v8 = 0; v8 < v0.length; v8 = v8 + 1) {
+    for (v8 = 0; v8 < v0.length; v8 += 1) {
       v3[v8 >> 2] = v3[v8 >> 2] | v0.charCodeAt(v8) << (v8 % 4 << 3);
     }
     v3[v8 >> 2] = v3[v8 >> 2] | 128 << (v8 % 4 << 3);
     if (v8 > 55) {
       md5cycle(v2, v3);
-      for (v4 = 0; v4 < 16; v4 = v4 + 1) {
+      for (v4 = 0; v4 < 16; v4 += 1) {
         v3[v4] = 0;
       }
     }
@@ -60,7 +58,7 @@
   }
   function hex(p0) {
     let v0;
-    for (v0 = 0; v0 < p0.length; v0 = v0 + 1) {
+    for (v0 = 0; v0 < p0.length; v0 += 1) {
       p0[v0] = rhex(p0[v0]);
     }
     return p0.join("");

@@ -578,9 +578,10 @@ const HANDLES: Record<string, Handle> = {
     },
     loadLex: (ins, block, mh, l, node) => {
         const factory = mh.getCodeGenerator().getNodeFactory();
-        const type = l.getTypeInfo(block.getParent(), ins.toSignature());
+        const currentLevel = l.getLevel(block.getParent(), ins.pc);
+        const type = l.getTypeInfo(block.getParent(), ins.toSignature(currentLevel));
         let name = ins.isSendAble ? "sendable" : "local";
-        const nowLevel = l.getLevel(block.getParent(), ins.pc) - ins.lexLevel - 1;
+        const nowLevel = currentLevel - ins.lexLevel - 1;
         name += "_" + nowLevel + "_";
         const assignment = factory.assignmentExpressionNode("=", factory.identifierNode("acc") as any, factory.identifierNode(name + ins.lexIndex, type) as any);
         mh.getCodeGenerator().getNodeUtils().insertNodeToBody(factory.expressionStatementNode(assignment as any) as any, node);

@@ -34,10 +34,10 @@ v0.cipher = function cipher(p0, p1) {
   v1 = 1;
   v4 = [new Array(4), new Array(4), new Array(4), new Array(4)];
   v5 = new Array(4 * 4);
-  for (v6 = 0; v6 < p0.length; v6 = v6 + 1) {
+  for (v6 = 0; v6 < p0.length; v6 += 1) {
     v4[v6 % 4][Math.floor(v6 / 4)] = p0[v6];
   }
-  for (this.addRoundKey(v4, p1, 0, 4); v1 < p1.length / 4 - 1; v1 = v1 + 1) {
+  for (this.addRoundKey(v4, p1, 0, 4); v1 < p1.length / 4 - 1; v1 += 1) {
     this.subBytes(v4, 4);
     this.shiftRows(v4, 4);
     this.mixColumns(v4, 4);
@@ -45,7 +45,7 @@ v0.cipher = function cipher(p0, p1) {
   }
   this.subBytes(v4, 4);
   this.shiftRows(v4, 4);
-  for (this.addRoundKey(v4, p1, v1, 4); v0 < v5.length; v0 = v0 + 1) {
+  for (this.addRoundKey(v4, p1, v1, 4); v0 < v5.length; v0 += 1) {
     acc = Math.floor(v0 / 4);
     acc = v4[v0 % 4][acc];
     v5[v0] = acc;
@@ -54,8 +54,8 @@ v0.cipher = function cipher(p0, p1) {
 };
 v0.subBytes = function subBytes(p0, p1) {
   let v2, v3;
-  for (v2 = 0; v2 < p1; v2 = v2 + 1) {
-    for (v3 = 0; v3 < 4; v3 = v3 + 1) {
+  for (v2 = 0; v2 < p1; v2 += 1) {
+    for (v3 = 0; v3 < 4; v3 += 1) {
       p0[v3][v2] = this.sbox[p0[v3][v2]];
     }
   }
@@ -63,21 +63,21 @@ v0.subBytes = function subBytes(p0, p1) {
 v0.shiftRows = function shiftRows(p0, p1) {
   let v2, v3, v4;
   v2 = 1;
-  for (v3 = new Array(p1); v2 < 4; v2 = v2 + 1) {
-    for (v4 = 0; v4 < p1; v4 = v4 + 1) {
+  for (v3 = new Array(p1); v2 < 4; v2 += 1) {
+    for (v4 = 0; v4 < p1; v4 += 1) {
       v3[v4] = p0[v2][(v4 + v2) % p1];
     }
-    for (v4 = 0; v4 < 4; v4 = v4 + 1) {
+    for (v4 = 0; v4 < 4; v4 += 1) {
       p0[v2][v4] = v3[v4];
     }
   }
 };
 v0.mixColumns = function mixColumns(p0, p1) {
   let v7, v8, v9, v10, acc;
-  for (v7 = 0; v7 < p1; v7 = v7 + 1) {
+  for (v7 = 0; v7 < p1; v7 += 1) {
     v8 = new Array(4);
     v9 = new Array(4);
-    for (v10 = 0; v10 < 4; v10 = v10 + 1) {
+    for (v10 = 0; v10 < 4; v10 += 1) {
       v8[v10] = p0[v10][v7];
       acc = p0[v10][v7] & 128 ? p0[v10][v7] << 1 ^ 283 : p0[v10][v7] << 1;
       v9[v10] = acc;
@@ -91,8 +91,8 @@ v0.mixColumns = function mixColumns(p0, p1) {
 };
 v0.addRoundKey = function addRoundKey(p0, p1, p2, p3) {
   let v2, v3;
-  for (v2 = 0; v2 < p3; v2 = v2 + 1) {
-    for (v3 = 0; v3 < 4; v3 = v3 + 1) {
+  for (v2 = 0; v2 < p3; v2 += 1) {
+    for (v3 = 0; v3 < 4; v3 += 1) {
       p0[v3][v2] = p0[v3][v2] ^ p1[p2 * 4 + v2][v3];
     }
   }
@@ -101,25 +101,25 @@ v0.keyExpansion = function keyExpansion(p0) {
   let v0, v1, v7, v8, v9, v10;
   v7 = new Array(4 * (p0.length / 4 + 6 + 1));
   v8 = new Array(4);
-  for (v9 = 0; v9 < p0.length / 4; v9 = v9 + 1) {
+  for (v9 = 0; v9 < p0.length / 4; v9 += 1) {
     v10 = [p0[4 * v9], p0[4 * v9 + 1], p0[4 * v9 + 2], p0[4 * v9 + 3]];
     v7[v9] = v10;
   }
-  for (v0 = p0.length / 4; v0 < v7.length; v0 = v0 + 1) {
+  for (v0 = p0.length / 4; v0 < v7.length; v0 += 1) {
     v7[v0] = new Array(4);
-    for (v1 = 0; v1 < 4; v1 = v1 + 1) {
+    for (v1 = 0; v1 < 4; v1 += 1) {
       v8[v1] = v7[v0 - 1][v1];
     }
     if (v0 % (p0.length / 4) === 0) {
       this.rotWord(v8);
       this.subWord(v8);
-      for (v1 = 0; v1 < 4; v1 = v1 + 1) {
+      for (v1 = 0; v1 < 4; v1 += 1) {
         v8[v1] = v8[v1] ^ globalThis.AES.rcon[v0 / (p0.length / 4)][v1];
       }
-    } else if ((p0.length / 4 > 6) && (v1 = v0 % (p0.length / 4), v0 % (p0.length / 4) === 4)) {
+    } else if (p0.length / 4 > 6 && (v1 = v0 % (p0.length / 4), v0 % (p0.length / 4) === 4)) {
       this.subWord(v8);
     }
-    for (v1 = 0; v1 < 4; v1 = v1 + 1) {
+    for (v1 = 0; v1 < 4; v1 += 1) {
       v7[v0][v1] = v7[v0 - p0.length / 4][v1] ^ v8[v1];
     }
   }
@@ -127,24 +127,22 @@ v0.keyExpansion = function keyExpansion(p0) {
 };
 v0.rotWord = function rotWord(p0) {
   let v2;
-  for (v2 = 0; v2 < 3; v2 = v2 + 1) {
+  for (v2 = 0; v2 < 3; v2 += 1) {
     p0[v2] = p0[v2 + 1];
   }
   p0[3] = p0[0];
 };
 v0.subWord = function subWord(p0) {
   let v1;
-  for (v1 = 0; v1 < 4; v1 = v1 + 1) {
+  for (v1 = 0; v1 < 4; v1 += 1) {
     p0[v1] = this.sbox[p0[v1]];
   }
 };
 v0.generateKey = function generateKey() {
-  let v1, v3, v6;
+  let v1, v3;
   v1 = 0;
-  for (v3 = new Array(16); v1 < 16; v1 = v1 + 1) {
-    v6 = Math.random();
-    v6 = v6 * 256;
-    v3[v1] = Math.floor(v6);
+  for (v3 = new Array(16); v1 < 16; v1 += 1) {
+    v3[v1] = Math.floor(Math.random() * 256);
   }
   return v3;
 };
@@ -155,48 +153,36 @@ v1 = {
   "decode": null
 };
 v1.encode = function encode(p0) {
-  let v7, v8, v9, v10, v11, v12, acc;
+  let v7, v8, v9, v10, v11, v12;
   v7 = 0;
-  for (v8 = ""; v7 < p0.length; v8 = acc) {
+  for (v8 = ""; v7 < p0.length; v8 += this.characters.charAt(v11)) {
     v9 = p0.charCodeAt(v7);
     v11 = v7 + 1 + 1;
     v10 = p0.charCodeAt(v7 + 1);
     v7 = v7 + 1 + 1 + 1;
     v11 = p0.charCodeAt(v11);
     v12 = v9 >> 2;
-    v9 = v9 & 3;
-    v9 = v9 << 4;
-    v9 = v9 | v10 >> 4;
-    if (!isNaN(v10)) {
-      acc = isNaN(v11);
-      acc = !acc;
-      if (!acc) {
-        v10 = (v10 & 15) << 2 | v11 >> 6;
-        v11 = 64;
-      } else {
-        v10 = (v10 & 15) << 2 | v11 >> 6;
-        v11 = v11 & 63;
-      }
-    } else {
+    v9 &= 3;
+    v9 <<= 4;
+    v9 |= v10 >> 4;
+    if (isNaN(v10)) {
       v10 = 64;
       v11 = 64;
+    } else if (isNaN(v11)) {
+      v10 = (v10 & 15) << 2 | v11 >> 6;
+      v11 = 64;
+    } else {
+      v10 = (v10 & 15) << 2 | v11 >> 6;
+      v11 &= 63;
     }
-    acc = this.characters.charAt(v12);
-    acc = v8 + acc;
-    v8 = acc;
-    acc = this.characters.charAt(v9);
-    acc = v8 + acc;
-    v8 = acc;
-    acc = this.characters.charAt(v10);
-    acc = v8 + acc;
-    v8 = acc;
-    acc = this.characters.charAt(v11);
-    acc = v8 + acc;
+    v8 += this.characters.charAt(v12);
+    v8 += this.characters.charAt(v9);
+    v8 += this.characters.charAt(v10);
   }
   return v8;
 };
 v1.decode = function decode(p0) {
-  let v6, v7, v8, v9, v10, v11, v12, v14, acc;
+  let v6, v7, v8, v9, v10, v11, v12, v14;
   v6 = 0;
   v7 = "";
   v8 = p0.replace(new RegExp("[^A-Za-z0-9\\+\\/\\=]", "g"), "");
@@ -211,23 +197,17 @@ v1.decode = function decode(p0) {
     v11 = this.characters.indexOf(v12);
     v6 = v14 + 1;
     v14 = v8.charAt(v14);
-    v9 = v9 << 2;
-    v9 = v9 | v10 >> 4;
-    v10 = v10 & 15;
-    v10 = v10 << 4;
-    v10 = v10 | v11 >> 2;
-    acc = String.fromCharCode(v9);
-    acc = v7 + acc;
-    v7 = acc;
+    v9 <<= 2;
+    v9 |= v10 >> 4;
+    v10 &= 15;
+    v10 <<= 4;
+    v10 |= v11 >> 2;
+    v7 += String.fromCharCode(v9);
     if (v11 !== 64) {
-      acc = String.fromCharCode(v10);
-      acc = v7 + acc;
-      v7 = acc;
+      v7 += String.fromCharCode(v10);
     }
     if (this.characters.indexOf(v14) !== 64) {
-      acc = String.fromCharCode((v11 & 3) << 6 | this.characters.indexOf(v14));
-      acc = v7 + acc;
-      v7 = acc;
+      v7 += String.fromCharCode((v11 & 3) << 6 | this.characters.indexOf(v14));
     }
   }
   return v7;
@@ -237,18 +217,18 @@ globalThis.AES.Counter = function () {
   let local_0_0;
   local_0_0 = undefined;
   this.arr = new Array(16);
-  for (local_0_0 = 0; local_0_0 < 4; local_0_0 = local_0_0 + 1) {
+  for (local_0_0 = 0; local_0_0 < 4; local_0_0 += 1) {
     this.arr[local_0_0] = 1715592630 >>> local_0_0 * 8 & 255;
   }
   this.arr[4] = 123;
   this.arr[5] = 223;
   this.arr[6] = 13;
   this.arr[7] = 23;
-  for (local_0_0 = 8; local_0_0 < 16; local_0_0 = local_0_0 + 1) {
+  for (local_0_0 = 8; local_0_0 < 16; local_0_0 += 1) {
     this.arr[local_0_0] = 0;
   }
   this.increment = function () {
-    for (local_0_0 = 15; local_0_0 >= 8; local_0_0 = local_0_0 - 1) {
+    for (local_0_0 = 15; local_0_0 >= 8; local_0_0 -= 1) {
       if (this.arr[local_0_0] === 255) {
         this.arr[local_0_0] = this.arr[local_0_0] + 1;
         break;
@@ -268,7 +248,7 @@ globalThis.AES.Crypto = function (p0) {
   this.keySchedule = globalThis.AES.keyExpansion(p0);
   this.counter = new globalThis.AES.Counter();
   this.setCounter = function (p0) {
-    for (local_0_0 = 0; local_0_0 < 16; local_0_0 = local_0_0 + 1) {
+    for (local_0_0 = 0; local_0_0 < 16; local_0_0 += 1) {
       this.counter.arr[local_0_0] = p0[local_0_0];
     }
     return this;
@@ -277,17 +257,14 @@ globalThis.AES.Crypto = function (p0) {
     return this.counter.arr;
   };
   this.run = function (p0) {
-    let v2, v3, v4, v5, v6, v8, acc;
+    let v2, v3, v4, v5, v6, v8;
     v2 = Math.ceil(p0.length / local_0_1);
     v3 = new Array(p0.length);
-    for (v4 = 0; v4 < v2; v4 = v4 + 1) {
+    for (v4 = 0; v4 < v2; v4 += 1) {
       v5 = globalThis.AES.cipher(this.counter.arr, this.keySchedule);
       v6 = v4 + 1 === v2 ? p0.length % local_0_1 : local_0_1;
-      for (v8 = 0; v8 < v6; v8 = v8 + 1) {
-        acc = p0.charCodeAt(v4 * local_0_1 + v8);
-        acc = v5[v8] ^ acc;
-        acc = String.fromCharCode(acc);
-        v3[v4 * local_0_1 + v8] = acc;
+      for (v8 = 0; v8 < v6; v8 += 1) {
+        v3[v4 * local_0_1 + v8] = String.fromCharCode(v5[v8] ^ p0.charCodeAt(v4 * local_0_1 + v8));
       }
       this.counter.increment();
     }

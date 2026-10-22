@@ -61,6 +61,11 @@ export class SyntaxRewriteSimplify implements ISimplify {
 
     /** 化简 if/while 的 test:!!a -> a,!a == b -> a != b,!a && !b -> ... */
     private simplifyTestNode(node: TYPE.Expression): TYPE.Expression {
+        node = this.unwrapParens(node);
+        // ConditionSimplify 删除序列中间元素后可能留下单元素序列
+        while (TYPE.isSequenceExpression(node) && node.expressions.length === 1) {
+            node = this.unwrapParens(node.expressions[0] as TYPE.Expression);
+        }
         if (TYPE.isSequenceExpression(node)) {
             if (node.expressions.length > 0) {
                 node.expressions[node.expressions.length - 1] =
@@ -71,10 +76,15 @@ export class SyntaxRewriteSimplify implements ISimplify {
         if (TYPE.isLogicalExpression(node)) {
             node.left = this.simplifyTestNode(node.left);
             node.right = this.simplifyTestNode(node.right);
-            return node;
+            const nullish = this.mergeNullishCheck(node);
+            return nullish ?? node;
         }
         if (!TYPE.isUnaryExpression(node) || node.operator !== "!") return node;
-        const arg = node.argument;
+        let arg = this.unwrapParens(node.argument as TYPE.Expression);
+        while (TYPE.isSequenceExpression(arg) && arg.expressions.length === 1) {
+            arg = this.unwrapParens(arg.expressions[0] as TYPE.Expression);
+        }
+        if (arg !== node.argument) node.argument = arg;
         if (TYPE.isUnaryExpression(arg) && arg.operator === "!") {
             return this.simplifyTestNode(arg.argument);
         }
@@ -92,6 +102,71 @@ export class SyntaxRewriteSimplify implements ISimplify {
             return TYPE.booleanLiteral(!arg.value);
         }
         return node;
+    }
+
+    private unwrapParens(node: TYPE.Expression): TYPE.Expression {
+        let current = node;
+        while (TYPE.isParenthesizedExpression(current)) current = (current as any).expression;
+        return current;
+    }
+
+    private isUndefinedNode(node: TYPE.Node): boolean {
+        if (TYPE.isIdentifier(node) && node.name === "undefined") return true;
+        return TYPE.isUnaryExpression(node) && node.operator === "void"
+            && TYPE.isNumericLiteral(node.argument) && node.argument.value === 0;
+    }
+
+    /** 返回 `x === null` / `x !== undefined` 这类比较里的 x;不是该形式则返回 null。 */
+    private nullishCheckTarget(node: TYPE.Expression, operator: "===" | "!==", kind: "null" | "undefined"): TYPE.Identifier | null {
+        node = this.unwrapParens(node);
+        if (!TYPE.isBinaryExpression(node) || node.operator !== operator) return null;
+        if (!TYPE.isIdentifier(node.left)) return null;
+        const right = this.unwrapParens(node.right as TYPE.Expression);
+        const matched = kind === "null" ? TYPE.isNullLiteral(right) : this.isUndefinedNode(right);
+        return matched ? node.left : null;
+    }
+
+    /** x === null || x === undefined -> x == null;x !== null && x !== undefined -> x != null */
+    private mergeNullishCheck(node: TYPE.LogicalExpression): TYPE.BinaryExpression | null {
+        const isOr = node.operator === "||";
+        const isAnd = node.operator === "&&";
+        if (!isOr && !isAnd) return null;
+        const operator = isOr ? "===" : "!==";
+        const left = this.unwrapParens(node.left as TYPE.Expression);
+        const right = this.unwrapParens(node.right as TYPE.Expression);
+        const leftNull = this.nullishCheckTarget(left, operator, "null");
+        const leftUndefined = this.nullishCheckTarget(left, operator, "undefined");
+        const rightNull = this.nullishCheckTarget(right, operator, "null");
+        const rightUndefined = this.nullishCheckTarget(right, operator, "undefined");
+        const target = leftNull && rightUndefined && leftNull.name === rightUndefined.name
+            ? leftNull
+            : leftUndefined && rightNull && leftUndefined.name === rightNull.name
+                ? leftUndefined
+                : null;
+        if (!target) return null;
+        return TYPE.binaryExpression(isOr ? "==" : "!=", target, TYPE.nullLiteral());
+    }
+
+    /** 供流水线末尾调用:HighLevelGrammarSimplify 可能新生成 if/三元,需要再归一化一次 test。 */
+    public static normalizeConditionTests(node: Program): void {
+        const pass = new SyntaxRewriteSimplify();
+        traverse(TYPE.file(node), {
+            IfStatement: (path) => {
+                for (let i = 0; i < 4; i++) {
+                    path.node.test = pass.simplifyTestNode(path.node.test);
+                    if (!pass.transformIfOnce(path)) break;
+                }
+            },
+            WhileStatement: (path) => {
+                path.node.test = pass.simplifyTestNode(path.node.test);
+            },
+            DoWhileStatement: (path) => {
+                path.node.test = pass.simplifyTestNode(path.node.test);
+            },
+            ConditionalExpression: (path) => {
+                path.node.test = pass.simplifyTestNode(path.node.test);
+            },
+        });
     }
 
     private checkIsAccUndefined(stmt: TYPE.Statement): boolean {
@@ -235,10 +310,9 @@ export class SyntaxRewriteSimplify implements ISimplify {
         }
         // if (a !== b) A else B -> if (a === b) B else A
         if (TYPE.isBlockStatement(consequent) && TYPE.isBlockStatement(alternate)
-            && TYPE.isBinaryExpression(node.test)) {
-            if (node.test.operator === "!==") node.test.operator = "===";
-            else if (node.test.operator === "!=") node.test.operator = "==";
-            else return false;
+            && TYPE.isBinaryExpression(node.test)
+            && (node.test.operator === "!==" || node.test.operator === "!=")) {
+            node.test.operator = node.test.operator === "!==" ? "===" : "==";
             node.consequent = alternate;
             node.alternate = consequent;
             return true;
@@ -257,6 +331,28 @@ export class SyntaxRewriteSimplify implements ISimplify {
             return true;
         }
         return false;
+    }
+
+    /** 定点迭代稳定后执行:x = x op y -> x op= y(避免提前改写干扰复制传播/活跃性) */
+    public static foldCompoundAssignments(node: Program): void {
+        traverse(TYPE.file(node), {
+            AssignmentExpression: (value) => {
+                const assign = value.node;
+                if (assign.operator !== "=" || !TYPE.isIdentifier(assign.left)) return;
+                const right = assign.right;
+                if (!TYPE.isBinaryExpression(right)) return;
+                if (!TYPE.isIdentifier(right.left) || right.left.name !== assign.left.name) return;
+                switch (right.operator) {
+                    case "+": case "-": case "*": case "/": case "%":
+                    case "<<": case ">>": case ">>>": case "&": case "|": case "^": case "**":
+                        break;
+                    default:
+                        return;
+                }
+                assign.operator = (right.operator + "=") as TYPE.AssignmentExpression["operator"];
+                assign.right = right.right;
+            },
+        });
     }
 
     simplify(node: Program): boolean {

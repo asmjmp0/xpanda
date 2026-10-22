@@ -2,6 +2,7 @@ import * as TYPE from "@babel/types";
 import { ISimplify } from "./ISimplify";
 import { ReservedIdentifierSimplifier } from "./ReservedIdentifierSimplifier";
 import { TempVariableSimplify } from "./TempVariableSimplify";
+import { ConditionSimplify } from "./ConditionSimplify";
 import { SyntaxRewriteSimplify } from "./SyntaxRewriteSimplify";
 import { HighLevelGrammarSimplify } from "./HighLevelGrammarSimplify";
 import { ClassSyntaxSimplify } from "./ClassSyntaxSimplify";
@@ -17,6 +18,7 @@ export class SimplifyExport {
         const simplifyArr: Array<ISimplify> = [
             new ReservedIdentifierSimplifier(),
             new TempVariableSimplify(),
+            new ConditionSimplify(),
             new SyntaxRewriteSimplify(),
             new ClassSyntaxSimplify(),
         ];
@@ -35,5 +37,9 @@ export class SimplifyExport {
             if (!SimplifyExport.simplifyALL(node)) break;
         }
         new HighLevelGrammarSimplify().simplify(node);
+        // HighLevelGrammarSimplify 可能新生成 if/三元,再归一化一次 test
+        SyntaxRewriteSimplify.normalizeConditionTests(node);
+        // 复合赋值放到最后一轮之后,避免提前改写成 += 后影响活跃性/复制传播
+        SyntaxRewriteSimplify.foldCompoundAssignments(node);
     }
 }

@@ -220,7 +220,52 @@ export class TempVariableSimplify implements ISimplify {
         }
     }
 
+    private hasHoistCandidate(stmts: TYPE.Statement[]): boolean {
+        for (const stmt of stmts) {
+            if (!TYPE.isExpressionStatement(stmt) || !TYPE.isAssignmentExpression(stmt.expression)) continue;
+            const assign = stmt.expression;
+            if (assign.operator !== "=" || !TYPE.isIdentifier(assign.left)) continue;
+            if (!/^local_\d+_\d+$/.test(assign.left.name)) continue;
+            if (TYPE.isFunctionExpression(assign.right) && assign.right.id) return true;
+        }
+        return false;
+    }
+
+    /** 复制传播后按当前 AST 重建临时变量的引用集合,修正被克隆/移动/删除的节点。 */
+    private refreshBindingInfos(scope: any, ctx: FunctionContext): void {
+        if (!scope || typeof scope.crawl !== "function") return;
+        scope.crawl();
+        const currentFunction: TYPE.Node = scope.block;
+        for (const [name, old] of [...ctx.infos]) {
+            const binding = scope.getOwnBinding ? scope.getOwnBinding(name) : undefined;
+            if (!binding) {
+                old.refs.clear();
+                continue;
+            }
+            const refs = new Set<TYPE.Node>();
+            for (const reference of binding.referencePaths) {
+                if (reference.node) refs.add(reference.node);
+            }
+            let captured = false;
+            for (const reference of binding.referencePaths) {
+                const functionParent = reference.getFunctionParent();
+                captured = TYPE.isProgram(currentFunction)
+                    ? functionParent != null
+                    : (!functionParent || functionParent.node !== currentFunction);
+                if (captured) break;
+            }
+            ctx.infos.set(name, { name, refs, captured });
+        }
+    }
+
     private hoistNamedFunctionExpressions(stmts: TYPE.Statement[], ctx: FunctionContext, scope: any): void {
+        // 没有候选时直接返回,避免每轮都遍历整棵子树(含嵌套函数)
+        if (!this.hasHoistCandidate(stmts)) return;
+        // 复制传播/死存储清理会克隆或移动节点,processScope 开始时建立的
+        // binding.referencePaths 已经过期(克隆出来的引用不在 refs 里)。
+        // 若直接按旧 refs 改名并删除声明,会留下未声明的 local_* 引用。
+        this.refreshBindingInfos(scope, ctx);
+
         const nameCounts = new Map<string, number>();
         const writes = new Map<string, TYPE.Statement[]>();
         for (const stmt of stmts) {
@@ -1103,7 +1148,19 @@ export class TempVariableSimplify implements ISimplify {
                 const n = node as TYPE.LogicalExpression;
                 n.left = this.rewriteExpr(n.left, env, list, index, ctx, allowImpure);
                 // 右侧是条件求值,不能把前一语句的副作用搬进来
-                n.right = this.rewriteExpr(n.right, env.copy(), list, index, ctx, false);
+                const rightEnv = env.copy();
+                n.right = this.rewriteExpr(n.right, rightEnv, list, index, ctx, false);
+                // 右值可能执行,也可能不执行;它写入的变量在 outer env 中必须视为未知,
+                // 否则分支里会把 v7 错误地继续当成 acc(acc 已被右值改掉)。
+                for (const name of collectAssignedNames(n.right)) env.invalidate(name);
+                return n;
+            }
+            case "BinaryExpression": {
+                const n = node as TYPE.BinaryExpression;
+                n.left = this.rewriteExpr(n.left as TYPE.Expression, env, list, index, ctx, allowImpure);
+                // 右操作数在左侧之后求值:左侧有副作用时不能再把前一语句的调用搬进来
+                n.right = this.rewriteExpr(n.right as TYPE.Expression, env, list, index, ctx,
+                    allowImpure && isPureExpression(n.left as TYPE.Expression));
                 return n;
             }
             case "ConditionalExpression": {
@@ -1111,6 +1168,11 @@ export class TempVariableSimplify implements ISimplify {
                 n.test = this.rewriteExpr(n.test, env, list, index, ctx, allowImpure);
                 n.consequent = this.rewriteExpr(n.consequent, env.copy(), list, index, ctx, false);
                 n.alternate = this.rewriteExpr(n.alternate, env.copy(), list, index, ctx, false);
+                // consequent/alternate 只会执行其中一个,写入的变量在 outer env 中都视为未知
+                const writes = new Set<string>();
+                collectAssignedNames(n.consequent, writes);
+                collectAssignedNames(n.alternate, writes);
+                for (const name of writes) env.invalidate(name);
                 return n;
             }
             case "CallExpression":
@@ -1287,6 +1349,18 @@ export class TempVariableSimplify implements ISimplify {
         return false;
     }
 
+    /**
+     * 当前语句是否是 `x = x + ...` 形式的自覆盖,且读取的正是本次读取的节点。
+     * 只对二元运算放开:这类累加链的旧值在本条语句后失效,可以安全搬移前一条语句的结果。
+     */
+    private statementOverwritesSelf(stmt: TYPE.Statement | undefined, name: string, id: TYPE.Identifier): boolean {
+        if (!stmt || !TYPE.isExpressionStatement(stmt) || !TYPE.isAssignmentExpression(stmt.expression)) return false;
+        const assign = stmt.expression;
+        if (assign.operator !== "=" || !TYPE.isIdentifier(assign.left) || assign.left.name !== name) return false;
+        if (!TYPE.isBinaryExpression(assign.right)) return false;
+        return assign.right.left === id || assign.right.right === id;
+    }
+
     private resolveIdentifier(
         id: TYPE.Identifier,
         env: EnvState,
@@ -1312,9 +1386,13 @@ export class TempVariableSimplify implements ISimplify {
             }
         }
 
-        // 当前值的最后一次读取:可以用克隆/搬移代替读取变量
+        // 当前值的最后一次读取:可以用克隆/搬移代替读取变量。
+        // 注意 liveness 只看“名字是否还活着”,分不清 acc 的新旧版本:
+        //   acc = f(); acc = x + acc; y = acc;
+        // 第 2 条读取的是旧 acc,但旧值在本条语句结束后就被覆盖,因此也应视为 last use。
         const liveAfter = ctx.liveAfter.get(list[index]);
-        const lastUse = liveAfter != null && !liveAfter.has(id.name);
+        const overwrittenHere = this.statementOverwritesSelf(list[index], id.name, id);
+        const lastUse = overwrittenHere || (liveAfter != null && !liveAfter.has(id.name));
         if (lastUse && entry.unsubstitutedReads === 0) {
             if (isPureExpression(entry.expr) && !isDeclarationValue(entry.expr)) {
                 // 数组/对象字面量:只在唯一使用处求值一次,原赋值稍后会被作为死存储删除
@@ -1559,14 +1637,15 @@ export class TempVariableSimplify implements ISimplify {
                 return result;
             }
             case "IfStatement": {
+                // 分支的 live-out 就是 if 之后的 live-out。
+                // 不能减去 test 的写入:test 里的临时赋值不会让分支里的同名赋值变成死代码
+                // (例如 test 写 acc、两个分支也分别写 acc,而 if 之后还要读 acc)。
                 const testReads = this.tempReads(stmt.test, ctx);
-                const testWrites = this.tempWrites(stmt.test, ctx);
-                const after = new Set<string>();
-                for (const name of liveOut) if (!testWrites.has(name)) after.add(name);
-                const consequentIn = this.cleanupNested(stmt.consequent, ctx, after);
+                const branchOut = new Set(liveOut);
+                const consequentIn = this.cleanupNested(stmt.consequent, ctx, branchOut);
                 const alternateIn = stmt.alternate
-                    ? this.cleanupNested(stmt.alternate, ctx, after)
-                    : after;
+                    ? this.cleanupNested(stmt.alternate, ctx, branchOut)
+                    : new Set(branchOut);
                 return TempVariableSimplify.union(testReads, consequentIn, alternateIn);
             }
             case "WhileStatement": {

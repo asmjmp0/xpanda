@@ -8,7 +8,16 @@ A decompiler for HarmonyOS `.abc` files (Panda / ArkCompiler bytecode), written 
 
 It turns `.abc` files back into readable JavaScript: classes, methods, functions, control flow and module `import`/`export` are restored, and an optimizer pipeline cleans up the register temporaries emitted by the compiler.
 
-Supported bytecode version: `24.0.0.0`.
+Supported bytecode versions: `24.0.0.0` (backward compatible with `13.0.1.0`).
+
+## Features
+
+- **Pure TypeScript, zero native dependencies**: parses `.abc` files and emits readable JavaScript that can run as-is;
+- **Classes and functions**: class fields, accessors, prototype methods, closures and lexical environments (`local` / `sendable` env);
+- **Control flow**: `if/else`, `while/do-while`, `for`, `try/catch`, and more; falls back to labeled linear output when structural analysis fails;
+- **Modules**: ES Module `import` / `export`;
+- **Babel AST optimizer**: register-temp copy propagation, dead-store elimination, function/class syntax recovery, call rewriting and compound-assignment folding;
+- **MCP Server**: lets AI clients such as Claude Code, OpenCode and Cursor analyze `.abc` files on demand.
 
 ## Decompilation results
 
@@ -54,8 +63,8 @@ The full result is in [`test/expected/md5.js`](test/expected/md5.js).
   function rhex(p0) {
     let v3, v4;
     v3 = 0;
-    for (v4 = ""; v3 < 4; v3 = v3 + 1) {
-      v4 = v4 + ("0123456789abcdef"[p0 >> v3 * 8 + 4 & 15] + "0123456789abcdef"[p0 >> v3 * 8 & 15]);
+    for (v4 = ""; v3 < 4; v3 += 1) {
+      v4 += "0123456789abcdef"[p0 >> v3 * 8 + 4 & 15] + "0123456789abcdef"[p0 >> v3 * 8 & 15];
     }
     return v4;
   }
@@ -65,10 +74,8 @@ The full result is in [`test/expected/md5.js`](test/expected/md5.js).
   function md5blk(p0) {
     let v8, v9, v11;
     v8 = 0;
-    for (v9 = []; v8 < 64; v8 = v8 + 4) {
-      v11 = p0.charCodeAt(v8);
-      v11 = v11 + (p0.charCodeAt(v8 + 1) << 8);
-      v11 = v11 + (p0.charCodeAt(v8 + 2) << 16);
+    for (v9 = []; v8 < 64; v8 += 4) {
+      v11 = p0.charCodeAt(v8) + (p0.charCodeAt(v8 + 1) << 8) + (p0.charCodeAt(v8 + 2) << 16);
       v9[v8 >> 2] = v11 + (p0.charCodeAt(v8 + 3) << 24);
     }
     return v9;
@@ -80,18 +87,18 @@ The full result is in [`test/expected/md5.js`](test/expected/md5.js).
     }
     globalThis.txt = "";
     v2 = [1732584193, -271733879, -1732584194, 271733878];
-    for (v3 = 64; v3 <= p0.length; v3 = v3 + 64) {
+    for (v3 = 64; v3 <= p0.length; v3 += 64) {
       md5cycle(v2, md5blk(p0.substring(v3 - 64, v3)));
     }
     v0 = p0.substring(v3 - 64);
     v3 = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-    for (v8 = 0; v8 < v0.length; v8 = v8 + 1) {
+    for (v8 = 0; v8 < v0.length; v8 += 1) {
       v3[v8 >> 2] = v3[v8 >> 2] | v0.charCodeAt(v8) << (v8 % 4 << 3);
     }
     v3[v8 >> 2] = v3[v8 >> 2] | 128 << (v8 % 4 << 3);
     if (v8 > 55) {
       md5cycle(v2, v3);
-      for (v4 = 0; v4 < 16; v4 = v4 + 1) {
+      for (v4 = 0; v4 < 16; v4 += 1) {
         v3[v4] = 0;
       }
     }
@@ -104,7 +111,7 @@ The full result is in [`test/expected/md5.js`](test/expected/md5.js).
   }
   function hex(p0) {
     let v0;
-    for (v0 = 0; v0 < p0.length; v0 = v0 + 1) {
+    for (v0 = 0; v0 < p0.length; v0 += 1) {
       p0[v0] = rhex(p0[v0]);
     }
     return p0.join("");
@@ -202,6 +209,22 @@ The full result is in [`test/expected/md5.js`](test/expected/md5.js).
 ```
 
 </details>
+
+### `test/expected/aes.js`
+
+The full result is in [`test/expected/aes.js`](test/expected/aes.js). The optimizer folds the `acc` accumulation chain into compound assignments:
+
+```js
+v9 <<= 2;
+v9 |= v10 >> 4;
+v10 &= 15;
+v10 <<= 4;
+v10 |= v11 >> 2;
+v7 += String.fromCharCode(v9);
+if (v11 !== 64) {
+  v7 += String.fromCharCode(v10);
+}
+```
 
 ## Requirements
 
@@ -321,7 +344,7 @@ src/
   mcp/          MCP server (stdio, for AI client integration)
   PandaDecompiler.ts  public entry point
   cli.ts        command line interface
-resources/isa.yaml      ArkCompiler instruction set description (v24.0.0.0)
+resources/isa.yaml      ArkCompiler instruction set description (v24.0.0.0, compatible with v13.0.1.0)
 scripts/gen-opcodes.ts  isa.yaml → src/disasm/opcodes.ts
 test/                   integration tests, sample files and snapshots
 docs/                   architecture documentation, MCP documentation
@@ -342,10 +365,22 @@ docs/                   architecture documentation, MCP documentation
   → JavaScript output
 ```
 
+## Optimizer
+
+`SimplifyExport` runs to a fixed point until the AST stops changing (at most 5 rounds):
+
+- `ReservedIdentifierSimplifier`: removes `panda_jmp0_reserved_*` placeholders;
+- `TempVariableSimplify`: copy propagation for temps (`acc` / `vN` / `local_L_i`), dead-store elimination and closure-function hoisting; it distinguishes old and new values of `acc`, so `acc = f(); acc = x + acc; y = acc` becomes `y = x + f()`, and it no longer deletes `if`-branch assignments as dead stores;
+- `ConditionSimplify`: hoists unconditionally evaluated `SequenceExpression` prefixes out of `if` tests, removes scratch temp assignments, and folds `x === null || x === undefined` into `x == null`;
+- `SyntaxRewriteSimplify`: call rewriting, function-expression-to-declaration, condition/loop cleanup, and a final compound-assignment fold (`x = x + y` → `x += y`);
+- `ClassSyntaxSimplify` / `HighLevelGrammarSimplify`: class and high-level syntax recovery.
+
+`PandaLexical` first resolves each method's lexical environments: a closure starts at the depth of its definition site, and `newlexenv` / `stlexvar` / `ldlexvar` are normalized to absolute depths. The optimizer then uses those depths to recover `local_L_i` / `sendable_L_i` variables.
+
 ## Tests
 
 ```bash
-npm test           # decompile md5.abc / class.abc, diff against snapshots, then re-parse with Babel
+npm test           # decompile md5.abc / class.abc / aes.abc: snapshot diff, Babel re-parse, runtime checks
 npm run test:mcp   # MCP server end-to-end test (child process + JSON-RPC)
 npm run typecheck  # tsc --noEmit
 ```
@@ -355,9 +390,10 @@ Snapshots live in:
 ```text
 test/expected/md5.js
 test/expected/class.js
+test/expected/aes.js
 ```
 
-The output for `md5.abc` is also executed, and `md5("admin")` is checked against Node's `crypto`.
+The output for `md5.abc` is executed, and `md5("admin")` is checked against Node's `crypto`. The `aes.abc` output also runs an encrypt/decrypt self-check.
 
 ## Known limitations
 
@@ -365,7 +401,7 @@ The output for `md5.abc` is also executed, and `md5("admin")` is checked against
   - a single method with more than 500 basic blocks;
   - the `jeq/jne/jstricteq/jnstricteq` instructions;
   - an instruction kind with no registered handle.
-- Degraded output may contain `break` scoping issues, or use `export ... from` syntax that requires the matching parser plugin.
+- Degraded output hoists lexical-environment declarations to the function top so later labels can access them; it may still contain bare-`break` scoping issues or use `export ... from` syntax that requires the matching parser plugin.
 - The optimizer targets semantic equivalence and readability.
 
 ## References
