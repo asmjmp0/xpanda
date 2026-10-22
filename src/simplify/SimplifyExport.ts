@@ -7,6 +7,7 @@ import { SyntaxRewriteSimplify } from "./SyntaxRewriteSimplify";
 import { HighLevelGrammarSimplify } from "./HighLevelGrammarSimplify";
 import { ClassSyntaxSimplify } from "./ClassSyntaxSimplify";
 import { CallResultSimplify } from "./CallResultSimplify";
+import { AccCallSimplify } from "./AccCallSimplify";
 import { normalizeDeclarations } from "./NormalizeDeclarations";
 
 /**
@@ -18,6 +19,7 @@ export class SimplifyExport {
         const simplifyArr: Array<ISimplify> = [
             new ReservedIdentifierSimplifier(),
             new TempVariableSimplify(),
+            new AccCallSimplify(),
             new ConditionSimplify(),
             new SyntaxRewriteSimplify(),
             new ClassSyntaxSimplify(),

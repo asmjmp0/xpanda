@@ -201,7 +201,7 @@ export class TempVariableSimplify implements ISimplify {
      * 同时把所有对 local_0_x 的引用改名,并删除对应声明。
      * 只处理函数体/Program 顶层的赋值,避免影响块级作用域语义。
      */
-    /** X = E; return X; -> return E; (E 不含 X 自身时) */
+    /** X = E; return X; -> return E; */
     private foldReturnAssignments(stmts: TYPE.Statement[], ctx: FunctionContext): void {
         for (let i = stmts.length - 2; i >= 0; i--) {
             const assignStmt = stmts[i];
@@ -211,13 +211,42 @@ export class TempVariableSimplify implements ISimplify {
             if (assign.operator !== "=" || !TYPE.isIdentifier(assign.left)) continue;
             if (!TYPE.isReturnStatement(returnStmt) || !TYPE.isIdentifier(returnStmt.argument)) continue;
             if (returnStmt.argument.name !== assign.left.name) continue;
-            if (collectIdentifierNames(assign.right).has(assign.left.name)) continue;
+            // 直接读取右值里的 X(如 new Promise(acc))在赋值前求值,折叠后仍是同一个旧值;
+            // 若右值会写入 X(X++ / X = ...),折叠会改变写入次数,直接跳过。
+            if (collectAssignedNames(assign.right).has(assign.left.name)) continue;
+            // 只有闭包/类字段里延迟读取 X 时,赋值是否发生才会影响结果,必须保守跳过。
+            if (this.hasDeferredSelfReference(assign.right, assign.left.name)) continue;
             ctx.infos.get(assign.left.name)?.refs.delete(returnStmt.argument);
             returnStmt.argument = assign.right;
             stmts.splice(i, 1);
             this.changed = true;
             i--;
         }
+    }
+
+    /** 右值中是否存在位于函数/类内部、可能在赋值之后才执行的同名读取。 */
+    private hasDeferredSelfReference(node: TYPE.Node | null | undefined, name: string): boolean {
+        let found = false;
+        const visit = (current: TYPE.Node | null | undefined, inDeferred: boolean): void => {
+            if (found || !current || typeof (current as any).type !== "string") return;
+            if (inDeferred && TYPE.isIdentifier(current) && current.name === name) {
+                found = true;
+                return;
+            }
+            const nested = inDeferred || isFunctionLike(current) || isClassLike(current);
+            const keys = (TYPE.VISITOR_KEYS as any)[current.type] as string[] | undefined;
+            if (!keys) return;
+            for (const key of keys) {
+                const value = (current as any)[key];
+                if (Array.isArray(value)) {
+                    for (const child of value) visit(child, nested);
+                } else {
+                    visit(value, nested);
+                }
+            }
+        };
+        visit(node, false);
+        return found;
     }
 
     private hasHoistCandidate(stmts: TYPE.Statement[]): boolean {
@@ -911,8 +940,10 @@ export class TempVariableSimplify implements ISimplify {
                         && definition.expression.operator === "="
                         && definition.expression.right === sourceEntry.expr;
                     const deps = collectIdentifierNames(sourceEntry.expr);
+                    const liveAfterMove = ctx.liveAfter.get(list[index]);
                     if (isSimpleDefinition && !isCopyable(sourceEntry.expr)
-                        && !deps.has(name)) {
+                        && !deps.has(name)
+                        && !(liveAfterMove && liveAfterMove.has(sourceName))) {
                         const value = sourceEntry.expr;
                         sourceInfo.refs.delete(declarator.init);
                         ctx.moved.set(value, list[index]);
@@ -990,8 +1021,10 @@ export class TempVariableSimplify implements ISimplify {
                     && definition.expression.operator === "="
                     && definition.expression.right === sourceEntry.expr;
                 const deps = collectIdentifierNames(sourceEntry.expr);
+                const liveAfterMove = ctx.liveAfter.get(list[index]);
                 if (isSimpleDefinition && TYPE.isNewExpression(sourceEntry.expr)
-                    && !deps.has(targetName)) {
+                    && !deps.has(targetName)
+                    && !(liveAfterMove && liveAfterMove.has(sourceName))) {
                     const value = sourceEntry.expr;
                     sourceInfo.refs.delete(assign.right);
                     ctx.moved.set(value, list[index]);
@@ -1411,8 +1444,7 @@ export class TempVariableSimplify implements ISimplify {
                 return value;
             }
             // 调用/构造/函数/类表达式:跨过的语句必须无副作用,保持求值顺序
-            // 返回值来源的调用不搬移,交给后续 foldReturnAssignments 处理
-            if (!ctx.returned.has(id.name) && allowImpure && entry.list === list && entry.index < index
+            if (allowImpure && entry.list === list && entry.index < index
                 && this.isSafeToMoveBetween(list, entry.index + 1, index)) {
                 info.refs.delete(id);
                 ctx.moved.set(entry.expr, list[index]);
@@ -1772,7 +1804,8 @@ export class TempVariableSimplify implements ISimplify {
         const info = ctx.infos.get(name);
         if (!info || info.captured) return null;
         // 返回表达式里直接使用该变量时,保守保留调用结果赋值,避免活跃性误判丢失返回值
-        if (ctx.returned.has(name) && TYPE.isCallExpression(assign.right)) return null;
+        // (已经被复制传播搬进 return 的调用不受此限,否则会同时留下调用语句和 return 调用)
+        if (ctx.returned.has(name) && TYPE.isCallExpression(assign.right) && !ctx.moved.has(assign.right)) return null;
         // v = v 恒等于无操作,无论 v 之后是否活跃都可以删除
         if (TYPE.isIdentifier(assign.right) && assign.right.name === name) {
             this.removeRefs(assign.right, ctx);

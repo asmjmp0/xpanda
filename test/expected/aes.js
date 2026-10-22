@@ -182,7 +182,7 @@ v1.encode = function encode(p0) {
   return v8;
 };
 v1.decode = function decode(p0) {
-  let v6, v7, v8, v9, v10, v11, v12, v14;
+  let v6, v7, v8, v9, v10, v11, v12;
   v6 = 0;
   v7 = "";
   v8 = p0.replace(new RegExp("[^A-Za-z0-9\\+\\/\\=]", "g"), "");
@@ -192,11 +192,9 @@ v1.decode = function decode(p0) {
     v6 = v8.charAt(v6);
     v9 = this.characters.indexOf(v6);
     v10 = this.characters.indexOf(v8.charAt(v12));
-    v14 = v12 + 1 + 1;
-    v12 = v8.charAt(v12 + 1);
-    v11 = this.characters.indexOf(v12);
-    v6 = v14 + 1;
-    v14 = v8.charAt(v14);
+    v11 = this.characters.indexOf(v8.charAt(v12 + 1));
+    v6 = v12 + 1 + 1 + 1;
+    v12 = this.characters.indexOf(v8.charAt(v12 + 1 + 1));
     v9 <<= 2;
     v9 |= v10 >> 4;
     v10 &= 15;
@@ -206,8 +204,8 @@ v1.decode = function decode(p0) {
     if (v11 !== 64) {
       v7 += String.fromCharCode(v10);
     }
-    if (this.characters.indexOf(v14) !== 64) {
-      v7 += String.fromCharCode((v11 & 3) << 6 | this.characters.indexOf(v14));
+    if (v12 !== 64) {
+      v7 += String.fromCharCode((v11 & 3) << 6 | v12);
     }
   }
   return v7;
@@ -271,14 +269,10 @@ globalThis.AES.Crypto = function (p0) {
     return v3.join("");
   };
   this.encrypt = function (p0) {
-    let v2;
-    v2 = this.run(p0);
-    return globalThis.AES.Base64.encode(v2);
+    return globalThis.AES.Base64.encode(this.run(p0));
   };
   this.decrypt = function (p0) {
-    let v1;
-    v1 = globalThis.AES.Base64.decode(p0);
-    return this.run(v1);
+    return this.run(globalThis.AES.Base64.decode(p0));
   };
 };
 globalThis.aSide = new globalThis.AES.Crypto([190, 100, 76, 127, 43, 253, 149, 65, 72, 90, 40, 65, 6, 211, 77, 37]);

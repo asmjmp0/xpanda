@@ -147,9 +147,7 @@
     return add32(v0, p2);
   }
   globalThis.md5 = function md5(p0) {
-    let v1;
-    v1 = md51(p0);
-    return hex(v1);
+    return hex(md51(p0));
   };
   console.log("md5 of admin is ", md5("admin"));
 })();

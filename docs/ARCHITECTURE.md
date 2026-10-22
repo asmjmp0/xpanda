@@ -95,7 +95,7 @@ docs/ARCHITECTURE.md     本文档
 ```text
 NormalizeDeclarations
   → CallResultSimplify
-  → [ReservedIdentifierSimplifier → TempVariableSimplify → ConditionSimplify → SyntaxRewriteSimplify → ClassSyntaxSimplify] × N
+  → [ReservedIdentifierSimplifier → TempVariableSimplify → AccCallSimplify → ConditionSimplify → SyntaxRewriteSimplify → ClassSyntaxSimplify] × N
   → HighLevelGrammarSimplify
   → normalizeConditionTests / foldCompoundAssignments
 ```
@@ -108,6 +108,7 @@ NormalizeDeclarations
 | `NormalizeDeclarations.ts` | 归一化重复 `let` / import 声明,避免 Babel scope 冲突 |
 | `ReservedIdentifierSimplifier.ts` | 还原 `panda_jmp0_reserved_*` 保留标识符 |
 | `TempVariableSimplify.ts` | 临时变量复制传播、死存储消除、序列表达式清理、返回值折叠、函数提升、catch 参数隔离 |
+| `AccCallSimplify.ts` | 还原 `recv = acc; acc = acc.method; acc.call(recv, ...)` 为 `recv.method(...)` |
 | `ConditionSimplify.ts` | 提升 if test 中无条件求值的序列表达式、清理条件临时赋值、合并 null/undefined 判断 |
 | `SyntaxRewriteSimplify.ts` | if 条件化简、if/else 归一化、`.call` 还原、函数表达式/数组字面量/内置函数优化 |
 | `ClassSyntaxSimplify.ts` | getter/setter、prototype 方法、class 表达式还原 |

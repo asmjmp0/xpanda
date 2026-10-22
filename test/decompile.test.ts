@@ -5,6 +5,7 @@ import * as crypto from "crypto";
 import { PandaFile } from "../src/file/PandaFile";
 import { PandaDecompiler } from "../src/PandaDecompiler";
 import { NodeFactory } from "../src/ast/NodeFactory";
+import { SimplifyExport } from "../src/simplify/SimplifyExport";
 
 /**
  * 集成测试:
@@ -89,7 +90,101 @@ function verifyAes(code: string): void {
     }
 }
 
+/**
+ * 回归:活跃性分析必须以根节点就是标识符的读取为准。
+ * 旧实现只从子节点收集读取名,`return acc;` 会被当成不读取 acc,
+ * 前一条 `acc = new X(...)` 因而被误判为死存储,返回值丢失。
+ */
+function verifyReturnValueLiveness(): void {
+    const program = NodeFactory.parse(`
+function stringToUint8Array(p0) {
+  let v4, acc;
+  v4 = [];
+  for (let i = 0; i < p0.length; i += 1) {
+    acc = p0.charCodeAt(i);
+    v4.push(acc);
+  }
+  acc = new Uint8Array(v4);
+  return acc;
+}
+`);
+    SimplifyExport.simplify(program);
+    const code = NodeFactory.generate(program);
+    if (!code.includes("return new Uint8Array(v4)")) {
+        throw new Error(`simplify: return 的构造结果被丢弃\n${code}`);
+    }
+}
+
+/**
+ * 回归:ArkCompiler 经 acc 装载方法再 `call` 的形态应还原成普通成员调用,
+ * 同时 `X = E; return X;` 可直接折叠成 `return E;`(包括 E 直接读取旧 X)。
+ */
+function verifyAccCallSimplification(): void {
+    const program = NodeFactory.parse(`
+function md5(str) {
+  let acc;
+  let local_0_2 = this;
+  acc = function (p0, p1) {
+    let v8, acc;
+    let local_1_0 = cryptoFramework.createMd("MD5");
+    let local_1_1 = p0;
+    acc = local_1_0.update(str).then(function () {
+      return local_1_0.digest();
+    });
+    v8 = acc;
+    acc = acc.then;
+    acc.call(v8, function (p0) {
+      local_1_1(p0.data.toString());
+    });
+  };
+  acc = new Promise(acc);
+  return acc;
+}
+`);
+    SimplifyExport.simplify(program);
+    const code = NodeFactory.generate(program);
+    if (code.includes(".call(")) {
+        throw new Error(`simplify: acc.call 形态未还原\n${code}`);
+    }
+    if (!code.includes("}).then(function (p0) {") || !code.includes("return new Promise(function")) {
+        throw new Error(`simplify: Promise/then 链未正确折叠\n${code}`);
+    }
+}
+
+/** 回归:源临时变量仍然活跃时,不能把 new 表达式再次搬进另一个变量,否则会重复构造。 */
+function verifyNoDuplicateConstruction(): void {
+    const program = NodeFactory.parse(`
+function f() {
+  let v13, acc;
+  acc = new ServiceBuilder();
+  v13 = acc;
+  acc = v13;
+  acc = acc.setEndpoint;
+  acc = acc.call(v13, ApiConstants.apiBase);
+  return acc;
+}
+`);
+    SimplifyExport.simplify(program);
+    const code = NodeFactory.generate(program);
+    const count = code.split("new ServiceBuilder()").length - 1;
+    if (count !== 1 || !code.includes("return new ServiceBuilder().setEndpoint(ApiConstants.apiBase)")) {
+        throw new Error(`simplify: 构造表达式被重复生成\n${code}`);
+    }
+}
+
 function main(): void {
+    console.log("[test] simplify return liveness");
+    verifyReturnValueLiveness();
+    console.log("    ok");
+
+    console.log("[test] simplify acc call");
+    verifyAccCallSimplification();
+    console.log("    ok");
+
+    console.log("[test] simplify duplicate construction");
+    verifyNoDuplicateConstruction();
+    console.log("    ok");
+
     const samples: Sample[] = [
         { abc: "md5.abc", expected: "md5.js", verify: verifyMd5 },
         { abc: "class.abc", expected: "class.js", verify: verifyClass },
