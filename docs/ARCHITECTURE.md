@@ -96,7 +96,7 @@ docs/ARCHITECTURE.md     本文档
 ```text
 NormalizeDeclarations
   → CallResultSimplify
-  → [ReservedIdentifierSimplifier → TempVariableSimplify → AccCallSimplify → ConditionSimplify → SyntaxRewriteSimplify → ClassSyntaxSimplify] × N
+  → [ReservedIdentifierSimplifier → TempVariableSimplify → AccCallSimplify → EnumSimplify → ConditionSimplify → SyntaxRewriteSimplify → ClassSyntaxSimplify] × N
   → HighLevelGrammarSimplify
   → normalizeConditionTests / foldCompoundAssignments
 ```
@@ -108,6 +108,7 @@ NormalizeDeclarations
 | `AstUtils.ts` | 纯表达式/可复制表达式判定、节点大小、无副作用遍历 |
 | `NormalizeDeclarations.ts` | 归一化重复 `let` / import 声明,避免 Babel scope 冲突 |
 | `ReservedIdentifierSimplifier.ts` | 还原 `panda_jmp0_reserved_*` 保留标识符 |
+| `EnumSimplify.ts` | 还原 ArkTS enum 的惰性初始化字节码模式为对象字面量(`v0 = function...; v1 = E; if (!E) {...}; v0(v1)` → `E = { ... }`) |
 | `TempVariableSimplify.ts` | 临时变量复制传播、死存储消除、序列表达式清理、返回值折叠、函数提升、catch 参数隔离 |
 | `AccCallSimplify.ts` | 还原 `recv = acc; acc = acc.method; acc.call(recv, ...)` 为 `recv.method(...)` |
 | `ConditionSimplify.ts` | 提升 if test 中无条件求值的序列表达式、清理条件临时赋值、合并 null/undefined 判断 |

@@ -1,6 +1,7 @@
 import * as TYPE from "@babel/types";
 import { ISimplify } from "./ISimplify";
 import { ReservedIdentifierSimplifier } from "./ReservedIdentifierSimplifier";
+import { EnumSimplify } from "./EnumSimplify";
 import { TempVariableSimplify } from "./TempVariableSimplify";
 import { ConditionSimplify } from "./ConditionSimplify";
 import { SyntaxRewriteSimplify } from "./SyntaxRewriteSimplify";
@@ -20,6 +21,9 @@ export class SimplifyExport {
             new ReservedIdentifierSimplifier(),
             new TempVariableSimplify(),
             new AccCallSimplify(),
+            // 依赖 TempVariableSimplify/AccCallSimplify 先把累加器形态归一化:
+            //   acc = "A"; v0 = acc; acc = "a"; p0[v0] = acc; ... acc = acc(v1);
+            new EnumSimplify(),
             new ConditionSimplify(),
             new SyntaxRewriteSimplify(),
             new ClassSyntaxSimplify(),

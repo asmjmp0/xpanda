@@ -4,6 +4,7 @@ package-lock.json
 dist/
 out/
 test_out/
+test_app/
 
 # 参考仓库(runtime 实现,不参与构建)
 reference/
