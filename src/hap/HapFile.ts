@@ -44,4 +44,9 @@ export class HapFile {
     getResourcesIndexData(): Uint8Array | null {
         return this.readEntry("resources.index");
     }
+
+    /** resources/ 目录下的全部资源条目(media、rawfile、profile 等,不含目录条目,保持归档内顺序) */
+    getResourceEntries(): ZipEntry[] {
+        return this.zip.entries.filter((e) => !e.isDirectory() && e.name.startsWith("resources/"));
+    }
 }

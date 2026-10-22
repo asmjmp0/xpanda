@@ -14,7 +14,7 @@ import { ZipFile } from "./hap/ZipFile";
  * @Author: jmp0 */
 function usage(): void {
     console.log("用法: xpanda decompile <file.abc|file.hap> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N]");
-    console.log("  file.hap         鸿蒙应用包:自动解出全部 .abc 反编译,并解包 resources.index");
+    console.log("  file.hap         鸿蒙应用包:自动解出全部 .abc 反编译,并解包 resources.index 与 resources/ 资源文件");
     console.log("  -o outDir        按类名输出 .js 文件(默认 out/;hap 模式下 abc 条目输出到 outDir/<条目路径>/)");
     console.log("  --no-simplify    禁用优化器(跳过 simplify 阶段,等价于 --raw)");
     console.log("  --stdout         将结果拼接输出到标准输出");
@@ -143,13 +143,21 @@ async function decompileHap(decompiler: PandaDecompiler, data: Uint8Array, optio
         const outs = await decompileAbcData(decompiler, entry.read(), options, classOutDir);
         allOutputs.push(...outs);
     }
-    // resources.index → outDir/resources.json(--stdout 模式不落盘)
+    // resources.index → outDir/resources.json;resources/ 资源文件按包内相对路径落盘(--stdout 模式不落盘)
     if (!options.stdout) {
         const indexData = hap.getResourcesIndexData();
         if (indexData) {
             fs.mkdirSync(options.outDir, { recursive: true });
             const outPath = path.join(options.outDir, "resources.json");
             fs.writeFileSync(outPath, JSON.stringify(resourcesIndexToJson(indexData).json, null, 2));
+            console.log("written: " + outPath);
+        }
+        const outRoot = path.resolve(options.outDir) + path.sep;
+        for (const entry of hap.getResourceEntries()) {
+            const outPath = path.join(options.outDir, entry.name);
+            if (!path.resolve(outPath).startsWith(outRoot)) continue; // 防包内异常条目名路径穿越
+            fs.mkdirSync(path.dirname(outPath), { recursive: true });
+            fs.writeFileSync(outPath, entry.read());
             console.log("written: " + outPath);
         }
     }
