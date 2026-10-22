@@ -26,8 +26,8 @@
 | `src/cli.ts` | CLI:`decompile <file.abc> [-o outDir] [--no-simplify] [--stdout] [--quiet]` |
 | `resources/isa.yaml` | ArkCompiler 指令集描述(v13.0.1.0) |
 | `scripts/gen-opcodes.ts` | 生成 `src/disasm/opcodes.ts` |
-| `test/` | 集成测试 + 样本(`md5.abc`、`class.abc`、`bilibili_open.abc`) |
-| `test/expected/` | 反编译输出快照(`md5.js`、`class.js`) |
+| `test/` | 集成测试 + 样本(`md5.abc`、`class.abc`、`aes.abc`、`bilibili_open.abc`) |
+| `test/expected/` | 反编译输出快照(`md5.js`、`class.js`、`aes.js`) |
 | `docs/ARCHITECTURE.md` | 架构文档 |
 
 ## 常用命令
@@ -91,9 +91,10 @@ NODE_OPTIONS=--max-old-space-size=4096 \
 
 | 测试 | 用途 |
 |---|---|
-| `test/decompile.test.ts` | 反编译 `md5.abc` / `class.abc`,与 `test/expected/*.js` 比较,并做 Babel 再解析 |
+| `test/decompile.test.ts` | 反编译 `md5.abc` / `class.abc` / `aes.abc`,与 `test/expected/*.js` 比较,并做 Babel 再解析 |
 | `test/resources/md5.abc` | 小样本,测试中还会执行输出并校验 MD5 结果 |
 | `test/resources/class.abc` | 类/访问器/原型方法还原样本 |
+| `test/resources/aes.abc` | AES 加解密样本,测试中还会执行输出并校验加解密自检结果为 `true` |
 | `test/resources/bilibili_open.abc` | 大文件回归样本,通常手动验证 |
 
 更新快照前先确认输出变化是预期的;不要为了通过测试而直接覆盖快照。

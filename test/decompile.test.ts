@@ -11,7 +11,7 @@ import { NodeFactory } from "../src/ast/NodeFactory";
  *   1. 反编译 test/resources/*.abc;
  *   2. 与 test/expected/*.js 快照逐字比较;
  *   3. 校验输出可被 Babel 再次解析;
- *   4. 执行两个样本,确认输出行为符合预期。
+ *   4. 执行样本,确认输出行为符合预期。
  */
 
 interface Sample {
@@ -82,10 +82,18 @@ function verifyClass(code: string): void {
     }
 }
 
+function verifyAes(code: string): void {
+    const logs = runInSandbox(code);
+    if (!logs.some((line) => line === "true")) {
+        throw new Error(`aes 执行结果不正确,期望输出 true,实际输出:\n${logs.join("\n")}`);
+    }
+}
+
 function main(): void {
     const samples: Sample[] = [
         { abc: "md5.abc", expected: "md5.js", verify: verifyMd5 },
         { abc: "class.abc", expected: "class.js", verify: verifyClass },
+        { abc: "aes.abc", expected: "aes.js", verify: verifyAes },
     ];
 
     for (const sample of samples) {
