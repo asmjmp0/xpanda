@@ -59,24 +59,42 @@ function firstDifference(expected: string, actual: string): string {
     return "";
 }
 
-function runInSandbox(code: string): string[] {
+function runSandbox(code: string): { logs: string[]; sandbox: Record<string, unknown> } {
     const logs: string[] = [];
-    const sandbox = {
+    const sandbox: Record<string, unknown> = {
         console: {
             log: (...args: unknown[]) => logs.push(args.map((arg) => String(arg)).join(" ")),
         },
     };
-    (sandbox as any).globalThis = sandbox;
+    sandbox.globalThis = sandbox;
     vm.runInNewContext(code, sandbox, { timeout: 5000 });
-    return logs;
+    return { logs, sandbox };
+}
+
+function runInSandbox(code: string): string[] {
+    return runSandbox(code).logs;
 }
 
 function verifyMd5(code: string): void {
-    const logs = runInSandbox(code);
+    const { logs, sandbox } = runSandbox(code);
     const expected = crypto.createHash("md5").update("admin").digest("hex");
     const output = logs.join("\n");
     if (!output.includes(expected)) {
         throw new Error(`md5 执行结果不正确,期望包含 ${expected},实际输出:\n${output}`);
+    }
+    // 非 ASCII 输入才会走 UTF-8 转换分支:纯 ASCII 下编码与否结果相同,
+    // 抓不到条件极性接反(例如 if 前取反链折叠方向错误)这类问题。
+    // 注意源实现的守卫是 [\x80-\xFF],只覆盖 Latin-1,中文不会触发编码分支,
+    // 所以这里必须用 Latin-1 范围内的字符。
+    const md5 = sandbox.md5;
+    if (typeof md5 !== "function") {
+        throw new Error("md5 执行结果不正确:输出未暴露全局 md5 函数");
+    }
+    const latin1 = "café naïve Ünïcödé";
+    const latin1Expected = crypto.createHash("md5").update(Buffer.from(latin1, "utf8")).digest("hex");
+    const actual = (md5 as (s: string) => string)(latin1);
+    if (actual !== latin1Expected) {
+        throw new Error(`md5 非 ASCII 输入结果不正确,期望 ${latin1Expected},实际 ${actual}`);
     }
 }
 
@@ -177,6 +195,59 @@ function f() {
 }
 
 /**
+ * 回归:三元表达式的布尔分支化简。
+ *   - HighLevelGrammarSimplify 把 `if (X) return A; else return B;` 合成三元后,
+ *     三元的 test 也是布尔上下文,其前的自取反链要能折叠;
+ *   - `!T ? A : B` / `T ? false : B` / `T ? true : B` 本质是逻辑运算,应折成 && / ||。
+ * 覆盖编译器常见的 `X = E; X = !X; X = !X; return !X ? false : B;` 形态。
+ */
+function verifyBooleanConditionalFolding(): void {
+    const program = NodeFactory.parse(`
+function fromTernary(p0) {
+  let acc;
+  acc = isTrustedZhihuRequestUrl(p0);
+  acc = !acc;
+  acc = !acc;
+  return !acc ? false : checkUrl(p0);
+}
+function fromIf(p0) {
+  let acc;
+  acc = isTrustedZhihuRequestUrl(p0);
+  acc = !acc;
+  acc = !acc;
+  if (!acc) {
+    return false;
+  } else {
+    return checkUrl(p0);
+  }
+}
+function oddChain(p0) {
+  let acc;
+  acc = isTrustedZhihuRequestUrl(p0);
+  acc = !acc;
+  return acc ? false : checkUrl(p0);
+}
+function trueBranch(p0) {
+  let acc;
+  acc = isTrustedZhihuRequestUrl(p0);
+  return acc ? true : checkUrl(p0);
+}
+`);
+    SimplifyExport.simplify(program);
+    const code = NodeFactory.generate(program);
+    const andCount = code.split("return isTrustedZhihuRequestUrl(p0) && checkUrl(p0);").length - 1;
+    if (andCount !== 3) {
+        throw new Error(`simplify: 三元布尔分支/自取反链未化简(期望 3 处 &&,实际 ${andCount})\n${code}`);
+    }
+    if (!code.includes("return isTrustedZhihuRequestUrl(p0) || checkUrl(p0);")) {
+        throw new Error(`simplify: true 分支三元未折成 ||\n${code}`);
+    }
+    if (code.includes("!acc") || code.includes("? false") || code.includes("? true")) {
+        throw new Error(`simplify: 仍残留取反链或布尔三元\n${code}`);
+    }
+}
+
+/**
  * 回归:按类并行反编译必须与串行逐字一致。
  * 用 bilibili_open.abc 里的几个小类(避开数秒级的大类)验证:
  *   1. 单类输出与处理顺序/worker 数量无关(生成名计数器按类复位);
@@ -263,6 +334,10 @@ async function main(): Promise<void> {
 
     console.log("[test] simplify duplicate construction");
     verifyNoDuplicateConstruction();
+    console.log("    ok");
+
+    console.log("[test] simplify boolean conditional folding");
+    verifyBooleanConditionalFolding();
     console.log("    ok");
 
     console.log("[test] parallel determinism (worker_threads)");

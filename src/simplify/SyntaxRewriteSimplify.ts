@@ -104,6 +104,40 @@ export class SyntaxRewriteSimplify implements ISimplify {
         return node;
     }
 
+    /**
+     * 三元表达式的布尔分支化简(分支是 true/false 时,三元本质上就是逻辑运算):
+     *   !T ? A : B    -> T ? B : A   (严格等价)
+     *   T ? false : B -> !T && B     (严格等价)
+     *   T ? B : false -> T && B
+     *   T ? true : B  -> T || B
+     *   T ? B : true  -> !T || B
+     * 后三条把 T 当布尔值使用,与 HighLevelGrammarSimplify 里
+     * `T ? true : false -> T` 的既有约定保持一致。
+     *
+     * 返回 null 表示没有变化;返回 node 本身表示原地修改(可继续化简);返回其他节点表示需要替换。
+     */
+    private foldBooleanConditional(node: TYPE.ConditionalExpression): TYPE.Expression | null {
+        const test = node.test;
+        if (TYPE.isUnaryExpression(test) && test.operator === "!") {
+            node.test = test.argument;
+            const consequent = node.consequent;
+            node.consequent = node.alternate;
+            node.alternate = consequent;
+            return node;
+        }
+        const consequent = node.consequent;
+        const alternate = node.alternate;
+        const consequentBool = TYPE.isBooleanLiteral(consequent) ? consequent.value : null;
+        const alternateBool = TYPE.isBooleanLiteral(alternate) ? alternate.value : null;
+        if (consequentBool === true && alternateBool === false) return test;
+        if (consequentBool === false && alternateBool === true) return this.invertExpression(test);
+        if (consequentBool === false) return TYPE.logicalExpression("&&", this.invertExpression(test), alternate);
+        if (alternateBool === false) return TYPE.logicalExpression("&&", test, consequent);
+        if (consequentBool === true) return TYPE.logicalExpression("||", test, alternate);
+        if (alternateBool === true) return TYPE.logicalExpression("||", this.invertExpression(test), consequent);
+        return null;
+    }
+
     private unwrapParens(node: TYPE.Expression): TYPE.Expression {
         let current = node;
         while (TYPE.isParenthesizedExpression(current)) current = (current as any).expression;
@@ -164,7 +198,15 @@ export class SyntaxRewriteSimplify implements ISimplify {
                 path.node.test = pass.simplifyTestNode(path.node.test);
             },
             ConditionalExpression: (path) => {
-                path.node.test = pass.simplifyTestNode(path.node.test);
+                let test = pass.simplifyTestNode(path.node.test);
+                if (test !== path.node.test) path.node.test = test;
+                for (let i = 0; i < 4; i++) {
+                    const folded = pass.foldBooleanConditional(path.node);
+                    if (!folded) break;
+                    if (folded === path.node) continue;
+                    path.replaceWith(folded);
+                    break;
+                }
             },
         });
     }
@@ -367,6 +409,16 @@ export class SyntaxRewriteSimplify implements ISimplify {
                 for (let i = 0; i < 8; i++) {
                     if (!this.transformIfOnce(value)) break;
                     changed = true;
+                }
+            },
+            ConditionalExpression: (value) => {
+                for (let i = 0; i < 4; i++) {
+                    const folded = this.foldBooleanConditional(value.node);
+                    if (!folded) break;
+                    changed = true;
+                    if (folded === value.node) continue;
+                    value.replaceWith(folded);
+                    break;
                 }
             },
             UpdateExpression: (value) => {

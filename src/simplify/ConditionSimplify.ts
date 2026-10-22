@@ -2,7 +2,8 @@ import { Program } from "@babel/types";
 import { ISimplify } from "./ISimplify";
 import traverse, { NodePath } from "@babel/traverse";
 import * as TYPE from "@babel/types";
-import { collectAssignedNames, collectReadNames, isPureExpression, isTempName } from "./AstUtils";
+import { collectAssignedNames, collectReadNames, isPureExpression, isTempName, scanCapturedRead, tempReadBeforeWrite } from "./AstUtils";
+import { SyntaxRewriteSimplify } from "./SyntaxRewriteSimplify";
 
 /**
  * 条件表达式清理。
@@ -18,6 +19,8 @@ import { collectAssignedNames, collectReadNames, isPureExpression, isTempName } 
  *
  * 只处理 if 的 test(以及其中 `&&`/`||` 的左侧),不处理循环:
  * 循环 test 每次迭代都会求值,提到循环外会改变语义。
+ * HighLevelGrammarSimplify 会把尾部的 if/else return 合成为三元,
+ * 其 test 同样是布尔上下文,因此三元 test 前的自取反链也在这里折叠。
  *
  * @Author: jmp0
  */
@@ -30,11 +33,142 @@ export class ConditionSimplify implements ISimplify {
                 // 单条语句形式(if (a) if (b) ...)不处理,避免改变结构。
                 const parent = path.parentPath;
                 if (!parent || (!parent.isBlockStatement() && !parent.isProgram())) return;
+                if (this.foldNegationChain(path)) changed = true;
                 if (this.removeScratchAssignments(path)) changed = true;
                 if (this.hoistTestPrefix(path)) changed = true;
             },
+            ReturnStatement: (path) => {
+                // HighLevelGrammarSimplify 会把 `if (X) return A; else return B;` 合成
+                // `return X ? A : B`,三元的 test 也是布尔上下文,自取反链要能继续折叠。
+                const argument = path.node.argument;
+                if (!argument || !TYPE.isConditionalExpression(argument)) return;
+                if (this.foldNegationChain(path)) changed = true;
+            },
         });
         return changed;
+    }
+
+    /**
+     * 折叠紧邻布尔上下文消费点的连续自取反链:
+     * `X = !X; X = !X; if (X)` → `if (X)`,`X = !X; X = !X; return X ? A : B` → `return X ? A : B`。
+     * 编译器按分支极性生成取反指令,偶数条取反是恒等操作;奇数条则把消费点的极性翻转。
+     * 删除后 X 的值从 ToBoolean(E) 恢复为 E,因此要求之后在覆盖前不再读取(X 是
+     * 函数级累加器,现有模式要求"仅模式内使用"对它永远不成立),也没有被闭包捕获。
+     * "之后"按执行流收集:当前列表尾部 + 祖先各级的后续语句(循环整体保守纳入)。
+     */
+    private foldNegationChain(stmtPath: NodePath<TYPE.Statement>): boolean {
+        const parent = stmtPath.parentPath;
+        if (!parent || (!parent.isBlockStatement() && !parent.isProgram())) return false;
+        const list = parent.node.body;
+        const stmtIndex = list.indexOf(stmtPath.node);
+        if (stmtIndex < 0) return false;
+
+        // 只有布尔上下文消费点才能安全删除取反链(ToBoolean 对原始值和布尔值等价)
+        const consumer = this.booleanTestConsumer(stmtPath.node);
+        if (!consumer) return false;
+        const name = this.tempTestName(consumer.test);
+        if (name === null || !isTempName(name)) return false;
+
+        // 向前数连续的 `X = !X`
+        let count = 0;
+        while (stmtIndex - 1 - count >= 0 && this.isSelfNegation(list[stmtIndex - 1 - count], name)) count++;
+        if (count === 0) return false;
+
+        const fnParent = stmtPath.getFunctionParent();
+        const scope: TYPE.Node = fnParent ? fnParent.node : stmtPath.scope.path.node;
+        if (scanCapturedRead(scope, null, new Set([name]), new Set(), false)) return false;
+        const tails = this.collectStatementsAfter(stmtPath);
+        if (tempReadBeforeWrite(tails, 0, name)) return false;
+
+        // 用官方 path API 删除链语句:从后往前删,避免索引偏移。
+        // 注意不能用 getSibling(它取的是"父节点所在数组"的兄弟,不是块内语句)。
+        for (let j = stmtIndex - 1; j >= stmtIndex - count; j--) {
+            const sibling = (parent.get("body") as NodePath[])[j];
+            if (sibling) sibling.remove();
+        }
+        // 奇数条取反时,消费点读到的值多翻了一次极性,需要翻转条件
+        if (count % 2 === 1) consumer.setTest(ConditionSimplify.invertTest(consumer.test));
+        return true;
+    }
+
+    /**
+     * 取出语句里的布尔上下文 test:if 的 test、return 三元表达式的 test。
+     * 只有这两类位置允许删除自取反链,其他位置(普通表达式/赋值)读到的值类型会变。
+     */
+    private booleanTestConsumer(stmt: TYPE.Statement):
+        { test: TYPE.Expression; setTest: (expr: TYPE.Expression) => void } | null {
+        if (TYPE.isIfStatement(stmt)) {
+            return { test: stmt.test, setTest: (expr) => { stmt.test = expr; } };
+        }
+        if (TYPE.isReturnStatement(stmt) && stmt.argument && TYPE.isConditionalExpression(stmt.argument)) {
+            const conditional = stmt.argument;
+            return { test: conditional.test, setTest: (expr) => { conditional.test = expr; } };
+        }
+        return null;
+    }
+
+    /** test 形如 `X` 或 `!X` 时返回 X;其他形态无法确定链对应的临时变量。 */
+    private tempTestName(test: TYPE.Expression): string | null {
+        if (TYPE.isIdentifier(test)) return test.name;
+        if (TYPE.isUnaryExpression(test) && test.operator === "!" && TYPE.isIdentifier(test.argument)) {
+            return test.argument.name;
+        }
+        return null;
+    }
+
+    private static invertTest(node: TYPE.Expression): TYPE.Expression {
+        if (TYPE.isUnaryExpression(node) && node.operator === "!") return node.argument;
+        if (TYPE.isBinaryExpression(node)) {
+            const inverse = SyntaxRewriteSimplify.binaryInvert(node);
+            if (inverse != null) {
+                return TYPE.binaryExpression(inverse, node.left as TYPE.Expression, node.right as TYPE.Expression);
+            }
+        }
+        return TYPE.unaryExpression("!", node);
+    }
+
+    /**
+     * 收集语句之后按执行流可能执行到的语句(顺序即执行序):
+     * 当前列表的尾部 → 逐级祖先块的尾部;祖先为循环时整个循环保守纳入(回边);
+     * 祖先为 switch 时纳入后续 case(fallthrough);到达函数/Program 边界即止。
+     */
+    private collectStatementsAfter(stmtPath: NodePath<TYPE.Statement>): TYPE.Statement[] {
+        const out: TYPE.Statement[] = [];
+        let child: NodePath = stmtPath;
+        let cur: NodePath | null = stmtPath.parentPath;
+        while (cur) {
+            if (cur.isBlockStatement() || cur.isProgram()) {
+                const body = cur.node.body;
+                const idx = body.indexOf(child.node as TYPE.Statement);
+                if (idx < 0) break;
+                out.push(...body.slice(idx + 1));
+            } else if (cur.isWhileStatement() || cur.isDoWhileStatement() || cur.isForStatement()
+                || cur.isForInStatement() || cur.isForOfStatement()) {
+                out.push(cur.node);
+            } else if (cur.isSwitchStatement()) {
+                const cases = cur.node.cases;
+                const caseIndex = cases.findIndex((c) => c.consequent.includes(child.node as TYPE.Statement));
+                if (caseIndex >= 0) {
+                    for (let s = caseIndex; s < cases.length; s++) out.push(...cases[s].consequent);
+                }
+            }
+            if (cur.isFunction() || cur.isProgram()) break;
+            child = cur;
+            cur = cur.parentPath;
+        }
+        return out;
+    }
+
+    private isSelfNegation(stmt: TYPE.Statement, name: string): boolean {
+        return TYPE.isExpressionStatement(stmt)
+            && TYPE.isAssignmentExpression(stmt.expression)
+            && stmt.expression.operator === "="
+            && TYPE.isIdentifier(stmt.expression.left)
+            && stmt.expression.left.name === name
+            && TYPE.isUnaryExpression(stmt.expression.right)
+            && stmt.expression.right.operator === "!"
+            && TYPE.isIdentifier(stmt.expression.right.argument)
+            && stmt.expression.right.argument.name === name;
     }
 
     /**

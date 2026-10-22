@@ -1,7 +1,7 @@
 import { Program } from "@babel/types";
 import { ISimplify } from "./ISimplify";
 import * as TYPE from "@babel/types";
-import { addPatternNames, isClassLike, isFunctionLike, isPureExpression, isTempName, walkNode } from "./AstUtils";
+import { isFunctionLike, isPureExpression, isTempName, scanCapturedRead, walkNode, walkStatementSkipFunctions } from "./AstUtils";
 
 /**
  * ArkTS enum 初始化还原。
@@ -325,7 +325,7 @@ export class EnumSimplify implements ISimplify {
         let lastUndefIndex = -1;
         for (let j = 0; j < i; j++) {
             const stmt = stmts[j];
-            this.walkStatementSkipFunctions(stmt, (node, parent) => {
+            walkStatementSkipFunctions(stmt, (node, parent) => {
                 if (TYPE.isIdentifier(node) && node.name === enumName
                     && parent && TYPE.isReferenced(node, parent)) {
                     hasRead = true;
@@ -359,7 +359,7 @@ export class EnumSimplify implements ISimplify {
         involved: Set<string>,
         scope: TYPE.Program | TYPE.BlockStatement,
     ): boolean {
-        if (this.scanCapturedRead(scope, null, involved, new Set(), false)) return false;
+        if (scanCapturedRead(scope, null, involved, new Set(), false)) return false;
 
         for (const name of involved) {
             if (this.sequenceFlowUnsafe(stmts, i + 4, name, { killed: false })) return false;
@@ -460,7 +460,7 @@ export class EnumSimplify implements ISimplify {
         if (killed) return false;
         let read = false;
         let redeclared = false;
-        this.walkStatementSkipFunctions(stmt, (node, parent) => {
+        walkStatementSkipFunctions(stmt, (node, parent) => {
             if (TYPE.isIdentifier(node) && node.name === name
                 && parent && TYPE.isReferenced(node, parent)) {
                 read = true;
@@ -486,7 +486,7 @@ export class EnumSimplify implements ISimplify {
         if (!expr) return false;
         if (TYPE.isIdentifier(expr) && expr.name === name) return true;
         let read = false;
-        this.walkStatementSkipFunctions(expr, (node, parent) => {
+        walkStatementSkipFunctions(expr, (node, parent) => {
             if (TYPE.isIdentifier(node) && node.name === name
                 && parent && TYPE.isReferenced(node, parent)) {
                 read = true;
@@ -495,85 +495,7 @@ export class EnumSimplify implements ISimplify {
         return read;
     }
 
-    /**
-     * 作用域感知的捕获读取检测:
-     * 沿嵌套函数链下探,链上任何函数只要"确定遮蔽"了某名字(参数、函数顶层的
-     * let/const/var/函数/类声明 —— TDZ 下内部读取只会抛错,不会读到外层),
-     * 该名字在函数内的读取就与我们作用域的变量无关;未遮蔽的读取即视为捕获。
-     * 只做保守方向:拿不准是否遮蔽时一律按"捕获"处理(宁可放弃优化)。
-     */
-    private scanCapturedRead(
-        node: TYPE.Node,
-        parent: TYPE.Node | null,
-        names: Set<string>,
-        shadowed: Set<string>,
-        insideFunction: boolean,
-    ): boolean {
-        if ((isFunctionLike(node) || isClassLike(node)) && parent !== null) {
-            const inner = new Set(shadowed);
-            if (isFunctionLike(node)) {
-                for (const p of (node as TYPE.Function).params) addPatternNames(p, inner);
-            } else {
-                const id = (node as TYPE.Class).id;
-                if (id) inner.add(id.name);
-            }
-            const body: TYPE.Node | null = isFunctionLike(node)
-                ? (node as TYPE.Function).body
-                : (node as TYPE.Class).body;
-            if (body && TYPE.isBlockStatement(body)) {
-                for (const stmt of body.body) this.addFunctionTopLevelDecls(stmt, inner);
-            }
-            const remaining = new Set([...names].filter((n) => !inner.has(n)));
-            if (remaining.size === 0 || !body) return false;
-            return this.scanCapturedRead(body, node, remaining, inner, true);
-        }
-        // 只关心嵌套函数体内的读取;顶层线性读取由 tempsUnusedAfter 的逐语句检查负责
-        if (insideFunction && TYPE.isIdentifier(node) && names.has(node.name) && !shadowed.has(node.name)
-            && parent && TYPE.isReferenced(node, parent)) {
-            return true;
-        }
-        const keys = (TYPE.VISITOR_KEYS as any)[node.type] as string[] | undefined;
-        if (!keys) return false;
-        for (const key of keys) {
-            const value = (node as any)[key];
-            if (Array.isArray(value)) {
-                for (const child of value) {
-                    if (child && typeof child.type === "string"
-                        && this.scanCapturedRead(child, node, names, shadowed, insideFunction)) {
-                        return true;
-                    }
-                }
-            } else if (value && typeof value.type === "string") {
-                if (this.scanCapturedRead(value, node, names, shadowed, insideFunction)) return true;
-            }
-        }
-        return false;
-    }
-
-    /** 函数体顶层的 let/const/var/函数/类声明,遮蔽整个函数作用域 */
-    private addFunctionTopLevelDecls(stmt: TYPE.Statement, out: Set<string>): void {
-        if (TYPE.isVariableDeclaration(stmt)) {
-            for (const d of stmt.declarations) addPatternNames(d.id, out);
-        } else if (TYPE.isFunctionDeclaration(stmt) && stmt.id) {
-            out.add(stmt.id.name);
-        } else if (TYPE.isClassDeclaration(stmt) && stmt.id) {
-            out.add(stmt.id.name);
-        }
-    }
-
     // ---------------------------------------------------------------- 工具
-
-    /** 遍历一条语句,不进入嵌套函数/类体(它们只在被调用时才执行) */
-    private walkStatementSkipFunctions(
-        stmt: TYPE.Node,
-        visit: (node: TYPE.Node, parent: TYPE.Node | null) => void,
-    ): void {
-        walkNode(stmt, (node, parent) => {
-            if (node !== stmt && (isFunctionLike(node) || isClassLike(node))) return false;
-            visit(node, parent);
-            return true;
-        });
-    }
 
     /** 可能执行任意代码的表达式(调用/构造/await/yield/标签模板) */
     private isInvocation(node: TYPE.Node): boolean {
@@ -618,7 +540,7 @@ export class EnumSimplify implements ISimplify {
             if (isFunctionLike(node)) {
                 const body = (node as TYPE.Function).body;
                 if (TYPE.isBlockStatement(body)) {
-                    this.walkStatementSkipFunctions(body, (n) => {
+                    walkStatementSkipFunctions(body, (n) => {
                         if (this.isUnsafeWriteTo(n, enumName, true)) found = true;
                     });
                 }
@@ -638,7 +560,7 @@ export class EnumSimplify implements ISimplify {
             const stmt = stmts[j];
             if (fillerCalls.has(stmt)) continue; // 其他模式的填充调用:纯操作
             let found = false;
-            this.walkStatementSkipFunctions(stmt, (node) => {
+            walkStatementSkipFunctions(stmt, (node) => {
                 if (this.isInvocation(node)) found = true;
             });
             if (found) return true;

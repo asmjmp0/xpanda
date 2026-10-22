@@ -355,3 +355,106 @@ export function isNodeEqual(a: TYPE.Node | null | undefined, b: TYPE.Node | null
         return false;
     }
 }
+
+/** 遍历一条语句,不进入嵌套函数/类体(它们只在被调用时才执行) */
+export function walkStatementSkipFunctions(
+    stmt: TYPE.Node,
+    visit: (node: TYPE.Node, parent: TYPE.Node | null) => void,
+): void {
+    walkNode(stmt, (node, parent) => {
+        if (node !== stmt && (isFunctionLike(node) || isClassLike(node))) return false;
+        visit(node, parent);
+        return true;
+    });
+}
+
+/** 函数体顶层的 let/const/var/函数/类声明会遮蔽整个函数作用域(TDZ 下内部读取只会抛错,不会读到外层) */
+function addFunctionTopLevelDecls(stmt: TYPE.Statement, out: Set<string>): void {
+    if (TYPE.isVariableDeclaration(stmt)) {
+        for (const d of stmt.declarations) addPatternNames(d.id, out);
+    } else if (TYPE.isFunctionDeclaration(stmt) && stmt.id) {
+        out.add(stmt.id.name);
+    } else if (TYPE.isClassDeclaration(stmt) && stmt.id) {
+        out.add(stmt.id.name);
+    }
+}
+
+/**
+ * 作用域感知的捕获读取检测:names 里是否有名字被嵌套函数捕获读取。
+ * 沿嵌套函数链下探,链上函数只要"确定遮蔽"了某名字(参数、函数顶层的
+ * let/const/var/函数/类声明),该名字在函数内的读取就与外层变量无关;
+ * 拿不准是否遮蔽时一律按"捕获"处理(保守方向,宁可放弃优化)。
+ */
+export function scanCapturedRead(
+    node: TYPE.Node,
+    parent: TYPE.Node | null,
+    names: Set<string>,
+    shadowed: Set<string>,
+    insideFunction: boolean,
+): boolean {
+    if ((isFunctionLike(node) || isClassLike(node)) && parent !== null) {
+        const inner = new Set(shadowed);
+        if (isFunctionLike(node)) {
+            for (const p of (node as TYPE.Function).params) addPatternNames(p, inner);
+        } else {
+            const id = (node as TYPE.Class).id;
+            if (id) inner.add(id.name);
+        }
+        const body: TYPE.Node | null = isFunctionLike(node)
+            ? (node as TYPE.Function).body
+            : (node as TYPE.Class).body;
+        if (body && TYPE.isBlockStatement(body)) {
+            for (const stmt of body.body) addFunctionTopLevelDecls(stmt, inner);
+        }
+        const remaining = new Set([...names].filter((n) => !inner.has(n)));
+        if (remaining.size === 0 || !body) return false;
+        return scanCapturedRead(body, node, remaining, inner, true);
+    }
+    // 只关心嵌套函数体内的读取;顶层线性读取由调用方的逐语句检查负责
+    if (insideFunction && TYPE.isIdentifier(node) && names.has(node.name) && !shadowed.has(node.name)
+        && parent && TYPE.isReferenced(node, parent)) {
+        return true;
+    }
+    const keys = (TYPE.VISITOR_KEYS as any)[node.type] as string[] | undefined;
+    if (!keys) return false;
+    for (const key of keys) {
+        const value = (node as any)[key];
+        if (Array.isArray(value)) {
+            for (const child of value) {
+                if (child && typeof child.type === "string"
+                    && scanCapturedRead(child, node, names, shadowed, insideFunction)) {
+                    return true;
+                }
+            }
+        } else if (value && typeof value.type === "string") {
+            if (scanCapturedRead(value, node, names, shadowed, insideFunction)) return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * from 起的线性代码里,name 是否在无条件写入前被读取(扁平保守版:块内写入不参与 kill,
+ * 任何嵌套函数体内的读取视为危险)。用于"删除会改变变量值的语句"前的安全确认。
+ */
+export function tempReadBeforeWrite(stmts: TYPE.Statement[], from: number, name: string): boolean {
+    let killed = false;
+    for (let j = from; j < stmts.length; j++) {
+        const stmt = stmts[j];
+        let read = false;
+        walkStatementSkipFunctions(stmt, (node, parent) => {
+            if (TYPE.isIdentifier(node) && node.name === name
+                && parent && TYPE.isReferenced(node, parent)) {
+                read = true;
+            }
+        });
+        if (read && !killed) return true;
+        if (TYPE.isExpressionStatement(stmt) && TYPE.isAssignmentExpression(stmt.expression)
+            && stmt.expression.operator === "="
+            && TYPE.isIdentifier(stmt.expression.left)
+            && stmt.expression.left.name === name) {
+            killed = true;
+        }
+    }
+    return false;
+}

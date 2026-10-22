@@ -43,7 +43,8 @@ export class SimplifyExport {
             if (!SimplifyExport.simplifyALL(node)) break;
         }
         new HighLevelGrammarSimplify().simplify(node);
-        // HighLevelGrammarSimplify 可能新生成 if/三元,再归一化一次 test
+        // HighLevelGrammarSimplify 可能新生成 if/三元,再归一化一次 test,
+        // 并把 `!T ? A : B` / `T ? false : B` 这类布尔三元折成逻辑运算
         SyntaxRewriteSimplify.normalizeConditionTests(node);
         // 复合赋值放到最后一轮之后,避免提前改写成 += 后影响活跃性/复制传播
         SyntaxRewriteSimplify.foldCompoundAssignments(node);
