@@ -111,7 +111,8 @@ async function main(): Promise<void> {
     const tools = await request("tools/list", {});
     const names = tools.tools.map((t: any) => t.name).sort();
     const expected = ["abc_close", "abc_decompile_class", "abc_disassemble_method",
-        "abc_export", "abc_get_class", "abc_list_classes", "abc_load", "abc_search_strings"].sort();
+        "abc_export", "abc_get_class", "abc_list_classes", "abc_load", "abc_search_strings",
+        "hap_read_abc", "hap_resources"].sort();
     check(JSON.stringify(names) === JSON.stringify(expected), "tools/list 共 " + names.length + " 个工具且名称齐全");
 
     // 3. abc_load md5.abc
@@ -189,6 +190,58 @@ async function main(): Promise<void> {
     // 13. abc_close
     const closed = await call("abc_close", { fileId });
     check(closed.closed === true, "abc_close 释放会话");
+
+    // 14. HAP 应用包:加载 → 解出 abc → 反编译(含 supercallforwardallargs 还原)
+    const hapPath = path.join(root, "test", "resources", "zhihupp0.59.hap");
+    const hapLoaded = await call("abc_load", { path: hapPath });
+    check(hapLoaded.kind === "hap", "abc_load(.hap) kind=" + hapLoaded.kind);
+    check(hapLoaded.bundleName === "com.github.zhuoyi233.zhplus"
+        && hapLoaded.moduleName === "entry"
+        && hapLoaded.virtualMachine === "ark13.0.1.0", "abc_load(.hap) module.json 摘要正确");
+    check(Array.isArray(hapLoaded.abcEntries) && hapLoaded.abcEntries.some((e: any) => e.name === "ets/modules.abc"),
+        "abc_load(.hap) 列出 ets/modules.abc 条目");
+    check(hapLoaded.resourceItemCount === 64, "abc_load(.hap) 资源项数 = " + hapLoaded.resourceItemCount);
+
+    const hapReloaded = await call("abc_load", { path: hapPath });
+    check(hapReloaded.cached === true && hapReloaded.fileId === hapLoaded.fileId, "abc_load(.hap) 重复加载复用会话");
+
+    const readAbc = await call("hap_read_abc", { fileId: hapLoaded.fileId });
+    check(readAbc.abcFileId && readAbc.entry === "ets/modules.abc" && readAbc.classCount === 287,
+        "hap_read_abc abcFileId=" + readAbc.abcFileId + " classCount=" + readAbc.classCount);
+    const readAbcCached = await call("hap_read_abc", { fileId: hapLoaded.fileId });
+    check(readAbcCached.cached === true && readAbcCached.abcFileId === readAbc.abcFileId, "hap_read_abc 复用 abc 会话");
+
+    const ability = await call("abc_decompile_class", { fileId: readAbc.abcFileId, className: "L&entry/src/main/ets/entryability/EntryAbility&;" });
+    check(ability.raw.includes("super(...arguments)"), "hap 内 EntryAbility 的 supercallforwardallargs 还原为 super(...arguments)");
+    const abilityList = await call("abc_list_classes", { fileId: readAbc.abcFileId, filter: "WorkSchedulerProbe" });
+    check(abilityList.filtered === 1, "abc_list_classes 在 hap 解出的 abc 上可用,filtered=" + abilityList.filtered);
+
+    // 15. hap_resources:resources.index 查询
+    const allResources = await call("hap_resources", { fileId: hapLoaded.fileId, limit: 500 });
+    check(allResources.total === 64 && allResources.matched === 64 && allResources.format === "RestoolV2",
+        "hap_resources total=" + allResources.total + " format=" + allResources.format);
+    const byName = await call("hap_resources", { fileId: hapLoaded.fileId, name: "app_name" });
+    check(byName.matched >= 1 && byName.items[0].id === "0x03000000" && byName.items[0].type === "string",
+        "hap_resources 按名字命中 app_name → " + byName.items[0]?.id);
+    const byId = await call("hap_resources", { fileId: hapLoaded.fileId, id: "0x03000011" });
+    check(byId.matched === 2 && byId.items.some((i: any) => i.limitKey === "dark" && i.value === "#000000"),
+        "hap_resources 按_id 命中 start_window_background base/dark 两条件");
+    const byType = await call("hap_resources", { fileId: hapLoaded.fileId, type: "color", limitKey: "dark" });
+    check(byType.matched >= 1 && byType.items.every((i: any) => i.type === "color" && i.limitKey === "dark"),
+        "hap_resources 按类型+限定词过滤生效,matched=" + byType.matched);
+    const paged = await call("hap_resources", { fileId: hapLoaded.fileId, offset: 0, limit: 5 });
+    check(paged.items.length === 5 && paged.truncated === true, "hap_resources 分页 limit=5 truncated=true");
+
+    // 16. hap 错误路径:abc fileId 用 hap 工具 / hap fileId 用 abc 工具 / 非法条目与 id
+    await call("hap_read_abc", { fileId }, true);
+    await call("hap_resources", { fileId }, true);
+    await call("hap_read_abc", { fileId: hapLoaded.fileId, entry: "no/such.abc" }, true);
+    await call("hap_resources", { fileId: hapLoaded.fileId, id: "not-an-id" }, true);
+    console.log("  ok: hap 错误路径均返回 isError=true");
+
+    // 17. abc_close 关闭 hap 会话
+    const closedHap = await call("abc_close", { fileId: hapLoaded.fileId });
+    check(closedHap.closed === true, "abc_close 释放 hap 会话");
 
     child.kill();
     if (failures.length > 0) {

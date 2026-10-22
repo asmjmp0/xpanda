@@ -17,6 +17,8 @@ export { SimplifyExport } from "./simplify/SimplifyExport";
 export { ResourceIndexFile } from "./res/ResourceIndexFile";
 export { ResourceItem } from "./res/ResourceItem";
 export { ResourceUtils } from "./res/ResourceUtils";
+export { HapFile } from "./hap/HapFile";
+export { ZipFile, ZipEntry } from "./hap/ZipFile";
 export {
     ResourceKeyType,
     ResourceResType,

@@ -240,7 +240,7 @@ npm install
 CLI:
 
 ```bash
-npx tsx src/cli.ts decompile <file.abc> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N]
+npx tsx src/cli.ts decompile <file.abc|file.hap> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N]
 ```
 
 | 参数 | 说明 |
@@ -250,6 +250,13 @@ npx tsx src/cli.ts decompile <file.abc> [-o outDir] [--no-simplify] [--stdout] [
 | `--stdout` | 把结果输出到标准输出,不落盘 |
 | `--quiet` | 关闭过程日志 |
 | `-j, --jobs N` | 按类并行 simplify 的 worker 数;`0` 表示自动(CPU-1,上限 4) |
+
+hap 支持说明:
+
+- 输入 `.hap`(鸿蒙应用包,ZIP 容器)时自动解出包内全部 `.abc` 条目逐个反编译,
+  类文件输出到 `outDir/<abc 条目路径>/`(如 `ets/modules.abc` → `out/ets/modules/`),
+  并把 `resources.index` 解包为 `outDir/resources.json`;
+- `unpack-index` 子命令也可单独解包 `resources.index`。
 
 示例:
 
@@ -293,7 +300,7 @@ for (const cls of pandaFile.getAllClasses()) {
 
 ## MCP Server
 
-xpanda 内置 [Model Context Protocol](https://modelcontextprotocol.io) Server,可把反编译能力接入 Claude Code、OpenCode、Cursor 等 AI 客户端,让 agent 按需、增量地分析 `.abc` 文件:加载 → 浏览类 → 查看元数据 → 反编译单类 → 反汇编对照 → 搜索字符串。
+xpanda 内置 [Model Context Protocol](https://modelcontextprotocol.io) Server,可把反编译能力接入 Claude Code、OpenCode、Cursor 等 AI 客户端,让 agent 按需、增量地分析 `.abc` 与 `.hap`(应用包,内含字节码与资源表):加载 → 浏览类 → 查看元数据 → 反编译单类 → 反汇编对照 → 搜索字符串 → 查询资源。
 
 ```bash
 npm run mcp          # 启动(stdio transport)
@@ -302,14 +309,16 @@ npm run test:mcp     # 端到端测试
 
 | 工具 | 作用 |
 |---|---|
-| `abc_load` | 解析 `.abc` 文件,返回 `fileId` 与文件头信息、类列表预览 |
+| `abc_load` | 解析 `.abc` 或 `.hap` 文件,返回 `fileId`;hap 返回包摘要与 `.abc` 条目清单 |
+| `hap_read_abc` | 把 hap 内 `.abc` 条目解出为 abc 会话,返回的 `abcFileId` 可用于全部 `abc_*` 工具 |
+| `hap_resources` | 解析 hap 内 `resources.index`,按名字/类型/限定词/ID 查询资源项 |
 | `abc_list_classes` | 分页列出类(名称/方法数/字段数),支持子串过滤 |
 | `abc_get_class` | 类元数据:父类、字段表、方法表(shorty 原型)、import/export |
 | `abc_decompile_class` | 单类反编译为 JavaScript 源码,带降级标志 |
 | `abc_disassemble_method` | 方法级反汇编(基本块 + 跳转目标 + try-catch 归属) |
 | `abc_search_strings` | 字符串池搜索(子串或正则),定位 URL/密钥等线索 |
 | `abc_export` | 全量反编译落盘(等价 CLI decompile) |
-| `abc_close` | 释放会话内存 |
+| `abc_close` | 释放会话内存(abc 或 hap) |
 
 客户端接入:
 

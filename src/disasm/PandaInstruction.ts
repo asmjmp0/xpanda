@@ -24,7 +24,7 @@ export type InstructionKind =
     // 基础数据流
     | "mov" | "load" | "store" | "return" | "binaryOp" | "unary"
     // 调用
-    | "call" | "superCall" | "superCallSpread" | "callRuntime" | "throw"
+    | "call" | "superCall" | "superCallSpread" | "superCallForwardAllArgs" | "callRuntime" | "throw"
     // 定义
     | "defineFunc" | "defineClassWithBuffer" | "defineGetterSetterByValue"
     // 对象/数组创建
@@ -202,6 +202,7 @@ function buildKindMap(): Map<string, InstructionKind> {
     put("superCall", "supercallthisrange", "supercallarrowrange",
         "wide.supercallthisrange", "wide.supercallarrowrange");
     put("superCallSpread", "supercallspread");
+    put("superCallForwardAllArgs", "callruntime.supercallforwardallargs");
     put("callRuntime",
         "callruntime.callinit", "callruntime.isfalse", "callruntime.istrue",
         "callruntime.notifyconcurrentresult", "callruntime.definefieldbyindex", "callruntime.definefieldbyvalue");
@@ -420,6 +421,10 @@ export class PandaInstruction {
             case "call": this.initCall(opcode, method); break;
             case "superCall": this.initSuperCall(method); break;
             case "superCallSpread": (this as any).arr = this.params[1]; break;
+            case "superCallForwardAllArgs":
+                // 格式 PREF_V8:params[0] 为当前函数对象寄存器,仅供运行时定位父类构造器,
+                // 反编译不需要该寄存器(实参直接从调用帧转发),无专属语义字段
+                break;
             case "callRuntime": (this as any).runtimeType = CALLRUNTIME_TYPES[opcode.name] ?? "NONE"; break;
             case "throw": break;
             case "defineFunc": {

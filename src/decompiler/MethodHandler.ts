@@ -240,6 +240,19 @@ const HANDLES: Record<string, Handle> = {
         assignAcc(mh, call, node);
         return false;
     },
+    superCallForwardAllArgs: (_ins, _b, mh, _l, node) => {
+        // callruntime.supercallforwardallargs v(func):运行时把当前帧的全部实参
+        // (startIdx=0..numArgs)连同 newTarget 一起转发给父类构造器
+        // (参考 arkcompiler RuntimeStubs::RuntimeSuperCallForwardAllArgs),
+        // 源码语义等价于 super(...arguments)
+        const codeGenerator = mh.getCodeGenerator();
+        const factory = codeGenerator.getNodeFactory();
+        const arrayObject = codeGenerator.arrayObject();
+        codeGenerator.addToArray(arrayObject, factory.spreadElementNode(factory.identifierNode("arguments") as any) as any);
+        const call = factory.callExpressionNode(factory.superNode() as any, arrayObject as any);
+        assignAcc(mh, call, node);
+        return false;
+    },
     callRuntime: (ins, _b, mh, _l, node) => {
         const codeGenerator = mh.getCodeGenerator();
         const factory = codeGenerator.getNodeFactory();

@@ -23,9 +23,10 @@
 | `src/ast/` | `NodeFactory` / `NodeUtils`(Babel AST 工具) |
 | `src/simplify/` | 优化器流水线(`SimplifyExport`、`TempVariableSimplify`、`ConditionSimplify`、`SyntaxRewriteSimplify`、`ClassSyntaxSimplify`、`HighLevelGrammarSimplify`、`AstUtils`、`NormalizeDeclarations`) |
 | `src/parallel/` | 按类并行的 simplify worker 池(`ParallelDecompiler.ts` 调度、`simplify-worker.ts` worker 入口) |
-| `src/mcp/` | MCP Server(`server.ts` stdio 入口、`registry.ts` 会话注册表、`tools/` 七个工具),文档见 [docs/MCP.md](docs/MCP.md) |
+| `src/hap/` | HAP 应用包适配:`ZipFile.ts`(只读 ZIP 解析,store/deflate)、`HapFile.ts`(.abc 条目/module.json/resources.index) |
+| `src/mcp/` | MCP Server(`server.ts` stdio 入口、`registry.ts` abc/hap 会话注册表、`tools/` 十个工具),文档见 [docs/MCP.md](docs/MCP.md) |
 | `src/PandaDecompiler.ts` | 对外总入口(库 API) |
-| `src/cli.ts` | CLI:`decompile <file.abc> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N]` |
+| `src/cli.ts` | CLI:`decompile <file.abc|file.hap> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N]`、`unpack-index <resources.index> [-o outDir] [--stdout]` |
 | `resources/isa.yaml` | ArkCompiler 指令集描述(v24.0.0.0) |
 | `scripts/gen-opcodes.ts` | 生成 `src/disasm/opcodes.ts` |
 | `test/` | 集成测试 + 样本(`md5.abc`、`class.abc`、`aes.abc`、`bilibili_open.abc`) |
@@ -44,6 +45,9 @@ npm run gen:opcodes        # isa.yaml → src/disasm/opcodes.ts
 
 # 快速验证小样本
 npx tsx src/cli.ts decompile test/resources/md5.abc -o out --quiet
+
+# 反编译鸿蒙 HAP 应用包(ZIP 容器,自动解出全部 .abc + resources.index)
+npx tsx src/cli.ts decompile test/resources/zhihupp0.59.hap -o out --quiet
 
 # 大文件按类并行 simplify(worker_threads)
 npx tsx src/cli.ts decompile test/resources/bilibili_open.abc -o out -j 4 --quiet
@@ -103,12 +107,13 @@ npm run test:mcp
 
 | 测试 | 用途 |
 |---|---|
-| `test/decompile.test.ts` | 反编译 `md5.abc` / `class.abc` / `aes.abc`,与 `test/expected/*.js` 比较,并做 Babel 再解析 |
-| `scripts/test-mcp.ts` | 以子进程启动 MCP Server,按 JSON-RPC 调用全部工具,快照比对 + 错误路径校验 |
+| `test/decompile.test.ts` | 反编译 `md5.abc` / `class.abc` / `aes.abc`,与 `test/expected/*.js` 比较,并做 Babel 再解析;另含并行一致性回归与 HAP 包(`zhihupp0.59.hap`)轻量回归 |
+| `scripts/test-mcp.ts` | 以子进程启动 MCP Server,按 JSON-RPC 调用全部工具,快照比对 + 错误路径校验(含 hap 加载/解 abc/资源查询) |
 | `test/resources/md5.abc` | 小样本,测试中还会执行输出并校验 MD5 结果 |
 | `test/resources/class.abc` | 类/访问器/原型方法还原样本 |
 | `test/resources/aes.abc` | AES 加解密样本,测试中还会执行输出并校验加解密自检结果为 `true` |
 | `test/resources/bilibili_open.abc` | 大文件回归样本,通常手动验证 |
+| `test/resources/zhihupp0.59.hap` | HAP 应用包样本(字节码版本 13.0.1.0,含 `callruntime.supercallforwardallargs`),完整反编译约 1 分钟,测试只做轻量校验 |
 
 更新快照前先确认输出变化是预期的;不要为了通过测试而直接覆盖快照。
 

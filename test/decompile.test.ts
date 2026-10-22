@@ -7,13 +7,16 @@ import { PandaDecompiler } from "../src/PandaDecompiler";
 import { decompileClassesParallel } from "../src/parallel/ParallelDecompiler";
 import { NodeFactory } from "../src/ast/NodeFactory";
 import { SimplifyExport } from "../src/simplify/SimplifyExport";
+import { HapFile } from "../src/hap/HapFile";
+import { ResourceIndexFile } from "../src/res/ResourceIndexFile";
 
 /**
  * 集成测试:
  *   1. 反编译 test/resources/*.abc;
  *   2. 与 test/expected/*.js 快照逐字比较;
  *   3. 校验输出可被 Babel 再次解析;
- *   4. 执行样本,确认输出行为符合预期。
+ *   4. 执行样本,确认输出行为符合预期;
+ *   5. 校验 HAP 应用包(ZIP 容器)适配与 callruntime.supercallforwardallargs 还原。
  */
 
 interface Sample {
@@ -204,6 +207,51 @@ async function verifyParallelDeterminism(): Promise<void> {
     }
 }
 
+/**
+ * 回归:HAP 应用包(ZIP 容器)适配。
+ * 完整反编译该 hap 约需一分钟,这里只做轻量校验:
+ *   1. 中央目录解析与 .abc 条目定位;
+ *   2. hap 内 ets/modules.abc 可被 PandaFile 解析(版本 13.0.1.0);
+ *   3. 之前因 callruntime.supercallforwardallargs 未处理而失败的两个类
+ *      (EntryAbility / WorkSchedulerProbeExtensionAbility)现在还原为
+ *      super(...arguments) 且可被 Babel 再次解析;
+ *   4. module.json 摘要与 resources.index 可解析。
+ */
+function verifyHapPackage(): void {
+    const hapPath = path.join(__dirname, "resources", "zhihupp0.59.hap");
+    const hap = new HapFile(new Uint8Array(fs.readFileSync(hapPath)));
+
+    const abcEntries = hap.getAbcEntries().map((entry) => entry.name);
+    if (!abcEntries.includes("ets/modules.abc")) {
+        throw new Error("hap: 未找到 ets/modules.abc 条目,实际: " + abcEntries.join(", "));
+    }
+
+    const moduleJson = hap.getModuleJson();
+    if (!moduleJson || moduleJson.app?.bundleName !== "com.github.zhuoyi233.zhplus" || moduleJson.module?.virtualMachine !== "ark13.0.1.0") {
+        throw new Error("hap: module.json 解析结果不符合预期");
+    }
+
+    const resourcesIndex = new ResourceIndexFile(hap.getResourcesIndexData()!);
+    if (resourcesIndex.items.length === 0) throw new Error("hap: resources.index 解析为空");
+
+    const data = hap.readEntry("ets/modules.abc")!;
+    const pandaFile = new PandaFile(data);
+    // 287 为该 abc 的全部类数,其中 276 个可产出有效反编译结果(其余无 func_main_0)
+    const classes = pandaFile.getAllClasses();
+    if (classes.length !== 287) throw new Error(`hap: 类数量不符合预期(期望 287,实际 ${classes.length})`);
+
+    const decompiler = new PandaDecompiler();
+    for (const name of ["EntryAbility", "WorkSchedulerProbeExtensionAbility"]) {
+        const clazz = classes.find((c) => c.name.content.includes(name));
+        if (!clazz) throw new Error(`hap: 未找到类 ${name}`);
+        const code = decompiler.decompileClass(clazz);
+        if (!code.includes("super(...arguments)")) {
+            throw new Error(`hap: ${name} 的 supercallforwardallargs 未还原为 super(...arguments)\n${code}`);
+        }
+        NodeFactory.parse(code);
+    }
+}
+
 async function main(): Promise<void> {
     console.log("[test] simplify return liveness");
     verifyReturnValueLiveness();
@@ -219,6 +267,10 @@ async function main(): Promise<void> {
 
     console.log("[test] parallel determinism (worker_threads)");
     await verifyParallelDeterminism();
+    console.log("    ok");
+
+    console.log("[test] hap package (zhihupp0.59.hap)");
+    verifyHapPackage();
     console.log("    ok");
 
     const samples: Sample[] = [

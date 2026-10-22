@@ -1,6 +1,6 @@
 # xpanda MCP Server
 
-> 把 xpanda 反编译器通过 [Model Context Protocol](https://modelcontextprotocol.io) 暴露给 AI agent,支持按需、增量地分析鸿蒙 `.abc` 字节码文件。
+> 把 xpanda 反编译器通过 [Model Context Protocol](https://modelcontextprotocol.io) 暴露给 AI agent,支持按需、增量地分析鸿蒙 `.abc` 字节码文件与 `.hap` 应用包(字节码 + 资源表)。
 
 ## 快速开始
 
@@ -61,21 +61,23 @@ OpenCode 默认以 Code Mode 暴露工具(`tools.xpanda.abc_load(...)`);需要�
 
 | 工具 | 作用 | 关键参数 |
 |---|---|---|
-| `abc_load` | 解析 `.abc` 文件,返回 `fileId` 与文件头信息、类列表预览 | `path` |
+| `abc_load` | 解析 `.abc` 或 `.hap`;hap 返回包摘要与 `.abc` 条目清单 | `path` |
+| `hap_read_abc` | 把 hap 内 `.abc` 条目解出为 abc 会话 | `fileId, entry?` |
+| `hap_resources` | 解析 hap 内 `resources.index`(名字/类型/限定词/ID 过滤 + 分页) | `fileId, name?, type?, limitKey?, id?, offset?, limit?` |
 | `abc_list_classes` | 分页列出类(名称/方法数/字段数/external),支持子串过滤 | `fileId, filter?, offset?, limit?` |
 | `abc_get_class` | 类元数据:父类、字段表、方法表(shorty 原型)、import/export | `fileId, className` |
 | `abc_decompile_class` | 单类反编译为 JavaScript 源码,带 `degraded` 降级标志 | `fileId, className, simplify?=true` |
 | `abc_disassemble_method` | 方法级反汇编(基本块 + pc/操作数/跳转目标/try-catch) | `fileId, className, methodName?=func_main_0` |
 | `abc_search_strings` | 字符串池搜索(子串或正则),返回内容与文件偏移 | `fileId, pattern, regex?=` |
 | `abc_export` | 全量反编译落盘(等价 CLI decompile) | `fileId, outDir, simplify?=` |
-| `abc_close` | 释放会话内存 | `fileId` |
+| `abc_close` | 释放会话内存(abc 或 hap) | `fileId` |
 
 所有工具除 `abc_load` 外都需要先 `abc_load` 拿到 `fileId`。类名接受 `Lpkg/Name;` 与 `pkg/Name` 两种形态,查找失败时会列出候选类名。
 
 ## 推荐工作流
 
 ```text
-abc_load
+abc_load(.abc)
   → abc_list_classes(filter 定位目标类)
   → abc_get_class(确认方法表 / import-export)
   → abc_decompile_class(读源码)
@@ -86,15 +88,37 @@ abc_load
   → abc_close(释放内存)
 ```
 
+HAP 应用包工作流:
+
+```text
+abc_load(.hap)                     → kind="hap",包摘要 + .abc 条目清单 + 资源项数
+  → hap_read_abc(entry?)           → 解出 .abc 得到 abcFileId
+      → abc_list_classes / abc_decompile_class / abc_search_strings …(与 .abc 工作流相同)
+  → hap_resources(name/type/limitKey/id 过滤)  → 资源项(id ↔ name ↔ value)对账
+  → abc_close(释放 hap 会话与 abc 会话)
+```
+
 ## 设计说明
 
 ### 会话注册表
 
 MCP 工具调用本身无状态,但 `PandaFile` 解析大文件成本高。server 内部维护
-`fileId → { PandaFile, PandaDecompiler }` 注册表(上限 8 个会话,超出按最久未使用淘汰);
+`fileId → 会话` 注册表(上限 8 个会话,超出按最久未使用淘汰);
 同一路径重复 `abc_load` 直接复用,返回 `cached: true`。
 
-`fileId` 形如 `md5-5411df7`(文件名 + Adler32 checksum 十六进制)。
+两类会话共用同一个 LRU 池:
+
+- `AbcSession`:`.abc`(或从 hap 内解出的 `.abc`)→ `PandaFile + PandaDecompiler`,
+  供全部 `abc_*` 工具使用;
+- `HapSession`:`.hap` → `HapFile`(条目读取 / module.json / resources.index),
+  供 `hap_read_abc` / `hap_resources` 使用;加载时只记资源项数,完整解析推迟到
+  `hap_resources` 调用时。
+
+`abc_*` 工具拿到 hap `fileId`、`hap_*` 工具拿到 abc `fileId` 都会得到带指引的错误。
+
+`fileId` 形如 `md5-5411df7`(文件名 + Adler32 checksum 十六进制);
+hap 会话为 `hap-<文件名>-<checksum>`,hap 内解出的 abc 会话为
+`hap_<hap名>_<条目名>-<checksum>`(如 `hap_zhihupp0.59_ets_modules-7041b86`)。
 
 ### stdio 纯净性
 
@@ -125,11 +149,12 @@ MCP 层只新增了 `PandaFile.getAllStrings()`(与 `dumpAllString()` 同语义�
 ```text
 src/mcp/
   server.ts        入口:stdio transport + 无条件静默 console
-  registry.ts      会话注册表(fileId → PandaFile/PandaDecompiler,LRU 上限 8)
+  registry.ts      会话注册表(fileId → abc/hap 会话,LRU 上限 8)
   nameutil.ts      类名归一化与查找(Lpkg/Name; ↔ pkg/Name)
   tools/
     util.ts        结果包装(textResult/jsonResult/errorResult/截断)
     load.ts        abc_load / abc_close
+    hap.ts         hap_read_abc / hap_resources
     browse.ts      abc_list_classes / abc_get_class
     decompile.ts   abc_decompile_class / abc_export
     disasm.ts      abc_disassemble_method

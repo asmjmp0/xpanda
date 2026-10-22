@@ -240,7 +240,7 @@ npm install
 CLI:
 
 ```bash
-npx tsx src/cli.ts decompile <file.abc> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N]
+npx tsx src/cli.ts decompile <file.abc|file.hap> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N]
 ```
 
 | Option | Description |
@@ -250,6 +250,14 @@ npx tsx src/cli.ts decompile <file.abc> [-o outDir] [--no-simplify] [--stdout] [
 | `--stdout` | Print the result to stdout instead of writing files |
 | `--quiet` | Suppress progress logs |
 | `-j, --jobs N` | Number of workers that run simplify per class; `0` = auto (CPU-1, max 4) |
+
+HAP support:
+
+- Given a `.hap` input (HarmonyOS ability package, a ZIP container), every `.abc` entry
+  inside is extracted and decompiled; class files go to `outDir/<abc entry path>/`
+  (e.g. `ets/modules.abc` → `out/ets/modules/`), and `resources.index` is unpacked
+  to `outDir/resources.json`;
+- The `unpack-index` subcommand can also unpack a standalone `resources.index`.
 
 Examples:
 
@@ -293,7 +301,7 @@ for (const cls of pandaFile.getAllClasses()) {
 
 ## MCP Server
 
-xpanda ships a built-in [Model Context Protocol](https://modelcontextprotocol.io) server, so AI clients such as Claude Code, OpenCode and Cursor can drive the decompiler — letting an agent analyze `.abc` files on demand: load → browse classes → inspect metadata → decompile a single class → cross-check disassembly → search strings.
+xpanda ships a built-in [Model Context Protocol](https://modelcontextprotocol.io) server, so AI clients such as Claude Code, OpenCode and Cursor can drive the decompiler — letting an agent analyze `.abc` and `.hap` files (HarmonyOS app packages containing bytecode and resources) on demand: load → browse classes → inspect metadata → decompile a single class → cross-check disassembly → search strings → query resources.
 
 ```bash
 npm run mcp          # start it (stdio transport)
@@ -302,14 +310,16 @@ npm run test:mcp     # end-to-end test
 
 | Tool | Purpose |
 |---|---|
-| `abc_load` | Parse an `.abc` file, return a `fileId` plus header info and a class-list preview |
+| `abc_load` | Parse an `.abc` or `.hap` file and return a `fileId`; for haps, a package summary plus the list of `.abc` entries |
+| `hap_read_abc` | Extract an `.abc` entry from a hap into an abc session; the returned `abcFileId` works with every `abc_*` tool |
+| `hap_resources` | Parse the hap's `resources.index` and query resources by name / type / limit key / id |
 | `abc_list_classes` | Page through classes (name / method count / field count) with substring filtering |
 | `abc_get_class` | Class metadata: superclass, fields, methods (shorty prototypes), import/export |
 | `abc_decompile_class` | Decompile a single class to JavaScript, with a degradation flag |
 | `abc_disassemble_method` | Method-level disassembly (basic blocks + jump targets + try-catch membership) |
 | `abc_search_strings` | Search the string pool (substring or regex) to locate URLs, keys and other leads |
 | `abc_export` | Decompile everything to disk (equivalent to the CLI decompile) |
-| `abc_close` | Release the session's memory |
+| `abc_close` | Release the session's memory (abc or hap) |
 
 Client integration:
 
