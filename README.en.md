@@ -262,6 +262,51 @@ for (const cls of pandaFile.getAllClasses()) {
 }
 ```
 
+## MCP Server
+
+xpanda ships a built-in [Model Context Protocol](https://modelcontextprotocol.io) server, so AI clients such as Claude Code, OpenCode and Cursor can drive the decompiler — letting an agent analyze `.abc` files on demand: load → browse classes → inspect metadata → decompile a single class → cross-check disassembly → search strings.
+
+```bash
+npm run mcp          # start it (stdio transport)
+npm run test:mcp     # end-to-end test
+```
+
+| Tool | Purpose |
+|---|---|
+| `abc_load` | Parse an `.abc` file, return a `fileId` plus header info and a class-list preview |
+| `abc_list_classes` | Page through classes (name / method count / field count) with substring filtering |
+| `abc_get_class` | Class metadata: superclass, fields, methods (shorty prototypes), import/export |
+| `abc_decompile_class` | Decompile a single class to JavaScript, with a degradation flag |
+| `abc_disassemble_method` | Method-level disassembly (basic blocks + jump targets + try-catch membership) |
+| `abc_search_strings` | Search the string pool (substring or regex) to locate URLs, keys and other leads |
+| `abc_export` | Decompile everything to disk (equivalent to the CLI decompile) |
+| `abc_close` | Release the session's memory |
+
+Client integration:
+
+```bash
+# Claude Code
+claude mcp add xpanda -- npx tsx /absolute/path/to/xpanda/src/mcp/server.ts
+
+# OpenCode
+opencode mcp add xpanda -- npx tsx /absolute/path/to/xpanda/src/mcp/server.ts
+```
+
+Generic JSON config (Claude Desktop / Cursor, etc.):
+
+```json
+{
+  "mcpServers": {
+    "xpanda": {
+      "command": "npx",
+      "args": ["tsx", "/absolute/path/to/xpanda/src/mcp/server.ts"]
+    }
+  }
+}
+```
+
+See [docs/MCP.md](docs/MCP.md) for the full tool reference and design notes (session registry, output truncation, degradation flag).
+
 ## Directory layout
 
 ```text
@@ -273,12 +318,13 @@ src/
   codegen/      CodeGenerator (wraps ast/ NodeFactory & NodeUtils)
   ast/          Babel AST construction and utilities
   simplify/     optimizer pipeline (AST cleanup and syntax recovery)
+  mcp/          MCP server (stdio, for AI client integration)
   PandaDecompiler.ts  public entry point
   cli.ts        command line interface
 resources/isa.yaml      ArkCompiler instruction set description (v13.0.1.0)
 scripts/gen-opcodes.ts  isa.yaml → src/disasm/opcodes.ts
 test/                   integration tests, sample files and snapshots
-docs/                   architecture documentation
+docs/                   architecture documentation, MCP documentation
 ```
 
 ## Decompilation pipeline
@@ -300,6 +346,7 @@ docs/                   architecture documentation
 
 ```bash
 npm test           # decompile md5.abc / class.abc, diff against snapshots, then re-parse with Babel
+npm run test:mcp   # MCP server end-to-end test (child process + JSON-RPC)
 npm run typecheck  # tsc --noEmit
 ```
 

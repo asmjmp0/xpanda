@@ -22,13 +22,16 @@
 | `src/codegen/CodeGenerator.ts` | AST 生成入口(包装 `src/ast/`) |
 | `src/ast/` | `NodeFactory` / `NodeUtils`(Babel AST 工具) |
 | `src/simplify/` | 优化器流水线(`SimplifyExport`、`TempVariableSimplify`、`SyntaxRewriteSimplify`、`ClassSyntaxSimplify`、`HighLevelGrammarSimplify`、`AstUtils`、`NormalizeDeclarations`) |
+| `src/mcp/` | MCP Server(`server.ts` stdio 入口、`registry.ts` 会话注册表、`tools/` 七个工具),文档见 [docs/MCP.md](docs/MCP.md) |
 | `src/PandaDecompiler.ts` | 对外总入口(库 API) |
 | `src/cli.ts` | CLI:`decompile <file.abc> [-o outDir] [--no-simplify] [--stdout] [--quiet]` |
 | `resources/isa.yaml` | ArkCompiler 指令集描述(v13.0.1.0) |
 | `scripts/gen-opcodes.ts` | 生成 `src/disasm/opcodes.ts` |
 | `test/` | 集成测试 + 样本(`md5.abc`、`class.abc`、`aes.abc`、`bilibili_open.abc`) |
 | `test/expected/` | 反编译输出快照(`md5.js`、`class.js`、`aes.js`) |
+| `scripts/test-mcp.ts` | MCP Server 端到端测试(子进程 + JSON-RPC) |
 | `docs/ARCHITECTURE.md` | 架构文档 |
+| `docs/MCP.md` | MCP Server 文档 |
 
 ## 常用命令
 
@@ -47,6 +50,10 @@ npx tsx src/cli.ts decompile test/resources/bilibili_open.abc -o out --no-simpli
 # 大文件加堆
 NODE_OPTIONS=--max-old-space-size=4096 \
   npx tsx src/cli.ts decompile test/resources/bilibili_open.abc -o out --quiet
+
+# 启动 MCP Server(stdio)/ MCP 端到端测试
+npm run mcp
+npm run test:mcp
 ```
 
 ## 硬性约定
@@ -92,6 +99,7 @@ NODE_OPTIONS=--max-old-space-size=4096 \
 | 测试 | 用途 |
 |---|---|
 | `test/decompile.test.ts` | 反编译 `md5.abc` / `class.abc` / `aes.abc`,与 `test/expected/*.js` 比较,并做 Babel 再解析 |
+| `scripts/test-mcp.ts` | 以子进程启动 MCP Server,按 JSON-RPC 调用全部工具,快照比对 + 错误路径校验 |
 | `test/resources/md5.abc` | 小样本,测试中还会执行输出并校验 MD5 结果 |
 | `test/resources/class.abc` | 类/访问器/原型方法还原样本 |
 | `test/resources/aes.abc` | AES 加解密样本,测试中还会执行输出并校验加解密自检结果为 `true` |

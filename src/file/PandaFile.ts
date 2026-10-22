@@ -108,16 +108,21 @@ export class PandaFile implements IPandaFile {
         }
     }
 
+    /** 获取所有已解析的字符串(需先 parseAssembly 才完整) */
+    getAllStrings(): PandaString[] {
+        const strings: PandaString[] = [];
+        for (const value of this.offsets.values()) {
+            if (value instanceof PandaString) strings.push(value);
+        }
+        return strings;
+    }
+
     /** 导出所有已解析的字符串 */
     dumpAllString(): string {
         this.parseAssembly();
-        const sb: string[] = [];
-        for (const value of this.offsets.values()) {
-            if (value instanceof PandaString) {
-                sb.push(value.getOffset() + "->" + value.content + "\n");
-            }
-        }
-        return sb.join("");
+        return this.getAllStrings()
+            .map((s) => s.getOffset() + "->" + s.content + "\n")
+            .join("");
     }
 }
 

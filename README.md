@@ -262,6 +262,51 @@ for (const cls of pandaFile.getAllClasses()) {
 }
 ```
 
+## MCP Server
+
+xpanda 内置 [Model Context Protocol](https://modelcontextprotocol.io) Server,可把反编译能力接入 Claude Code、OpenCode、Cursor 等 AI 客户端,让 agent 按需、增量地分析 `.abc` 文件:加载 → 浏览类 → 查看元数据 → 反编译单类 → 反汇编对照 → 搜索字符串。
+
+```bash
+npm run mcp          # 启动(stdio transport)
+npm run test:mcp     # 端到端测试
+```
+
+| 工具 | 作用 |
+|---|---|
+| `abc_load` | 解析 `.abc` 文件,返回 `fileId` 与文件头信息、类列表预览 |
+| `abc_list_classes` | 分页列出类(名称/方法数/字段数),支持子串过滤 |
+| `abc_get_class` | 类元数据:父类、字段表、方法表(shorty 原型)、import/export |
+| `abc_decompile_class` | 单类反编译为 JavaScript 源码,带降级标志 |
+| `abc_disassemble_method` | 方法级反汇编(基本块 + 跳转目标 + try-catch 归属) |
+| `abc_search_strings` | 字符串池搜索(子串或正则),定位 URL/密钥等线索 |
+| `abc_export` | 全量反编译落盘(等价 CLI decompile) |
+| `abc_close` | 释放会话内存 |
+
+客户端接入:
+
+```bash
+# Claude Code
+claude mcp add xpanda -- npx tsx /absolute/path/to/xpanda/src/mcp/server.ts
+
+# OpenCode
+opencode mcp add xpanda -- npx tsx /absolute/path/to/xpanda/src/mcp/server.ts
+```
+
+通用 JSON 配置(Claude Desktop / Cursor 等):
+
+```json
+{
+  "mcpServers": {
+    "xpanda": {
+      "command": "npx",
+      "args": ["tsx", "/absolute/path/to/xpanda/src/mcp/server.ts"]
+    }
+  }
+}
+```
+
+完整工具说明与设计细节(会话注册表、大输出保护、降级标志)见 [docs/MCP.md](docs/MCP.md)。
+
 ## 目录结构
 
 ```text
@@ -273,12 +318,13 @@ src/
   codegen/      CodeGenerator(包装 ast/ 的 NodeFactory/NodeUtils)
   ast/          Babel AST 构建与工具
   simplify/     优化器流水线(AST 清理与语法还原)
+  mcp/          MCP Server(stdio,供 AI 客户端接入)
   PandaDecompiler.ts  对外总入口
   cli.ts        命令行
 resources/isa.yaml      ArkCompiler 指令集描述(v13.0.1.0)
 scripts/gen-opcodes.ts  isa.yaml → src/disasm/opcodes.ts
 test/                   集成测试、样本与快照
-docs/                   架构文档
+docs/                   架构文档、MCP 文档
 ```
 
 ## 反编译流水线
@@ -300,6 +346,7 @@ docs/                   架构文档
 
 ```bash
 npm test           # 反编译 md5.abc / class.abc,与快照逐字比较并做 Babel 再解析
+npm run test:mcp   # MCP Server 端到端测试(子进程 + JSON-RPC)
 npm run typecheck  # tsc --noEmit
 ```
 

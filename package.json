@@ -7,6 +7,8 @@
     "gen:opcodes": "tsx scripts/gen-opcodes.ts",
     "typecheck": "tsc --noEmit",
     "test": "tsx test/decompile.test.ts",
+    "test:mcp": "tsx scripts/test-mcp.ts",
+    "mcp": "tsx src/mcp/server.ts",
     "xpanda": "tsx src/cli.ts"
   },
   "dependencies": {
@@ -14,7 +16,9 @@
     "@babel/parser": "^7.23.9",
     "@babel/traverse": "^7.23.9",
     "@babel/types": "^7.23.9",
-    "js-yaml": "^4.1.0"
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "js-yaml": "^4.1.0",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
