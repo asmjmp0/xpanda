@@ -81,6 +81,10 @@ export class PandaDecompiler {
         }
         factory.addComment(programNode, builder.join(""));
 
+        if (!pandaLexical.has(funcMain0Method)) {
+            // func_main_0 反汇编失败(如 jeq/jne 家族指令未实现):输出失败标记,由上层降级为空输出
+            return "//decompile failed: func_main_0 disassembly failed";
+        }
         const pandaIRCFG = pandaLexical.getPandaIRCFG(funcMain0Method);
         this.decompileSingleFunction(pandaIRCFG, pandaLexical, programNode);
 
@@ -147,7 +151,7 @@ export class PandaDecompiler {
     decompileClassRaw(pandaClass: PandaClass): string {
         const out = this.decompileRaw(pandaClass);
         if (out.length === 0) return "";
-        if (out === "//no function main...") return "";
+        if (out === "//no function main..." || out.startsWith("//decompile failed")) return "";
         const object = JSON.parse(out);
         return NodeFactory.generate(object);
     }

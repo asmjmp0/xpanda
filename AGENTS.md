@@ -109,7 +109,7 @@ npm run test:mcp
 
 ## 陷阱与注意事项
 
-- **三种降级路径是设计行为,不是 bug**:单方法 > 500 基本块;`jeq/jne/jstricteq/jnstricteq` 指令构造即抛异常;指令 kind 未注册 handle。三者都会使该方法走 `SimpleAnalysis` 线性输出。
+- **降级路径是设计行为,不是 bug**:单方法 > 500 基本块、指令 kind 未注册 handle,二者使该方法走 `SimpleAnalysis` 线性输出;`jeq/jne/jstricteq/jnstricteq` 指令构造即抛异常,词法分析阶段(`PandaLexical`)会跳过该方法并输出占位函数体,不中断整个类。
 - 前缀指令占 2 字节(首字节 ≥ 251),`PandaDisAssembler` 有特殊处理;新增指令名(kind 映射)用 isa.yaml 的 `sig` 首词(如 `wide.callrange`)。
 - 类名形如 `Lpkg/Name;`,输出前由 `PandaDecompiler.saveFile()` demangle。
 - `--no-simplify` 不执行优化器,适合验证解析/反汇编;大文件完整优化耗时主要来自逐类按函数分析和定点迭代。

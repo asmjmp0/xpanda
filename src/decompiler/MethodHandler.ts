@@ -74,7 +74,6 @@ export class PandaDecompilerMethodHandler {
     }
 
     decompileFunction(inner: PandaMethod, pandaLexical: PandaLexical): any {
-        const pandaIRCFG = pandaLexical.getPandaIRCFG(inner);
         const codeGenerator = this.codeGenerator;
         const factory = codeGenerator.getNodeFactory();
         const numArgs = inner.methodCode!.numArgs - 3;
@@ -83,11 +82,17 @@ export class PandaDecompilerMethodHandler {
             codeGenerator.addToArray(params, factory.identifierNode("p" + i));
         }
         const block = factory.blockStatementNode();
-        this.insertFunctionPreamble(inner, pandaLexical, block);
-        try {
-            new StructureAnalysis(pandaIRCFG, pandaIRCFG.getEntryBlock(), pandaIRCFG.getLastBlock()).analysis(this, pandaLexical, block);
-        } catch (e) {
-            new SimpleAnalysis(pandaIRCFG).analysis(this, pandaLexical, block);
+        if (!pandaLexical.has(inner)) {
+            // 词法分析阶段失败的方法(如 jeq/jne 家族指令未实现):输出占位函数体,避免整个类反编译失败
+            factory.addComment(block, " xpanda: method body unavailable (disassembly failed) ");
+        } else {
+            const pandaIRCFG = pandaLexical.getPandaIRCFG(inner);
+            this.insertFunctionPreamble(inner, pandaLexical, block);
+            try {
+                new StructureAnalysis(pandaIRCFG, pandaIRCFG.getEntryBlock(), pandaIRCFG.getLastBlock()).analysis(this, pandaLexical, block);
+            } catch (e) {
+                new SimpleAnalysis(pandaIRCFG).analysis(this, pandaLexical, block);
+            }
         }
         const name = inner.name.content;
         if (name.startsWith("#") || this.isNumeric(name)) return factory.functionExpressionNode(null, params as any, block);

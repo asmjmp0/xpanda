@@ -2,7 +2,6 @@ import { PandaDisAssembler } from "./PandaDisAssembler";
 import type { PandaIRCFG } from "./PandaIRCFG";
 import type { PandaInstruction } from "./PandaInstruction";
 import { PandaIRBasicBlock } from "./PandaIRBasicBlock";
-import { runSplitJumpPass, runSplitTryCatchPass } from "./passes";
 import { ENTRY_FUNCTION_MAIN } from "../file/PandaFile";
 import { PandaMethod } from "../file/method/PandaMethod";
 import type { PandaClass } from "../file/clazz/PandaClass";
@@ -10,12 +9,15 @@ import type { PandaClass } from "../file/clazz/PandaClass";
 /**
  * 词法环境/类型分析(移植自 Java jmp0.abc.disasm.lexical.PandaLexical)
  * 记录每个方法的词法层级与虚寄存器类型,并惰性反汇编所有内嵌方法
+ * 单方法反汇编失败(如 jeq 家族未实现)时跳过该方法,不中断整个类的分析
  * @Author: jmp0
  */
 export class PandaLexical {
     private finished = false;
     private readonly lexicalMap = new Map<PandaMethod, PandaLexicalDescription>();
     private readonly typeMap = new Map<PandaMethod, Map<string, string>>();
+    /** 已分析过的方法(同一方法只分析一次,锁定首次引用处的词法层级) */
+    private readonly visited = new Set<PandaMethod>();
 
     constructor(private readonly pandaClass: PandaClass) {
         this.analyze();
@@ -23,19 +25,20 @@ export class PandaLexical {
 
     private getInnerDeclaredMethods(instruction: PandaInstruction): PandaMethod[] {
         const methods: PandaMethod[] = [];
+        const pushIfMethod = (value: any): void => {
+            if (value instanceof PandaMethod) methods.push(value);
+        };
         // method in object
         if (instruction.kind === "createObject") {
-            for (const value of instruction.objMap.values()) {
-                if (value instanceof PandaMethod) methods.push(value);
-            }
+            for (const value of instruction.objMap.values()) pushIfMethod(value);
             // method in class
         } else if (instruction.kind === "defineClassWithBuffer") {
-            methods.push(instruction.constructorMethod!);
-            for (const desc of instruction.methodDescriptions) methods.push(desc.method);
-            for (const desc of instruction.staticMethodDescriptions) methods.push(desc.method);
+            pushIfMethod(instruction.constructorMethod);
+            for (const desc of instruction.methodDescriptions) pushIfMethod(desc.method);
+            for (const desc of instruction.staticMethodDescriptions) pushIfMethod(desc.method);
             // method in inner define
         } else if (instruction.kind === "defineFunc") {
-            methods.push(instruction.func!);
+            pushIfMethod(instruction.func);
         }
         return methods;
     }
@@ -65,9 +68,18 @@ export class PandaLexical {
         return false;
     }
 
-    private checkAddDebugInfo(block: PandaIRBasicBlock, instruction: PandaInstruction): void {
+    /** 取 pc 的前一条指令;pc 为块首时沿 pc 序回退到前一个块的末条指令(TDZ 检查常被块边界切开) */
+    private getPreInstruction(pandaIRCFG: PandaIRCFG, block: PandaIRBasicBlock, pc: number): PandaInstruction | null {
+        const pre = block.getPreInstructionByPc(pc);
+        if (pre) return pre;
+        const idx = pandaIRCFG.getBlockIndexPC(block.getStartPC());
+        if (idx === null || idx === 0) return null;
+        return pandaIRCFG.pandaIRBasicBlocks[idx - 1].getTerminator();
+    }
+
+    private checkAddDebugInfo(pandaIRCFG: PandaIRCFG, block: PandaIRBasicBlock, instruction: PandaInstruction): void {
         const type = instruction.typeString!.content;
-        const pre = block.getPreInstructionByPc(instruction.pc);
+        const pre = this.getPreInstruction(pandaIRCFG, block, instruction.pc);
         if (pre && pre.kind === "store") {
             this.addTypeInfo(block.getParent(), pre.destObj!.toString(), type);
         } else if (pre && pre.kind === "loadLex") {
@@ -86,7 +98,16 @@ export class PandaLexical {
     }
 
     private analyzeWithPandaMethod(mth: PandaMethod, nowLevel: number): void {
-        const pandaIRCFG = mth.disAssemble();
+        // 同一方法只分析一次,避免重复引用时以不同层级覆盖首次分析结果
+        if (this.visited.has(mth)) return;
+        this.visited.add(mth);
+        // 单方法反汇编失败(如 jeq/jne/jstricteq/jnstricteq 未实现)时跳过该方法,不中断整个类的分析
+        let pandaIRCFG: PandaIRCFG | null;
+        try {
+            pandaIRCFG = mth.disAssemble();
+        } catch (_e) {
+            return;
+        }
         if (!pandaIRCFG) return;
         this.lexicalMap.set(mth, new PandaLexicalDescription(pandaIRCFG));
         this.typeMap.set(mth, new Map());
@@ -108,7 +129,7 @@ export class PandaLexical {
             if (exceptionHandleBlockSet.has(block) || this.checkAsyncFunctionResolveContain(block)) ignorePop = true;
             for (const instruction of block.pandaInstructions) {
                 if (instruction.kind === "assert") {
-                    this.checkAddDebugInfo(block, instruction);
+                    this.checkAddDebugInfo(pandaIRCFG, block, instruction);
                 }
                 nowLevel = this.checkNeedHandleLevel(mth, instruction, ignorePop, nowLevel);
                 const declaredMethods = this.getInnerDeclaredMethods(instruction);
@@ -120,7 +141,12 @@ export class PandaLexical {
     }
 
     getLevel(method: PandaMethod, pc: number): number {
-        return this.lexicalMap.get(method)!.getLevel(pc);
+        // 层级缺失时回退到最外层,避免 NaN 污染变量命名
+        return this.lexicalMap.get(method)?.getLevel(pc) ?? 0;
+    }
+
+    has(pandaMethod: PandaMethod): boolean {
+        return this.lexicalMap.has(pandaMethod);
     }
 
     getPandaIRCFG(pandaMethod: PandaMethod): PandaIRCFG {
@@ -145,7 +171,7 @@ export class PandaLexicalDescription {
     }
 
     getLevel(pc: number): number {
-        return this.opCodeLevelMap.get(pc)!;
+        return this.opCodeLevelMap.get(pc) ?? 0;
     }
 
     getPandaIRCFG(): PandaIRCFG {

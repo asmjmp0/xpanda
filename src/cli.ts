@@ -42,7 +42,14 @@ function main(): void {
     const results: string[] = [];
     if (!stdout) fs.mkdirSync(outDir, { recursive: true });
     for (const pandaClass of pandaFile.getAllClasses()) {
-        const content = raw ? decompiler.decompileClassRaw(pandaClass) : decompiler.decompileClass(pandaClass);
+        let content: string;
+        try {
+            content = raw ? decompiler.decompileClassRaw(pandaClass) : decompiler.decompileClass(pandaClass);
+        } catch (e) {
+            // 单类反编译失败不中断整体
+            console.error("decompile failed: " + pandaClass.name.content + " " + e);
+            continue;
+        }
         if (content.length === 0) continue;
         results.push("\n/***************************" + pandaClass.name.content + "*************************************/\n" + content);
         if (!stdout) {
