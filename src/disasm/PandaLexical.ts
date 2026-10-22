@@ -43,15 +43,16 @@ export class PandaLexical {
         return methods;
     }
 
-    private checkNeedHandleLevel(nowMethod: PandaMethod, instruction: PandaInstruction, ignorePop: boolean, nowLevel: number): number {
+    private checkNeedHandleLevel(nowMethod: PandaMethod, instruction: PandaInstruction, ignorePop: boolean, nowLevel: number, startLevel: number): number {
         if (instruction.kind === "newLexEnv") {
             this.lexicalMap.get(nowMethod)!.recordLevel(instruction.pc, nowLevel);
             nowLevel++;
         } else if (instruction.kind === "storeLex" || instruction.kind === "loadLex") {
             this.lexicalMap.get(nowMethod)!.recordLevel(instruction.pc, nowLevel);
         } else if (instruction.kind === "popLexEnv" && !ignorePop) {
-            if (nowLevel === 0) {
-                return 0;
+            // 不能低于方法入口层级(闭包方法入口时已经带着外层词法环境)
+            if (nowLevel <= startLevel) {
+                return startLevel;
             }
             nowLevel--;
         }
@@ -124,6 +125,9 @@ export class PandaLexical {
             }
         }
 
+        // 方法入口层级:闭包方法从定义处的词法层级开始
+        const startLevel = nowLevel;
+
         for (const block of pandaIRCFG.pandaIRBasicBlocks) {
             let ignorePop = false;
             if (exceptionHandleBlockSet.has(block) || this.checkAsyncFunctionResolveContain(block)) ignorePop = true;
@@ -131,7 +135,7 @@ export class PandaLexical {
                 if (instruction.kind === "assert") {
                     this.checkAddDebugInfo(pandaIRCFG, block, instruction);
                 }
-                nowLevel = this.checkNeedHandleLevel(mth, instruction, ignorePop, nowLevel);
+                nowLevel = this.checkNeedHandleLevel(mth, instruction, ignorePop, nowLevel, startLevel);
                 const declaredMethods = this.getInnerDeclaredMethods(instruction);
                 for (const method of declaredMethods) {
                     this.analyzeWithPandaMethod(method, nowLevel);

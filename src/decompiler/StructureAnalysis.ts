@@ -84,7 +84,10 @@ export class StructureAnalysis {
             const block = region.block!;
             const instruction = block.pandaInstructions[0];
             if (instruction.kind === "newLexEnv") {
-                const pc = instruction.instructionSize();
+                // 注意:splitBasicBlock 需要绝对 pc,不是指令长度
+                const pc = instruction.pc + instruction.instructionSize();
+                // newLexEnv 已经是块内最后一条指令时无需再切分
+                if (!block.getByPC(pc)) return region;
                 const [a, b] = block.splitBasicBlock(pc);
                 const newLexRegion = new Region(a, "Linear");
                 const nextRegion = new Region(b, region.getType());

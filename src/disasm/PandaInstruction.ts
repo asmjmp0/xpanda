@@ -500,7 +500,9 @@ export class PandaInstruction {
             case "loadGlobal": (this as any).globalName = ((this.params[1] as PandaInstructionID).obj as PandaString); break;
             case "newLexEnv": {
                 (this as any).lexImm = (this.params[0] as PandaInstructionIMM).imm;
-                (this as any).isSendAble = opcode.name.startsWith("callruntime.newsendableenv");
+                // 注意 wide 变体的名字是 callruntime.widenewsendableenv,不以前者开头
+                (this as any).isSendAble = opcode.name === "callruntime.newsendableenv"
+                    || opcode.name === "callruntime.widenewsendableenv";
                 break;
             }
             case "storeLex":
@@ -840,6 +842,9 @@ function parseParamByFormat(opcode: OpcodeInfo, param: Uint8Array, method: Panda
     const dv = new DataView(param.buffer, param.byteOffset, param.byteLength);
     const list: any[] = [];
     const realName = opcode.format.replace("PREF_", "");
+    // 指令集里只有跳转偏移和 ldai 的立即数是 i8/i16/i32,其余 imm 均为 u8/u16/u32
+    // (参考 isa.yaml 与 reference 运行时 READ_INST_* 的无符号读取)
+    const signedImm = (opcode.flags & OPCODE_FLAG.JUMP) !== 0 || opcode.name === "ldai";
     let index = 0;
     let bits = 0;
     let paramIndex = 0;
@@ -859,21 +864,21 @@ function parseParamByFormat(opcode: OpcodeInfo, param: Uint8Array, method: Panda
             }
             case "IMM8": {
                 if (bits !== 0) throw new PandaParseException("bits should equal to zero.");
-                list.push(new PandaInstructionIMM(dv.getInt8(index)));
+                list.push(new PandaInstructionIMM(signedImm ? dv.getInt8(index) : dv.getUint8(index)));
                 index++;
                 paramIndex++;
                 break;
             }
             case "IMM16": {
                 if (bits !== 0) throw new PandaParseException("bits should equal to zero.");
-                list.push(new PandaInstructionIMM(dv.getInt16(index, true)));
+                list.push(new PandaInstructionIMM(signedImm ? dv.getInt16(index, true) : dv.getUint16(index, true)));
                 index += 2;
                 paramIndex++;
                 break;
             }
             case "IMM32": {
                 if (bits !== 0) throw new PandaParseException("bits should equal to zero.");
-                list.push(new PandaInstructionIMM(dv.getInt32(index, true)));
+                list.push(new PandaInstructionIMM(signedImm ? dv.getInt32(index, true) : dv.getUint32(index, true)));
                 index += 4;
                 paramIndex++;
                 break;
@@ -894,14 +899,14 @@ function parseParamByFormat(opcode: OpcodeInfo, param: Uint8Array, method: Panda
             }
             case "V8": {
                 if (bits !== 0) throw new PandaParseException("bits should equal to zero.");
-                list.push(new PandaInstructionVReg(dv.getInt8(index), method));
+                list.push(new PandaInstructionVReg(dv.getUint8(index), method));
                 index++;
                 paramIndex++;
                 break;
             }
             case "V16": {
                 if (bits !== 0) throw new PandaParseException("bits should equal to zero.");
-                list.push(new PandaInstructionVReg(dv.getInt16(index, true), method));
+                list.push(new PandaInstructionVReg(dv.getUint16(index, true), method));
                 index += 2;
                 paramIndex++;
                 break;
