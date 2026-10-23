@@ -3,6 +3,45 @@ import { ISimplify } from "./ISimplify";
 import * as TYPE from "@babel/types";
 import { isFunctionLike, isPureExpression, isTempName, scanCapturedRead, walkNode, walkStatementSkipFunctions } from "./AstUtils";
 
+
+const {
+    assignmentExpression,
+    expressionStatement,
+    identifier,
+    isArrowFunctionExpression,
+    isAssignmentExpression,
+    isAwaitExpression,
+    isBlockStatement,
+    isCallExpression,
+    isDoWhileStatement,
+    isExpressionStatement,
+    isForInStatement,
+    isForOfStatement,
+    isForStatement,
+    isFunctionExpression,
+    isIdentifier,
+    isIfStatement,
+    isLabeledStatement,
+    isMemberExpression,
+    isNewExpression,
+    isNullLiteral,
+    isNumericLiteral,
+    isObjectExpression,
+    isReferenced,
+    isReturnStatement,
+    isStringLiteral,
+    isSwitchStatement,
+    isTaggedTemplateExpression,
+    isTryStatement,
+    isUnaryExpression,
+    isUpdateExpression,
+    isVariableDeclaration,
+    isWhileStatement,
+    isYieldExpression,
+    objectExpression,
+    objectProperty,
+} = TYPE;
+
 /**
  * ArkTS enum 初始化还原。
  *
@@ -59,16 +98,16 @@ interface PendingUndefDelete {
 
 /** undefined / null / hole 都能让 `if (!E)` 走创建分支 */
 function isFalsyInitValue(expr: TYPE.Expression): boolean {
-    if (TYPE.isIdentifier(expr)) return expr.name === "undefined" || expr.name === "hole";
-    if (TYPE.isNullLiteral(expr)) return true;
-    if (TYPE.isUnaryExpression(expr) && expr.operator === "void") return isPureExpression(expr.argument);
+    if (isIdentifier(expr)) return expr.name === "undefined" || expr.name === "hole";
+    if (isNullLiteral(expr)) return true;
+    if (isUnaryExpression(expr) && expr.operator === "void") return isPureExpression(expr.argument);
     return false;
 }
 
 /** 只有这两种 `= undefined` 可以随模式一起删除(void 0 / null 保留,避免过度改写) */
 function isDeletableUndefined(expr: TYPE.Expression): boolean {
-    if (TYPE.isIdentifier(expr) && expr.name === "undefined") return true;
-    return TYPE.isUnaryExpression(expr) && expr.operator === "void" && isPureExpression(expr.argument);
+    if (isIdentifier(expr) && expr.name === "undefined") return true;
+    return isUnaryExpression(expr) && expr.operator === "void" && isPureExpression(expr.argument);
 }
 
 export class EnumSimplify implements ISimplify {
@@ -81,7 +120,7 @@ export class EnumSimplify implements ISimplify {
             return true;
         });
         for (const fn of functions) {
-            if (TYPE.isBlockStatement(fn.body)) {
+            if (isBlockStatement(fn.body)) {
                 changed = this.processScope(fn.body) || changed;
             }
         }
@@ -127,7 +166,7 @@ export class EnumSimplify implements ISimplify {
         // S1: v = E;(E 只要求是标识符,temp 风格的局部名也允许;
         // 是否真的持有"初始为假值的本模块变量"由声明检查与区域检查保证)
         const load = this.matchSimpleAssign(stmts[i + 1]);
-        if (!load || !TYPE.isIdentifier(load.right)) return null;
+        if (!load || !isIdentifier(load.right)) return null;
         const enumName = load.right.name;
         const valueTemp = load.left;
         if (valueTemp === enumName) return null;
@@ -138,10 +177,10 @@ export class EnumSimplify implements ISimplify {
 
         // S3: fnTemp(v) 或 fnTemp(E)
         const callStmt = stmts[i + 3];
-        if (!TYPE.isExpressionStatement(callStmt) || !TYPE.isCallExpression(callStmt.expression)) return null;
+        if (!isExpressionStatement(callStmt) || !isCallExpression(callStmt.expression)) return null;
         const call = callStmt.expression;
-        if (call.optional || !TYPE.isIdentifier(call.callee) || call.callee.name !== filler.fnTemp) return null;
-        if (call.arguments.length !== 1 || !TYPE.isIdentifier(call.arguments[0])) return null;
+        if (call.optional || !isIdentifier(call.callee) || call.callee.name !== filler.fnTemp) return null;
+        if (call.arguments.length !== 1 || !isIdentifier(call.arguments[0])) return null;
         const argName = call.arguments[0].name;
         if (argName !== valueTemp && argName !== enumName) return null;
 
@@ -171,18 +210,18 @@ export class EnumSimplify implements ISimplify {
         if (!this.tempsUnusedAfter(stmts, i, involved, scope)) return false;
 
         // 四条语句 -> 一条对象字面量赋值(成员值节点直接搬移,表达式纯且不引用会变的变量)
-        const object = TYPE.objectExpression(match.filler.members.map((m) => {
+        const object = objectExpression(match.filler.members.map((m) => {
             let key: EnumMember["key"] = m.key;
             // 字符串键尽量还原成标识符键;__proto__ 必须保持 computed,
             // 否则对象字面量会把语义从"普通属性"变成"设置原型"。
-            if (TYPE.isStringLiteral(key) && key.value !== "__proto__"
+            if (isStringLiteral(key) && key.value !== "__proto__"
                 && /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(key.value)) {
-                key = TYPE.identifier(key.value);
+                key = identifier(key.value);
             }
-            return TYPE.objectProperty(key, m.value, TYPE.isStringLiteral(key) && key.value === "__proto__");
+            return objectProperty(key, m.value, isStringLiteral(key) && key.value === "__proto__");
         }));
-        const replacement = TYPE.expressionStatement(
-            TYPE.assignmentExpression("=", TYPE.identifier(match.enumName), object));
+        const replacement = expressionStatement(
+            assignmentExpression("=", identifier(match.enumName), object));
         stmts.splice(i, 4, replacement);
 
         // 之前证明已死的 `E = undefined;` 登记为删除候选,由 processScope 统一核对删除
@@ -195,13 +234,13 @@ export class EnumSimplify implements ISimplify {
 
     /** S0:fnTemp = function (p) { p.M = expr; ... }; 成员填充函数 */
     private matchFillerFunction(stmt: TYPE.Statement): { fnTemp: string; members: EnumMember[] } | null {
-        if (!TYPE.isExpressionStatement(stmt) || !TYPE.isAssignmentExpression(stmt.expression)) return null;
+        if (!isExpressionStatement(stmt) || !isAssignmentExpression(stmt.expression)) return null;
         const assign = stmt.expression;
-        if (assign.operator !== "=" || !TYPE.isIdentifier(assign.left) || !isTempName(assign.left.name)) return null;
+        if (assign.operator !== "=" || !isIdentifier(assign.left) || !isTempName(assign.left.name)) return null;
         const fn = assign.right;
-        if (!TYPE.isFunctionExpression(fn) && !TYPE.isArrowFunctionExpression(fn)) return null;
-        if (fn.generator || fn.async || !TYPE.isBlockStatement(fn.body)) return null;
-        if (fn.params.length !== 1 || !TYPE.isIdentifier(fn.params[0])) return null;
+        if (!isFunctionExpression(fn) && !isArrowFunctionExpression(fn)) return null;
+        if (fn.generator || fn.async || !isBlockStatement(fn.body)) return null;
+        if (fn.params.length !== 1 || !isIdentifier(fn.params[0])) return null;
         const param = fn.params[0].name;
 
         const members: EnumMember[] = [];
@@ -209,19 +248,19 @@ export class EnumSimplify implements ISimplify {
             const inner = fn.body.body[idx];
             // 原始输出里函数末尾带一条空 `return;`;只允许它出现在最后,
             // 出现在中间会让后面的成员赋值不可达,语义对不上。
-            if (TYPE.isReturnStatement(inner)) {
+            if (isReturnStatement(inner)) {
                 if (idx === fn.body.body.length - 1 && !inner.argument) break;
                 return null;
             }
-            if (!TYPE.isExpressionStatement(inner) || !TYPE.isAssignmentExpression(inner.expression)) return null;
+            if (!isExpressionStatement(inner) || !isAssignmentExpression(inner.expression)) return null;
             const a = inner.expression;
-            if (a.operator !== "=" || !TYPE.isMemberExpression(a.left) || a.left.optional) return null;
-            if (!TYPE.isIdentifier(a.left.object) || a.left.object.name !== param) return null;
+            if (a.operator !== "=" || !isMemberExpression(a.left) || a.left.optional) return null;
+            if (!isIdentifier(a.left.object) || a.left.object.name !== param) return null;
             let key: EnumMember["key"];
-            if (!a.left.computed && TYPE.isIdentifier(a.left.property)) {
+            if (!a.left.computed && isIdentifier(a.left.property)) {
                 key = a.left.property;
             } else if (a.left.computed
-                && (TYPE.isStringLiteral(a.left.property) || TYPE.isNumericLiteral(a.left.property))) {
+                && (isStringLiteral(a.left.property) || isNumericLiteral(a.left.property))) {
                 key = a.left.property;
             } else {
                 return null;
@@ -230,7 +269,7 @@ export class EnumSimplify implements ISimplify {
             // 值不能引用填充参数,也不能引用任何临时变量(模式删除后它们的值会变)
             let bad = false;
             walkNode(a.right, (n) => {
-                if (TYPE.isIdentifier(n) && (n.name === param || isTempName(n.name))) {
+                if (isIdentifier(n) && (n.name === param || isTempName(n.name))) {
                     bad = true;
                     return false;
                 }
@@ -245,29 +284,29 @@ export class EnumSimplify implements ISimplify {
     /** enumName 必须在本语句列表顶层的 let/var 声明里出现过,排除隐式全局变量 */
     private isDeclaredInList(stmts: TYPE.Statement[], name: string): boolean {
         for (const stmt of stmts) {
-            if (!TYPE.isVariableDeclaration(stmt)) continue;
+            if (!isVariableDeclaration(stmt)) continue;
             for (const d of stmt.declarations) {
-                if (TYPE.isIdentifier(d.id) && d.id.name === name) return true;
+                if (isIdentifier(d.id) && d.id.name === name) return true;
             }
         }
         return false;
     }
 
     private matchSimpleAssign(stmt: TYPE.Statement): { left: string; right: TYPE.Expression } | null {
-        if (!TYPE.isExpressionStatement(stmt) || !TYPE.isAssignmentExpression(stmt.expression)) return null;
+        if (!isExpressionStatement(stmt) || !isAssignmentExpression(stmt.expression)) return null;
         const a = stmt.expression;
-        if (a.operator !== "=" || !TYPE.isIdentifier(a.left)) return null;
+        if (a.operator !== "=" || !isIdentifier(a.left)) return null;
         return { left: a.left.name, right: a.right };
     }
 
     /** S2:if (!E / !v) { 若干 `名字 = 名字/空对象` 赋值,EnumName 与 v 最终都解析到同一个空对象 } */
     private matchLazyInit(stmt: TYPE.Statement, enumName: string, valueTemp: string):
         { object: TYPE.ObjectExpression; aliases: Set<string> } | null {
-        if (!TYPE.isIfStatement(stmt) || stmt.alternate) return null;
+        if (!isIfStatement(stmt) || stmt.alternate) return null;
         const test = stmt.test;
-        if (!TYPE.isUnaryExpression(test) || test.operator !== "!" || !TYPE.isIdentifier(test.argument)) return null;
+        if (!isUnaryExpression(test) || test.operator !== "!" || !isIdentifier(test.argument)) return null;
         if (test.argument.name !== enumName && test.argument.name !== valueTemp) return null;
-        if (!TYPE.isBlockStatement(stmt.consequent)) return null;
+        if (!isBlockStatement(stmt.consequent)) return null;
 
         const map = new Map<string, TYPE.Expression>();
         for (const inner of stmt.consequent.body) {
@@ -279,7 +318,7 @@ export class EnumSimplify implements ISimplify {
 
         let object: TYPE.ObjectExpression | null = null;
         for (const rhs of map.values()) {
-            if (TYPE.isObjectExpression(rhs) && rhs.properties.length === 0) {
+            if (isObjectExpression(rhs) && rhs.properties.length === 0) {
                 if (object) return null; // 出现两个空对象:无法确定共享的是哪一个
                 object = rhs;
             }
@@ -299,8 +338,8 @@ export class EnumSimplify implements ISimplify {
         if (seen.has(name)) return null;
         seen.add(name);
         const next = map.get(name);
-        if (!next) return TYPE.identifier(name);
-        if (TYPE.isIdentifier(next)) return this.resolveAlias(map, next.name, seen);
+        if (!next) return identifier(name);
+        if (isIdentifier(next)) return this.resolveAlias(map, next.name, seen);
         return next;
     }
 
@@ -326,14 +365,14 @@ export class EnumSimplify implements ISimplify {
         for (let j = 0; j < i; j++) {
             const stmt = stmts[j];
             walkStatementSkipFunctions(stmt, (node, parent) => {
-                if (TYPE.isIdentifier(node) && node.name === enumName
-                    && parent && TYPE.isReferenced(node, parent)) {
+                if (isIdentifier(node) && node.name === enumName
+                    && parent && isReferenced(node, parent)) {
                     hasRead = true;
                 }
                 if (!fillerCalls.has(stmt) && this.isInvocation(node)) hasUnknownInvocation = true;
                 if (this.isUnsafeWriteTo(node, enumName, true)) hasBadWrite = true;
-                if (TYPE.isAssignmentExpression(node) && node.operator === "="
-                    && TYPE.isIdentifier(node.left) && node.left.name === enumName
+                if (isAssignmentExpression(node) && node.operator === "="
+                    && isIdentifier(node.left) && node.left.name === enumName
                     && isDeletableUndefined(node.right)) {
                     lastUndefIndex = j;
                 }
@@ -384,10 +423,10 @@ export class EnumSimplify implements ISimplify {
     }
 
     private statementFlowUnsafe(stmt: TYPE.Statement, name: string, state: { killed: boolean }): boolean {
-        if (TYPE.isExpressionStatement(stmt)) {
+        if (isExpressionStatement(stmt)) {
             const expr = stmt.expression;
-            if (TYPE.isAssignmentExpression(expr) && expr.operator === "="
-                && TYPE.isIdentifier(expr.left) && expr.left.name === name) {
+            if (isAssignmentExpression(expr) && expr.operator === "="
+                && isIdentifier(expr.left) && expr.left.name === name) {
                 // RHS 先求值:RHS 里读取旧值仍然危险;赋值完成后旧值失效
                 if (!state.killed && this.exprReadsUnsafe(expr.right, name)) return true;
                 state.killed = true;
@@ -395,28 +434,28 @@ export class EnumSimplify implements ISimplify {
             }
             return !state.killed && this.exprReadsUnsafe(expr, name);
         }
-        if (TYPE.isBlockStatement(stmt)) {
+        if (isBlockStatement(stmt)) {
             return this.sequenceFlowUnsafe(stmt.body, 0, name, state);
         }
-        if (TYPE.isLabeledStatement(stmt)) {
-            return TYPE.isBlockStatement(stmt.body)
+        if (isLabeledStatement(stmt)) {
+            return isBlockStatement(stmt.body)
                 ? this.sequenceFlowUnsafe(stmt.body.body, 0, name, state)
                 : this.statementFlowUnsafe(stmt.body, name, state);
         }
-        if (TYPE.isVariableDeclaration(stmt)) {
+        if (isVariableDeclaration(stmt)) {
             for (const d of stmt.declarations) {
-                if (TYPE.isIdentifier(d.id) && d.id.name === name) return true; // 重新声明,遮蔽
+                if (isIdentifier(d.id) && d.id.name === name) return true; // 重新声明,遮蔽
                 if (!state.killed && d.init && this.exprReadsUnsafe(d.init, name)) return true;
             }
             return false;
         }
-        if (TYPE.isIfStatement(stmt)) {
+        if (isIfStatement(stmt)) {
             if (!state.killed && this.exprReadsUnsafe(stmt.test, name)) return true;
             return this.branchFlowUnsafe(stmt.consequent, name, state.killed)
                 || (!!stmt.alternate && this.branchFlowUnsafe(stmt.alternate, name, state.killed));
         }
-        if (TYPE.isWhileStatement(stmt) || TYPE.isForStatement(stmt)
-            || TYPE.isForInStatement(stmt) || TYPE.isForOfStatement(stmt)) {
+        if (isWhileStatement(stmt) || isForStatement(stmt)
+            || isForInStatement(stmt) || isForOfStatement(stmt)) {
             const s: any = stmt;
             if (!state.killed) {
                 if (stmt.type === "WhileStatement" && this.exprReadsUnsafe(stmt.test, name)) return true;
@@ -429,11 +468,11 @@ export class EnumSimplify implements ISimplify {
             }
             return this.branchFlowUnsafe(stmt.body, name, state.killed);
         }
-        if (TYPE.isDoWhileStatement(stmt)) {
+        if (isDoWhileStatement(stmt)) {
             if (this.branchFlowUnsafe(stmt.body, name, state.killed)) return true;
             return !state.killed && this.exprReadsUnsafe(stmt.test, name);
         }
-        if (TYPE.isSwitchStatement(stmt)) {
+        if (isSwitchStatement(stmt)) {
             if (!state.killed && this.exprReadsUnsafe(stmt.discriminant, name)) return true;
             for (const c of stmt.cases) {
                 if (c.test && !state.killed && this.exprReadsUnsafe(c.test, name)) return true;
@@ -441,7 +480,7 @@ export class EnumSimplify implements ISimplify {
             }
             return false;
         }
-        if (TYPE.isTryStatement(stmt)) {
+        if (isTryStatement(stmt)) {
             // block / finalizer 无条件执行,可以传播 kill;handler 条件执行。
             // 异常可能中断 block 提前进入 handler:handler/finalizer 检查时用进入前的 kill 状态。
             const saved = state.killed;
@@ -461,13 +500,13 @@ export class EnumSimplify implements ISimplify {
         let read = false;
         let redeclared = false;
         walkStatementSkipFunctions(stmt, (node, parent) => {
-            if (TYPE.isIdentifier(node) && node.name === name
-                && parent && TYPE.isReferenced(node, parent)) {
+            if (isIdentifier(node) && node.name === name
+                && parent && isReferenced(node, parent)) {
                 read = true;
             }
-            if (TYPE.isVariableDeclaration(node)) {
+            if (isVariableDeclaration(node)) {
                 for (const d of node.declarations) {
-                    if (TYPE.isIdentifier(d.id) && d.id.name === name) redeclared = true;
+                    if (isIdentifier(d.id) && d.id.name === name) redeclared = true;
                 }
             }
         });
@@ -484,11 +523,11 @@ export class EnumSimplify implements ISimplify {
     /** 表达式里是否存在对 name 的读取(不进入嵌套函数;根本身就是标识符也算) */
     private exprReadsUnsafe(expr: TYPE.Node | null | undefined, name: string): boolean {
         if (!expr) return false;
-        if (TYPE.isIdentifier(expr) && expr.name === name) return true;
+        if (isIdentifier(expr) && expr.name === name) return true;
         let read = false;
         walkStatementSkipFunctions(expr, (node, parent) => {
-            if (TYPE.isIdentifier(node) && node.name === name
-                && parent && TYPE.isReferenced(node, parent)) {
+            if (isIdentifier(node) && node.name === name
+                && parent && isReferenced(node, parent)) {
                 read = true;
             }
         });
@@ -499,9 +538,9 @@ export class EnumSimplify implements ISimplify {
 
     /** 可能执行任意代码的表达式(调用/构造/await/yield/标签模板) */
     private isInvocation(node: TYPE.Node): boolean {
-        return TYPE.isCallExpression(node) || TYPE.isNewExpression(node)
-            || TYPE.isAwaitExpression(node) || TYPE.isYieldExpression(node)
-            || TYPE.isTaggedTemplateExpression(node);
+        return isCallExpression(node) || isNewExpression(node)
+            || isAwaitExpression(node) || isYieldExpression(node)
+            || isTaggedTemplateExpression(node);
     }
 
     /**
@@ -510,27 +549,27 @@ export class EnumSimplify implements ISimplify {
      * 成员写(E.x = ... / E[x] = ... / E.x++ / delete E.x)和复合赋值(E += ...)一律不安全。
      */
     private isUnsafeWriteTo(node: TYPE.Node, name: string, allowUndefinedRhs: boolean): boolean {
-        if (TYPE.isAssignmentExpression(node)) {
-            if (TYPE.isIdentifier(node.left)) {
+        if (isAssignmentExpression(node)) {
+            if (isIdentifier(node.left)) {
                 if (node.left.name !== name) return false;
                 if (node.operator !== "=") return true; // 复合赋值会读旧值
                 return allowUndefinedRhs ? !isFalsyInitValue(node.right) : true;
             }
             return this.isMemberOf(node.left, name);
         }
-        if (TYPE.isUpdateExpression(node)) {
-            return (TYPE.isIdentifier(node.argument) && node.argument.name === name)
+        if (isUpdateExpression(node)) {
+            return (isIdentifier(node.argument) && node.argument.name === name)
                 || this.isMemberOf(node.argument, name);
         }
-        if (TYPE.isUnaryExpression(node) && node.operator === "delete") {
+        if (isUnaryExpression(node) && node.operator === "delete") {
             return this.isMemberOf(node.argument, name);
         }
         return false;
     }
 
     private isMemberOf(node: TYPE.Node | null | undefined, name: string): boolean {
-        return !!node && TYPE.isMemberExpression(node) && !node.optional
-            && TYPE.isIdentifier(node.object) && node.object.name === name;
+        return !!node && isMemberExpression(node) && !node.optional
+            && isIdentifier(node.object) && node.object.name === name;
     }
 
     private hasNestedEnumWrite(scope: TYPE.Program | TYPE.BlockStatement, enumName: string): boolean {
@@ -539,7 +578,7 @@ export class EnumSimplify implements ISimplify {
             if (found) return false;
             if (isFunctionLike(node)) {
                 const body = (node as TYPE.Function).body;
-                if (TYPE.isBlockStatement(body)) {
+                if (isBlockStatement(body)) {
                     walkStatementSkipFunctions(body, (n) => {
                         if (this.isUnsafeWriteTo(n, enumName, true)) found = true;
                     });

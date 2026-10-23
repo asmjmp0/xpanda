@@ -16,6 +16,37 @@ import {
 } from "./AstUtils";
 import { SyntaxRewriteSimplify } from "./SyntaxRewriteSimplify";
 
+
+const {
+    binaryExpression,
+    expressionStatement,
+    file,
+    identifier,
+    isArrayExpression,
+    isAssignmentExpression,
+    isBinaryExpression,
+    isCallExpression,
+    isConditionalExpression,
+    isExpressionStatement,
+    isIdentifier,
+    isIfStatement,
+    isLabeledStatement,
+    isLogicalExpression,
+    isMemberExpression,
+    isNewExpression,
+    isObjectExpression,
+    isParenthesizedExpression,
+    isReturnStatement,
+    isSequenceExpression,
+    isTryStatement,
+    isUnaryExpression,
+    isUpdateExpression,
+    unaryExpression,
+    isBlockStatement: isBlockStatementNode,
+    isProgram: isProgramNode,
+    isReferenced: isReferencedNode,
+} = TYPE;
+
 /**
  * 条件表达式清理。
  *
@@ -59,7 +90,8 @@ interface TestFoldContext {
 export class ConditionSimplify implements ISimplify {
     simplify(node: Program): boolean {
         let changed = false;
-        traverse(TYPE.file(node), {
+        traverse(file(node), {
+            noScope: true,
             IfStatement: (path) => {
                 // insertBefore 需要 if 位于语句列表中(块或 Program);
                 // 单条语句形式(if (a) if (b) ...)不处理,避免改变结构。
@@ -73,7 +105,7 @@ export class ConditionSimplify implements ISimplify {
                 // HighLevelGrammarSimplify 会把 `if (X) return A; else return B;` 合成
                 // `return X ? A : B`,三元的 test 也是布尔上下文,自取反链要能继续折叠。
                 const argument = path.node.argument;
-                if (!argument || !TYPE.isConditionalExpression(argument)) return;
+                if (!argument || !isConditionalExpression(argument)) return;
                 if (this.foldNegationChain(path)) changed = true;
             },
         });
@@ -94,7 +126,8 @@ export class ConditionSimplify implements ISimplify {
     static foldMaterializedTestArtifacts(node: Program): boolean {
         const pass = new ConditionSimplify();
         let changed = false;
-        traverse(TYPE.file(node), {
+        traverse(file(node), {
+            noScope: true,
             IfStatement: (path) => {
                 const parent = path.parentPath;
                 if (!parent || (!parent.isBlockStatement() && !parent.isProgram())) return;
@@ -108,7 +141,7 @@ export class ConditionSimplify implements ISimplify {
             },
             ReturnStatement: (path) => {
                 const argument = path.node.argument;
-                if (!TYPE.isConditionalExpression(argument)) return;
+                if (!isConditionalExpression(argument)) return;
                 const ctx = pass.contextForConditional(path, argument);
                 if (pass.foldTestSequenceChains(ctx)) changed = true;
                 for (let i = 0; i < 8; i++) {
@@ -120,13 +153,21 @@ export class ConditionSimplify implements ISimplify {
         return changed;
     }
 
+    /** 最近的函数节点;不在函数内时返回 Program(替代 path.scope.path.node,后者需要 scope 爬取)。 */
+    private static enclosingScopeNode(path: NodePath<any>): TYPE.Node {
+        const fn = path.getFunctionParent();
+        if (fn) return fn.node;
+        const program = path.findParent((p) => p.isProgram());
+        return program ? program.node : path.findParent(() => true)?.node ?? (path as any).node;
+    }
+
     private contextForIf(path: NodePath<TYPE.IfStatement>): TestFoldContext {
         return {
             path,
             test: path.node.test,
             consequent: this.branchStatements(path.node.consequent),
             alternate: path.node.alternate ? this.branchStatements(path.node.alternate) : [],
-            scope: (path.getFunctionParent() ? path.getFunctionParent()!.node : path.scope.path.node) as TYPE.Node,
+            scope: ConditionSimplify.enclosingScopeNode(path),
         };
     }
 
@@ -137,9 +178,9 @@ export class ConditionSimplify implements ISimplify {
         return {
             path,
             test: node.test,
-            consequent: [TYPE.expressionStatement(node.consequent)],
-            alternate: [TYPE.expressionStatement(node.alternate)],
-            scope: (path.getFunctionParent() ? path.getFunctionParent()!.node : path.scope.path.node) as TYPE.Node,
+            consequent: [expressionStatement(node.consequent)],
+            alternate: [expressionStatement(node.alternate)],
+            scope: ConditionSimplify.enclosingScopeNode(path),
         };
     }
 
@@ -170,7 +211,7 @@ export class ConditionSimplify implements ISimplify {
         if (count === 0) return false;
 
         const fnParent = stmtPath.getFunctionParent();
-        const scope: TYPE.Node = fnParent ? fnParent.node : stmtPath.scope.path.node;
+        const scope: TYPE.Node = fnParent ? fnParent.node : ConditionSimplify.enclosingScopeNode(stmtPath);
         if (scanCapturedRead(scope, null, new Set([name]), new Set(), false)) return false;
         const tails = this.collectStatementsAfter(stmtPath);
         if (tempReadBeforeWrite(tails, 0, name)) return false;
@@ -192,10 +233,10 @@ export class ConditionSimplify implements ISimplify {
      */
     private booleanTestConsumer(stmt: TYPE.Statement):
         { test: TYPE.Expression; setTest: (expr: TYPE.Expression) => void } | null {
-        if (TYPE.isIfStatement(stmt)) {
+        if (isIfStatement(stmt)) {
             return { test: stmt.test, setTest: (expr) => { stmt.test = expr; } };
         }
-        if (TYPE.isReturnStatement(stmt) && stmt.argument && TYPE.isConditionalExpression(stmt.argument)) {
+        if (isReturnStatement(stmt) && stmt.argument && isConditionalExpression(stmt.argument)) {
             const conditional = stmt.argument;
             return { test: conditional.test, setTest: (expr) => { conditional.test = expr; } };
         }
@@ -204,22 +245,22 @@ export class ConditionSimplify implements ISimplify {
 
     /** test 形如 `X` 或 `!X` 时返回 X;其他形态无法确定链对应的临时变量。 */
     private tempTestName(test: TYPE.Expression): string | null {
-        if (TYPE.isIdentifier(test)) return test.name;
-        if (TYPE.isUnaryExpression(test) && test.operator === "!" && TYPE.isIdentifier(test.argument)) {
+        if (isIdentifier(test)) return test.name;
+        if (isUnaryExpression(test) && test.operator === "!" && isIdentifier(test.argument)) {
             return test.argument.name;
         }
         return null;
     }
 
     private static invertTest(node: TYPE.Expression): TYPE.Expression {
-        if (TYPE.isUnaryExpression(node) && node.operator === "!") return node.argument;
-        if (TYPE.isBinaryExpression(node)) {
+        if (isUnaryExpression(node) && node.operator === "!") return node.argument;
+        if (isBinaryExpression(node)) {
             const inverse = SyntaxRewriteSimplify.binaryInvert(node);
             if (inverse != null) {
-                return TYPE.binaryExpression(inverse, node.left as TYPE.Expression, node.right as TYPE.Expression);
+                return binaryExpression(inverse, node.left as TYPE.Expression, node.right as TYPE.Expression);
             }
         }
-        return TYPE.unaryExpression("!", node);
+        return unaryExpression("!", node);
     }
 
     /**
@@ -255,14 +296,14 @@ export class ConditionSimplify implements ISimplify {
     }
 
     private isSelfNegation(stmt: TYPE.Statement, name: string): boolean {
-        return TYPE.isExpressionStatement(stmt)
-            && TYPE.isAssignmentExpression(stmt.expression)
+        return isExpressionStatement(stmt)
+            && isAssignmentExpression(stmt.expression)
             && stmt.expression.operator === "="
-            && TYPE.isIdentifier(stmt.expression.left)
+            && isIdentifier(stmt.expression.left)
             && stmt.expression.left.name === name
-            && TYPE.isUnaryExpression(stmt.expression.right)
+            && isUnaryExpression(stmt.expression.right)
             && stmt.expression.right.operator === "!"
-            && TYPE.isIdentifier(stmt.expression.right.argument)
+            && isIdentifier(stmt.expression.right.argument)
             && stmt.expression.right.argument.name === name;
     }
 
@@ -296,35 +337,33 @@ export class ConditionSimplify implements ISimplify {
         const order = this.evaluationOrder(ifNode.test);
         const removals = new Map<TYPE.SequenceExpression, number[]>();
 
-        const testPath = path.get("test") as NodePath<TYPE.Expression>;
-        testPath.traverse({
-            AssignmentExpression: (assignPath) => {
-                const assign = assignPath.node;
-                if (assign.operator !== "=" || !TYPE.isIdentifier(assign.left)) return;
-                const name = assign.left.name;
-                if (!isTempName(name) || !overwrittenOnBothPaths.has(name) || branchReads.has(name)) return;
-                if (!isPureExpression(assign.right)) return;
+        // 只用到父节点,不需要 NodePath/scope:用纯 AST 遍历收集待删除的下标
+        walkNode(ifNode.test, (assign, parent) => {
+            if (!isAssignmentExpression(assign)) return true;
+            if (assign.operator !== "=" || !isIdentifier(assign.left)) return true;
+            const name = assign.left.name;
+            if (!isTempName(name) || !overwrittenOnBothPaths.has(name) || branchReads.has(name)) return true;
+            if (!isPureExpression(assign.right)) return true;
+            if (!parent || !isSequenceExpression(parent)) return true;
+            const sequence = parent as TYPE.SequenceExpression;
+            const expressions = sequence.expressions as TYPE.Expression[];
+            const index = expressions.indexOf(assign as TYPE.Expression);
+            // 只删除中间表达式,最后一个表达式的值就是条件,不能删
+            if (index < 0 || index === expressions.length - 1) return true;
 
-                const parent = assignPath.parentPath;
-                if (!parent || !parent.isSequenceExpression()) return;
-                const expressions = parent.node.expressions as TYPE.Expression[];
-                const index = expressions.indexOf(assign);
-                // 只删除中间表达式,最后一个表达式的值就是条件,不能删
-                if (index < 0 || index === expressions.length - 1) return;
+            const pos = order.indexOf(assign);
+            if (pos < 0) return true;
+            for (let i = pos + 1; i < order.length; i++) {
+                if (collectReadNames(order[i]).has(name)) return true;
+            }
 
-                const pos = order.indexOf(assign);
-                if (pos < 0) return;
-                for (let i = pos + 1; i < order.length; i++) {
-                    if (collectReadNames(order[i]).has(name)) return;
-                }
-
-                let indices = removals.get(parent.node);
-                if (!indices) {
-                    indices = [];
-                    removals.set(parent.node, indices);
-                }
-                indices.push(index);
-            },
+            let indices = removals.get(sequence);
+            if (!indices) {
+                indices = [];
+                removals.set(sequence, indices);
+            }
+            indices.push(index);
+            return true;
         });
 
         let changed = false;
@@ -356,9 +395,9 @@ export class ConditionSimplify implements ISimplify {
         const index = list.indexOf(path.node);
         if (index <= 0) return false;
         const prev = list[index - 1];
-        if (!TYPE.isExpressionStatement(prev) || !TYPE.isAssignmentExpression(prev.expression)) return false;
+        if (!isExpressionStatement(prev) || !isAssignmentExpression(prev.expression)) return false;
         const assign = prev.expression;
-        if (assign.operator !== "=" || !TYPE.isIdentifier(assign.left)) return false;
+        if (assign.operator !== "=" || !isIdentifier(assign.left)) return false;
         const name = assign.left.name;
         // 函数/类表达式的值经 callee 调用消费时 isReferenced 不可见(v4(...)),
         // 无法证明值已死,一律不删
@@ -369,7 +408,7 @@ export class ConditionSimplify implements ISimplify {
         walkNode(ctx.test, (n) => {
             if (sawConditional) return false;
             if (isFunctionLike(n) || isClassLike(n)) return false;
-            if (TYPE.isConditionalExpression(n)) sawConditional = true;
+            if (isConditionalExpression(n)) sawConditional = true;
             return !sawConditional;
         });
         if (sawConditional) return false;
@@ -385,7 +424,7 @@ export class ConditionSimplify implements ISimplify {
             && !this.testWritesOnTakenPath(ctx.test, name, false)) return false;
 
         const fnParent = path.getFunctionParent();
-        const scope: TYPE.Node = fnParent ? fnParent.node : path.scope.path.node;
+        const scope: TYPE.Node = fnParent ? fnParent.node : ConditionSimplify.enclosingScopeNode(path);
         if (scanCapturedRead(scope, null, new Set([name]), new Set(), false)) return false;
         if (!this.nameDeadAfterStatement(path, name)) return false;
         (parent.get("body") as NodePath[])[index - 1].remove();
@@ -412,7 +451,7 @@ export class ConditionSimplify implements ISimplify {
         const sequences: TYPE.SequenceExpression[] = [];
         walkNode(ctx.test, (n) => {
             if (isFunctionLike(n) || isClassLike(n)) return false;
-            if (TYPE.isSequenceExpression(n)) sequences.push(n);
+            if (isSequenceExpression(n)) sequences.push(n);
             return true;
         });
         for (const seq of sequences) {
@@ -440,8 +479,8 @@ export class ConditionSimplify implements ISimplify {
         const scope = ctx.scope;
         for (let j = 1; j < elements.length; j++) {
             const copy = elements[j];
-            if (!TYPE.isAssignmentExpression(copy) || copy.operator !== "=") continue;
-            if (!TYPE.isIdentifier(copy.left) || !TYPE.isIdentifier(copy.right)) continue;
+            if (!isAssignmentExpression(copy) || copy.operator !== "=") continue;
+            if (!isIdentifier(copy.left) || !isIdentifier(copy.right)) continue;
             const yName = copy.left.name;
             const xName = copy.right.name;
             if (!isTempName(xName) || !isTempName(yName) || xName === yName) continue;
@@ -451,8 +490,8 @@ export class ConditionSimplify implements ISimplify {
             let yWrittenBetween = false;
             for (let k = j - 1; k >= 0; k--) {
                 const e = elements[k];
-                if (TYPE.isAssignmentExpression(e) && e.operator === "="
-                    && TYPE.isIdentifier(e.left) && e.left.name === xName) {
+                if (isAssignmentExpression(e) && e.operator === "="
+                    && isIdentifier(e.left) && e.left.name === xName) {
                     if (collectReadNames(e).has(xName)) break; // X = ...X... 自引用,不能搬
                     i = k;
                     break;
@@ -481,7 +520,7 @@ export class ConditionSimplify implements ISimplify {
             if (this.branchDependsOnValue(ctx, xName, elements[i])) continue;
 
             for (let k = j + 1; k < elements.length; k++) {
-                this.replaceIdentifierReads(elements[k], xName, TYPE.identifier(yName));
+                this.replaceIdentifierReads(elements[k], xName, identifier(yName));
             }
             copy.right = value;
             elements.splice(i, 1);
@@ -501,8 +540,8 @@ export class ConditionSimplify implements ISimplify {
         const scope = ctx.scope;
         for (let i = 0; i < elements.length - 1; i++) {
             const assign = elements[i];
-            if (!TYPE.isAssignmentExpression(assign) || assign.operator !== "=") continue;
-            if (!TYPE.isIdentifier(assign.left)) continue;
+            if (!isAssignmentExpression(assign) || assign.operator !== "=") continue;
+            if (!isIdentifier(assign.left)) continue;
             const yName = assign.left.name;
             if (!isTempName(yName)) continue;
             const next = elements[i + 1];
@@ -544,8 +583,8 @@ export class ConditionSimplify implements ISimplify {
         const scope = ctx.scope;
         for (let i = 0; i < elements.length - 1; i++) {
             const assign = elements[i];
-            if (!TYPE.isAssignmentExpression(assign) || assign.operator !== "=") continue;
-            if (!TYPE.isIdentifier(assign.left)) continue;
+            if (!isAssignmentExpression(assign) || assign.operator !== "=") continue;
+            if (!isIdentifier(assign.left)) continue;
             const xName = assign.left.name;
             if (!isTempName(xName)) continue;
             // 函数/类表达式的值经 callee 调用消费时 isReferenced 不可见,无法证明已死
@@ -570,7 +609,7 @@ export class ConditionSimplify implements ISimplify {
     private branchReadsBeforeWrite(stmts: TYPE.Statement[], name: string): boolean {
         for (const stmt of stmts) {
             if (this.definitelyWrites(stmt, name)) return false;
-            if (TYPE.isIfStatement(stmt)) {
+            if (isIfStatement(stmt)) {
                 if (collectReadNames(stmt.test).has(name)) return true;
                 if (this.branchReadsBeforeWrite(this.branchStatements(stmt.consequent), name)) return true;
                 if (stmt.alternate && this.branchReadsBeforeWrite(this.branchStatements(stmt.alternate), name)) return true;
@@ -582,7 +621,7 @@ export class ConditionSimplify implements ISimplify {
     }
 
     private branchStatements(stmt: TYPE.Statement): TYPE.Statement[] {
-        return TYPE.isBlockStatement(stmt) ? stmt.body : [stmt];
+        return isBlockStatementNode(stmt) ? stmt.body : [stmt];
     }
 
     /**
@@ -614,10 +653,10 @@ export class ConditionSimplify implements ISimplify {
         if (node === skip) return { readBefore: false, started, written };
         if (node === anchor) return { readBefore: false, started: true, written: false };
         const value = node as unknown as { expression?: TYPE.Expression };
-        if (TYPE.isParenthesizedExpression(node)) {
+        if (isParenthesizedExpression(node)) {
             return this.readsNameBeforeWriteAfterAnchor(value.expression as TYPE.Expression, anchor, name, skip, started, written);
         }
-        if (TYPE.isSequenceExpression(node)) {
+        if (isSequenceExpression(node)) {
             let readBefore = false;
             let st = started;
             let wr = written;
@@ -629,13 +668,13 @@ export class ConditionSimplify implements ISimplify {
             }
             return { readBefore, started: st, written: wr };
         }
-        if (TYPE.isLogicalExpression(node)) {
+        if (isLogicalExpression(node)) {
             const left = this.readsNameBeforeWriteAfterAnchor(node.left as TYPE.Expression, anchor, name, skip, started, written);
             const right = this.readsNameBeforeWriteAfterAnchor(node.right as TYPE.Expression, anchor, name, skip, left.started, left.written);
             // 右侧可能短路不执行,节点之后只有左侧的写入是确定的
             return { readBefore: left.readBefore || right.readBefore, started: left.started || right.started, written: left.written };
         }
-        if (TYPE.isConditionalExpression(node)) {
+        if (isConditionalExpression(node)) {
             const test = this.readsNameBeforeWriteAfterAnchor(node.test, anchor, name, skip, started, written);
             const consequent = this.readsNameBeforeWriteAfterAnchor(node.consequent, anchor, name, skip, test.started, test.written);
             const alternate = this.readsNameBeforeWriteAfterAnchor(node.alternate, anchor, name, skip, test.started, test.written);
@@ -645,20 +684,20 @@ export class ConditionSimplify implements ISimplify {
                 written: test.written,
             };
         }
-        if (TYPE.isUnaryExpression(node)) {
+        if (isUnaryExpression(node)) {
             return this.readsNameBeforeWriteAfterAnchor(node.argument as TYPE.Expression, anchor, name, skip, started, written);
         }
-        if (TYPE.isBinaryExpression(node)) {
+        if (isBinaryExpression(node)) {
             const left = this.readsNameBeforeWriteAfterAnchor(node.left as unknown as TYPE.Expression, anchor, name, skip, started, written);
             const right = this.readsNameBeforeWriteAfterAnchor(node.right as unknown as TYPE.Expression, anchor, name, skip, left.started, left.written);
             return { readBefore: left.readBefore || right.readBefore, started: right.started, written: right.written };
         }
-        if (TYPE.isAssignmentExpression(node)) {
-            const readsLeft = TYPE.isIdentifier(node.left)
+        if (isAssignmentExpression(node)) {
+            const readsLeft = isIdentifier(node.left)
                 ? (node.operator !== "=" && node.left.name === name)
                 : collectReadNames(node.left).has(name);
             const right = this.readsNameBeforeWriteAfterAnchor(node.right, anchor, name, skip, started, written);
-            const writes = right.started && TYPE.isIdentifier(node.left) && node.left.name === name;
+            const writes = right.started && isIdentifier(node.left) && node.left.name === name;
             return {
                 readBefore: (right.started && readsLeft && !right.written) || right.readBefore,
                 started: right.started,
@@ -703,7 +742,7 @@ export class ConditionSimplify implements ISimplify {
         skip: TYPE.Node,
     ): boolean {
         if (node === anchor || node === skip) return false;
-        if (TYPE.isSequenceExpression(node)) {
+        if (isSequenceExpression(node)) {
             const expressions = node.expressions as TYPE.Expression[];
             const index = expressions.findIndex((e) => this.containsNode(e, anchor));
             if (index < 0) return false;
@@ -713,7 +752,7 @@ export class ConditionSimplify implements ISimplify {
             }
             return false;
         }
-        if (TYPE.isLogicalExpression(node)) {
+        if (isLogicalExpression(node)) {
             const left = node.left as TYPE.Expression;
             const right = node.right as TYPE.Expression;
             if (this.containsNode(left, anchor)) {
@@ -728,10 +767,10 @@ export class ConditionSimplify implements ISimplify {
             }
             return false;
         }
-        if (TYPE.isUnaryExpression(node) && node.operator === "!") {
+        if (isUnaryExpression(node) && node.operator === "!") {
             return this.testWritesAfterAnchor(node.argument as TYPE.Expression, anchor, name, !truthy, skip);
         }
-        if (TYPE.isConditionalExpression(node)) {
+        if (isConditionalExpression(node)) {
             if (this.containsNode(node.test, anchor)) {
                 if (this.testWritesAfterAnchor(node.test, anchor, name, true, skip)) return true;
                 return this.testWritesOnTakenPath(node.consequent, name, truthy, skip)
@@ -745,12 +784,12 @@ export class ConditionSimplify implements ISimplify {
             }
             return false;
         }
-        if (TYPE.isAssignmentExpression(node)) {
+        if (isAssignmentExpression(node)) {
             return this.containsNode(node.right, anchor)
                 ? this.testWritesAfterAnchor(node.right, anchor, name, truthy, skip)
                 : false;
         }
-        if (TYPE.isBinaryExpression(node)) {
+        if (isBinaryExpression(node)) {
             const left = node.left as unknown as TYPE.Expression;
             const right = node.right as unknown as TYPE.Expression;
             if (this.containsNode(left, anchor)) {
@@ -762,7 +801,7 @@ export class ConditionSimplify implements ISimplify {
             }
             return false;
         }
-        if (TYPE.isMemberExpression(node)) {
+        if (isMemberExpression(node)) {
             if (this.containsNode(node.object, anchor)) {
                 return this.testWritesAfterAnchor(node.object as TYPE.Expression, anchor, name, truthy, skip)
                     || (node.computed && this.testWritesOnTakenPath(node.property as unknown as TYPE.Expression, name, true, skip));
@@ -771,7 +810,7 @@ export class ConditionSimplify implements ISimplify {
                 ? this.testWritesAfterAnchor(node.property as unknown as TYPE.Expression, anchor, name, truthy, skip)
                 : false;
         }
-        if (TYPE.isCallExpression(node) || TYPE.isNewExpression(node)) {
+        if (isCallExpression(node) || isNewExpression(node)) {
             const parts: TYPE.Expression[] = [node.callee as TYPE.Expression];
             for (const arg of node.arguments) parts.push(arg as TYPE.Expression);
             const index = parts.findIndex((part) => this.containsNode(part, anchor));
@@ -782,7 +821,7 @@ export class ConditionSimplify implements ISimplify {
             }
             return false;
         }
-        if (TYPE.isUnaryExpression(node)) {
+        if (isUnaryExpression(node)) {
             return this.testWritesAfterAnchor(node.argument as TYPE.Expression, anchor, name, truthy, skip);
         }
         return false;
@@ -799,20 +838,20 @@ export class ConditionSimplify implements ISimplify {
         skip?: TYPE.Node,
     ): boolean {
         if (skip && test === skip) return false;
-        if (TYPE.isSequenceExpression(test)) {
+        if (isSequenceExpression(test)) {
             return test.expressions.some((e) => this.testWritesOnTakenPath(e as TYPE.Expression, name, true, skip));
         }
-        if (TYPE.isAssignmentExpression(test)) {
-            const writesLeft = TYPE.isIdentifier(test.left) && test.left.name === name;
+        if (isAssignmentExpression(test)) {
+            const writesLeft = isIdentifier(test.left) && test.left.name === name;
             return writesLeft || this.testWritesOnTakenPath(test.right, name, true, skip);
         }
-        if (TYPE.isUpdateExpression(test)) {
-            return TYPE.isIdentifier(test.argument) && test.argument.name === name;
+        if (isUpdateExpression(test)) {
+            return isIdentifier(test.argument) && test.argument.name === name;
         }
-        if (TYPE.isUnaryExpression(test) && test.operator === "!") {
+        if (isUnaryExpression(test) && test.operator === "!") {
             return this.testWritesOnTakenPath(test.argument as TYPE.Expression, name, !truthy, skip);
         }
-        if (TYPE.isLogicalExpression(test)) {
+        if (isLogicalExpression(test)) {
             const left = test.left as TYPE.Expression;
             const right = test.right as TYPE.Expression;
             if (test.operator === "&&") {
@@ -826,7 +865,7 @@ export class ConditionSimplify implements ISimplify {
                 ? this.testWritesOnTakenPath(left, name, true, skip)
                 : this.testWritesOnTakenPath(left, name, false, skip) || this.testWritesOnTakenPath(right, name, false, skip);
         }
-        if (TYPE.isConditionalExpression(test)) {
+        if (isConditionalExpression(test)) {
             return this.testWritesOnTakenPath(test.consequent, name, truthy, skip)
                 && this.testWritesOnTakenPath(test.alternate, name, truthy, skip);
         }
@@ -884,14 +923,14 @@ export class ConditionSimplify implements ISimplify {
                     innermostLoopHandled = true;
                     const loopTestStmts: TYPE.Statement[] = [];
                     if (cur.isForStatement()) {
-                        if (cur.node.test) loopTestStmts.push(TYPE.expressionStatement(cur.node.test));
-                        if (cur.node.update) loopTestStmts.push(TYPE.expressionStatement(cur.node.update));
+                        if (cur.node.test) loopTestStmts.push(expressionStatement(cur.node.test));
+                        if (cur.node.update) loopTestStmts.push(expressionStatement(cur.node.update));
                     } else if (cur.isWhileStatement() && cur.node.test) {
-                        loopTestStmts.push(TYPE.expressionStatement(cur.node.test));
+                        loopTestStmts.push(expressionStatement(cur.node.test));
                     }
                     segments.push(loopTestStmts);
                     const body = cur.node.body;
-                    if (TYPE.isBlockStatement(body)) {
+                    if (isBlockStatementNode(body)) {
                         const idx = body.body.findIndex((s) => this.statementContains(s, self));
                         if (idx > 0) segments.push(body.body.slice(0, idx));
                     }
@@ -934,7 +973,7 @@ export class ConditionSimplify implements ISimplify {
         let count = 0;
         walkNode(node, (n, parent) => {
             if (isFunctionLike(n) || isClassLike(n)) return false;
-            if (TYPE.isIdentifier(n) && n.name === name && parent && TYPE.isReferenced(n, parent)) count++;
+            if (isIdentifier(n) && n.name === name && parent && isReferencedNode(n, parent)) count++;
             return true;
         });
         return count;
@@ -949,8 +988,8 @@ export class ConditionSimplify implements ISimplify {
         const visit = (current: TYPE.Node, parent: TYPE.Node | null, key: string | null): boolean => {
             if (site) return false;
             if (isFunctionLike(current) || isClassLike(current)) return false;
-            if (TYPE.isIdentifier(current) && current.name === name && parent && key !== null
-                && TYPE.isReferenced(current, parent)) {
+            if (isIdentifier(current) && current.name === name && parent && key !== null
+                && isReferencedNode(current, parent)) {
                 const holder = parent as { [key: string]: any };
                 const slot = holder[key];
                 // 键可能对应数组(expressions/arguments 等),记录元素下标
@@ -968,14 +1007,14 @@ export class ConditionSimplify implements ISimplify {
     private replaceIdentifierReads(node: TYPE.Node, name: string, replacement: TYPE.Identifier): void {
         const visit = (current: TYPE.Node, parent: TYPE.Node | null, key: string | null): boolean => {
             if (isFunctionLike(current) || isClassLike(current)) return false;
-            if (TYPE.isIdentifier(current) && current.name === name && parent && key !== null
-                && TYPE.isReferenced(current, parent)) {
+            if (isIdentifier(current) && current.name === name && parent && key !== null
+                && isReferencedNode(current, parent)) {
                 const holder = parent as { [key: string]: any };
                 const slot = holder[key];
                 if (Array.isArray(slot)) {
-                    slot[slot.indexOf(current)] = TYPE.identifier(replacement.name);
+                    slot[slot.indexOf(current)] = identifier(replacement.name);
                 } else {
-                    holder[key] = TYPE.identifier(replacement.name);
+                    holder[key] = identifier(replacement.name);
                 }
                 return false;
             }
@@ -1004,32 +1043,32 @@ export class ConditionSimplify implements ISimplify {
         out: TYPE.Statement[],
         unconditional: boolean,
     ): TYPE.Expression {
-        while (TYPE.isParenthesizedExpression(expr)) expr = (expr as any).expression;
-        if (TYPE.isSequenceExpression(expr)) {
+        while (isParenthesizedExpression(expr)) expr = (expr as any).expression;
+        if (isSequenceExpression(expr)) {
             if (!unconditional) return expr;
             const expressions = expr.expressions as TYPE.Expression[];
             if (expressions.length <= 1) return expressions[0] ?? expr;
             for (let i = 0; i < expressions.length - 1; i++) {
-                out.push(TYPE.expressionStatement(expressions[i]));
+                out.push(expressionStatement(expressions[i]));
             }
             return this.extractUnconditionalPrefix(expressions[expressions.length - 1], out, unconditional);
         }
-        if (TYPE.isLogicalExpression(expr)) {
+        if (isLogicalExpression(expr)) {
             // 左侧一定求值;右侧只在左侧满足条件时求值,不能提前。
             expr.left = this.extractUnconditionalPrefix(expr.left as TYPE.Expression, out, unconditional);
             expr.right = this.extractUnconditionalPrefix(expr.right as TYPE.Expression, out, false);
             return expr;
         }
-        if (TYPE.isConditionalExpression(expr)) {
+        if (isConditionalExpression(expr)) {
             // test 一定求值,consequent/alternate 不一定。
             expr.test = this.extractUnconditionalPrefix(expr.test, out, unconditional);
             return expr;
         }
-        if (TYPE.isUnaryExpression(expr) && expr.operator !== "delete") {
+        if (isUnaryExpression(expr) && expr.operator !== "delete") {
             expr.argument = this.extractUnconditionalPrefix(expr.argument as TYPE.Expression, out, unconditional);
             return expr;
         }
-        if (TYPE.isParenthesizedExpression(expr)) {
+        if (isParenthesizedExpression(expr)) {
             const node = expr as any;
             node.expression = this.extractUnconditionalPrefix(node.expression, out, unconditional);
             return node;
@@ -1040,16 +1079,16 @@ export class ConditionSimplify implements ISimplify {
     /** 判断语句是否在所有执行路径上都会给 name 赋新值(用于确认 test 中的临时赋值一定被覆盖)。 */
     private definitelyWrites(stmt: TYPE.Statement | null | undefined, name: string): boolean {
         if (!stmt) return false;
-        if (TYPE.isBlockStatement(stmt) || TYPE.isProgram(stmt)) {
+        if (isBlockStatementNode(stmt) || isProgramNode(stmt)) {
             return stmt.body.some((child) => this.definitelyWrites(child, name));
         }
-        if (TYPE.isExpressionStatement(stmt)) return this.definitelyWritesExpression(stmt.expression, name);
-        if (TYPE.isIfStatement(stmt)) {
+        if (isExpressionStatement(stmt)) return this.definitelyWritesExpression(stmt.expression, name);
+        if (isIfStatement(stmt)) {
             return this.definitelyWrites(stmt.consequent, name)
                 && this.definitelyWrites(stmt.alternate, name);
         }
-        if (TYPE.isLabeledStatement(stmt)) return this.definitelyWrites(stmt.body, name);
-        if (TYPE.isTryStatement(stmt)) {
+        if (isLabeledStatement(stmt)) return this.definitelyWrites(stmt.body, name);
+        if (isTryStatement(stmt)) {
             // finally 一定会执行;没有 finally 时保守处理
             return stmt.finalizer != null && this.definitelyWrites(stmt.finalizer, name);
         }
@@ -1057,14 +1096,14 @@ export class ConditionSimplify implements ISimplify {
     }
 
     private definitelyWritesExpression(expr: TYPE.Expression, name: string): boolean {
-        if (TYPE.isAssignmentExpression(expr)) {
-            if (TYPE.isIdentifier(expr.left) && expr.left.name === name) return true;
+        if (isAssignmentExpression(expr)) {
+            if (isIdentifier(expr.left) && expr.left.name === name) return true;
             return this.definitelyWritesExpression(expr.right, name);
         }
-        if (TYPE.isUpdateExpression(expr)) {
-            return TYPE.isIdentifier(expr.argument) && expr.argument.name === name;
+        if (isUpdateExpression(expr)) {
+            return isIdentifier(expr.argument) && expr.argument.name === name;
         }
-        if (TYPE.isSequenceExpression(expr)) {
+        if (isSequenceExpression(expr)) {
             return expr.expressions.some((child) => this.definitelyWritesExpression(child as TYPE.Expression, name));
         }
         return false;
@@ -1079,54 +1118,54 @@ export class ConditionSimplify implements ISimplify {
 
     private flatten(node: TYPE.Node | null | undefined, out: TYPE.Node[]): void {
         if (!node || typeof (node as any).type !== "string") return;
-        if (TYPE.isSequenceExpression(node)) {
+        if (isSequenceExpression(node)) {
             for (const expression of node.expressions) this.flatten(expression as TYPE.Expression, out);
             return;
         }
-        if (TYPE.isLogicalExpression(node)) {
+        if (isLogicalExpression(node)) {
             this.flatten(node.left as TYPE.Expression, out);
             this.flatten(node.right as TYPE.Expression, out);
             return;
         }
-        if (TYPE.isConditionalExpression(node)) {
+        if (isConditionalExpression(node)) {
             this.flatten(node.test, out);
             this.flatten(node.consequent, out);
             this.flatten(node.alternate, out);
             return;
         }
-        if (TYPE.isAssignmentExpression(node)) {
+        if (isAssignmentExpression(node)) {
             // 赋值语句本身在 RHS 之后生效
             this.flatten(node.right, out);
             out.push(node);
             return;
         }
-        if (TYPE.isCallExpression(node) || TYPE.isNewExpression(node)) {
+        if (isCallExpression(node) || isNewExpression(node)) {
             this.flatten(node.callee as TYPE.Expression, out);
             for (const argument of node.arguments) this.flatten(argument as TYPE.Expression, out);
             return;
         }
-        if (TYPE.isBinaryExpression(node)) {
+        if (isBinaryExpression(node)) {
             this.flatten(node.left as TYPE.Expression, out);
             this.flatten(node.right as TYPE.Expression, out);
             return;
         }
-        if (TYPE.isUnaryExpression(node)) {
+        if (isUnaryExpression(node)) {
             this.flatten(node.argument as TYPE.Expression, out);
             out.push(node);
             return;
         }
-        if (TYPE.isMemberExpression(node)) {
+        if (isMemberExpression(node)) {
             this.flatten(node.object as TYPE.Expression, out);
             if (node.computed) this.flatten(node.property as TYPE.Expression, out);
             out.push(node);
             return;
         }
-        if (TYPE.isArrayExpression(node)) {
+        if (isArrayExpression(node)) {
             for (const element of node.elements) this.flatten(element as TYPE.Expression, out);
             out.push(node);
             return;
         }
-        if (TYPE.isObjectExpression(node)) {
+        if (isObjectExpression(node)) {
             for (const property of node.properties) this.flatten(property as TYPE.Node, out);
             out.push(node);
             return;

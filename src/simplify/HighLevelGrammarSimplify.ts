@@ -5,6 +5,39 @@ import traverse, {NodePath} from "@babel/traverse";
 import {SyntaxRewriteSimplify} from "./SyntaxRewriteSimplify";
 import {isDoneMember, isNextValue, isNodeEqual} from "./AstUtils";
 
+
+const {
+    breakStatement,
+    expressionStatement,
+    file,
+    forInStatement,
+    identifier,
+    isBooleanLiteral,
+    isBreakStatement,
+    isCallExpression,
+    isLogicalExpression,
+    isMemberExpression,
+    isProgram,
+    optionalMemberExpression,
+    switchCase,
+    assignmentExpression: assignmentExpressionBuilder,
+    blockStatement: blockStatementBuilder,
+    conditionalExpression: conditionalExpressionBuilder,
+    forOfStatement: forOfStatementBuilder,
+    forStatement: forStatementBuilder,
+    isAssignmentExpression: isAssignmentExpressionNode,
+    isBinaryExpression: isBinaryExpressionNode,
+    isBlockStatement: isBlockStatementNode,
+    isExpressionStatement: isExpressionStatementNode,
+    isIdentifier: isIdentifierNode,
+    isIfStatement: isIfStatementNode,
+    isNullLiteral: isNullLiteralNode,
+    isReturnStatement: isReturnStatementNode,
+    logicalExpression: logicalExpressionBuilder,
+    returnStatement: returnStatementBuilder,
+    switchStatement: switchStatementBuilder,
+} = TYPE;
+
 /**
  * @Author: jmp0
  * @Email: jmp0@qq.com
@@ -74,13 +107,13 @@ export class HighLevelGrammarSimplify implements ISimplify {
         if (consequentAssign !== null && alternateAssign !== null){
             const name = this.getAssignmentExpressionEqualedLeft(consequentAssign,alternateAssign);
             if (name === null) return false;
-            let conditionalExpression:TYPE.Expression= TYPE.conditionalExpression(value.get('test').node,consequentAssign.get('right').node,alternateAssign.get('right').node);
-            if (TYPE.isBooleanLiteral(conditionalExpression.consequent) && TYPE.isBooleanLiteral(conditionalExpression.alternate)
+            let conditionalExpression:TYPE.Expression= conditionalExpressionBuilder(value.get('test').node,consequentAssign.get('right').node,alternateAssign.get('right').node);
+            if (isBooleanLiteral(conditionalExpression.consequent) && isBooleanLiteral(conditionalExpression.alternate)
                 && conditionalExpression.consequent.value === true && conditionalExpression.alternate.value === false){
                 conditionalExpression = value.get('test').node;
             }
-            const newAssignmentExpression = TYPE.assignmentExpression('=',TYPE.identifier(name),conditionalExpression);
-            value.replaceWith(TYPE.expressionStatement(newAssignmentExpression));
+            const newAssignmentExpression = assignmentExpressionBuilder('=',identifier(name),conditionalExpression);
+            value.replaceWith(expressionStatement(newAssignmentExpression));
             return true;
         }
         // return 三目只在非嵌套位置折叠,保留 else-if 链的可读结构
@@ -88,12 +121,12 @@ export class HighLevelGrammarSimplify implements ISimplify {
         const consequentRet = this.getBlockOnlyOneReturnExpression(consequent);
         const alternateRet = this.getBlockOnlyOneReturnExpression(alternate);
         if (consequentRet !== null && alternateRet !== null){
-            let conditionalExpression:TYPE.Expression= TYPE.conditionalExpression(value.get('test').node,consequentRet.node,alternateRet.node);
-            if (TYPE.isBooleanLiteral(conditionalExpression.consequent) && TYPE.isBooleanLiteral(conditionalExpression.alternate)
+            let conditionalExpression:TYPE.Expression= conditionalExpressionBuilder(value.get('test').node,consequentRet.node,alternateRet.node);
+            if (isBooleanLiteral(conditionalExpression.consequent) && isBooleanLiteral(conditionalExpression.alternate)
                 && conditionalExpression.consequent.value === true && conditionalExpression.alternate.value === false){
                 conditionalExpression = value.get('test').node;
             }
-            const returnStatement = TYPE.returnStatement(conditionalExpression)
+            const returnStatement = returnStatementBuilder(conditionalExpression)
             value.replaceWith(returnStatement);
             return true;
         }
@@ -106,7 +139,7 @@ export class HighLevelGrammarSimplify implements ISimplify {
             if (result == null) return false;
             arr.push(result);
             return true;
-        } else if (TYPE.isLogicalExpression(path.node) && path.node.operator === '||'){
+        } else if (isLogicalExpression(path.node) && path.node.operator === '||'){
             // 必须整棵 || 都能拆成比较,否则 switch 会漏掉未识别的分支(例如 `!(a !== b)`
             // 或带 sequence 的条件),把剩余条件直接丢掉导致语义错误。
             if (!this.checkEqualAngGetLeftRight(path.get('left') as NodePath<TYPE.Expression>,arr)) return false;
@@ -130,13 +163,13 @@ export class HighLevelGrammarSimplify implements ISimplify {
      * 输出 `(x?.a).b`,遇到 x 为空时会继续读 `.b` 而抛异常。
      */
     private makeOptionalChain(node: TYPE.Expression, target: string): TYPE.Expression | null {
-        if (!TYPE.isMemberExpression(node) || node.optional) return null;
-        if (TYPE.isIdentifier(node.object) && node.object.name === target) {
-            return TYPE.optionalMemberExpression(node.object, node.property as TYPE.Expression, node.computed, true);
+        if (!isMemberExpression(node) || node.optional) return null;
+        if (isIdentifierNode(node.object) && node.object.name === target) {
+            return optionalMemberExpression(node.object, node.property as TYPE.Expression, node.computed, true);
         }
         const inner = this.makeOptionalChain(node.object as TYPE.Expression, target);
         if (!inner) return null;
-        return TYPE.optionalMemberExpression(inner, node.property as TYPE.Expression, node.computed, false);
+        return optionalMemberExpression(inner, node.property as TYPE.Expression, node.computed, false);
     }
 
     /**
@@ -145,20 +178,20 @@ export class HighLevelGrammarSimplify implements ISimplify {
      * `p0.value.author` 这类成员访问重复求值(可能触发 getter)。
      */
     private nullishGuardTarget(test: TYPE.Expression): TYPE.Identifier | null {
-        if (TYPE.isBinaryExpression(test) && test.operator === "==") {
-            if (TYPE.isNullLiteral(test.left) && TYPE.isIdentifier(test.right)) return test.right;
-            if (TYPE.isNullLiteral(test.right) && TYPE.isIdentifier(test.left)) return test.left;
+        if (isBinaryExpressionNode(test) && test.operator === "==") {
+            if (isNullLiteralNode(test.left) && isIdentifierNode(test.right)) return test.right;
+            if (isNullLiteralNode(test.right) && isIdentifierNode(test.left)) return test.left;
             return null;
         }
-        if (!TYPE.isLogicalExpression(test) || test.operator !== "||") return null;
+        if (!isLogicalExpression(test) || test.operator !== "||") return null;
         const strict = (node: TYPE.Node): TYPE.BinaryExpression | null =>
-            TYPE.isBinaryExpression(node) && node.operator === "===" ? node : null;
+            isBinaryExpressionNode(node) && node.operator === "===" ? node : null;
         const left = strict(test.left);
         const right = strict(test.right);
         if (!left || !right) return null;
         for (const [a, b] of [[left, right], [right, left]] as Array<[TYPE.BinaryExpression, TYPE.BinaryExpression]>) {
-            if (TYPE.isIdentifier(a.left) && TYPE.isNullLiteral(a.right)
-                && TYPE.isIdentifier(b.left) && TYPE.isIdentifier(b.right, { name: "undefined" })
+            if (isIdentifierNode(a.left) && isNullLiteralNode(a.right)
+                && isIdentifierNode(b.left) && isIdentifierNode(b.right, { name: "undefined" })
                 && a.left.name === b.left.name) {
                 return a.left;
             }
@@ -167,20 +200,20 @@ export class HighLevelGrammarSimplify implements ISimplify {
     }
 
     private isAccUndefinedBreak(node:TYPE.Node):boolean {
-        return TYPE.isIfStatement(node)
-            && TYPE.isBinaryExpression(node.test) && node.test.operator === "=="
-            && TYPE.isIdentifier(node.test.left) && node.test.left.name === "acc"
-            && TYPE.isIdentifier(node.test.right) && node.test.right.name === "undefined"
-            && TYPE.isBreakStatement(node.consequent);
+        return isIfStatementNode(node)
+            && isBinaryExpressionNode(node.test) && node.test.operator === "=="
+            && isIdentifierNode(node.test.left) && node.test.left.name === "acc"
+            && isIdentifierNode(node.test.right) && node.test.right.name === "undefined"
+            && isBreakStatement(node.consequent);
     }
 
     /** acc[Symbol.iterator]() */
     private isSymbolIteratorCall(node:TYPE.Node):boolean {
-        if (!TYPE.isCallExpression(node) || !TYPE.isMemberExpression(node.callee)) return false;
+        if (!isCallExpression(node) || !isMemberExpression(node.callee)) return false;
         const callee = node.callee;
-        if (!callee.computed || !TYPE.isMemberExpression(callee.property)) return false;
-        return TYPE.isIdentifier(callee.property.object) && callee.property.object.name === "Symbol"
-            && TYPE.isIdentifier(callee.property.property) && callee.property.property.name === "iterator";
+        if (!callee.computed || !isMemberExpression(callee.property)) return false;
+        return isIdentifierNode(callee.property.object) && callee.property.object.name === "Symbol"
+            && isIdentifierNode(callee.property.property) && callee.property.property.name === "iterator";
     }
 
     private canTransform2questionMarkStatement(rawSwitchCase:Array<SwitchCaseDesc>):TYPE.Statement|null {
@@ -189,18 +222,18 @@ export class HighLevelGrammarSimplify implements ISimplify {
         const case2:SwitchCaseDesc = rawSwitchCase[1];
         if (case1.body != null) return null;
         if (!case1.right.isNullLiteral()) return null;
-        if (!TYPE.isIdentifier(case2.right.node)) return null;
+        if (!isIdentifierNode(case2.right.node)) return null;
         if (case2.right.node.name !== 'undefined') return null;
         if (case2?.body.node.body.length != 1) return null;
         const statement = case2.body.node.body[0];
-        if (TYPE.isExpressionStatement(statement) && TYPE.isAssignmentExpression(statement.expression)){
-            if (TYPE.isIdentifier(statement.expression.left) && TYPE.isIdentifier(case1.left.node)){
+        if (isExpressionStatementNode(statement) && isAssignmentExpressionNode(statement.expression)){
+            if (isIdentifierNode(statement.expression.left) && isIdentifierNode(case1.left.node)){
                 if(statement.expression.left.name === case1.left.node.name) {
-                    const assignmentExpression = TYPE.assignmentExpression("=", TYPE.identifier(case1.left.node.name), TYPE.logicalExpression("??", TYPE.identifier(case1.left.node.name), statement.expression.right));
-                    return TYPE.expressionStatement(assignmentExpression);
+                    const assignmentExpression = assignmentExpressionBuilder("=", identifier(case1.left.node.name), logicalExpressionBuilder("??", identifier(case1.left.node.name), statement.expression.right));
+                    return expressionStatement(assignmentExpression);
                 }else {
-                    const logicalExpression = TYPE.logicalExpression("??",case1.left.node,statement.expression);
-                    return TYPE.expressionStatement(logicalExpression);
+                    const logicalExpression = logicalExpressionBuilder("??",case1.left.node,statement.expression);
+                    return expressionStatement(logicalExpression);
                 }
             }
         }
@@ -262,17 +295,17 @@ export class HighLevelGrammarSimplify implements ISimplify {
         const switchCases:Array<TYPE.SwitchCase> = []
         for (let desc of rawSwitchCase) {
             if (desc.body === null){
-                switchCases.push(TYPE.switchCase(desc.right.node,[]))
+                switchCases.push(switchCase(desc.right.node,[]))
                 continue;
             }
-            if (!TYPE.isReturnStatement(desc.body.node.body[desc.body.node.body.length-1])){
-                desc.body.node.body.push(TYPE.breakStatement())
+            if (!isReturnStatementNode(desc.body.node.body[desc.body.node.body.length-1])){
+                desc.body.node.body.push(breakStatement())
             }
-            switchCases.push(TYPE.switchCase(desc.right.node,desc.body.node.body))
+            switchCases.push(switchCase(desc.right.node,desc.body.node.body))
         }
-        const switchStatement = TYPE.switchStatement(rawSwitchCase[0].left.node,switchCases)
+        const switchStatement = switchStatementBuilder(rawSwitchCase[0].left.node,switchCases)
         if (defaultBody != null){
-            switchCases.push(TYPE.switchCase(null,defaultBody))
+            switchCases.push(switchCase(null,defaultBody))
         }
         value.replaceWith(switchStatement);
         return true;
@@ -280,28 +313,28 @@ export class HighLevelGrammarSimplify implements ISimplify {
 
     private checkAndTransformToForStatement(value:NodePath<TYPE.WhileStatement>){
         const pre = value.getPrevSibling();
-        if (!TYPE.isExpressionStatement(pre.node)) return false;
+        if (!isExpressionStatementNode(pre.node)) return false;
         const test = value.get('test');
-        if (!TYPE.isBooleanLiteral(test.node)) return false;
+        if (!isBooleanLiteral(test.node)) return false;
         const body = value.get('body')
-        if (!TYPE.isBlockStatement(body.node)) return false;
+        if (!isBlockStatementNode(body.node)) return false;
         const bodyStatements = (body as NodePath<TYPE.BlockStatement>).get('body')
         if (bodyStatements.length < 2) return false;
         const first = bodyStatements[0];
         const last = bodyStatements[bodyStatements.length -1];
-        if (!TYPE.isExpressionStatement(last.node)) return false;
+        if (!isExpressionStatementNode(last.node)) return false;
         if (!first.isIfStatement()) return false;
         const consequent = first.get('consequent');
-        if (!TYPE.isBreakStatement(consequent.node)) return false;
+        if (!isBreakStatement(consequent.node)) return false;
         //now transform it to for loop;
-        const forBlock = TYPE.blockStatement([])
+        const forBlock = blockStatementBuilder([])
         for (let i = 1; i < bodyStatements.length - 1; i++) {
             forBlock.body.push(bodyStatements[i].node);
         }
         const forTest = first.get('test').node
-        if (!TYPE.isBinaryExpression(forTest)) return false;
+        if (!isBinaryExpressionNode(forTest)) return false;
         else forTest.operator = SyntaxRewriteSimplify.binaryInvert(forTest);
-        const forStatement = TYPE.forStatement(pre.node.expression,forTest,last.node.expression,forBlock)
+        const forStatement = forStatementBuilder(pre.node.expression,forTest,last.node.expression,forBlock)
         pre.remove();
         value.replaceWith(forStatement);
         return true;
@@ -313,26 +346,26 @@ export class HighLevelGrammarSimplify implements ISimplify {
         // v10 = acc;
         // if (acc == undefined) break;
         const pre = value.getPrevSibling();
-        if (!TYPE.isExpressionStatement(pre.node)) return false;
+        if (!isExpressionStatementNode(pre.node)) return false;
         const test = value.get('test');
-        if (!TYPE.isBooleanLiteral(test.node)) return false;
+        if (!isBooleanLiteral(test.node)) return false;
         const body = value.get('body')
-        if (!TYPE.isBlockStatement(body.node)) return false;
+        if (!isBlockStatementNode(body.node)) return false;
         const bodyStatements = (body as NodePath<TYPE.BlockStatement>).get('body')
         if (bodyStatements.length < 3) return false;
         const a = bodyStatements[0];
         const b = bodyStatements[1];
         const c = bodyStatements[2];
-        if (TYPE.isExpressionStatement(a.node) && TYPE.isAssignmentExpression(a.node.expression) &&
-            isNextValue(a.node.expression.right) && TYPE.isIdentifier(a.node.expression.left) && a.node.expression.left.name === 'acc'){
-            if (TYPE.isExpressionStatement(b.node) && TYPE.isAssignmentExpression(b.node.expression)
-                && TYPE.isIdentifier(b.node.expression.right) && b.node.expression.right.name === 'acc'){
+        if (isExpressionStatementNode(a.node) && isAssignmentExpressionNode(a.node.expression) &&
+            isNextValue(a.node.expression.right) && isIdentifierNode(a.node.expression.left) && a.node.expression.left.name === 'acc'){
+            if (isExpressionStatementNode(b.node) && isAssignmentExpressionNode(b.node.expression)
+                && isIdentifierNode(b.node.expression.right) && b.node.expression.right.name === 'acc'){
                 const vv = b.node.expression.left  as TYPE.Identifier;
                 if (this.isAccUndefinedBreak(c.node)){
-                    const body = TYPE.blockStatement(bodyStatements.slice(3,bodyStatements.length).map((value)=>{
+                    const body = blockStatementBuilder(bodyStatements.slice(3,bodyStatements.length).map((value)=>{
                         return value.node;
                     }));
-                    value.replaceWith(TYPE.forInStatement(vv,TYPE.identifier("reserved"),body));
+                    value.replaceWith(forInStatement(vv,identifier("reserved"),body));
                     return true;
                 }
             }
@@ -342,44 +375,44 @@ export class HighLevelGrammarSimplify implements ISimplify {
     /** `it = obj[Symbol.iterator]()` / `it = obj[Symbol.iterator]` 里的 obj。 */
     private iterableOfIteratorInit(expr: TYPE.Expression): TYPE.Expression | null {
         let callee: TYPE.Node = expr;
-        if (TYPE.isCallExpression(expr)) {
+        if (isCallExpression(expr)) {
             if (expr.arguments.length > 0) return null;
             callee = expr.callee;
         }
-        if (!TYPE.isMemberExpression(callee) || !callee.computed) return null;
+        if (!isMemberExpression(callee) || !callee.computed) return null;
         const prop = callee.property;
-        if (!TYPE.isMemberExpression(prop) || prop.computed) return null;
-        if (!TYPE.isIdentifier(prop.object) || prop.object.name !== "Symbol") return null;
-        if (!TYPE.isIdentifier(prop.property) || prop.property.name !== "iterator") return null;
+        if (!isMemberExpression(prop) || prop.computed) return null;
+        if (!isIdentifierNode(prop.object) || prop.object.name !== "Symbol") return null;
+        if (!isIdentifierNode(prop.property) || prop.property.name !== "iterator") return null;
         return callee.object as TYPE.Expression;
     }
 
     /** `it.next()` 且 it 是指定迭代器变量。 */
     private isNextCallOf(expr: TYPE.Node | null | undefined, itName: string): boolean {
-        if (!TYPE.isCallExpression(expr) || expr.arguments.length !== 0) return false;
+        if (!isCallExpression(expr) || expr.arguments.length !== 0) return false;
         const callee = expr.callee;
-        return TYPE.isMemberExpression(callee) && !callee.computed
-            && TYPE.isIdentifier(callee.object) && callee.object.name === itName
-            && TYPE.isIdentifier(callee.property) && callee.property.name === "next";
+        return isMemberExpression(callee) && !callee.computed
+            && isIdentifierNode(callee.object) && callee.object.name === itName
+            && isIdentifierNode(callee.property) && callee.property.name === "next";
     }
 
     /** `X = X.value`(for-of 循环变量的绑定赋值,转换后应删除)。 */
     private isSelfValueAssignment(stmt: TYPE.Statement, name: string): boolean {
-        if (!TYPE.isExpressionStatement(stmt) || !TYPE.isAssignmentExpression(stmt.expression)) return false;
+        if (!isExpressionStatementNode(stmt) || !isAssignmentExpressionNode(stmt.expression)) return false;
         const assign = stmt.expression;
         return assign.operator === "="
-            && TYPE.isIdentifier(assign.left) && assign.left.name === name
-            && TYPE.isMemberExpression(assign.right) && !assign.right.computed
-            && TYPE.isIdentifier(assign.right.object) && assign.right.object.name === name
-            && TYPE.isIdentifier(assign.right.property) && assign.right.property.name === "value";
+            && isIdentifierNode(assign.left) && assign.left.name === name
+            && isMemberExpression(assign.right) && !assign.right.computed
+            && isIdentifierNode(assign.right.object) && assign.right.object.name === name
+            && isIdentifierNode(assign.right.property) && assign.right.property.name === "value";
     }
 
     /** 语句是否是无条件的 `name = ...`。 */
     private isDirectAssignmentTo(stmt: TYPE.Node, name: string): boolean {
-        return TYPE.isExpressionStatement(stmt)
-            && TYPE.isAssignmentExpression(stmt.expression)
+        return isExpressionStatementNode(stmt)
+            && isAssignmentExpressionNode(stmt.expression)
             && stmt.expression.operator === "="
-            && TYPE.isIdentifier(stmt.expression.left)
+            && isIdentifierNode(stmt.expression.left)
             && stmt.expression.left.name === name;
     }
 
@@ -408,7 +441,7 @@ export class HighLevelGrammarSimplify implements ISimplify {
             refChild = p;
         }
         if (!common || common.node === loop.node) return false;
-        if (!TYPE.isBlockStatement(common.node) && !TYPE.isProgram(common.node)) return false;
+        if (!isBlockStatementNode(common.node) && !isProgram(common.node)) return false;
 
         const body = common.node.body as TYPE.Node[];
         let loopChild: NodePath = loop;
@@ -446,25 +479,25 @@ export class HighLevelGrammarSimplify implements ISimplify {
 
     private checkAndTransformToForOfStatement(value:NodePath<TYPE.WhileStatement>){
         const pre = value.getPrevSibling();
-        if (!TYPE.isExpressionStatement(pre.node)) return false;
+        if (!isExpressionStatementNode(pre.node)) return false;
         const init = pre.node.expression;
-        if (!TYPE.isAssignmentExpression(init) || init.operator !== "=" || !TYPE.isIdentifier(init.left)) return false;
+        if (!isAssignmentExpressionNode(init) || init.operator !== "=" || !isIdentifierNode(init.left)) return false;
         const iterable = this.iterableOfIteratorInit(init.right as TYPE.Expression);
         if (!iterable) return false;
         const iterBinding = value.scope.getBinding(init.left.name);
         if (!iterBinding) return false;
 
         const test = value.get('test');
-        if (!TYPE.isBooleanLiteral(test.node)) return false;
+        if (!isBooleanLiteral(test.node)) return false;
         const body = value.get('body')
-        if (!TYPE.isBlockStatement(body.node)) return false;
+        if (!isBlockStatementNode(body.node)) return false;
         const bodyStatements = (body as NodePath<TYPE.BlockStatement>).get('body')
         if (bodyStatements.length < 3) return false;
         // body[0] 必须是 `vv = it.next()`
         const nextStatement = bodyStatements[0].node;
-        if (!TYPE.isExpressionStatement(nextStatement) || !TYPE.isAssignmentExpression(nextStatement.expression)) return false;
+        if (!isExpressionStatementNode(nextStatement) || !isAssignmentExpressionNode(nextStatement.expression)) return false;
         const nextAssign = nextStatement.expression;
-        if (nextAssign.operator !== "=" || !TYPE.isIdentifier(nextAssign.left)
+        if (nextAssign.operator !== "=" || !isIdentifierNode(nextAssign.left)
             || !this.isNextCallOf(nextAssign.right, init.left.name)) return false;
         // 转换会删掉 `it = obj[Symbol.iterator]()`;循环体内不能再读取迭代器临时量。
         // ArkTS 会在提前 return 的分支里内联 `it.return()` 收尾,转换后 it 已不再赋值,
@@ -500,10 +533,10 @@ export class HighLevelGrammarSimplify implements ISimplify {
         if (!outStatement.isIfStatement()) return false;
         const btest = outStatement.get('test');
         const consequent = outStatement.get('consequent');
-        if (!TYPE.isBreakStatement(consequent.node)) return false;
+        if (!isBreakStatement(consequent.node)) return false;
         if (!isDoneMember(btest.node)) return false;
         const doneObject = (btest.node as TYPE.MemberExpression).object;
-        if (!TYPE.isIdentifier(doneObject) || doneObject.name !== vv.name) return false;
+        if (!isIdentifierNode(doneObject) || doneObject.name !== vv.name) return false;
 
         // `vv = vv.value` 由 for-of 的循环变量赋值替代。先判定再替换,
         // 否则 `vv.value` 已被改写后这条赋值就认不出来了。
@@ -514,9 +547,9 @@ export class HighLevelGrammarSimplify implements ISimplify {
         body.traverse({
            MemberExpression:(path)=>{
                if (path.node.computed) return;
-               if (!TYPE.isIdentifier(path.node.object) || path.node.object.name !== vv.name) return;
-               if (!TYPE.isIdentifier(path.node.property) || path.node.property.name !== "value") return;
-               path.replaceWith(TYPE.identifier(vv.name));
+               if (!isIdentifierNode(path.node.object) || path.node.object.name !== vv.name) return;
+               if (!isIdentifierNode(path.node.property) || path.node.property.name !== "value") return;
+               path.replaceWith(identifier(vv.name));
            }
         });
         const arr:TYPE.Statement[] = [];
@@ -524,8 +557,8 @@ export class HighLevelGrammarSimplify implements ISimplify {
             if (i === 2 && skipSelfValueAssignment) continue;
             arr.push(bodyStatements[i].node);
         }
-        const blockStatement = TYPE.blockStatement(arr);
-        const forOfStatement = TYPE.forOfStatement(vv,iterable as any,blockStatement);
+        const blockStatement = blockStatementBuilder(arr);
+        const forOfStatement = forOfStatementBuilder(vv,iterable as any,blockStatement);
         value.replaceWith(forOfStatement);
         pre.remove();
         return true;
@@ -533,7 +566,7 @@ export class HighLevelGrammarSimplify implements ISimplify {
 
     simplify(node: Program): boolean {
         let changed = false;
-        traverse(TYPE.file(node), {
+        traverse(file(node), {
             //transform while-statement to for-statement
             WhileStatement:(value)=>{
                 if (this.checkAndTransformToForStatement(value)) changed = true;
@@ -548,19 +581,19 @@ export class HighLevelGrammarSimplify implements ISimplify {
                 },
             },
             ForInStatement:(value)=>{
-                if (TYPE.isIdentifier(value.node.right) && value.node.right.name === 'reserved'){
+                if (isIdentifierNode(value.node.right) && value.node.right.name === 'reserved'){
                     let node = value.getPrevSibling().node;
-                    if (TYPE.isExpressionStatement(node)){
+                    if (isExpressionStatementNode(node)){
                         node = node.expression
                     }
-                    if(TYPE.isAssignmentExpression(node)){
+                    if(isAssignmentExpressionNode(node)){
                         node = node.right
                     }
                     if (this.isSymbolIteratorCall(node)){
                         const callee = (node as TYPE.CallExpression).callee
                         const callexp = (callee as TYPE.MemberExpression).object as TYPE.CallExpression
                         const id = callexp.arguments[0] as TYPE.Identifier
-                        if (TYPE.isIdentifier(id)) {
+                        if (isIdentifierNode(id)) {
                             value.get('right').replaceWith(id)
                             value.getPrevSibling().remove();
                             changed = true;
@@ -575,7 +608,7 @@ export class HighLevelGrammarSimplify implements ISimplify {
                 const target = this.nullishGuardTarget(conditionalNode.test);
                 if (!target) return;
                 const consequent = conditionalNode.consequent;
-                if (!TYPE.isIdentifier(consequent) || consequent.name !== 'undefined') return;
+                if (!isIdentifierNode(consequent) || consequent.name !== 'undefined') return;
                 const optionalChain = this.makeOptionalChain(conditionalNode.alternate, target.name);
                 if (!optionalChain) return;
                 value.replaceWith(optionalChain);
@@ -583,7 +616,7 @@ export class HighLevelGrammarSimplify implements ISimplify {
             }
         })
 
-        traverse(TYPE.file(node), {
+        traverse(file(node), {
             IfStatement:(value)=>{
                 // transform to switch case expression
                 if (this.checkAndTransformToSwitchCase(value)) changed = true;

@@ -1,8 +1,27 @@
 import { Program } from "@babel/types";
 import * as TYPE from "@babel/types";
-import traverse from "@babel/traverse";
 import { ISimplify } from "./ISimplify";
-import { collectAssignedNames, collectIdentifierNames, isNodeEqual, isPureExpression, isTempName } from "./AstUtils";
+import { collectAssignedNames, collectIdentifierNames, isNodeEqual, isPureExpression, isTempName, walkNode } from "./AstUtils";
+
+
+const {
+    assignmentExpression,
+    callExpression,
+    expressionStatement,
+    identifier,
+    isAssignmentExpression,
+    isCallExpression,
+    isExpression,
+    isExpressionStatement,
+    isIdentifier,
+    isMemberExpression,
+    isReturnStatement,
+    isStringLiteral,
+    isUnaryExpression,
+    memberExpression,
+    returnStatement,
+    unaryExpression,
+} = TYPE;
 
 /**
  * 还原 ArkCompiler 通过累加器调用方法的字节码形态。
@@ -25,18 +44,18 @@ import { collectAssignedNames, collectIdentifierNames, isNodeEqual, isPureExpres
  */
 export class AccCallSimplify implements ISimplify {
     private static isAcc(node: TYPE.Node | null | undefined): boolean {
-        return TYPE.isIdentifier(node) && node.name === "acc";
+        return isIdentifier(node) && node.name === "acc";
     }
 
     /** 匹配 `acc = acc.prop` / `acc = acc["prop"]`,返回属性名。 */
     private matchMethodLoad(stmt: TYPE.Statement): string | null {
-        if (!TYPE.isExpressionStatement(stmt) || !TYPE.isAssignmentExpression(stmt.expression)) return null;
+        if (!isExpressionStatement(stmt) || !isAssignmentExpression(stmt.expression)) return null;
         const assign = stmt.expression;
         if (assign.operator !== "=" || !AccCallSimplify.isAcc(assign.left)) return null;
-        if (!TYPE.isMemberExpression(assign.right) || !AccCallSimplify.isAcc(assign.right.object)) return null;
+        if (!isMemberExpression(assign.right) || !AccCallSimplify.isAcc(assign.right.object)) return null;
         const property = assign.right.property;
-        if (!assign.right.computed && TYPE.isIdentifier(property)) return property.name;
-        if (assign.right.computed && TYPE.isStringLiteral(property) && /^[A-Za-z_$][\w$]*$/.test(property.value)) {
+        if (!assign.right.computed && isIdentifier(property)) return property.name;
+        if (assign.right.computed && isStringLiteral(property) && /^[A-Za-z_$][\w$]*$/.test(property.value)) {
             return property.value;
         }
         return null;
@@ -60,13 +79,13 @@ export class AccCallSimplify implements ISimplify {
         let target: TYPE.Identifier | TYPE.MemberExpression | null = null;
         let operator = "=";
         let mode: "assign" | "expr" | "return" = "expr";
-        if (TYPE.isReturnStatement(stmt) && stmt.argument) {
+        if (isReturnStatement(stmt) && stmt.argument) {
             call = stmt.argument;
             mode = "return";
-        } else if (TYPE.isExpressionStatement(stmt)) {
+        } else if (isExpressionStatement(stmt)) {
             const expr = stmt.expression;
-            if (TYPE.isAssignmentExpression(expr)
-                && (TYPE.isIdentifier(expr.left) || TYPE.isMemberExpression(expr.left))) {
+            if (isAssignmentExpression(expr)
+                && (isIdentifier(expr.left) || isMemberExpression(expr.left))) {
                 call = expr.right;
                 target = expr.left;
                 operator = expr.operator;
@@ -77,26 +96,26 @@ export class AccCallSimplify implements ISimplify {
         }
         // 剥掉外层前缀一元运算(!、void、typeof 等;delete 需要左值引用,不剥)
         const wrappers: TYPE.UnaryExpression["operator"][] = [];
-        while (TYPE.isUnaryExpression(call) && call.prefix && call.operator !== "delete") {
+        while (isUnaryExpression(call) && call.prefix && call.operator !== "delete") {
             wrappers.push(call.operator);
             call = call.argument;
         }
-        if (!call || !TYPE.isCallExpression(call)) return null;
+        if (!call || !isCallExpression(call)) return null;
         const callee = call.callee;
-        if (!TYPE.isMemberExpression(callee) || callee.computed) return null;
-        if (!TYPE.isIdentifier(callee.property) || callee.property.name !== "call") return null;
+        if (!isMemberExpression(callee) || callee.computed) return null;
+        if (!isIdentifier(callee.property) || callee.property.name !== "call") return null;
         if (!AccCallSimplify.isAcc(callee.object)) return null;
         if (call.arguments.length === 0) return null;
         const [receiver, ...args] = call.arguments;
-        if (!TYPE.isExpression(receiver)) return null;
+        if (!isExpression(receiver)) return null;
         return { mode, target, operator, receiver, args: args as TYPE.CallExpression["arguments"], wrappers };
     }
 
     private matchReceiverAssign(stmt: TYPE.Statement, name: string): boolean {
-        return TYPE.isExpressionStatement(stmt)
-            && TYPE.isAssignmentExpression(stmt.expression)
+        return isExpressionStatement(stmt)
+            && isAssignmentExpression(stmt.expression)
             && stmt.expression.operator === "="
-            && TYPE.isIdentifier(stmt.expression.left)
+            && isIdentifier(stmt.expression.left)
             && stmt.expression.left.name === name
             && AccCallSimplify.isAcc(stmt.expression.right);
     }
@@ -107,14 +126,14 @@ export class AccCallSimplify implements ISimplify {
      * 两次紧邻求值结果相同,方法装载改接 recv 等价。
      */
     private isCloneOfAccValue(accStmt: TYPE.Statement, recvStmt: TYPE.Statement): boolean {
-        if (!TYPE.isExpressionStatement(accStmt) || !TYPE.isAssignmentExpression(accStmt.expression)) return false;
+        if (!isExpressionStatement(accStmt) || !isAssignmentExpression(accStmt.expression)) return false;
         const accAssign = accStmt.expression;
         if (!AccCallSimplify.isAcc(accAssign.left)) return false;
         const value = accAssign.right;
         if (!isPureExpression(value)) return false;
-        if (!TYPE.isExpressionStatement(recvStmt) || !TYPE.isAssignmentExpression(recvStmt.expression)) return false;
+        if (!isExpressionStatement(recvStmt) || !isAssignmentExpression(recvStmt.expression)) return false;
         const recvAssign = recvStmt.expression;
-        if (recvAssign.operator !== "=" || !TYPE.isIdentifier(recvAssign.left)) return false;
+        if (recvAssign.operator !== "=" || !isIdentifier(recvAssign.left)) return false;
         return isNodeEqual(recvAssign.right, value);
     }
 
@@ -129,7 +148,7 @@ export class AccCallSimplify implements ISimplify {
         const method = this.matchMethodLoad(stmt);
         if (method === null) return null;
         const call = this.matchAccCall(list[loadIndex + 1]);
-        if (!call || !TYPE.isIdentifier(call.receiver)) return null;
+        if (!call || !isIdentifier(call.receiver)) return null;
         const receiverName = call.receiver.name;
         if (!isTempName(receiverName)) return null;
         // 参数里若读取 acc,原语句读到的可能是刚装载的方法;改写后会读成旧值。
@@ -153,19 +172,19 @@ export class AccCallSimplify implements ISimplify {
     private rewrite(list: TYPE.Statement[], loadIndex: number, receiverName: string): void {
         const method = this.matchMethodLoad(list[loadIndex])!;
         const call = this.matchAccCall(list[loadIndex + 1])!;
-        const member = TYPE.memberExpression(TYPE.identifier(receiverName), TYPE.identifier(method), false);
-        let newCall: TYPE.Expression = TYPE.callExpression(member, call.args);
+        const member = memberExpression(identifier(receiverName), identifier(method), false);
+        let newCall: TYPE.Expression = callExpression(member, call.args);
         for (let i = call.wrappers.length - 1; i >= 0; i--) {
-            newCall = TYPE.unaryExpression(call.wrappers[i], newCall);
+            newCall = unaryExpression(call.wrappers[i], newCall);
         }
         if (call.mode === "assign") {
             // 目标可能是 acc,也可能是其他变量/成员/复合赋值(字节码把结果存进哪个寄存器就还原成哪个)
-            list[loadIndex + 1] = TYPE.expressionStatement(
-                TYPE.assignmentExpression(call.operator, call.target ?? TYPE.identifier("acc"), newCall));
+            list[loadIndex + 1] = expressionStatement(
+                assignmentExpression(call.operator, call.target ?? identifier("acc"), newCall));
         } else if (call.mode === "return") {
-            list[loadIndex + 1] = TYPE.returnStatement(newCall);
+            list[loadIndex + 1] = returnStatement(newCall);
         } else {
-            list[loadIndex + 1] = TYPE.expressionStatement(newCall);
+            list[loadIndex + 1] = expressionStatement(newCall);
         }
         list.splice(loadIndex, 1);
     }
@@ -182,10 +201,13 @@ export class AccCallSimplify implements ISimplify {
     }
 
     simplify(node: Program): boolean {
+        // 只需要语句列表:用纯 AST 遍历收集,避免为整棵树建立 NodePath
         const bodies: TYPE.Statement[][] = [];
-        traverse(TYPE.file(node), {
-            Program: (path) => { bodies.push(path.node.body); },
-            BlockStatement: (path) => { bodies.push(path.node.body); },
+        walkNode(node, (n) => {
+            if (n.type === "Program" || n.type === "BlockStatement") {
+                bodies.push(n.body as TYPE.Statement[]);
+            }
+            return true;
         });
         let changed = false;
         for (const body of bodies) {

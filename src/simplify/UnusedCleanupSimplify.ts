@@ -3,6 +3,22 @@ import traverse, { NodePath } from '@babel/traverse'
 import { ISimplify } from "./ISimplify";
 import { isDeclarationValue, isPureExpression, walkNode } from "./AstUtils";
 
+
+const {
+    file,
+    isAssignmentExpression,
+    isAwaitExpression,
+    isCallExpression,
+    isIdentifier,
+    isMemberExpression,
+    isNewExpression,
+    isOptionalMemberExpression,
+    isReferenced,
+    isTaggedTemplateExpression,
+    isUpdateExpression,
+    isYieldExpression,
+} = TYPE;
+
 /**
  * 兜底清理:删除没有任何读取的变量声明与无效果表达式语句。
  *
@@ -15,11 +31,11 @@ import { isDeclarationValue, isPureExpression, walkNode } from "./AstUtils";
 export class UnusedCleanupSimplify implements ISimplify {
     private isDiscardableExpression(node: TYPE.Expression): boolean {
         if (isDeclarationValue(node)) return false;
-        if (TYPE.isMemberExpression(node) || TYPE.isOptionalMemberExpression(node)
-            || TYPE.isCallExpression(node) || TYPE.isNewExpression(node)
-            || TYPE.isAssignmentExpression(node) || TYPE.isUpdateExpression(node)
-            || TYPE.isAwaitExpression(node) || TYPE.isYieldExpression(node)
-            || TYPE.isTaggedTemplateExpression(node)) {
+        if (isMemberExpression(node) || isOptionalMemberExpression(node)
+            || isCallExpression(node) || isNewExpression(node)
+            || isAssignmentExpression(node) || isUpdateExpression(node)
+            || isAwaitExpression(node) || isYieldExpression(node)
+            || isTaggedTemplateExpression(node)) {
             return false;
         }
         return isPureExpression(node);
@@ -29,22 +45,22 @@ export class UnusedCleanupSimplify implements ISimplify {
         let changed = false;
         const readNames = new Set<string>();
         walkNode(node, (n, parent) => {
-            if (TYPE.isIdentifier(n) && parent && TYPE.isReferenced(n, parent)) {
+            if (isIdentifier(n) && parent && isReferenced(n, parent)) {
                 readNames.add(n.name);
             }
         });
 
         const noScopeTraverse = (traverse as any);
-        noScopeTraverse(TYPE.file(node), {
+        noScopeTraverse(file(node), {
             noScope: true,
             VariableDeclarator: (value: NodePath<TYPE.VariableDeclarator>) => {
-                if (!TYPE.isIdentifier(value.node.id)) return;
+                if (!isIdentifier(value.node.id)) return;
                 if (readNames.has(value.node.id.name)) return;
                 value.remove();
                 changed = true;
             },
             AssignmentExpression: (value: NodePath<TYPE.AssignmentExpression>) => {
-                if (!TYPE.isIdentifier(value.node.left)) return;
+                if (!isIdentifier(value.node.left)) return;
                 if (readNames.has(value.node.left.name)) return;
                 const right = value.node.right;
                 const statement = value.getStatementParent();

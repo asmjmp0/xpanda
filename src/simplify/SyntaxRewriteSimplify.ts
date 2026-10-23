@@ -2,7 +2,55 @@ import { Program } from "@babel/types";
 import { ISimplify } from "./ISimplify";
 import traverse, { NodePath } from "@babel/traverse";
 import * as TYPE from "@babel/types";
-import { collectIdentifierNames, isDeclarationValue, isNodeEqual, isPureExpression, isTempName } from "./AstUtils";
+import { collectIdentifierNames, isDeclarationValue, isNodeEqual, isPureExpression, isTempName, walkNode } from "./AstUtils";
+
+
+const {
+    binaryExpression,
+    booleanLiteral,
+    emptyStatement,
+    expressionStatement,
+    file,
+    functionDeclaration,
+    identifier,
+    isArrayExpression,
+    isAssignmentExpression,
+    isAwaitExpression,
+    isBinaryExpression,
+    isBlockStatement,
+    isBooleanLiteral,
+    isBreakStatement,
+    isCallExpression,
+    isClassDeclaration,
+    isContinueStatement,
+    isFunctionDeclaration,
+    isIdentifier,
+    isIfStatement,
+    isLogicalExpression,
+    isMemberExpression,
+    isNewExpression,
+    isNullLiteral,
+    isNumericLiteral,
+    isOptionalMemberExpression,
+    isParenthesizedExpression,
+    isProgram,
+    isReturnStatement,
+    isSequenceExpression,
+    isSpreadElement,
+    isStringLiteral,
+    isSuper,
+    isTaggedTemplateExpression,
+    isThisExpression,
+    isThrowStatement,
+    isUnaryExpression,
+    isUpdateExpression,
+    isVariableDeclaration,
+    isYieldExpression,
+    logicalExpression,
+    nullLiteral,
+    unaryExpression,
+    isExpressionStatement: isExpressionStatementNode,
+} = TYPE;
 
 /**
  * 通用语法重写:
@@ -26,7 +74,7 @@ export class SyntaxRewriteSimplify implements ISimplify {
      */
     public static foldConstantConditions(node: Program): boolean {
         let changed = false;
-        traverse(TYPE.file(node), {
+        traverse(file(node), {
             IfStatement(path) {
                 // undefined 被局部变量遮蔽时不折叠
                 if (path.scope.getBinding("undefined")) return;
@@ -37,19 +85,19 @@ export class SyntaxRewriteSimplify implements ISimplify {
                 changed = true;
                 if (!branch) {
                     // 循环体/if 分支等必须保留一条语句的位置
-                    if (path.parentPath && (TYPE.isBlockStatement(path.parentPath.node) || TYPE.isProgram(path.parentPath.node))) {
+                    if (path.parentPath && (isBlockStatement(path.parentPath.node) || isProgram(path.parentPath.node))) {
                         path.remove();
                     } else {
-                        path.replaceWith(TYPE.emptyStatement());
+                        path.replaceWith(emptyStatement());
                     }
                     return;
                 }
                 // 保留原分支的块作用域(let/const 声明)
-                if (TYPE.isBlockStatement(branch)) {
+                if (isBlockStatement(branch)) {
                     const hasBlockScoped = branch.body.some((statement) =>
-                        (TYPE.isVariableDeclaration(statement) && statement.kind !== "var")
-                        || TYPE.isClassDeclaration(statement)
-                        || TYPE.isFunctionDeclaration(statement));
+                        (isVariableDeclaration(statement) && statement.kind !== "var")
+                        || isClassDeclaration(statement)
+                        || isFunctionDeclaration(statement));
                     if (!hasBlockScoped && branch.body.length === 1) {
                         path.replaceWith(branch.body[0]);
                         return;
@@ -77,12 +125,13 @@ export class SyntaxRewriteSimplify implements ISimplify {
      */
     public static foldSentinelGuards(node: Program): boolean {
         let changed = false;
-        traverse(TYPE.file(node), {
+        traverse(file(node), {
+            noScope: true,
             IfStatement(path) {
                 const test = path.node.test;
-                if (!TYPE.isBinaryExpression(test) || !["==", "===", "!=", "!=="].includes(test.operator)) return;
-                const holeLeft = TYPE.isIdentifier(test.left, { name: "hole" });
-                const holeRight = TYPE.isIdentifier(test.right, { name: "hole" });
+                if (!isBinaryExpression(test) || !["==", "===", "!=", "!=="].includes(test.operator)) return;
+                const holeLeft = isIdentifier(test.left, { name: "hole" });
+                const holeRight = isIdentifier(test.right, { name: "hole" });
                 if (!holeLeft && !holeRight) return;
                 // 排除 `hole == hole`:交给 foldConstantConditions 折叠成常量
                 if (holeLeft && holeRight) return;
@@ -94,20 +143,20 @@ export class SyntaxRewriteSimplify implements ISimplify {
                 if (normalBranch) {
                     // 保留原分支的块作用域(let/const 声明);只有单语句且无块级声明时才展平,
                     // 避免 `if (...) { } else { }` 直接变成一个多余的 `{ return ... }`。
-                    if (TYPE.isBlockStatement(normalBranch) && normalBranch.body.length === 1) {
+                    if (isBlockStatement(normalBranch) && normalBranch.body.length === 1) {
                         const only = normalBranch.body[0];
-                        const hasBlockScoped = TYPE.isVariableDeclaration(only) && only.kind !== "var"
-                            || TYPE.isClassDeclaration(only) || TYPE.isFunctionDeclaration(only);
+                        const hasBlockScoped = isVariableDeclaration(only) && only.kind !== "var"
+                            || isClassDeclaration(only) || isFunctionDeclaration(only);
                         if (!hasBlockScoped) {
                             path.replaceWith(only);
                             return;
                         }
                     }
                     path.replaceWith(normalBranch);
-                } else if (path.parentPath && (TYPE.isBlockStatement(path.parentPath.node) || TYPE.isProgram(path.parentPath.node))) {
+                } else if (path.parentPath && (isBlockStatement(path.parentPath.node) || isProgram(path.parentPath.node))) {
                     path.remove();
                 } else {
-                    path.replaceWith(TYPE.emptyStatement());
+                    path.replaceWith(emptyStatement());
                 }
             },
         });
@@ -116,11 +165,11 @@ export class SyntaxRewriteSimplify implements ISimplify {
 
     /** 语句(或块)的所有路径都以 throw 结束时返回 true */
     private static isThrowOnly(statement: TYPE.Statement): boolean {
-        if (TYPE.isBlockStatement(statement)) {
+        if (isBlockStatement(statement)) {
             const last = statement.body[statement.body.length - 1];
             return !!last && SyntaxRewriteSimplify.isThrowOnly(last);
         }
-        return TYPE.isThrowStatement(statement);
+        return isThrowStatement(statement);
     }
 
     /**
@@ -132,15 +181,16 @@ export class SyntaxRewriteSimplify implements ISimplify {
      */
     public static removeUnreachableStatements(node: Program): boolean {
         let changed = false;
-        traverse(TYPE.file(node), {
+        traverse(file(node), {
+            noScope: true,
             BlockStatement: (path) => {
                 const body = path.node.body;
                 for (let i = 0; i < body.length - 1; i++) {
                     if (!SyntaxRewriteSimplify.terminates(body[i])) continue;
                     const tail = body.slice(i + 1);
-                    if (tail.some((statement) => TYPE.isVariableDeclaration(statement)
-                        || TYPE.isFunctionDeclaration(statement)
-                        || TYPE.isClassDeclaration(statement))) break;
+                    if (tail.some((statement) => isVariableDeclaration(statement)
+                        || isFunctionDeclaration(statement)
+                        || isClassDeclaration(statement))) break;
                     body.splice(i + 1);
                     changed = true;
                     break;
@@ -158,7 +208,8 @@ export class SyntaxRewriteSimplify implements ISimplify {
      */
     public static removeOrphanJumps(node: Program): boolean {
         let changed = false;
-        traverse(TYPE.file(node), {
+        traverse(file(node), {
+            noScope: true,
             ContinueStatement(path) {
                 if (path.findParent((parent) => parent.isLoop())) return;
                 SyntaxRewriteSimplify.removeJump(path);
@@ -174,22 +225,22 @@ export class SyntaxRewriteSimplify implements ISimplify {
     }
 
     private static removeJump(path: NodePath<TYPE.Statement>): void {
-        if (path.parentPath && (TYPE.isBlockStatement(path.parentPath.node) || TYPE.isProgram(path.parentPath.node))) {
+        if (path.parentPath && (isBlockStatement(path.parentPath.node) || isProgram(path.parentPath.node))) {
             path.remove();
         } else {
-            path.replaceWith(TYPE.emptyStatement());
+            path.replaceWith(emptyStatement());
         }
     }
 
     /** 语句本身一定会终止(不落出当前块) */
     private static terminates(statement: TYPE.Statement): boolean {
-        if (TYPE.isReturnStatement(statement) || TYPE.isThrowStatement(statement)
-            || TYPE.isBreakStatement(statement) || TYPE.isContinueStatement(statement)) return true;
-        if (TYPE.isBlockStatement(statement)) {
+        if (isReturnStatement(statement) || isThrowStatement(statement)
+            || isBreakStatement(statement) || isContinueStatement(statement)) return true;
+        if (isBlockStatement(statement)) {
             const last = statement.body[statement.body.length - 1];
             return !!last && SyntaxRewriteSimplify.terminates(last);
         }
-        if (TYPE.isIfStatement(statement)) {
+        if (isIfStatement(statement)) {
             return statement.alternate != null
                 && SyntaxRewriteSimplify.terminates(statement.consequent)
                 && SyntaxRewriteSimplify.terminates(statement.alternate);
@@ -199,26 +250,26 @@ export class SyntaxRewriteSimplify implements ISimplify {
 
     /** 在布尔上下文里折叠逻辑表达式;无法判定时原样返回 */
     private static foldBooleanExpression(node: TYPE.Expression): TYPE.Expression {
-        if (TYPE.isLogicalExpression(node)) {
+        if (isLogicalExpression(node)) {
             node.left = SyntaxRewriteSimplify.foldBooleanExpression(node.left);
             const left = SyntaxRewriteSimplify.constantTruthiness(node.left);
             if (node.operator === "&&") {
-                if (left === false) return TYPE.booleanLiteral(false);
+                if (left === false) return booleanLiteral(false);
                 if (left === true) return SyntaxRewriteSimplify.foldBooleanExpression(node.right);
             } else {
-                if (left === true) return TYPE.booleanLiteral(true);
+                if (left === true) return booleanLiteral(true);
                 if (left === false) return SyntaxRewriteSimplify.foldBooleanExpression(node.right);
             }
             return node;
         }
-        if (TYPE.isUnaryExpression(node) && node.operator === "!") {
+        if (isUnaryExpression(node) && node.operator === "!") {
             node.argument = SyntaxRewriteSimplify.foldBooleanExpression(node.argument as TYPE.Expression);
             const value = SyntaxRewriteSimplify.constantTruthiness(node.argument);
-            return value === null ? node : TYPE.booleanLiteral(!value);
+            return value === null ? node : booleanLiteral(!value);
         }
-        if (TYPE.isBinaryExpression(node)) {
+        if (isBinaryExpression(node)) {
             const value = SyntaxRewriteSimplify.constantEquality(node);
-            return value === null ? node : TYPE.booleanLiteral(value);
+            return value === null ? node : booleanLiteral(value);
         }
         return node;
     }
@@ -226,19 +277,19 @@ export class SyntaxRewriteSimplify implements ISimplify {
     /** 返回静态真值;无法静态判定时返回 null */
     private static constantTruthiness(node: TYPE.Node | null | undefined): boolean | null {
         if (!node) return null;
-        if (TYPE.isBooleanLiteral(node)) return node.value;
-        if (TYPE.isNullLiteral(node)) return false;
-        if (TYPE.isNumericLiteral(node)) return node.value !== 0;
-        if (TYPE.isStringLiteral(node)) return node.value.length > 0;
-        if (TYPE.isIdentifier(node)) {
+        if (isBooleanLiteral(node)) return node.value;
+        if (isNullLiteral(node)) return false;
+        if (isNumericLiteral(node)) return node.value !== 0;
+        if (isStringLiteral(node)) return node.value.length > 0;
+        if (isIdentifier(node)) {
             if (node.name === "undefined") return false;
             return null;
         }
-        if (TYPE.isUnaryExpression(node) && node.operator === "!") {
+        if (isUnaryExpression(node) && node.operator === "!") {
             const inner = SyntaxRewriteSimplify.constantTruthiness(node.argument);
             return inner === null ? null : !inner;
         }
-        if (TYPE.isBinaryExpression(node)) {
+        if (isBinaryExpression(node)) {
             return SyntaxRewriteSimplify.constantEquality(node);
         }
         return null;
@@ -246,19 +297,19 @@ export class SyntaxRewriteSimplify implements ISimplify {
 
     private static isSimpleConstant(node: TYPE.Node | null | undefined): node is TYPE.Expression {
         return !!node && (
-            TYPE.isBooleanLiteral(node)
-            || TYPE.isNullLiteral(node)
-            || TYPE.isNumericLiteral(node)
-            || TYPE.isStringLiteral(node)
-            || (TYPE.isIdentifier(node, { name: "undefined" }))
+            isBooleanLiteral(node)
+            || isNullLiteral(node)
+            || isNumericLiteral(node)
+            || isStringLiteral(node)
+            || (isIdentifier(node, { name: "undefined" }))
         );
     }
 
     private static simpleValue(node: TYPE.Node): string | number | boolean | null | undefined {
-        if (TYPE.isBooleanLiteral(node)) return node.value;
-        if (TYPE.isNullLiteral(node)) return null;
-        if (TYPE.isNumericLiteral(node)) return node.value;
-        if (TYPE.isStringLiteral(node)) return node.value;
+        if (isBooleanLiteral(node)) return node.value;
+        if (isNullLiteral(node)) return null;
+        if (isNumericLiteral(node)) return node.value;
+        if (isStringLiteral(node)) return node.value;
         return undefined;
     }
 
@@ -269,7 +320,7 @@ export class SyntaxRewriteSimplify implements ISimplify {
         // ArkTS 13 在 for...of 的 iterator.close 收尾、try/finally 收尾里会留下
         // `X = hole; if (X != hole) throw X`,常量传播把 X 换成 hole 后就是
         // `if (hole != hole) throw hole`——恒 false 的守卫,删掉后代码才可执行。
-        if (TYPE.isIdentifier(left) && TYPE.isIdentifier(right) && left.name === "hole" && right.name === "hole") {
+        if (isIdentifier(left) && isIdentifier(right) && left.name === "hole" && right.name === "hole") {
             return operator === "===" || operator === "==";
         }
         if (!SyntaxRewriteSimplify.isSimpleConstant(left) || !SyntaxRewriteSimplify.isSimpleConstant(right)) return null;
@@ -306,81 +357,81 @@ export class SyntaxRewriteSimplify implements ISimplify {
     }
 
     private invertOperand(node: TYPE.Expression): TYPE.Expression {
-        if (TYPE.isBinaryExpression(node) || TYPE.isLogicalExpression(node)) {
+        if (isBinaryExpression(node) || isLogicalExpression(node)) {
             return this.invertExpression(node);
         }
-        return TYPE.unaryExpression("!", node);
+        return unaryExpression("!", node);
     }
 
     /** 对表达式取反(用于 if 分支交换)。 */
     private invertExpression(node: TYPE.Expression): TYPE.Expression {
-        if (TYPE.isBinaryExpression(node)) {
+        if (isBinaryExpression(node)) {
             const invert = SyntaxRewriteSimplify.binaryInvert(node);
-            if (invert == null) return TYPE.unaryExpression("!", node);
+            if (invert == null) return unaryExpression("!", node);
             node.operator = invert;
             return node;
         }
-        if (TYPE.isLogicalExpression(node)) {
+        if (isLogicalExpression(node)) {
             node.left = this.invertOperand(node.left);
             node.right = this.invertOperand(node.right);
             node.operator = node.operator === "||" ? "&&" : "||";
             return node;
         }
-        if (TYPE.isUnaryExpression(node) && node.operator === "!") {
+        if (isUnaryExpression(node) && node.operator === "!") {
             return node.argument;
         }
-        return TYPE.unaryExpression("!", node);
+        return unaryExpression("!", node);
     }
 
     /** 化简 if/while 的 test:!!a -> a,!a == b -> a != b,!a && !b -> ... */
     private simplifyTestNode(node: TYPE.Expression): TYPE.Expression {
         node = this.unwrapParens(node);
         // ConditionSimplify 删除序列中间元素后可能留下单元素序列
-        while (TYPE.isSequenceExpression(node) && node.expressions.length === 1) {
+        while (isSequenceExpression(node) && node.expressions.length === 1) {
             node = this.unwrapParens(node.expressions[0] as TYPE.Expression);
         }
-        if (TYPE.isSequenceExpression(node)) {
+        if (isSequenceExpression(node)) {
             if (node.expressions.length > 0) {
                 node.expressions[node.expressions.length - 1] =
                     this.simplifyTestNode(node.expressions[node.expressions.length - 1]);
             }
             return node;
         }
-        if (TYPE.isLogicalExpression(node)) {
+        if (isLogicalExpression(node)) {
             node.left = this.simplifyTestNode(node.left);
             node.right = this.simplifyTestNode(node.right);
             const nullish = this.mergeNullishCheck(node);
             return nullish ?? node;
         }
-        if (!TYPE.isUnaryExpression(node) || node.operator !== "!") return node;
+        if (!isUnaryExpression(node) || node.operator !== "!") return node;
         let arg = this.unwrapParens(node.argument as TYPE.Expression);
-        while (TYPE.isSequenceExpression(arg) && arg.expressions.length === 1) {
+        while (isSequenceExpression(arg) && arg.expressions.length === 1) {
             arg = this.unwrapParens(arg.expressions[0] as TYPE.Expression);
         }
         if (arg !== node.argument) node.argument = arg;
-        if (TYPE.isSequenceExpression(arg) && arg.expressions.length > 1) {
+        if (isSequenceExpression(arg) && arg.expressions.length > 1) {
             // !(a, b, c) === (a, b, !c):把取反推进最后一个元素,
             // 这样 `!(v = X, acc = !C, !!C)` 能继续化简成 `(v = X, acc = !C, C !== Y)`。
             const expressions = arg.expressions as TYPE.Expression[];
             const last = expressions[expressions.length - 1];
-            expressions[expressions.length - 1] = TYPE.unaryExpression("!", last);
+            expressions[expressions.length - 1] = unaryExpression("!", last);
             return this.simplifyTestNode(arg);
         }
-        if (TYPE.isUnaryExpression(arg) && arg.operator === "!") {
+        if (isUnaryExpression(arg) && arg.operator === "!") {
             return this.simplifyTestNode(arg.argument);
         }
-        if (TYPE.isBinaryExpression(arg)) {
+        if (isBinaryExpression(arg)) {
             const invert = SyntaxRewriteSimplify.binaryInvert(arg);
             if (invert != null) {
                 arg.operator = invert;
                 return this.simplifyTestNode(arg);
             }
         }
-        if (TYPE.isLogicalExpression(arg)) {
+        if (isLogicalExpression(arg)) {
             return this.simplifyTestNode(this.invertExpression(arg));
         }
-        if (TYPE.isBooleanLiteral(arg)) {
-            return TYPE.booleanLiteral(!arg.value);
+        if (isBooleanLiteral(arg)) {
+            return booleanLiteral(!arg.value);
         }
         return node;
     }
@@ -399,7 +450,7 @@ export class SyntaxRewriteSimplify implements ISimplify {
      */
     private foldBooleanConditional(node: TYPE.ConditionalExpression): TYPE.Expression | null {
         const test = node.test;
-        if (TYPE.isUnaryExpression(test) && test.operator === "!") {
+        if (isUnaryExpression(test) && test.operator === "!") {
             node.test = test.argument;
             const consequent = node.consequent;
             node.consequent = node.alternate;
@@ -408,36 +459,36 @@ export class SyntaxRewriteSimplify implements ISimplify {
         }
         const consequent = node.consequent;
         const alternate = node.alternate;
-        const consequentBool = TYPE.isBooleanLiteral(consequent) ? consequent.value : null;
-        const alternateBool = TYPE.isBooleanLiteral(alternate) ? alternate.value : null;
+        const consequentBool = isBooleanLiteral(consequent) ? consequent.value : null;
+        const alternateBool = isBooleanLiteral(alternate) ? alternate.value : null;
         if (consequentBool === true && alternateBool === false) return test;
         if (consequentBool === false && alternateBool === true) return this.invertExpression(test);
-        if (consequentBool === false) return TYPE.logicalExpression("&&", this.invertExpression(test), alternate);
-        if (alternateBool === false) return TYPE.logicalExpression("&&", test, consequent);
-        if (consequentBool === true) return TYPE.logicalExpression("||", test, alternate);
-        if (alternateBool === true) return TYPE.logicalExpression("||", this.invertExpression(test), consequent);
+        if (consequentBool === false) return logicalExpression("&&", this.invertExpression(test), alternate);
+        if (alternateBool === false) return logicalExpression("&&", test, consequent);
+        if (consequentBool === true) return logicalExpression("||", test, alternate);
+        if (alternateBool === true) return logicalExpression("||", this.invertExpression(test), consequent);
         return null;
     }
 
     private unwrapParens(node: TYPE.Expression): TYPE.Expression {
         let current = node;
-        while (TYPE.isParenthesizedExpression(current)) current = (current as any).expression;
+        while (isParenthesizedExpression(current)) current = (current as any).expression;
         return current;
     }
 
     private isUndefinedNode(node: TYPE.Node): boolean {
-        if (TYPE.isIdentifier(node) && node.name === "undefined") return true;
-        return TYPE.isUnaryExpression(node) && node.operator === "void"
-            && TYPE.isNumericLiteral(node.argument) && node.argument.value === 0;
+        if (isIdentifier(node) && node.name === "undefined") return true;
+        return isUnaryExpression(node) && node.operator === "void"
+            && isNumericLiteral(node.argument) && node.argument.value === 0;
     }
 
     /** 返回 `x === null` / `x !== undefined` 这类比较里的 x;不是该形式则返回 null。 */
     private nullishCheckTarget(node: TYPE.Expression, operator: "===" | "!==", kind: "null" | "undefined"): TYPE.Identifier | null {
         node = this.unwrapParens(node);
-        if (!TYPE.isBinaryExpression(node) || node.operator !== operator) return null;
-        if (!TYPE.isIdentifier(node.left)) return null;
+        if (!isBinaryExpression(node) || node.operator !== operator) return null;
+        if (!isIdentifier(node.left)) return null;
         const right = this.unwrapParens(node.right as TYPE.Expression);
-        const matched = kind === "null" ? TYPE.isNullLiteral(right) : this.isUndefinedNode(right);
+        const matched = kind === "null" ? isNullLiteral(right) : this.isUndefinedNode(right);
         return matched ? node.left : null;
     }
 
@@ -459,13 +510,14 @@ export class SyntaxRewriteSimplify implements ISimplify {
                 ? leftUndefined
                 : null;
         if (!target) return null;
-        return TYPE.binaryExpression(isOr ? "==" : "!=", target, TYPE.nullLiteral());
+        return binaryExpression(isOr ? "==" : "!=", target, nullLiteral());
     }
 
     /** 供流水线末尾调用:HighLevelGrammarSimplify 可能新生成 if/三元,需要再归一化一次 test。 */
     public static normalizeConditionTests(node: Program): void {
         const pass = new SyntaxRewriteSimplify();
-        traverse(TYPE.file(node), {
+        traverse(file(node), {
+            noScope: true,
             IfStatement: (path) => {
                 for (let i = 0; i < 4; i++) {
                     path.node.test = pass.simplifyTestNode(path.node.test);
@@ -505,39 +557,40 @@ export class SyntaxRewriteSimplify implements ISimplify {
     public static hoistTestPrefixes(node: Program): void {
         const isHoistableValue = (expr: TYPE.Node | null | undefined): boolean => {
             if (!expr) return false;
-            if (TYPE.isNumericLiteral(expr) || TYPE.isStringLiteral(expr)
-                || TYPE.isBooleanLiteral(expr) || TYPE.isNullLiteral(expr)) return true;
-            if (TYPE.isIdentifier(expr) && expr.name === "undefined") return true;
-            if (TYPE.isUnaryExpression(expr)) {
-                if (expr.operator === "void") return TYPE.isNumericLiteral(expr.argument);
-                return (expr.operator === "-" || expr.operator === "+") && TYPE.isNumericLiteral(expr.argument);
+            if (isNumericLiteral(expr) || isStringLiteral(expr)
+                || isBooleanLiteral(expr) || isNullLiteral(expr)) return true;
+            if (isIdentifier(expr) && expr.name === "undefined") return true;
+            if (isUnaryExpression(expr)) {
+                if (expr.operator === "void") return isNumericLiteral(expr.argument);
+                return (expr.operator === "-" || expr.operator === "+") && isNumericLiteral(expr.argument);
             }
             return false;
         };
         const alwaysExits = (stmt: TYPE.Statement | null | undefined): boolean => {
             if (!stmt) return false;
-            if (TYPE.isReturnStatement(stmt) || TYPE.isThrowStatement(stmt)) return true;
-            if (TYPE.isBlockStatement(stmt)) return stmt.body.some(alwaysExits);
-            if (TYPE.isIfStatement(stmt)) {
+            if (isReturnStatement(stmt) || isThrowStatement(stmt)) return true;
+            if (isBlockStatement(stmt)) return stmt.body.some(alwaysExits);
+            if (isIfStatement(stmt)) {
                 return stmt.alternate != null && alwaysExits(stmt.consequent) && alwaysExits(stmt.alternate);
             }
             return false;
         };
-        traverse(TYPE.file(node), {
+        traverse(file(node), {
+            noScope: true,
             IfStatement: (path) => {
                 const test = path.node.test;
-                if (!TYPE.isLogicalExpression(test) || test.operator !== "||") return;
+                if (!isLogicalExpression(test) || test.operator !== "||") return;
                 const right = test.right;
-                if (!TYPE.isSequenceExpression(right) || right.expressions.length < 2) return;
+                if (!isSequenceExpression(right) || right.expressions.length < 2) return;
                 const prefix: TYPE.ExpressionStatement[] = [];
                 const names = new Set<string>();
                 for (let i = 0; i < right.expressions.length - 1; i++) {
                     const expr = right.expressions[i];
-                    if (!TYPE.isAssignmentExpression(expr) || expr.operator !== "=") return;
-                    if (!TYPE.isIdentifier(expr.left) || !isTempName(expr.left.name)) return;
+                    if (!isAssignmentExpression(expr) || expr.operator !== "=") return;
+                    if (!isIdentifier(expr.left) || !isTempName(expr.left.name)) return;
                     if (!isHoistableValue(expr.right)) return;
                     names.add(expr.left.name);
-                    prefix.push(TYPE.expressionStatement(expr));
+                    prefix.push(expressionStatement(expr));
                 }
                 if (prefix.length === 0) return;
                 // A 侧不能读写这些临时变量(提到前面会改变 A 看到的值)
@@ -559,10 +612,10 @@ export class SyntaxRewriteSimplify implements ISimplify {
     }
 
     private checkIsAccUndefined(stmt: TYPE.Statement): boolean {
-        return TYPE.isExpressionStatement(stmt)
-            && TYPE.isAssignmentExpression(stmt.expression)
-            && TYPE.isIdentifier(stmt.expression.left) && stmt.expression.left.name === "acc"
-            && TYPE.isIdentifier(stmt.expression.right) && stmt.expression.right.name === "undefined";
+        return isExpressionStatementNode(stmt)
+            && isAssignmentExpression(stmt.expression)
+            && isIdentifier(stmt.expression.left) && stmt.expression.left.name === "acc"
+            && isIdentifier(stmt.expression.right) && stmt.expression.right.name === "undefined";
     }
 
     private removeFunctionReturnUndefined(body: TYPE.BlockStatement): boolean {
@@ -571,7 +624,7 @@ export class SyntaxRewriteSimplify implements ISimplify {
         const last = statements[statements.length - 1];
         const last2 = statements[statements.length - 2];
         if (this.checkIsAccUndefined(last2)
-            && TYPE.isReturnStatement(last) && last.argument == null) {
+            && isReturnStatement(last) && last.argument == null) {
             statements.pop();
             statements.pop();
             return true;
@@ -592,25 +645,25 @@ export class SyntaxRewriteSimplify implements ISimplify {
 
     private changeCallExpression(node: TYPE.CallExpression): boolean {
         const callee = node.callee;
-        if (!TYPE.isMemberExpression(callee) || callee.computed) return false;
-        if (!TYPE.isIdentifier(callee.property) || callee.property.name !== "call") return false;
+        if (!isMemberExpression(callee) || callee.computed) return false;
+        if (!isIdentifier(callee.property) || callee.property.name !== "call") return false;
         if (node.arguments.length === 0) return false;
 
         const fn = callee.object;
         const receiver = node.arguments[0];
         // 只有 receiver 明确是 null/undefined,或 fn 就是 receiver.method 时,
         // fn.call(receiver, ...) 才能安全地写成 fn(...)
-        const receiverIsNullish = TYPE.isNullLiteral(receiver)
-            || (TYPE.isIdentifier(receiver) && receiver.name === "undefined")
-            || (TYPE.isUnaryExpression(receiver) && receiver.operator === "void");
-        const receiverMatchesObject = TYPE.isMemberExpression(fn)
+        const receiverIsNullish = isNullLiteral(receiver)
+            || (isIdentifier(receiver) && receiver.name === "undefined")
+            || (isUnaryExpression(receiver) && receiver.operator === "void");
+        const receiverMatchesObject = isMemberExpression(fn)
             && (isNodeEqual(fn.object as TYPE.Node, receiver as TYPE.Node)
-                || (TYPE.isSuper(fn.object) && TYPE.isThisExpression(receiver)));
+                || (isSuper(fn.object) && isThisExpression(receiver)));
         if (!receiverIsNullish && !receiverMatchesObject) return false;
 
         let object = fn;
-        if (TYPE.isMemberExpression(object) && object.computed && TYPE.isStringLiteral(object.property)) {
-            object.property = TYPE.identifier(object.property.value);
+        if (isMemberExpression(object) && object.computed && isStringLiteral(object.property)) {
+            object.property = identifier(object.property.value);
             object.computed = false;
         }
         node.callee = object as TYPE.Expression;
@@ -620,11 +673,11 @@ export class SyntaxRewriteSimplify implements ISimplify {
 
     private isDiscardableExpression(node: TYPE.Expression): boolean {
         if (isDeclarationValue(node)) return false;
-        if (TYPE.isMemberExpression(node) || TYPE.isOptionalMemberExpression(node)
-            || TYPE.isCallExpression(node) || TYPE.isNewExpression(node)
-            || TYPE.isAssignmentExpression(node) || TYPE.isUpdateExpression(node)
-            || TYPE.isAwaitExpression(node) || TYPE.isYieldExpression(node)
-            || TYPE.isTaggedTemplateExpression(node)) {
+        if (isMemberExpression(node) || isOptionalMemberExpression(node)
+            || isCallExpression(node) || isNewExpression(node)
+            || isAssignmentExpression(node) || isUpdateExpression(node)
+            || isAwaitExpression(node) || isYieldExpression(node)
+            || isTaggedTemplateExpression(node)) {
             return false;
         }
         return isPureExpression(node);
@@ -635,24 +688,24 @@ export class SyntaxRewriteSimplify implements ISimplify {
         let changed = false;
         for (let i = 0; i < stmts.length; i++) {
             const statement = stmts[i];
-            if (!TYPE.isExpressionStatement(statement) || !TYPE.isAssignmentExpression(statement.expression)) continue;
+            if (!isExpressionStatementNode(statement) || !isAssignmentExpression(statement.expression)) continue;
             const init = statement.expression;
-            if (init.operator !== "=" || !TYPE.isIdentifier(init.left) || !TYPE.isArrayExpression(init.right)) continue;
+            if (init.operator !== "=" || !isIdentifier(init.left) || !isArrayExpression(init.right)) continue;
             const name = init.left.name;
             const array = init.right;
-            if (array.elements.some((e) => TYPE.isSpreadElement(e))) continue;
+            if (array.elements.some((e) => isSpreadElement(e))) continue;
 
             let j = i + 1;
             for (; j < stmts.length; j++) {
                 const next = stmts[j];
-                if (!TYPE.isExpressionStatement(next) || !TYPE.isAssignmentExpression(next.expression)) break;
+                if (!isExpressionStatementNode(next) || !isAssignmentExpression(next.expression)) break;
                 const assign = next.expression;
-                if (assign.operator !== "=" || !TYPE.isMemberExpression(assign.left)) break;
+                if (assign.operator !== "=" || !isMemberExpression(assign.left)) break;
                 const member = assign.left;
-                if (!member.computed || !TYPE.isIdentifier(member.object) || member.object.name !== name) break;
+                if (!member.computed || !isIdentifier(member.object) || member.object.name !== name) break;
                 const indexNode = member.property;
-                const index = TYPE.isNumericLiteral(indexNode) ? indexNode.value
-                    : (TYPE.isStringLiteral(indexNode) && /^\d+$/.test(indexNode.value) ? Number(indexNode.value) : NaN);
+                const index = isNumericLiteral(indexNode) ? indexNode.value
+                    : (isStringLiteral(indexNode) && /^\d+$/.test(indexNode.value) ? Number(indexNode.value) : NaN);
                 if (!Number.isInteger(index) || index < 0 || index !== array.elements.length) break;
                 if (collectIdentifierNames(assign.right).has(name)) break;
                 array.elements.push(assign.right);
@@ -667,14 +720,14 @@ export class SyntaxRewriteSimplify implements ISimplify {
     }
 
     private invertTestNode(node: TYPE.Expression): TYPE.Expression {
-        if (TYPE.isUnaryExpression(node) && node.operator === "!") return node.argument;
-        if (TYPE.isBinaryExpression(node)) {
+        if (isUnaryExpression(node) && node.operator === "!") return node.argument;
+        if (isBinaryExpression(node)) {
             const op = SyntaxRewriteSimplify.binaryInvert(node);
-            if (op == null) return TYPE.unaryExpression("!", node);
+            if (op == null) return unaryExpression("!", node);
             node.operator = op;
             return node;
         }
-        return TYPE.unaryExpression("!", node);
+        return unaryExpression("!", node);
     }
 
     /** 只做一次结构变换;返回是否发生变化。 */
@@ -684,22 +737,22 @@ export class SyntaxRewriteSimplify implements ISimplify {
         const alternate = node.alternate;
 
         // else { if (...) ... } -> else if (...)
-        if (TYPE.isBlockStatement(alternate) && alternate.body.length === 1
-            && TYPE.isIfStatement(alternate.body[0])) {
+        if (isBlockStatement(alternate) && alternate.body.length === 1
+            && isIfStatement(alternate.body[0])) {
             node.alternate = alternate.body[0];
             return true;
         }
         // if (test) { if (test2) ... } else {...}
-        if (TYPE.isBlockStatement(consequent) && consequent.body.length === 1
-            && TYPE.isIfStatement(consequent.body[0]) && alternate != null) {
+        if (isBlockStatement(consequent) && consequent.body.length === 1
+            && isIfStatement(consequent.body[0]) && alternate != null) {
             node.test = this.invertTestNode(node.test);
             node.consequent = alternate;
             node.alternate = consequent.body[0];
             return true;
         }
         // if (a !== b) A else B -> if (a === b) B else A
-        if (TYPE.isBlockStatement(consequent) && TYPE.isBlockStatement(alternate)
-            && TYPE.isBinaryExpression(node.test)
+        if (isBlockStatement(consequent) && isBlockStatement(alternate)
+            && isBinaryExpression(node.test)
             && (node.test.operator === "!==" || node.test.operator === "!=")) {
             node.test.operator = node.test.operator === "!==" ? "===" : "==";
             node.consequent = alternate;
@@ -707,13 +760,13 @@ export class SyntaxRewriteSimplify implements ISimplify {
             return true;
         }
         // 空 else
-        if (TYPE.isBlockStatement(alternate) && alternate.body.length === 0) {
+        if (isBlockStatement(alternate) && alternate.body.length === 0) {
             node.alternate = null;
             return true;
         }
         // 空 if 分支
-        if (TYPE.isBlockStatement(consequent) && consequent.body.length === 0
-            && TYPE.isBlockStatement(alternate)) {
+        if (isBlockStatement(consequent) && consequent.body.length === 0
+            && isBlockStatement(alternate)) {
             node.test = this.invertExpression(node.test);
             node.consequent = alternate;
             node.alternate = null;
@@ -724,13 +777,14 @@ export class SyntaxRewriteSimplify implements ISimplify {
 
     /** 定点迭代稳定后执行:x = x op y -> x op= y(避免提前改写干扰复制传播/活跃性) */
     public static foldCompoundAssignments(node: Program): void {
-        traverse(TYPE.file(node), {
+        traverse(file(node), {
+            noScope: true,
             AssignmentExpression: (value) => {
                 const assign = value.node;
-                if (assign.operator !== "=" || !TYPE.isIdentifier(assign.left)) return;
+                if (assign.operator !== "=" || !isIdentifier(assign.left)) return;
                 const right = assign.right;
-                if (!TYPE.isBinaryExpression(right)) return;
-                if (!TYPE.isIdentifier(right.left) || right.left.name !== assign.left.name) return;
+                if (!isBinaryExpression(right)) return;
+                if (!isIdentifier(right.left) || right.left.name !== assign.left.name) return;
                 switch (right.operator) {
                     case "+": case "-": case "*": case "/": case "%":
                     case "<<": case ">>": case ">>>": case "&": case "|": case "^": case "**":
@@ -746,7 +800,8 @@ export class SyntaxRewriteSimplify implements ISimplify {
 
     simplify(node: Program): boolean {
         let changed = false;
-        traverse(TYPE.file(node), {
+        traverse(file(node), {
+            noScope: true,
             IfStatement: (value) => {
                 const simplified = this.simplifyTestNode(value.node.test);
                 if (simplified !== value.node.test) {
@@ -772,10 +827,10 @@ export class SyntaxRewriteSimplify implements ISimplify {
                 const parent = value.getStatementParent();
                 if (!parent || !parent.isExpressionStatement()) return;
                 const expression = parent.node.expression;
-                if (!TYPE.isAssignmentExpression(expression) || expression.right !== value.node) return;
+                if (!isAssignmentExpression(expression) || expression.right !== value.node) return;
                 const left = expression.left;
                 const right = value.node.argument;
-                if (TYPE.isIdentifier(left) && TYPE.isIdentifier(right) && left.name === right.name) {
+                if (isIdentifier(left) && isIdentifier(right) && left.name === right.name) {
                     parent.node.expression = expression.right;
                     changed = true;
                 }
@@ -784,35 +839,35 @@ export class SyntaxRewriteSimplify implements ISimplify {
                 if (this.duplicateAccUndefined(value.node)) changed = true;
             },
             Function: (value) => {
-                if (!TYPE.isBlockStatement(value.node.body)) return;
+                if (!isBlockStatement(value.node.body)) return;
                 if (this.removeFunctionReturnUndefined(value.node.body)) {
                     changed = true;
                 }
                 // 末尾的裸 return; 等价于自然结束
                 const body = value.node.body.body;
                 const last = body[body.length - 1];
-                if (TYPE.isReturnStatement(last) && last.argument == null) {
+                if (isReturnStatement(last) && last.argument == null) {
                     body.pop();
                     changed = true;
                 }
             },
             MemberExpression: (value) => {
-                if (value.node.computed && TYPE.isStringLiteral(value.node.property)) {
+                if (value.node.computed && isStringLiteral(value.node.property)) {
                     const name = value.node.property.value;
                     if (/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name)) {
-                        value.node.property = TYPE.identifier(name);
+                        value.node.property = identifier(name);
                         value.node.computed = false;
                         changed = true;
                     }
                 }
-                if (!TYPE.isIdentifier(value.node.object) || value.node.object.name !== "arguments") return;
-                if (!TYPE.isNumericLiteral(value.node.property)) return;
+                if (!isIdentifier(value.node.object) || value.node.object.name !== "arguments") return;
+                if (!isNumericLiteral(value.node.property)) return;
                 const functionParent = value.getFunctionParent();
                 if (!functionParent) return;
                 const paramsLength = functionParent.node.params.length;
                 const memNum = value.node.property.value;
                 if (memNum < paramsLength) {
-                    value.replaceWith(TYPE.identifier("p" + memNum));
+                    value.replaceWith(identifier("p" + memNum));
                     changed = true;
                 }
             },
@@ -826,17 +881,17 @@ export class SyntaxRewriteSimplify implements ISimplify {
                 const fn = value.node;
                 // 匿名函数表达式不能转成函数声明(声明必须有名字)
                 if (!fn.id) return;
-                statement.replaceWith(TYPE.functionDeclaration(fn.id, fn.params, fn.body, fn.generator, fn.async));
+                statement.replaceWith(functionDeclaration(fn.id, fn.params, fn.body, fn.generator, fn.async));
                 changed = true;
             },
             UnaryExpression: (value) => {
                 if (value.node.operator !== "!") return;
                 const arg = value.node.argument;
-                if (TYPE.isNumericLiteral(arg)) {
-                    value.replaceWith(TYPE.booleanLiteral(arg.value === 0));
+                if (isNumericLiteral(arg)) {
+                    value.replaceWith(booleanLiteral(arg.value === 0));
                     changed = true;
-                } else if (TYPE.isBooleanLiteral(arg)) {
-                    value.replaceWith(TYPE.booleanLiteral(!arg.value));
+                } else if (isBooleanLiteral(arg)) {
+                    value.replaceWith(booleanLiteral(!arg.value));
                     changed = true;
                 }
             },
@@ -848,20 +903,20 @@ export class SyntaxRewriteSimplify implements ISimplify {
                 }
             },
             SpreadElement: (value) => {
-                if (TYPE.isArrayExpression(value.node.argument) && value.node.argument.elements.length === 1) {
+                if (isArrayExpression(value.node.argument) && value.node.argument.elements.length === 1) {
                     value.replaceWith(value.node.argument.elements[0]);
                     changed = true;
                 }
             },
         });
 
-        traverse(TYPE.file(node), {
-            Program: (value) => {
-                if (this.foldArrayAssignments(value.node.body)) changed = true;
-            },
-            BlockStatement: (value) => {
-                if (this.foldArrayAssignments(value.node.body)) changed = true;
-            },
+        // 第二遍只处理 Program/Block 的语句列表,用纯 AST 遍历代替 Babel traverse:
+        // 这一遍不依赖 NodePath/scope,walkNode 的开销明显更低。
+        walkNode(node, (n) => {
+            if (n.type === "Program" || n.type === "BlockStatement") {
+                if (this.foldArrayAssignments(n.body as TYPE.Statement[])) changed = true;
+            }
+            return true;
         });
         return changed;
     }

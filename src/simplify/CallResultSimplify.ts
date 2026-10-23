@@ -4,6 +4,12 @@ import traverse from "@babel/traverse";
 import * as TYPE from "@babel/types";
 import { walkNode } from "./AstUtils";
 
+
+const {
+    file,
+    isIdentifier,
+} = TYPE;
+
 /**
  * 处理 callIns 调用结果被立即覆盖的情况:
  *
@@ -21,7 +27,7 @@ export class CallResultSimplify implements ISimplify {
         let found = false;
         walkNode(node, (n) => {
             if (found) return false;
-            if (TYPE.isIdentifier(n) && n.name === name) {
+            if (isIdentifier(n) && n.name === name) {
                 found = true;
                 return false;
             }
@@ -32,19 +38,20 @@ export class CallResultSimplify implements ISimplify {
 
     simplify(node: Program): boolean {
         let changed = false;
-        traverse(TYPE.file(node), {
+        traverse(file(node), {
+            noScope: true,
             CallExpression: (value) => {
                 if (!value.node.extra || !value.node.extra["callIns"]) return;
                 const parent = value.getStatementParent();
                 if (!parent || !parent.isExpressionStatement()) return;
                 const expression = parent.get("expression");
                 if (!expression.isAssignmentExpression() || expression.node.operator !== "=") return;
-                if (!TYPE.isIdentifier(expression.node.left) || expression.node.left.name !== "acc") return;
+                if (!isIdentifier(expression.node.left) || expression.node.left.name !== "acc") return;
                 const next = parent.getNextSibling();
                 if (!next || !next.isExpressionStatement()) return;
                 const nextExpression = next.get("expression");
                 if (!nextExpression.isAssignmentExpression() || nextExpression.node.operator !== "=") return;
-                if (!TYPE.isIdentifier(nextExpression.node.left) || nextExpression.node.left.name !== "acc") return;
+                if (!isIdentifier(nextExpression.node.left) || nextExpression.node.left.name !== "acc") return;
                 // 下一条语句如果读取旧的 acc,则调用结果仍在使用
                 if (this.containsIdentifier(nextExpression.node.right, "acc")) return;
 

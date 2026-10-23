@@ -1,6 +1,20 @@
 import * as TYPE from "@babel/types";
 import { addPatternNames, walkNode } from "./AstUtils";
 
+
+const {
+    assignmentExpression,
+    expressionStatement,
+    identifier,
+    isBlockStatement,
+    isClassDeclaration,
+    isFunction,
+    isFunctionDeclaration,
+    isIdentifier,
+    isImportDeclaration,
+    isVariableDeclaration,
+} = TYPE;
+
 /**
  * 反编译结果里偶尔会出现同一作用域内重复的 let/import 声明(例如 import constants
  * 与 let constants 同时存在),Babel 建立 scope 时会直接抛
@@ -18,11 +32,11 @@ export function normalizeDeclarations(program: TYPE.Program): boolean {
     const importDeclarations: TYPE.ImportDeclaration[] = [];
 
     for (const statement of program.body) {
-        if (TYPE.isImportDeclaration(statement)) {
+        if (isImportDeclaration(statement)) {
             importDeclarations.push(statement);
-        } else if (TYPE.isVariableDeclaration(statement)) {
+        } else if (isVariableDeclaration(statement)) {
             for (const declarator of statement.declarations) addPatternNames(declarator.id, declaredTopLevel);
-        } else if ((TYPE.isFunctionDeclaration(statement) || TYPE.isClassDeclaration(statement)) && statement.id) {
+        } else if ((isFunctionDeclaration(statement) || isClassDeclaration(statement)) && statement.id) {
             declaredTopLevel.add(statement.id.name);
         }
     }
@@ -39,11 +53,11 @@ export function normalizeDeclarations(program: TYPE.Program): boolean {
 
     if (dedupeList(program.body)) changed = true;
     walkNode(program, (node) => {
-        if (TYPE.isFunction(node) && TYPE.isBlockStatement(node.body)) {
+        if (isFunction(node) && isBlockStatement(node.body)) {
             if (dedupeList(node.body.body)) changed = true;
             return true;
         }
-        if (TYPE.isBlockStatement(node)) {
+        if (isBlockStatement(node)) {
             if (dedupeList(node.body)) changed = true;
         }
         return true;
@@ -58,12 +72,12 @@ function dedupeList(statements: TYPE.Statement[]): boolean {
 
     for (let i = 0; i < statements.length; i++) {
         const statement = statements[i];
-        if (!TYPE.isVariableDeclaration(statement)) continue;
+        if (!isVariableDeclaration(statement)) continue;
 
         const kept: TYPE.VariableDeclarator[] = [];
         const assignments: TYPE.ExpressionStatement[] = [];
         for (const declarator of statement.declarations) {
-            if (!TYPE.isIdentifier(declarator.id)) {
+            if (!isIdentifier(declarator.id)) {
                 kept.push(declarator);
                 continue;
             }
@@ -71,8 +85,8 @@ function dedupeList(statements: TYPE.Statement[]): boolean {
             if (seen.has(name)) {
                 changed = true;
                 if (declarator.init) {
-                    assignments.push(TYPE.expressionStatement(
-                        TYPE.assignmentExpression("=", TYPE.identifier(name), declarator.init)));
+                    assignments.push(expressionStatement(
+                        assignmentExpression("=", identifier(name), declarator.init)));
                 }
             } else {
                 seen.add(name);

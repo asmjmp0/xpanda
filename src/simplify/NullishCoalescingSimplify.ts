@@ -3,6 +3,20 @@ import traverse from "@babel/traverse";
 import * as TYPE from "@babel/types";
 import { isNodeEqual, isPureExpression } from "./AstUtils";
 
+
+const {
+    assignmentExpression,
+    expressionStatement,
+    file,
+    identifier,
+    isAssignmentExpression,
+    isBreakStatement,
+    isExpressionStatement,
+    isIdentifier,
+    isNullLiteral,
+    logicalExpression,
+} = TYPE;
+
 /**
  * 还原 nullish coalescing 的 switch lowering:
  *
@@ -40,7 +54,8 @@ import { isNodeEqual, isPureExpression } from "./AstUtils";
 export class NullishCoalescingSimplify {
     simplify(node: Program): boolean {
         let changed = false;
-        traverse(TYPE.file(node), {
+        traverse(file(node), {
+            noScope: true,
             SwitchStatement: (path) => {
                 if (this.foldSwitch(path)) changed = true;
             },
@@ -52,14 +67,14 @@ export class NullishCoalescingSimplify {
         const switchNode = path.node as TYPE.SwitchStatement;
         if (switchNode.cases.length !== 2) return false;
 
-        const nullCase = switchNode.cases.find((c) => TYPE.isNullLiteral(c.test));
-        const undefinedCase = switchNode.cases.find((c) => TYPE.isIdentifier(c.test, { name: "undefined" }));
+        const nullCase = switchNode.cases.find((c) => isNullLiteral(c.test));
+        const undefinedCase = switchNode.cases.find((c) => isIdentifier(c.test, { name: "undefined" }));
         if (!nullCase || !undefinedCase || nullCase === undefinedCase) return false;
 
         const prev = path.getPrevSibling();
-        if (!prev || !TYPE.isExpressionStatement(prev.node) || !TYPE.isAssignmentExpression(prev.node.expression)) return false;
+        if (!prev || !isExpressionStatement(prev.node) || !isAssignmentExpression(prev.node.expression)) return false;
         const prevAssign = prev.node.expression;
-        if (prevAssign.operator !== "=" || !TYPE.isIdentifier(prevAssign.left)) return false;
+        if (prevAssign.operator !== "=" || !isIdentifier(prevAssign.left)) return false;
         const target = prevAssign.left.name;
 
         // 每个 case 要么为空(fallthrough),要么是 `target = value; [break;]`。
@@ -79,7 +94,7 @@ export class NullishCoalescingSimplify {
 
         const discriminant = switchNode.discriminant;
         let value: TYPE.Expression;
-        if (TYPE.isIdentifier(discriminant, { name: target })) {
+        if (isIdentifier(discriminant, { name: target })) {
             // switch 读的是刚赋给 target 的值
             value = prevAssign.right;
         } else if (isNodeEqual(discriminant, prevAssign.right) && isPureExpression(discriminant)) {
@@ -89,8 +104,8 @@ export class NullishCoalescingSimplify {
             return false;
         }
 
-        const replacement = TYPE.expressionStatement(
-            TYPE.assignmentExpression("=", TYPE.identifier(target), TYPE.logicalExpression("??", value, fallback)),
+        const replacement = expressionStatement(
+            assignmentExpression("=", identifier(target), logicalExpression("??", value, fallback)),
         );
         path.replaceWith(replacement);
         prev.remove();
@@ -106,11 +121,11 @@ export class NullishCoalescingSimplify {
         const body = caseNode.consequent;
         if (body.length === 0) return undefined;
         if (body.length > 2) return null;
-        if (body.length === 2 && !TYPE.isBreakStatement(body[1])) return null;
+        if (body.length === 2 && !isBreakStatement(body[1])) return null;
         const statement = body[0];
-        if (!TYPE.isExpressionStatement(statement) || !TYPE.isAssignmentExpression(statement.expression)) return null;
+        if (!isExpressionStatement(statement) || !isAssignmentExpression(statement.expression)) return null;
         const assign = statement.expression;
-        if (assign.operator !== "=" || !TYPE.isIdentifier(assign.left) || assign.left.name !== target) return null;
+        if (assign.operator !== "=" || !isIdentifier(assign.left) || assign.left.name !== target) return null;
         return assign.right;
     }
 }

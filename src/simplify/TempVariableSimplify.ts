@@ -8,6 +8,7 @@ import {
     collectMemberWriteTargets,
     collectIdentifierNames,
     collectReadNames,
+    collectReadWriteNames,
     isClassLike,
     isCopyable,
     isDeclarationValue,
@@ -20,6 +21,61 @@ import {
     walkNode,
     MemberWriteTarget,
 } from "./AstUtils";
+
+
+const {
+    VISITOR_KEYS,
+    cloneNode,
+    expressionStatement,
+    file,
+    functionDeclaration,
+    isArrayPattern,
+    isAssignmentExpression,
+    isAssignmentPattern,
+    isBinaryExpression,
+    isBlockStatement,
+    isCallExpression,
+    isCatchClause,
+    isClassDeclaration,
+    isClassExpression,
+    isConditionalExpression,
+    isContinueStatement,
+    isDoWhileStatement,
+    isEmptyStatement,
+    isExpression,
+    isExpressionStatement,
+    isForInStatement,
+    isForOfStatement,
+    isFunctionExpression,
+    isIdentifier,
+    isIfStatement,
+    isLogicalExpression,
+    isMemberExpression,
+    isNewExpression,
+    isObjectPattern,
+    isObjectProperty,
+    isOptionalCallExpression,
+    isOptionalMemberExpression,
+    isParenthesizedExpression,
+    isReferenced,
+    isRestElement,
+    isReturnStatement,
+    isSequenceExpression,
+    isSpreadElement,
+    isStringLiteral,
+    isTaggedTemplateExpression,
+    isUnaryExpression,
+    isUpdateExpression,
+    isVariableDeclaration,
+    isVariableDeclarator,
+    logicalExpression,
+    sequenceExpression,
+    stringLiteral,
+    unaryExpression,
+    identifier: identifierBuilder,
+    isProgram: isProgramNode,
+    isStatement: isStatementNode,
+} = TYPE;
 
 /**
  * 临时变量(acc / vN / local_X_Y)的复制传播与死存储消除。
@@ -96,8 +152,8 @@ interface LoopLive {
 
 /** 属性归一化键:非 computed 标识符与 computed 字符串字面量视为同一属性;动态键返回 null。 */
 function memberPropertyKey(property: TYPE.Expression, computed: boolean): string | null {
-    if (!computed && TYPE.isIdentifier(property)) return property.name;
-    if (computed && TYPE.isStringLiteral(property)) return String(property.value);
+    if (!computed && isIdentifier(property)) return property.name;
+    if (computed && isStringLiteral(property)) return String(property.value);
     return null;
 }
 
@@ -107,7 +163,7 @@ function exprReadsMember(expr: TYPE.Node, object: TYPE.Expression, key: string |
     walkNode(expr, (n) => {
         if (found) return false;
         if (isFunctionLike(n) || isClassLike(n)) return false;
-        if (TYPE.isMemberExpression(n) || TYPE.isOptionalMemberExpression(n)) {
+        if (isMemberExpression(n) || isOptionalMemberExpression(n)) {
             const m = n as TYPE.MemberExpression;
             if (isNodeEqual(m.object as TYPE.Expression, object)) {
                 const k = memberPropertyKey(m.property as TYPE.Expression, m.computed);
@@ -170,7 +226,6 @@ class EnvState {
             const current = queue.shift()!;
             if (seen.has(current)) continue;
             seen.add(current);
-            const entry = this.map.get(current);
             const holders = this.deps.get(current);
             this.delete(current);
             if (!holders) continue;
@@ -205,7 +260,7 @@ export class TempVariableSimplify implements ISimplify {
     simplify(node: Program): boolean {
         this.changed = false;
         this.conditionsOnly = false;
-        traverse(TYPE.file(node), {
+        traverse(file(node), {
             Program: (path) => this.processScope(path),
             Function: (path) => this.processScope(path),
         });
@@ -222,7 +277,7 @@ export class TempVariableSimplify implements ISimplify {
         const pass = new TempVariableSimplify();
         pass.changed = false;
         pass.conditionsOnly = true;
-        traverse(TYPE.file(node), {
+        traverse(file(node), {
             Program: (path) => pass.processScope(path),
             Function: (path) => pass.processScope(path),
         });
@@ -238,12 +293,12 @@ export class TempVariableSimplify implements ISimplify {
      */
     public static removeUnusedLexicalDeclarations(node: Program): boolean {
         let changed = false;
-        traverse(TYPE.file(node), {
+        traverse(file(node), {
             VariableDeclaration(path) {
                 const parent = path.parentPath;
-                if (!parent || !(TYPE.isBlockStatement(parent.node) || TYPE.isProgram(parent.node))) return;
+                if (!parent || !(isBlockStatement(parent.node) || isProgramNode(parent.node))) return;
                 const kept = path.node.declarations.filter((declarator) => {
-                    if (!TYPE.isIdentifier(declarator.id) || declarator.init) return true;
+                    if (!isIdentifier(declarator.id) || declarator.init) return true;
                     if (!/^(local|sendable)_\d+_\d+$/.test(declarator.id.name)) return true;
                     const binding = path.scope.getBinding(declarator.id.name);
                     if (!binding || binding.identifier !== declarator.id) return true;
@@ -259,11 +314,11 @@ export class TempVariableSimplify implements ISimplify {
             },
         });
         // 声明删除后再扫一遍,把刚变空的块去掉
-        traverse(TYPE.file(node), {
+        traverse(file(node), {
             BlockStatement(path) {
                 if (path.node.body.length !== 0) return;
                 const parent = path.parentPath;
-                if (!parent || !(TYPE.isBlockStatement(parent.node) || TYPE.isProgram(parent.node))) return;
+                if (!parent || !(isBlockStatement(parent.node) || isProgramNode(parent.node))) return;
                 if (!Array.isArray(parent.node.body) || !parent.node.body.includes(path.node)) return;
                 path.remove();
                 changed = true;
@@ -282,7 +337,7 @@ export class TempVariableSimplify implements ISimplify {
         const pass = new TempVariableSimplify();
         pass.changed = false;
         pass.shortCircuitOnly = true;
-        traverse(TYPE.file(node), {
+        traverse(file(node), {
             Program: (path) => pass.processScope(path),
             Function: (path) => pass.processScope(path),
         });
@@ -298,7 +353,7 @@ export class TempVariableSimplify implements ISimplify {
         const pass = new TempVariableSimplify();
         pass.changed = false;
         pass.returnsOnly = true;
-        traverse(TYPE.file(node), {
+        traverse(file(node), {
             Program: (path) => pass.processScope(path),
             Function: (path) => pass.processScope(path),
         });
@@ -307,9 +362,9 @@ export class TempVariableSimplify implements ISimplify {
 
     private processScope(path: NodePath<TYPE.Program> | NodePath<TYPE.Function>): void {
         const scope = path.scope;
-        const body: TYPE.Statement[] | null = TYPE.isProgram(path.node)
+        const body: TYPE.Statement[] | null = isProgramNode(path.node)
             ? path.node.body
-            : (TYPE.isBlockStatement(path.node.body) ? path.node.body.body : null);
+            : (isBlockStatement(path.node.body) ? path.node.body.body : null);
         if (!body || body.length === 0) return;
 
         const infos = new Map<string, BindingInfo>();
@@ -338,7 +393,7 @@ export class TempVariableSimplify implements ISimplify {
         this.renameCatchParameters(path, ctx);
         walkNode({ type: "BlockStatement", body } as TYPE.BlockStatement, (node) => {
             if (isFunctionLike(node) || isClassLike(node)) return false;
-            if (TYPE.isReturnStatement(node) && node.argument) {
+            if (isReturnStatement(node) && node.argument) {
                 for (const name of collectIdentifierNames(node.argument)) ctx.returned.add(name);
             }
             return true;
@@ -428,10 +483,10 @@ export class TempVariableSimplify implements ISimplify {
     private tryFoldReturnAssignment(stmts: TYPE.Statement[], i: number, ctx: FunctionContext): boolean {
         const assignStmt = stmts[i];
         const returnStmt = stmts[i + 1];
-        if (!TYPE.isExpressionStatement(assignStmt) || !TYPE.isAssignmentExpression(assignStmt.expression)) return false;
+        if (!isExpressionStatement(assignStmt) || !isAssignmentExpression(assignStmt.expression)) return false;
         const assign = assignStmt.expression;
-        if (assign.operator !== "=" || !TYPE.isIdentifier(assign.left)) return false;
-        if (!TYPE.isReturnStatement(returnStmt) || !returnStmt.argument) return false;
+        if (assign.operator !== "=" || !isIdentifier(assign.left)) return false;
+        if (!isReturnStatement(returnStmt) || !returnStmt.argument) return false;
         const name = assign.left.name;
         // 直接读取右值里的 X(如 new Promise(acc))在赋值前求值,折叠后仍是同一个旧值;
         // 若右值会写入 X(X++ / X = ...),折叠会改变写入次数,直接跳过。
@@ -439,7 +494,7 @@ export class TempVariableSimplify implements ISimplify {
         // 只有闭包/类字段里延迟读取 X 时,赋值是否发生才会影响结果,必须保守跳过。
         if (this.hasDeferredSelfReference(assign.right, name)) return false;
         const info = ctx.infos.get(name);
-        if (TYPE.isIdentifier(returnStmt.argument) && returnStmt.argument.name === name) {
+        if (isIdentifier(returnStmt.argument) && returnStmt.argument.name === name) {
             info?.refs.delete(returnStmt.argument);
             returnStmt.argument = assign.right;
             stmts.splice(i, 1);
@@ -453,7 +508,7 @@ export class TempVariableSimplify implements ISimplify {
         let id: TYPE.Identifier | null = null;
         walkNode(returnStmt.argument, (node, parent) => {
             if (isFunctionLike(node) || isClassLike(node)) return false;
-            if (TYPE.isIdentifier(node) && node.name === name && parent && TYPE.isReferenced(node, parent)) {
+            if (isIdentifier(node) && node.name === name && parent && isReferenced(node, parent)) {
                 id = node;
                 return false;
             }
@@ -499,24 +554,24 @@ export class TempVariableSimplify implements ISimplify {
     private tryFoldAccumulatorPair(stmts: TYPE.Statement[], i: number, ctx: FunctionContext): boolean {
         const first = stmts[i];
         const second = stmts[i + 1];
-        if (!TYPE.isExpressionStatement(first) || !TYPE.isAssignmentExpression(first.expression)) return false;
-        if (!TYPE.isExpressionStatement(second) || !TYPE.isAssignmentExpression(second.expression)) return false;
+        if (!isExpressionStatement(first) || !isAssignmentExpression(first.expression)) return false;
+        if (!isExpressionStatement(second) || !isAssignmentExpression(second.expression)) return false;
         const a = first.expression;
         const b = second.expression;
         if (a.operator !== "=" || b.operator !== "=") return false;
-        if (!TYPE.isIdentifier(a.left) || !TYPE.isIdentifier(b.left)) return false;
+        if (!isIdentifier(a.left) || !isIdentifier(b.left)) return false;
         const name = a.left.name;
         if (b.left.name !== name || !isTempName(name)) return false;
         const info = ctx.infos.get(name);
         if (!info || info.captured) return false;
-        if (!TYPE.isBinaryExpression(b.right)) return false;
+        if (!isBinaryExpression(b.right)) return false;
         if (this.countReadsInNode(b.right, name) !== 1) return false;
         if (collectAssignedNames(b.right).has(name)) return false;
         // 闭包里对 X 的延迟读取在两种写法里看到的都是最终值,但立即执行的闭包
         // (IIFE)会读到不同的旧值,保守跳过。
         if (this.hasDeferredSelfReference(a.right, name) || this.hasDeferredSelfReference(b.right, name)) return false;
-        const leftId = TYPE.isIdentifier(b.right.left) && b.right.left.name === name ? b.right.left : null;
-        const rightId = TYPE.isIdentifier(b.right.right) && b.right.right.name === name ? b.right.right : null;
+        const leftId = isIdentifier(b.right.left) && b.right.left.name === name ? b.right.left : null;
+        const rightId = isIdentifier(b.right.right) && b.right.right.name === name ? b.right.right : null;
         if (!leftId && !rightId) return false;
         const value = a.right;
         if (rightId) {
@@ -556,19 +611,19 @@ export class TempVariableSimplify implements ISimplify {
     private tryFoldTempAlias(stmts: TYPE.Statement[], i: number, ctx: FunctionContext): boolean {
         const first = stmts[i];
         const second = stmts[i + 1];
-        if (!TYPE.isExpressionStatement(first) || !TYPE.isAssignmentExpression(first.expression)) return false;
-        if (!TYPE.isExpressionStatement(second) || !TYPE.isAssignmentExpression(second.expression)) return false;
+        if (!isExpressionStatement(first) || !isAssignmentExpression(first.expression)) return false;
+        if (!isExpressionStatement(second) || !isAssignmentExpression(second.expression)) return false;
         const a = first.expression;
         const b = second.expression;
         if (a.operator !== "=" || b.operator !== "=") return false;
-        if (!TYPE.isIdentifier(a.left) || !TYPE.isIdentifier(b.right)) return false;
+        if (!isIdentifier(a.left) || !isIdentifier(b.right)) return false;
         const source = a.left.name;
         if (!isTempName(source) || b.right.name !== source) return false;
         // 目标是变量时保持原有限制;目标是成员(`v0.sbox = acc`)时只要求左值求值无副作用,
         // 否则把 E 搬到赋值右侧会改变 E 与左值副作用之间的求值顺序。
-        if (TYPE.isIdentifier(b.left)) {
+        if (isIdentifier(b.left)) {
             if (!isTempName(b.left.name) || b.left.name === source) return false;
-        } else if (TYPE.isMemberExpression(b.left)) {
+        } else if (isMemberExpression(b.left)) {
             const member = b.left;
             if (!isPureExpression(member.object as TYPE.Expression)) return false;
             if (member.computed && !isPureExpression(member.property as TYPE.Expression)) return false;
@@ -602,15 +657,15 @@ export class TempVariableSimplify implements ISimplify {
     }
 
     private firstEvaluatedChild(node: TYPE.Node): TYPE.Node | null {
-        if (TYPE.isBinaryExpression(node) || TYPE.isLogicalExpression(node)) return node.left;
-        if (TYPE.isConditionalExpression(node)) return node.test;
-        if (TYPE.isSequenceExpression(node)) return node.expressions[0] ?? null;
-        if (TYPE.isUnaryExpression(node) || TYPE.isUpdateExpression(node) || TYPE.isSpreadElement(node)) return node.argument;
-        if (TYPE.isMemberExpression(node)) return node.object;
-        if (TYPE.isOptionalMemberExpression(node)) return node.object;
-        if (TYPE.isCallExpression(node) || TYPE.isNewExpression(node) || TYPE.isOptionalCallExpression(node)) return node.callee;
-        if (TYPE.isTaggedTemplateExpression(node)) return node.tag;
-        if (TYPE.isAssignmentExpression(node)) return node.left;
+        if (isBinaryExpression(node) || isLogicalExpression(node)) return node.left;
+        if (isConditionalExpression(node)) return node.test;
+        if (isSequenceExpression(node)) return node.expressions[0] ?? null;
+        if (isUnaryExpression(node) || isUpdateExpression(node) || isSpreadElement(node)) return node.argument;
+        if (isMemberExpression(node)) return node.object;
+        if (isOptionalMemberExpression(node)) return node.object;
+        if (isCallExpression(node) || isNewExpression(node) || isOptionalCallExpression(node)) return node.callee;
+        if (isTaggedTemplateExpression(node)) return node.tag;
+        if (isAssignmentExpression(node)) return node.left;
         return null;
     }
 
@@ -620,10 +675,10 @@ export class TempVariableSimplify implements ISimplify {
                 this.foldReturnAssignments(stmt.body, ctx);
                 break;
             case "IfStatement":
-                if (TYPE.isBlockStatement(stmt.consequent)) this.foldReturnAssignments(stmt.consequent.body, ctx);
+                if (isBlockStatement(stmt.consequent)) this.foldReturnAssignments(stmt.consequent.body, ctx);
                 else this.foldReturnAssignmentsInChildren(stmt.consequent, ctx);
                 if (stmt.alternate) {
-                    if (TYPE.isBlockStatement(stmt.alternate)) this.foldReturnAssignments(stmt.alternate.body, ctx);
+                    if (isBlockStatement(stmt.alternate)) this.foldReturnAssignments(stmt.alternate.body, ctx);
                     else this.foldReturnAssignmentsInChildren(stmt.alternate, ctx);
                 }
                 break;
@@ -633,11 +688,11 @@ export class TempVariableSimplify implements ISimplify {
             case "ForInStatement":
             case "ForOfStatement":
             case "LabeledStatement":
-                if (TYPE.isBlockStatement(stmt.body)) this.foldReturnAssignments(stmt.body.body, ctx);
+                if (isBlockStatement(stmt.body)) this.foldReturnAssignments(stmt.body.body, ctx);
                 else this.foldReturnAssignmentsInChildren(stmt.body, ctx);
                 break;
             case "TryStatement":
-                if (TYPE.isBlockStatement(stmt.block)) this.foldReturnAssignments(stmt.block.body, ctx);
+                if (isBlockStatement(stmt.block)) this.foldReturnAssignments(stmt.block.body, ctx);
                 if (stmt.handler) this.foldReturnAssignments(stmt.handler.body.body, ctx);
                 if (stmt.finalizer) this.foldReturnAssignments(stmt.finalizer.body, ctx);
                 break;
@@ -654,12 +709,12 @@ export class TempVariableSimplify implements ISimplify {
         let found = false;
         const visit = (current: TYPE.Node | null | undefined, inDeferred: boolean): void => {
             if (found || !current || typeof (current as any).type !== "string") return;
-            if (inDeferred && TYPE.isIdentifier(current) && current.name === name) {
+            if (inDeferred && isIdentifier(current) && current.name === name) {
                 found = true;
                 return;
             }
             const nested = inDeferred || isFunctionLike(current) || isClassLike(current);
-            const keys = (TYPE.VISITOR_KEYS as any)[current.type] as string[] | undefined;
+            const keys = (VISITOR_KEYS as any)[current.type] as string[] | undefined;
             if (!keys) return;
             for (const key of keys) {
                 const value = (current as any)[key];
@@ -676,11 +731,11 @@ export class TempVariableSimplify implements ISimplify {
 
     private hasHoistCandidate(stmts: TYPE.Statement[]): boolean {
         for (const stmt of stmts) {
-            if (!TYPE.isExpressionStatement(stmt) || !TYPE.isAssignmentExpression(stmt.expression)) continue;
+            if (!isExpressionStatement(stmt) || !isAssignmentExpression(stmt.expression)) continue;
             const assign = stmt.expression;
-            if (assign.operator !== "=" || !TYPE.isIdentifier(assign.left)) continue;
+            if (assign.operator !== "=" || !isIdentifier(assign.left)) continue;
             if (!/^local_\d+_\d+$/.test(assign.left.name)) continue;
-            if (TYPE.isFunctionExpression(assign.right) && assign.right.id) return true;
+            if (isFunctionExpression(assign.right) && assign.right.id) return true;
         }
         return false;
     }
@@ -712,7 +767,7 @@ export class TempVariableSimplify implements ISimplify {
      * 导致把外层初始化当成唯一值传播进闭包后的读取,并连带删掉声明。
      */
     private isCapturedBinding(binding: any, functionNode: TYPE.Node): boolean {
-        const isProgram = TYPE.isProgram(functionNode);
+        const isProgram = isProgramNode(functionNode);
         const paths: NodePath[] = [
             ...(binding.referencePaths ?? []),
             ...(binding.constantViolations ?? []),
@@ -738,14 +793,14 @@ export class TempVariableSimplify implements ISimplify {
         const writes = new Map<string, TYPE.Statement[]>();
         for (const stmt of stmts) {
             walkNode(stmt, (node) => {
-                if (TYPE.isIdentifier(node)) {
+                if (isIdentifier(node)) {
                     nameCounts.set(node.name, (nameCounts.get(node.name) || 0) + 1);
                 }
-                if (TYPE.isAssignmentExpression(node) && TYPE.isIdentifier(node.left)) {
+                if (isAssignmentExpression(node) && isIdentifier(node.left)) {
                     let list = writes.get(node.left.name);
                     if (!list) { list = []; writes.set(node.left.name, list); }
                     list.push(stmt);
-                } else if (TYPE.isUpdateExpression(node) && TYPE.isIdentifier(node.argument)) {
+                } else if (isUpdateExpression(node) && isIdentifier(node.argument)) {
                     let list = writes.get(node.argument.name);
                     if (!list) { list = []; writes.set(node.argument.name, list); }
                     list.push(stmt);
@@ -756,12 +811,12 @@ export class TempVariableSimplify implements ISimplify {
 
         const candidates: Array<{ stmt: TYPE.Statement; name: string; fn: TYPE.FunctionExpression }> = [];
         for (const stmt of stmts) {
-            if (!TYPE.isExpressionStatement(stmt) || !TYPE.isAssignmentExpression(stmt.expression)) continue;
+            if (!isExpressionStatement(stmt) || !isAssignmentExpression(stmt.expression)) continue;
             const assign = stmt.expression;
-            if (assign.operator !== "=" || !TYPE.isIdentifier(assign.left)) continue;
+            if (assign.operator !== "=" || !isIdentifier(assign.left)) continue;
             const name = assign.left.name;
             if (!/^local_\d+_\d+$/.test(name)) continue;
-            if (!TYPE.isFunctionExpression(assign.right) || !assign.right.id) continue;
+            if (!isFunctionExpression(assign.right) || !assign.right.id) continue;
             if (!ctx.infos.get(name) || ctx.infos.get(name)!.refs.size === 0) continue;
             candidates.push({ stmt, name, fn: assign.right });
         }
@@ -779,10 +834,10 @@ export class TempVariableSimplify implements ISimplify {
             if (index < 0) continue;
             const info = ctx.infos.get(name)!;
             for (const ref of info.refs) {
-                if (TYPE.isIdentifier(ref)) ref.name = functionName;
+                if (isIdentifier(ref)) ref.name = functionName;
             }
             info.refs.clear();
-            stmts[index] = TYPE.functionDeclaration(fn.id!, fn.params, fn.body, fn.generator, fn.async);
+            stmts[index] = functionDeclaration(fn.id!, fn.params, fn.body, fn.generator, fn.async);
             this.removeDeclarator(stmts, name);
             this.changed = true;
         }
@@ -791,7 +846,7 @@ export class TempVariableSimplify implements ISimplify {
     private countIdentifiers(node: TYPE.Node, name: string): number {
         let count = 0;
         walkNode(node, (child) => {
-            if (TYPE.isIdentifier(child) && child.name === name) count++;
+            if (isIdentifier(child) && child.name === name) count++;
             return true;
         });
         return count;
@@ -801,18 +856,18 @@ export class TempVariableSimplify implements ISimplify {
     private foldSplitStringArrays(stmts: TYPE.Statement[], ctx: FunctionContext): void {
         for (let i = stmts.length - 1; i >= 0; i--) {
             const stmt = stmts[i];
-            if (!TYPE.isExpressionStatement(stmt) || !TYPE.isAssignmentExpression(stmt.expression)) continue;
+            if (!isExpressionStatement(stmt) || !isAssignmentExpression(stmt.expression)) continue;
             const assign = stmt.expression;
-            if (assign.operator !== "=" || !TYPE.isIdentifier(assign.left)) continue;
-            if (!TYPE.isCallExpression(assign.right) || !TYPE.isMemberExpression(assign.right.callee)) continue;
+            if (assign.operator !== "=" || !isIdentifier(assign.left)) continue;
+            if (!isCallExpression(assign.right) || !isMemberExpression(assign.right.callee)) continue;
             const callee = assign.right.callee;
-            if (!TYPE.isStringLiteral(callee.object)) continue;
+            if (!isStringLiteral(callee.object)) continue;
             const property = callee.property;
-            const method = !callee.computed && TYPE.isIdentifier(property) ? property.name
-                : (TYPE.isStringLiteral(property) ? property.value : "");
+            const method = !callee.computed && isIdentifier(property) ? property.name
+                : (isStringLiteral(property) ? property.value : "");
             if (method !== "split" || assign.right.arguments.length !== 1) continue;
             const separator = assign.right.arguments[0];
-            if (!TYPE.isStringLiteral(separator) || separator.value !== "") continue;
+            if (!isStringLiteral(separator) || separator.value !== "") continue;
 
             const name = assign.left.name;
             if (!isTempName(name)) continue;
@@ -823,11 +878,11 @@ export class TempVariableSimplify implements ISimplify {
             for (let j = stmts.length - 1; j >= 0; j--) {
                 if (j === candidateIndex) continue;
                 const other = stmts[j];
-                if (TYPE.isExpressionStatement(other) && TYPE.isAssignmentExpression(other.expression)
-                    && TYPE.isIdentifier(other.expression.left) && other.expression.left.name === name) {
+                if (isExpressionStatement(other) && isAssignmentExpression(other.expression)
+                    && isIdentifier(other.expression.left) && other.expression.left.name === name) {
                     const rhs = other.expression.right;
-                    const isUndefined = (TYPE.isIdentifier(rhs) && (rhs.name === "undefined" || rhs.name === "hole"))
-                        || (TYPE.isUnaryExpression(rhs) && rhs.operator === "void");
+                    const isUndefined = (isIdentifier(rhs) && (rhs.name === "undefined" || rhs.name === "hole"))
+                        || (isUnaryExpression(rhs) && rhs.operator === "void");
                     if (j < candidateIndex && isUndefined) {
                         stmts.splice(j, 1);
                         candidateIndex--;
@@ -835,7 +890,7 @@ export class TempVariableSimplify implements ISimplify {
                         canFold = false;
                         break;
                     }
-                } else if (TYPE.isUpdateExpression(other) || (TYPE.isForInStatement(other) || TYPE.isForOfStatement(other))) {
+                } else if (isUpdateExpression(other) || (isForInStatement(other) || isForOfStatement(other))) {
                     canFold = false;
                     break;
                 }
@@ -848,9 +903,9 @@ export class TempVariableSimplify implements ISimplify {
             walkNode({ type: "BlockStatement", body: stmts } as TYPE.BlockStatement, (node, parent) => {
                 if (!valid) return false;
                 if (node === stmts[candidateIndex]) return false;
-                if (!TYPE.isIdentifier(node) || node.name !== name) return true;
-                if (parent && TYPE.isVariableDeclarator(parent) && parent.id === node) return true;
-                if (parent && TYPE.isMemberExpression(parent) && parent.object === node && parent.computed) {
+                if (!isIdentifier(node) || node.name !== name) return true;
+                if (parent && isVariableDeclarator(parent) && parent.id === node) return true;
+                if (parent && isMemberExpression(parent) && parent.object === node && parent.computed) {
                     members.push(parent);
                     return false;
                 }
@@ -859,7 +914,7 @@ export class TempVariableSimplify implements ISimplify {
             });
             if (!valid || members.length === 0) continue;
 
-            for (const member of members) member.object = TYPE.stringLiteral(value);
+            for (const member of members) member.object = stringLiteral(value);
             ctx.infos.get(name)?.refs.clear();
             stmts.splice(candidateIndex, 1);
             this.removeDeclarator(stmts, name);
@@ -867,31 +922,11 @@ export class TempVariableSimplify implements ISimplify {
         }
     }
 
-    private hasWriteAnywhere(stmts: TYPE.Statement[], name: string, candidate: TYPE.Statement): boolean {
-        let found = false;
-        for (const stmt of stmts) {
-            walkNode(stmt, (node) => {
-                if (found) return false;
-                if (node === candidate) return false;
-                if (TYPE.isAssignmentExpression(node) && TYPE.isIdentifier(node.left) && node.left.name === name) {
-                    found = true;
-                    return false;
-                }
-                if (TYPE.isUpdateExpression(node) && TYPE.isIdentifier(node.argument) && node.argument.name === name) {
-                    found = true;
-                    return false;
-                }
-                return true;
-            });
-        }
-        return found;
-    }
-
     private removeDeclarator(stmts: TYPE.Statement[], name: string): void {
         for (let i = stmts.length - 1; i >= 0; i--) {
             const stmt = stmts[i];
-            if (!TYPE.isVariableDeclaration(stmt)) continue;
-            const kept = stmt.declarations.filter((d) => !(TYPE.isIdentifier(d.id) && d.id.name === name));
+            if (!isVariableDeclaration(stmt)) continue;
+            const kept = stmt.declarations.filter((d) => !(isIdentifier(d.id) && d.id.name === name));
             if (kept.length === stmt.declarations.length) continue;
             if (kept.length === 0) stmts.splice(i, 1);
             else stmt.declarations = kept;
@@ -909,7 +944,7 @@ export class TempVariableSimplify implements ISimplify {
      */
     private foldDoWhileTestAssignments(stmts: TYPE.Statement[], ctx: FunctionContext): void {
         for (const stmt of stmts) {
-            if (TYPE.isDoWhileStatement(stmt)) this.foldSingleDoWhileTest(stmt, ctx);
+            if (isDoWhileStatement(stmt)) this.foldSingleDoWhileTest(stmt, ctx);
             this.foldDoWhileTestChildren(stmt, ctx);
         }
     }
@@ -946,11 +981,11 @@ export class TempVariableSimplify implements ISimplify {
 
     private foldSingleDoWhileTest(stmt: TYPE.DoWhileStatement, ctx: FunctionContext): boolean {
         const body = stmt.body;
-        if (!TYPE.isBlockStatement(body) || body.body.length < 2) return false;
+        if (!isBlockStatement(body) || body.body.length < 2) return false;
         const last = body.body[body.body.length - 1];
-        if (!TYPE.isExpressionStatement(last) || !TYPE.isAssignmentExpression(last.expression)) return false;
+        if (!isExpressionStatement(last) || !isAssignmentExpression(last.expression)) return false;
         const assign = last.expression;
-        if (assign.operator !== "=" || !TYPE.isIdentifier(assign.left)) return false;
+        if (assign.operator !== "=" || !isIdentifier(assign.left)) return false;
         const name = assign.left.name;
         if (!isTempName(name)) return false;
         const info = ctx.infos.get(name);
@@ -959,10 +994,10 @@ export class TempVariableSimplify implements ISimplify {
 
         const test = stmt.test;
         let testNegated: boolean;
-        if (TYPE.isIdentifier(test) && test.name === name) {
+        if (isIdentifier(test) && test.name === name) {
             testNegated = false;
-        } else if (TYPE.isUnaryExpression(test) && test.operator === "!"
-            && TYPE.isIdentifier(test.argument) && test.argument.name === name) {
+        } else if (isUnaryExpression(test) && test.operator === "!"
+            && isIdentifier(test.argument) && test.argument.name === name) {
             testNegated = true;
         } else {
             return false;
@@ -971,7 +1006,7 @@ export class TempVariableSimplify implements ISimplify {
         // continue 会跳过末尾赋值直接求值 test,此时 test 读到的是旧值
         let hasContinue = false;
         walkNode(body, (node) => {
-            if (TYPE.isContinueStatement(node)) {
+            if (isContinueStatement(node)) {
                 hasContinue = true;
                 return false;
             }
@@ -984,10 +1019,10 @@ export class TempVariableSimplify implements ISimplify {
         if (!liveAfter || liveAfter.has(name)) return false;
 
         body.body.pop();
-        let newTest: TYPE.Expression = testNegated ? TYPE.unaryExpression("!", assign.right) : assign.right;
+        let newTest: TYPE.Expression = testNegated ? unaryExpression("!", assign.right) : assign.right;
         // !(!E) -> E
-        if (TYPE.isUnaryExpression(newTest) && newTest.operator === "!"
-            && TYPE.isUnaryExpression(newTest.argument) && newTest.argument.operator === "!") {
+        if (isUnaryExpression(newTest) && newTest.operator === "!"
+            && isUnaryExpression(newTest.argument) && newTest.argument.operator === "!") {
             newTest = newTest.argument.argument;
         }
         this.removeRefs(test, ctx);
@@ -1000,10 +1035,10 @@ export class TempVariableSimplify implements ISimplify {
     private cleanupConditionAssignments(stmts: TYPE.Statement[], ctx: FunctionContext): void {
         for (let i = 0; i < stmts.length; i++) {
             const stmt = stmts[i];
-            if (TYPE.isIfStatement(stmt)) {
+            if (isIfStatement(stmt)) {
                 const pattern = this.matchConditionPattern(stmts, i, ctx);
                 if (pattern) {
-                    const { start, name, expr, testId } = pattern;
+                    const { start, expr, testId } = pattern;
                     const oldTest = stmt.test;
                     // 只移除旧 test 里对 X 的那一次读取;test 中其它标识符(E 替换后仍在)
                     // 的引用必须保留,否则后续声明清理会误删它们。
@@ -1012,7 +1047,7 @@ export class TempVariableSimplify implements ISimplify {
                         // 删除整条 `X = !X` 取反链(可能有多条)里的引用
                         for (let j = start + 1; j < i; j++) {
                             const negation = stmts[j];
-                            if (TYPE.isExpressionStatement(negation) && TYPE.isAssignmentExpression(negation.expression)) {
+                            if (isExpressionStatement(negation) && isAssignmentExpression(negation.expression)) {
                                 this.removeRefs(negation.expression.right, ctx);
                             }
                         }
@@ -1046,10 +1081,10 @@ export class TempVariableSimplify implements ISimplify {
             case "IfStatement":
                 // consequent 可能是非块的 if(Region 归约会生成 `if (A) if (B) ...`),
                 // 同样需要下钻,否则整条分支里的条件物化都无法折叠。
-                if (TYPE.isBlockStatement(stmt.consequent)) this.cleanupConditionAssignments(stmt.consequent.body, ctx);
+                if (isBlockStatement(stmt.consequent)) this.cleanupConditionAssignments(stmt.consequent.body, ctx);
                 else this.cleanupConditionChildren(stmt.consequent, ctx);
                 if (stmt.alternate) {
-                    if (TYPE.isBlockStatement(stmt.alternate)) this.cleanupConditionAssignments(stmt.alternate.body, ctx);
+                    if (isBlockStatement(stmt.alternate)) this.cleanupConditionAssignments(stmt.alternate.body, ctx);
                     else this.cleanupConditionChildren(stmt.alternate, ctx);
                 }
                 break;
@@ -1059,7 +1094,7 @@ export class TempVariableSimplify implements ISimplify {
             case "ForInStatement":
             case "ForOfStatement":
             case "LabeledStatement":
-                if (TYPE.isBlockStatement(stmt.body)) this.cleanupConditionAssignments(stmt.body.body, ctx);
+                if (isBlockStatement(stmt.body)) this.cleanupConditionAssignments(stmt.body.body, ctx);
                 break;
             case "TryStatement":
                 this.cleanupConditionAssignments(stmt.block.body, ctx);
@@ -1080,23 +1115,23 @@ export class TempVariableSimplify implements ISimplify {
         ctx: FunctionContext,
     ): { start: number; name: string; expr: TYPE.Expression; testId: TYPE.Identifier } | null {
         const ifStmt = stmts[ifIndex];
-        if (!TYPE.isIfStatement(ifStmt)) return null;
+        if (!isIfStatement(ifStmt)) return null;
         const test = ifStmt.test;
         let name: string;
         let testId: TYPE.Identifier | null = null;
-        if (TYPE.isIdentifier(test)) {
+        if (isIdentifier(test)) {
             name = test.name;
             testId = test;
-        } else if (TYPE.isUnaryExpression(test) && test.operator === "!"
-            && TYPE.isIdentifier(test.argument)) {
+        } else if (isUnaryExpression(test) && test.operator === "!"
+            && isIdentifier(test.argument)) {
             name = test.argument.name;
             testId = test.argument;
         } else {
             // 复合 test(`!X && B` / `X || B`):变量名从前一条赋值获取,
             // 并要求 test 里只直接读取一次 X,这样把 X 的值搬进 test 不会复制求值。
             const prev = stmts[ifIndex - 1];
-            if (!TYPE.isExpressionStatement(prev) || !TYPE.isAssignmentExpression(prev.expression)
-                || prev.expression.operator !== "=" || !TYPE.isIdentifier(prev.expression.left)) {
+            if (!isExpressionStatement(prev) || !isAssignmentExpression(prev.expression)
+                || prev.expression.operator !== "=" || !isIdentifier(prev.expression.left)) {
                 return null;
             }
             name = prev.expression.left.name;
@@ -1104,7 +1139,7 @@ export class TempVariableSimplify implements ISimplify {
             if (this.countReadsInNode(test, name) !== 1) return null;
             walkNode(test, (node, parent) => {
                 if (isFunctionLike(node) || isClassLike(node)) return false;
-                if (TYPE.isIdentifier(node) && node.name === name && parent && TYPE.isReferenced(node, parent)) {
+                if (isIdentifier(node) && node.name === name && parent && isReferenced(node, parent)) {
                     testId = node;
                     return false;
                 }
@@ -1123,20 +1158,20 @@ export class TempVariableSimplify implements ISimplify {
         // 决定最终条件,避免把 `!T` 误当成 T 或只折叠一层。
         while (start >= 0) {
             const prev = stmts[start];
-            if (!TYPE.isExpressionStatement(prev) || !TYPE.isAssignmentExpression(prev.expression)) break;
+            if (!isExpressionStatement(prev) || !isAssignmentExpression(prev.expression)) break;
             const negation = prev.expression;
             if (negation.operator !== "="
-                || !TYPE.isIdentifier(negation.left) || negation.left.name !== name
-                || !TYPE.isUnaryExpression(negation.right) || negation.right.operator !== "!"
-                || !TYPE.isIdentifier(negation.right.argument) || negation.right.argument.name !== name) break;
+                || !isIdentifier(negation.left) || negation.left.name !== name
+                || !isUnaryExpression(negation.right) || negation.right.operator !== "!"
+                || !isIdentifier(negation.right.argument) || negation.right.argument.name !== name) break;
             negations++;
             start--;
         }
         if (start < 0) return null;
         const assign = stmts[start];
-        if (!TYPE.isExpressionStatement(assign) || !TYPE.isAssignmentExpression(assign.expression)) return null;
+        if (!isExpressionStatement(assign) || !isAssignmentExpression(assign.expression)) return null;
         const expression = assign.expression;
-        if (expression.operator !== "=" || !TYPE.isIdentifier(expression.left) || expression.left.name !== name) {
+        if (expression.operator !== "=" || !isIdentifier(expression.left) || expression.left.name !== name) {
             return null;
         }
         if (isDeclarationValue(expression.right)) return null;
@@ -1148,7 +1183,7 @@ export class TempVariableSimplify implements ISimplify {
         const patternRefs = new Set<TYPE.Node>();
         for (let j = start; j < ifIndex; j++) {
             walkNode(stmts[j], (node, parent) => {
-                if (TYPE.isIdentifier(node) && node.name === name && parent && TYPE.isReferenced(node, parent)) {
+                if (isIdentifier(node) && node.name === name && parent && isReferenced(node, parent)) {
                     patternRefs.add(node);
                 }
             });
@@ -1187,8 +1222,8 @@ export class TempVariableSimplify implements ISimplify {
 
     /** 构造 `!expr`,`!!E` 直接还原成 E。 */
     private negateExpression(expr: TYPE.Expression): TYPE.Expression {
-        if (TYPE.isUnaryExpression(expr) && expr.operator === "!") return expr.argument;
-        return TYPE.unaryExpression("!", expr);
+        if (isUnaryExpression(expr) && expr.operator === "!") return expr.argument;
+        return unaryExpression("!", expr);
     }
 
     /**
@@ -1251,12 +1286,12 @@ export class TempVariableSimplify implements ISimplify {
     private tryFoldSelfReadChain(stmts: TYPE.Statement[], i: number, ctx: FunctionContext): boolean {
         const first = stmts[i];
         const second = stmts[i + 1];
-        if (!TYPE.isExpressionStatement(first) || !TYPE.isAssignmentExpression(first.expression)) return false;
-        if (!TYPE.isExpressionStatement(second) || !TYPE.isAssignmentExpression(second.expression)) return false;
+        if (!isExpressionStatement(first) || !isAssignmentExpression(first.expression)) return false;
+        if (!isExpressionStatement(second) || !isAssignmentExpression(second.expression)) return false;
         const a = first.expression;
         const b = second.expression;
         if (a.operator !== "=" || b.operator !== "=") return false;
-        if (!TYPE.isIdentifier(a.left) || !TYPE.isIdentifier(b.left)) return false;
+        if (!isIdentifier(a.left) || !isIdentifier(b.left)) return false;
         const name = a.left.name;
         if (b.left.name !== name || !isTempName(name)) return false;
         const info = ctx.infos.get(name);
@@ -1265,7 +1300,7 @@ export class TempVariableSimplify implements ISimplify {
         // 并且在 B 内部没有再写入 X(避免 sequence 里混入 X = ...)。
         // 只处理成员装载(X = X.prop / X.length):其它自引用形态
         // (X = X + 1、X = !X)分别由 foldCompoundAssignments / 条件折叠负责。
-        if (!TYPE.isMemberExpression(a.right) && !TYPE.isOptionalMemberExpression(a.right)) return false;
+        if (!isMemberExpression(a.right) && !isOptionalMemberExpression(a.right)) return false;
         if (this.countReadsInNode(a.right, name) !== 1) return false;
         if (this.countReadsInNode(b.right, name) !== 1) return false;
         if (!isPureExpression(a.right)) return false;
@@ -1278,14 +1313,14 @@ export class TempVariableSimplify implements ISimplify {
         let id: TYPE.Identifier | null = null;
         walkNode(b.right, (node, parent) => {
             if (isFunctionLike(node) || isClassLike(node)) return false;
-            if (TYPE.isIdentifier(node) && node.name === name && parent && TYPE.isReferenced(node, parent)) {
+            if (isIdentifier(node) && node.name === name && parent && isReferenced(node, parent)) {
                 id = node;
                 return false;
             }
             return true;
         });
         if (!id) return false;
-        const clone = TYPE.cloneNode(a.right, true) as TYPE.Expression;
+        const clone = cloneNode(a.right, true) as TYPE.Expression;
         if (!replaceNodeInTree(b.right, id, clone)) return false;
         info.refs.delete(id);
         this.removeRefs(a.right, ctx);
@@ -1301,10 +1336,10 @@ export class TempVariableSimplify implements ISimplify {
                 this.foldSelfReadChains(stmt.body, ctx);
                 break;
             case "IfStatement":
-                if (TYPE.isBlockStatement(stmt.consequent)) this.foldSelfReadChains(stmt.consequent.body, ctx);
+                if (isBlockStatement(stmt.consequent)) this.foldSelfReadChains(stmt.consequent.body, ctx);
                 else this.foldSelfReadChainChildren(stmt.consequent, ctx);
                 if (stmt.alternate) {
-                    if (TYPE.isBlockStatement(stmt.alternate)) this.foldSelfReadChains(stmt.alternate.body, ctx);
+                    if (isBlockStatement(stmt.alternate)) this.foldSelfReadChains(stmt.alternate.body, ctx);
                     else this.foldSelfReadChainChildren(stmt.alternate, ctx);
                 }
                 break;
@@ -1314,7 +1349,7 @@ export class TempVariableSimplify implements ISimplify {
             case "ForInStatement":
             case "ForOfStatement":
             case "LabeledStatement":
-                if (TYPE.isBlockStatement(stmt.body)) this.foldSelfReadChains(stmt.body.body, ctx);
+                if (isBlockStatement(stmt.body)) this.foldSelfReadChains(stmt.body.body, ctx);
                 else this.foldSelfReadChainChildren(stmt.body, ctx);
                 break;
             case "TryStatement":
@@ -1336,10 +1371,10 @@ export class TempVariableSimplify implements ISimplify {
                 this.foldShortCircuitChains(stmt.body, ctx);
                 break;
             case "IfStatement":
-                if (TYPE.isBlockStatement(stmt.consequent)) this.foldShortCircuitChains(stmt.consequent.body, ctx);
+                if (isBlockStatement(stmt.consequent)) this.foldShortCircuitChains(stmt.consequent.body, ctx);
                 else this.foldShortCircuitChildren(stmt.consequent, ctx);
                 if (stmt.alternate) {
-                    if (TYPE.isBlockStatement(stmt.alternate)) this.foldShortCircuitChains(stmt.alternate.body, ctx);
+                    if (isBlockStatement(stmt.alternate)) this.foldShortCircuitChains(stmt.alternate.body, ctx);
                     else this.foldShortCircuitChildren(stmt.alternate, ctx);
                 }
                 break;
@@ -1349,7 +1384,7 @@ export class TempVariableSimplify implements ISimplify {
             case "ForInStatement":
             case "ForOfStatement":
             case "LabeledStatement":
-                if (TYPE.isBlockStatement(stmt.body)) this.foldShortCircuitChains(stmt.body.body, ctx);
+                if (isBlockStatement(stmt.body)) this.foldShortCircuitChains(stmt.body.body, ctx);
                 else this.foldShortCircuitChildren(stmt.body, ctx);
                 break;
             case "TryStatement":
@@ -1376,9 +1411,9 @@ export class TempVariableSimplify implements ISimplify {
     ): { value: TYPE.Expression; removedTest: TYPE.Expression } | null {
         if (i + 1 >= stmts.length) return null;
         const assignStmt = stmts[i];
-        if (!TYPE.isExpressionStatement(assignStmt) || !TYPE.isAssignmentExpression(assignStmt.expression)) return null;
+        if (!isExpressionStatement(assignStmt) || !isAssignmentExpression(assignStmt.expression)) return null;
         const assign = assignStmt.expression;
-        if (assign.operator !== "=" || !TYPE.isIdentifier(assign.left)) return null;
+        if (assign.operator !== "=" || !isIdentifier(assign.left)) return null;
         const name = assign.left.name;
         if (!isTempName(name)) return null;
         const info = ctx.infos.get(name);
@@ -1390,35 +1425,35 @@ export class TempVariableSimplify implements ISimplify {
         // 若在这里以自取反为链头抢先折叠成 `X = !X || set(...)`,
         // 会让尾部折叠失去链头,输出反而退化。函数/类表达式保持语句形态,
         // 留给 hoistNamedFunctionExpressions 提升。
-        if (TYPE.isUnaryExpression(assign.right) && assign.right.operator === "!"
-            && TYPE.isIdentifier(assign.right.argument) && assign.right.argument.name === name) return null;
+        if (isUnaryExpression(assign.right) && assign.right.operator === "!"
+            && isIdentifier(assign.right.argument) && assign.right.argument.name === name) return null;
         if (isDeclarationValue(assign.right)) return null;
 
         const ifStmt = stmts[i + 1];
-        if (!TYPE.isIfStatement(ifStmt) || ifStmt.alternate) return null;
+        if (!isIfStatement(ifStmt) || ifStmt.alternate) return null;
 
         // 分支体必须是唯一一条 `X = B`
         let body: TYPE.Statement[];
-        if (TYPE.isBlockStatement(ifStmt.consequent)) {
+        if (isBlockStatement(ifStmt.consequent)) {
             if (ifStmt.consequent.body.length !== 1) return null;
             body = ifStmt.consequent.body;
         } else {
             body = [ifStmt.consequent];
         }
         const only = body[0];
-        if (!TYPE.isExpressionStatement(only) || !TYPE.isAssignmentExpression(only.expression)) return null;
+        if (!isExpressionStatement(only) || !isAssignmentExpression(only.expression)) return null;
         const inner = only.expression;
-        if (inner.operator !== "=" || !TYPE.isIdentifier(inner.left) || inner.left.name !== name) return null;
+        if (inner.operator !== "=" || !isIdentifier(inner.left) || inner.left.name !== name) return null;
         if (isDeclarationValue(inner.right)) return null;
         if (this.hasDeferredSelfReference(inner.right, name)) return null;
 
         const test = ifStmt.test;
-        if (TYPE.isIdentifier(test) && test.name === name) {
-            return { value: TYPE.logicalExpression("&&", assign.right, inner.right), removedTest: test };
+        if (isIdentifier(test) && test.name === name) {
+            return { value: logicalExpression("&&", assign.right, inner.right), removedTest: test };
         }
-        if (TYPE.isUnaryExpression(test) && test.operator === "!"
-            && TYPE.isIdentifier(test.argument) && test.argument.name === name) {
-            return { value: TYPE.logicalExpression("||", assign.right, inner.right), removedTest: test };
+        if (isUnaryExpression(test) && test.operator === "!"
+            && isIdentifier(test.argument) && test.argument.name === name) {
+            return { value: logicalExpression("||", assign.right, inner.right), removedTest: test };
         }
         // 跨变量布尔物化:`X = E; Y = E; if (X/!X) { Y = B }` -> `Y = E &&/|| B`。
         // 编译器会把短路条件的左值物化到两个临时变量(一个用于跳转、一个存最终结果),
@@ -1428,34 +1463,34 @@ export class TempVariableSimplify implements ISimplify {
         const crossVar = (holder: string, negated: boolean): { value: TYPE.Expression; removedTest: TYPE.Expression } | null => {
             if (i < 1) return null;
             const prevStmt = stmts[i - 1];
-            if (!TYPE.isExpressionStatement(prevStmt) || !TYPE.isAssignmentExpression(prevStmt.expression)) return null;
+            if (!isExpressionStatement(prevStmt) || !isAssignmentExpression(prevStmt.expression)) return null;
             const holderAssign = prevStmt.expression;
             if (holderAssign.operator !== "="
-                || !TYPE.isIdentifier(holderAssign.left) || holderAssign.left.name !== holder
+                || !isIdentifier(holderAssign.left) || holderAssign.left.name !== holder
                 || !isNodeEqual(holderAssign.right, assign.right) || !isPureExpression(assign.right)) return null;
             const liveAfterIf = ctx.liveAfter.get(ifStmt);
             if (liveAfterIf && liveAfterIf.has(holder)) return null;
             return {
-                value: TYPE.logicalExpression(negated ? "||" : "&&", assign.right, inner.right),
+                value: logicalExpression(negated ? "||" : "&&", assign.right, inner.right),
                 removedTest: test,
             };
         };
-        if (TYPE.isIdentifier(test) && test.name !== name && isTempName(test.name)) {
+        if (isIdentifier(test) && test.name !== name && isTempName(test.name)) {
             const folded = crossVar(test.name, false);
             if (folded) return folded;
         }
-        if (TYPE.isUnaryExpression(test) && test.operator === "!"
-            && TYPE.isIdentifier(test.argument) && test.argument.name !== name && isTempName(test.argument.name)) {
+        if (isUnaryExpression(test) && test.operator === "!"
+            && isIdentifier(test.argument) && test.argument.name !== name && isTempName(test.argument.name)) {
             const folded = crossVar(test.argument.name, true);
             if (folded) return folded;
         }
         // test 是结构化归约重新物化的同一表达式:X = E; if (E) { X = B } / if (!E) {...}
         // 只有 E 纯(重复求值无副作用)才能把两次求值合并成一次。
-        const testNegated = TYPE.isUnaryExpression(test) && test.operator === "!";
+        const testNegated = isUnaryExpression(test) && test.operator === "!";
         const testValue = testNegated ? (test as TYPE.UnaryExpression).argument : test;
         if (testValue && isNodeEqual(testValue, assign.right) && isPureExpression(assign.right)) {
             return {
-                value: TYPE.logicalExpression(testNegated ? "||" : "&&", assign.right, inner.right),
+                value: logicalExpression(testNegated ? "||" : "&&", assign.right, inner.right),
                 removedTest: test,
             };
         }
@@ -1506,16 +1541,16 @@ export class TempVariableSimplify implements ISimplify {
     }
 
     private foldBooleanExpr(expr: TYPE.Expression, stmt: TYPE.IfStatement, ctx: FunctionContext): TYPE.Expression {
-        if (TYPE.isLogicalExpression(expr)) {
+        if (isLogicalExpression(expr)) {
             expr.left = this.foldBooleanExpr(expr.left, stmt, ctx);
             expr.right = this.foldBooleanExpr(expr.right, stmt, ctx);
             return expr;
         }
-        if (TYPE.isUnaryExpression(expr) && expr.operator === "!") {
+        if (isUnaryExpression(expr) && expr.operator === "!") {
             expr.argument = this.foldBooleanExpr(expr.argument as TYPE.Expression, stmt, ctx);
             return expr;
         }
-        if (TYPE.isSequenceExpression(expr)) {
+        if (isSequenceExpression(expr)) {
             const folded = this.foldTestSequence(expr, stmt, ctx);
             if (folded) return folded;
             const last = expr.expressions.length - 1;
@@ -1535,10 +1570,10 @@ export class TempVariableSimplify implements ISimplify {
         const last = exprs[exprs.length - 1];
         let name: string | null = null;
         let lastBang = false;
-        if (TYPE.isIdentifier(last)) {
+        if (isIdentifier(last)) {
             name = last.name;
-        } else if (TYPE.isUnaryExpression(last) && last.operator === "!"
-            && TYPE.isIdentifier(last.argument)) {
+        } else if (isUnaryExpression(last) && last.operator === "!"
+            && isIdentifier(last.argument)) {
             name = last.argument.name;
             lastBang = true;
         }
@@ -1548,10 +1583,10 @@ export class TempVariableSimplify implements ISimplify {
             let j = exprs.length - 2;
             while (j >= 0) {
                 const e = exprs[j];
-                if (TYPE.isAssignmentExpression(e) && e.operator === "="
-                    && TYPE.isIdentifier(e.left) && e.left.name === name
-                    && TYPE.isUnaryExpression(e.right) && e.right.operator === "!"
-                    && TYPE.isIdentifier(e.right.argument) && e.right.argument.name === name) {
+                if (isAssignmentExpression(e) && e.operator === "="
+                    && isIdentifier(e.left) && e.left.name === name
+                    && isUnaryExpression(e.right) && e.right.operator === "!"
+                    && isIdentifier(e.right.argument) && e.right.argument.name === name) {
                     neg++;
                     j--;
                     continue;
@@ -1559,22 +1594,22 @@ export class TempVariableSimplify implements ISimplify {
                 break;
             }
             const base = j >= 0 ? exprs[j] : null;
-            if (base && TYPE.isAssignmentExpression(base) && base.operator === "="
-                && TYPE.isIdentifier(base.left) && base.left.name === name
+            if (base && isAssignmentExpression(base) && base.operator === "="
+                && isIdentifier(base.left) && base.left.name === name
                 && !this.headReadsNameBeforeWrite(exprs, j, name)
                 && this.isNameDeadAfterTest(stmt, name, ctx)
                 && this.isTailExpression(stmt.test, seq)) {
                 const parity = (neg + (lastBang ? 1 : 0)) % 2;
-                const replacement = parity === 0 ? base.right : TYPE.unaryExpression("!", base.right);
+                const replacement = parity === 0 ? base.right : unaryExpression("!", base.right);
                 const kept = exprs.slice(0, j) as TYPE.Expression[];
                 kept.push(replacement);
-                return kept.length === 1 ? kept[0] : TYPE.sequenceExpression(kept);
+                return kept.length === 1 ? kept[0] : sequenceExpression(kept);
             }
         }
         // (X = E, <last>) 且 E 无副作用、last 不读取 X、X 在 test 后已死:直接丢掉 X = E
         const base = exprs[exprs.length - 2];
-        if (TYPE.isAssignmentExpression(base) && base.operator === "="
-            && TYPE.isIdentifier(base.left) && isTempName(base.left.name)
+        if (isAssignmentExpression(base) && base.operator === "="
+            && isIdentifier(base.left) && isTempName(base.left.name)
             && isPureExpression(base.right)
             && !this.headReadsNameBeforeWrite(exprs, exprs.length - 2, base.left.name)
             && this.countReadsInNode(last, base.left.name) === 0
@@ -1582,7 +1617,7 @@ export class TempVariableSimplify implements ISimplify {
             && this.isTailExpression(stmt.test, seq)) {
             const kept = exprs.slice(0, exprs.length - 2) as TYPE.Expression[];
             kept.push(last);
-            return kept.length === 1 ? kept[0] : TYPE.sequenceExpression(kept);
+            return kept.length === 1 ? kept[0] : sequenceExpression(kept);
         }
         return null;
     }
@@ -1592,8 +1627,8 @@ export class TempVariableSimplify implements ISimplify {
         let killed = false;
         for (let i = 0; i < end; i++) {
             const e = exprs[i];
-            if (TYPE.isAssignmentExpression(e) && e.operator === "="
-                && TYPE.isIdentifier(e.left) && e.left.name === name) {
+            if (isAssignmentExpression(e) && e.operator === "="
+                && isIdentifier(e.left) && e.left.name === name) {
                 if (!killed && this.countReadsInNode(e.right, name) > 0) return true;
                 killed = true;
                 continue;
@@ -1610,21 +1645,21 @@ export class TempVariableSimplify implements ISimplify {
      */
     private isTailExpression(root: TYPE.Expression, target: TYPE.Expression): boolean {
         if (root === target) return true;
-        if (TYPE.isParenthesizedExpression(root)) return this.isTailExpression(root.expression as TYPE.Expression, target);
-        if (TYPE.isLogicalExpression(root)) {
+        if (isParenthesizedExpression(root)) return this.isTailExpression(root.expression as TYPE.Expression, target);
+        if (isLogicalExpression(root)) {
             return this.containsNode(root.right, target) && this.isTailExpression(root.right as TYPE.Expression, target);
         }
-        if (TYPE.isSequenceExpression(root)) {
+        if (isSequenceExpression(root)) {
             const last = root.expressions[root.expressions.length - 1];
             return !!last && this.containsNode(last, target) && this.isTailExpression(last as TYPE.Expression, target);
         }
-        if (TYPE.isUnaryExpression(root)) {
+        if (isUnaryExpression(root)) {
             return this.containsNode(root.argument, target) && this.isTailExpression(root.argument as TYPE.Expression, target);
         }
-        if (TYPE.isBinaryExpression(root)) {
+        if (isBinaryExpression(root)) {
             return this.containsNode(root.right, target) && this.isTailExpression(root.right as TYPE.Expression, target);
         }
-        if (TYPE.isConditionalExpression(root)) {
+        if (isConditionalExpression(root)) {
             return this.containsNode(root.alternate, target) && this.isTailExpression(root.alternate as TYPE.Expression, target);
         }
         return false;
@@ -1632,7 +1667,7 @@ export class TempVariableSimplify implements ISimplify {
 
     /** X 在该 test 之后(含分支体)是否已经不再被读取。 */
     private isNameDeadAfterTest(stmt: TYPE.Statement, name: string, ctx: FunctionContext): boolean {
-        if (!TYPE.isIfStatement(stmt)) return false;
+        if (!isIfStatement(stmt)) return false;
         const liveAfter = ctx.liveAfter.get(stmt);
         if (!liveAfter || liveAfter.has(name)) return false;
         if (this.branchReadsNameBeforeWrite(stmt.consequent, name)) return false;
@@ -1709,24 +1744,24 @@ export class TempVariableSimplify implements ISimplify {
         liveOut: Set<string>,
         ctx: FunctionContext,
     ): TYPE.Expression {
-        if (TYPE.isSequenceExpression(expr)) {
+        if (isSequenceExpression(expr)) {
             this.simplifyTestSequence(expr, liveOut, ctx);
             return expr.expressions.length === 1
                 ? expr.expressions[0] as TYPE.Expression
                 : expr;
         }
-        if (TYPE.isLogicalExpression(expr)) {
+        if (isLogicalExpression(expr)) {
             expr.right = this.simplifyTestExpression(expr.right as TYPE.Expression, liveOut, ctx);
             const rightIn = this.testLiveIn(expr.right as TYPE.Expression, liveOut, ctx);
             expr.left = this.simplifyTestExpression(
                 expr.left as TYPE.Expression, TempVariableSimplify.union(liveOut, rightIn), ctx);
             return expr;
         }
-        if (TYPE.isUnaryExpression(expr) && expr.operator === "!") {
+        if (isUnaryExpression(expr) && expr.operator === "!") {
             expr.argument = this.simplifyTestExpression(expr.argument as TYPE.Expression, liveOut, ctx);
             return expr;
         }
-        if (TYPE.isParenthesizedExpression(expr)) {
+        if (isParenthesizedExpression(expr)) {
             (expr as any).expression = this.simplifyTestExpression(
                 (expr as any).expression as TYPE.Expression, liveOut, ctx);
             return expr;
@@ -1739,25 +1774,25 @@ export class TempVariableSimplify implements ISimplify {
      * 与 simplifyTestExpression 保持同一套规则:死赋值若会被整体删除,右值读取不再发生。
      */
     private testLiveIn(expr: TYPE.Expression, liveOut: Set<string>, ctx: FunctionContext): Set<string> {
-        if (TYPE.isSequenceExpression(expr)) {
+        if (isSequenceExpression(expr)) {
             let live = liveOut;
             for (let i = expr.expressions.length - 1; i >= 0; i--) {
                 live = this.testLiveIn(expr.expressions[i] as TYPE.Expression, live, ctx);
             }
             return live;
         }
-        if (TYPE.isLogicalExpression(expr)) {
+        if (isLogicalExpression(expr)) {
             const rightIn = this.testLiveIn(expr.right as TYPE.Expression, liveOut, ctx);
             return this.testLiveIn(
                 expr.left as TYPE.Expression, TempVariableSimplify.union(liveOut, rightIn), ctx);
         }
-        if (TYPE.isUnaryExpression(expr) && expr.operator === "!") {
+        if (isUnaryExpression(expr) && expr.operator === "!") {
             return this.testLiveIn(expr.argument as TYPE.Expression, liveOut, ctx);
         }
-        if (TYPE.isParenthesizedExpression(expr)) {
+        if (isParenthesizedExpression(expr)) {
             return this.testLiveIn((expr as any).expression as TYPE.Expression, liveOut, ctx);
         }
-        if (TYPE.isAssignmentExpression(expr) && expr.operator === "=" && TYPE.isIdentifier(expr.left)
+        if (isAssignmentExpression(expr) && expr.operator === "=" && isIdentifier(expr.left)
             && isTempName(expr.left.name)) {
             const name = expr.left.name;
             if (liveOut.has(name)) {
@@ -1780,7 +1815,7 @@ export class TempVariableSimplify implements ISimplify {
     /** 死赋值能否整体删除(右值无副作用且不是需要保留的函数/类表达式)。 */
     private isRemovableDeadTestAssignment(rhs: TYPE.Expression, name: string, info?: BindingInfo): boolean {
         if (!info || info.captured) return false;
-        if (TYPE.isIdentifier(rhs) && rhs.name === name) return true;
+        if (isIdentifier(rhs) && rhs.name === name) return true;
         return !isDeclarationValue(rhs) && isPureExpression(rhs);
     }
 
@@ -1790,13 +1825,13 @@ export class TempVariableSimplify implements ISimplify {
         live: Set<string>,
         ctx: FunctionContext,
     ): TYPE.Expression | null {
-        if (!TYPE.isAssignmentExpression(expr) || expr.operator !== "=" || !TYPE.isIdentifier(expr.left)) return expr;
+        if (!isAssignmentExpression(expr) || expr.operator !== "=" || !isIdentifier(expr.left)) return expr;
         const name = expr.left.name;
         if (!isTempName(name) || live.has(name)) return expr;
         const info = ctx.infos.get(name);
         if (!info || info.captured) return expr;
         const rhs = expr.right;
-        if (TYPE.isIdentifier(rhs) && rhs.name === name) {
+        if (isIdentifier(rhs) && rhs.name === name) {
             this.removeRefs(rhs, ctx);
             this.changed = true;
             return null;
@@ -1867,9 +1902,9 @@ export class TempVariableSimplify implements ISimplify {
     private tryFoldTestAccumulator(elements: TYPE.Expression[], i: number, ctx: FunctionContext): boolean {
         const a = elements[i];
         const b = elements[i + 1];
-        if (!TYPE.isAssignmentExpression(a) || !TYPE.isAssignmentExpression(b)) return false;
+        if (!isAssignmentExpression(a) || !isAssignmentExpression(b)) return false;
         if (a.operator !== "=" || b.operator !== "=") return false;
-        if (!TYPE.isIdentifier(a.left) || !TYPE.isIdentifier(b.left)) return false;
+        if (!isIdentifier(a.left) || !isIdentifier(b.left)) return false;
         const name = a.left.name;
         if (b.left.name !== name || !isTempName(name)) return false;
         const info = ctx.infos.get(name);
@@ -1881,7 +1916,7 @@ export class TempVariableSimplify implements ISimplify {
         let id: TYPE.Identifier | null = null;
         walkNode(b.right, (node, parent) => {
             if (isFunctionLike(node) || isClassLike(node)) return false;
-            if (TYPE.isIdentifier(node) && node.name === name && parent && TYPE.isReferenced(node, parent)) {
+            if (isIdentifier(node) && node.name === name && parent && isReferenced(node, parent)) {
                 id = node;
                 return false;
             }
@@ -1909,11 +1944,11 @@ export class TempVariableSimplify implements ISimplify {
     ): boolean {
         const a = elements[i];
         const b = elements[i + 1];
-        if (!TYPE.isAssignmentExpression(a) || !TYPE.isAssignmentExpression(b)) return false;
+        if (!isAssignmentExpression(a) || !isAssignmentExpression(b)) return false;
         if (a.operator !== "=" || b.operator !== "=") return false;
-        if (!TYPE.isIdentifier(a.left) || !TYPE.isIdentifier(b.left)) return false;
+        if (!isIdentifier(a.left) || !isIdentifier(b.left)) return false;
         const name = a.left.name;
-        if (!isTempName(name) || !TYPE.isIdentifier(b.right) || b.right.name !== name) return false;
+        if (!isTempName(name) || !isIdentifier(b.right) || b.right.name !== name) return false;
         const info = ctx.infos.get(name);
         if (!info || info.captured) return false;
         // 旧值在第二条赋值之后已死,删除第一条不会改变后续读取
@@ -1938,7 +1973,7 @@ export class TempVariableSimplify implements ISimplify {
             return true;
         }
         if (this.isFirstEvaluatedOccurrence(target, id)) return true;
-        if (TYPE.isCallExpression(target) && !this.containsNode(target.callee, id)
+        if (isCallExpression(target) && !this.containsNode(target.callee, id)
             && isPureExpression(target.callee)) {
             const assigned = collectAssignedNames(value);
             for (const dep of collectIdentifierNames(target.callee)) {
@@ -1957,7 +1992,7 @@ export class TempVariableSimplify implements ISimplify {
             for (const name of this.tempReads(stmt, ctx)) stmtLive.add(name);
             walkNode(stmt, (node) => {
                 if (isFunctionLike(node) || isClassLike(node)) return false;
-                if (!TYPE.isSequenceExpression(node)) return true;
+                if (!isSequenceExpression(node)) return true;
 
                 const live = new Set(stmtLive);
 
@@ -1965,8 +2000,8 @@ export class TempVariableSimplify implements ISimplify {
                 for (let i = node.expressions.length - 1; i >= 0; i--) {
                     const expr = node.expressions[i];
                     const reads = this.tempReads(expr, ctx);
-                    if (TYPE.isAssignmentExpression(expr) && expr.operator === "="
-                        && TYPE.isIdentifier(expr.left) && isTempName(expr.left.name)) {
+                    if (isAssignmentExpression(expr) && expr.operator === "="
+                        && isIdentifier(expr.left) && isTempName(expr.left.name)) {
                         const name = expr.left.name;
                         const info = ctx.infos.get(name);
                         if (info && !info.captured && !live.has(name) && !reads.has(name)) {
@@ -2009,18 +2044,18 @@ export class TempVariableSimplify implements ISimplify {
         const written = new Set<string>();
         walkNode({ type: "BlockStatement", body: stmts } as TYPE.BlockStatement, (node) => {
             if (isFunctionLike(node) || isClassLike(node)) return false;
-            if (TYPE.isAssignmentExpression(node)) addPatternNames(node.left, written);
-            else if (TYPE.isUpdateExpression(node) && TYPE.isIdentifier(node.argument)) written.add(node.argument.name);
-            else if (TYPE.isForInStatement(node) || TYPE.isForOfStatement(node)) addPatternNames(node.left, written);
+            if (isAssignmentExpression(node)) addPatternNames(node.left, written);
+            else if (isUpdateExpression(node) && isIdentifier(node.argument)) written.add(node.argument.name);
+            else if (isForInStatement(node) || isForOfStatement(node)) addPatternNames(node.left, written);
             return true;
         });
 
         const removeFrom = (list: TYPE.Statement[]): void => {
             for (let i = list.length - 1; i >= 0; i--) {
                 const stmt = list[i];
-                if (TYPE.isVariableDeclaration(stmt)) {
+                if (isVariableDeclaration(stmt)) {
                     const kept = stmt.declarations.filter((declarator) => {
-                        if (!TYPE.isIdentifier(declarator.id)) return true;
+                        if (!isIdentifier(declarator.id)) return true;
                         const name = declarator.id.name;
                         if (!isTempName(name)) return true;
                         const info = ctx.infos.get(name);
@@ -2048,8 +2083,8 @@ export class TempVariableSimplify implements ISimplify {
         switch (stmt.type) {
             case "BlockStatement": fn(stmt.body); break;
             case "IfStatement":
-                if (TYPE.isBlockStatement(stmt.consequent)) fn(stmt.consequent.body);
-                if (stmt.alternate && TYPE.isBlockStatement(stmt.alternate)) fn(stmt.alternate.body);
+                if (isBlockStatement(stmt.consequent)) fn(stmt.consequent.body);
+                if (stmt.alternate && isBlockStatement(stmt.alternate)) fn(stmt.alternate.body);
                 break;
             case "WhileStatement":
             case "DoWhileStatement":
@@ -2057,7 +2092,7 @@ export class TempVariableSimplify implements ISimplify {
             case "ForInStatement":
             case "ForOfStatement":
             case "LabeledStatement":
-                if (TYPE.isBlockStatement(stmt.body)) fn(stmt.body.body);
+                if (isBlockStatement(stmt.body)) fn(stmt.body.body);
                 break;
             case "TryStatement":
                 fn(stmt.block.body);
@@ -2074,7 +2109,7 @@ export class TempVariableSimplify implements ISimplify {
 
     private removeRefs(node: TYPE.Node, ctx: FunctionContext): void {
         walkNode(node, (n) => {
-            if (TYPE.isIdentifier(n)) ctx.infos.get(n.name)?.refs.delete(n);
+            if (isIdentifier(n)) ctx.infos.get(n.name)?.refs.delete(n);
         });
     }
 
@@ -2085,11 +2120,11 @@ export class TempVariableSimplify implements ISimplify {
      * 避免优化器把 catch 参数和函数累加器 acc 混为一谈。
      */
     private renameCatchParameters(path: NodePath<TYPE.Program> | NodePath<TYPE.Function>, ctx: FunctionContext): void {
-        const rootBody: TYPE.Node = TYPE.isProgram(path.node) ? path.node : path.node.body;
+        const rootBody: TYPE.Node = isProgramNode(path.node) ? path.node : path.node.body;
         let hasCatch = false;
         walkNode(rootBody, (node) => {
             if (node !== rootBody && (isFunctionLike(node) || isClassLike(node))) return false;
-            if (TYPE.isCatchClause(node)) {
+            if (isCatchClause(node)) {
                 hasCatch = true;
                 return false;
             }
@@ -2097,13 +2132,13 @@ export class TempVariableSimplify implements ISimplify {
         });
         if (!hasCatch) return;
 
-        const currentFunction = TYPE.isProgram(path.node) ? null : path.node;
+        const currentFunction = isProgramNode(path.node) ? null : path.node;
         path.traverse({
             CatchClause: (catchPath) => {
                 const functionParent = catchPath.getFunctionParent();
                 if ((functionParent ? functionParent.node : null) !== currentFunction) return;
                 const param = catchPath.node.param;
-                if (!TYPE.isIdentifier(param)) return;
+                if (!isIdentifier(param)) return;
                 const oldName = param.name;
                 if (!isTempName(oldName) || !ctx.infos.has(oldName)) return;
                 const binding = catchPath.scope.getBinding(oldName);
@@ -2171,12 +2206,12 @@ export class TempVariableSimplify implements ISimplify {
         target: TYPE.LVal | TYPE.OptionalMemberExpression,
         env: EnvState,
     ): void {
-        if (TYPE.isMemberExpression(target) || TYPE.isOptionalMemberExpression(target)) {
+        if (isMemberExpression(target) || isOptionalMemberExpression(target)) {
             const m = target as TYPE.MemberExpression;
             env.invalidateMemberReads(m.object as TYPE.Expression, m.property as TYPE.Expression, m.computed);
             return;
         }
-        if (TYPE.isIdentifier(target)) {
+        if (isIdentifier(target)) {
             env.invalidate(target.name);
             return;
         }
@@ -2225,7 +2260,7 @@ export class TempVariableSimplify implements ISimplify {
                 const writes = this.collectRegionWrites([stmt.init, stmt.test, stmt.update, stmt.body]);
                 this.invalidateRegionWrites(writes, env);
                 if (stmt.init) {
-                    if (TYPE.isVariableDeclaration(stmt.init)) {
+                    if (isVariableDeclaration(stmt.init)) {
                         this.processVariableDeclaration(stmt.init, env, list, index, ctx);
                     } else {
                         stmt.init = this.processExpression(stmt.init, env, list, index, ctx);
@@ -2295,13 +2330,13 @@ export class TempVariableSimplify implements ISimplify {
                 }
                 return;
             case "ExportNamedDeclaration":
-                if (stmt.declaration && TYPE.isVariableDeclaration(stmt.declaration)) {
+                if (stmt.declaration && isVariableDeclaration(stmt.declaration)) {
                     this.processVariableDeclaration(stmt.declaration, env, list, index, ctx);
                 }
                 return;
             case "ExportDefaultDeclaration":
                 if (stmt.declaration && !isFunctionLike(stmt.declaration) && !isClassLike(stmt.declaration)
-                    && TYPE.isExpression(stmt.declaration)) {
+                    && isExpression(stmt.declaration)) {
                     stmt.declaration = this.rewriteExpr(stmt.declaration, env, list, index, ctx, false);
                 }
                 return;
@@ -2311,7 +2346,7 @@ export class TempVariableSimplify implements ISimplify {
     }
 
     private processNestedStatement(stmt: TYPE.Statement, env: EnvState, ctx: FunctionContext): void {
-        if (TYPE.isBlockStatement(stmt)) {
+        if (isBlockStatement(stmt)) {
             this.processStatements(stmt.body, env, ctx);
         } else {
             this.processStatement(stmt, env, [stmt], 0, ctx);
@@ -2326,7 +2361,7 @@ export class TempVariableSimplify implements ISimplify {
         ctx: FunctionContext,
     ): void {
         for (const declarator of decl.declarations) {
-            if (!TYPE.isIdentifier(declarator.id)) {
+            if (!isIdentifier(declarator.id)) {
                 if (declarator.init) declarator.init = this.rewriteExpr(declarator.init, env, list, index, ctx, false);
                 continue;
             }
@@ -2336,7 +2371,7 @@ export class TempVariableSimplify implements ISimplify {
 
             // let Y = X; 当 X 当前值是 class/function/new/call 等不可复制值时,
             // 直接把值搬到 Y 的初始化里,避免多一个临时变量。
-            if (TYPE.isIdentifier(declarator.init) && declarator.init.name !== name) {
+            if (isIdentifier(declarator.init) && declarator.init.name !== name) {
                 const sourceName = declarator.init.name;
                 const sourceEntry = env.get(sourceName);
                 const sourceInfo = ctx.infos.get(sourceName);
@@ -2345,8 +2380,8 @@ export class TempVariableSimplify implements ISimplify {
                     && sourceEntry.list === list && sourceEntry.index < index
                     && this.isSafeToMoveBetween(list, sourceEntry.index + 1, index)) {
                     const definition = sourceEntry.list[sourceEntry.index];
-                    const isSimpleDefinition = TYPE.isExpressionStatement(definition)
-                        && TYPE.isAssignmentExpression(definition.expression)
+                    const isSimpleDefinition = isExpressionStatement(definition)
+                        && isAssignmentExpression(definition.expression)
                         && definition.expression.operator === "="
                         && definition.expression.right === sourceEntry.expr;
                     const deps = collectIdentifierNames(sourceEntry.expr);
@@ -2361,7 +2396,7 @@ export class TempVariableSimplify implements ISimplify {
                         env.invalidate(sourceName);
                         if (isTempName(sourceName) && ctx.infos.has(sourceName)) {
                             env.set(sourceName, {
-                                expr: TYPE.identifier(name),
+                                expr: identifierBuilder(name),
                                 list,
                                 index,
                                 deps: [name],
@@ -2391,7 +2426,7 @@ export class TempVariableSimplify implements ISimplify {
         ctx: FunctionContext,
         allowImpure: boolean = true,
     ): TYPE.Expression {
-        if (TYPE.isAssignmentExpression(expr)) {
+        if (isAssignmentExpression(expr)) {
             this.processAssignment(expr, env, list, index, ctx, allowImpure);
             return expr;
         }
@@ -2413,7 +2448,7 @@ export class TempVariableSimplify implements ISimplify {
 
         // Y = X:若 X 当前值是不可复制但可搬移的(New/调用/函数/类等),把值搬到 Y,
         // 并让 X 暂时别名到 Y。这样后续 X.method / X.call(Y,...) 能还原成 Y.method(...)。
-        if (assign.operator === "=" && TYPE.isIdentifier(assign.left) && TYPE.isIdentifier(assign.right)
+        if (assign.operator === "=" && isIdentifier(assign.left) && isIdentifier(assign.right)
             && assign.left.name !== assign.right.name) {
             const targetName = assign.left.name;
             const sourceName = assign.right.name;
@@ -2426,13 +2461,13 @@ export class TempVariableSimplify implements ISimplify {
                 && sourceEntry.list === list && sourceEntry.index < index
                 && this.isSafeToMoveBetween(list, sourceEntry.index + 1, index)) {
                 const definition = sourceEntry.list[sourceEntry.index];
-                const isSimpleDefinition = TYPE.isExpressionStatement(definition)
-                    && TYPE.isAssignmentExpression(definition.expression)
+                const isSimpleDefinition = isExpressionStatement(definition)
+                    && isAssignmentExpression(definition.expression)
                     && definition.expression.operator === "="
                     && definition.expression.right === sourceEntry.expr;
                 const deps = collectIdentifierNames(sourceEntry.expr);
                 const liveAfterMove = ctx.liveAfter.get(list[index]);
-                if (isSimpleDefinition && TYPE.isNewExpression(sourceEntry.expr)
+                if (isSimpleDefinition && isNewExpression(sourceEntry.expr)
                     && !deps.has(targetName)
                     && !(liveAfterMove && liveAfterMove.has(sourceName))) {
                     const value = sourceEntry.expr;
@@ -2442,7 +2477,7 @@ export class TempVariableSimplify implements ISimplify {
                     env.invalidate(sourceName);
                     this.define(env, targetName, value, list, index, ctx);
                     env.set(sourceName, {
-                        expr: TYPE.identifier(targetName),
+                        expr: identifierBuilder(targetName),
                         list,
                         index,
                         deps: [targetName],
@@ -2458,7 +2493,7 @@ export class TempVariableSimplify implements ISimplify {
         // “同对象.同属性”精确失效——成员写入不改变变量绑定,别名与模板对象
         // 必须跨成员写入存活(ObjectLiteralSimplify 依赖该形态)。
         this.invalidateAssignTarget(assign.left, env);
-        if (assign.operator === "=" && TYPE.isIdentifier(assign.left)) {
+        if (assign.operator === "=" && isIdentifier(assign.left)) {
             const name = assign.left.name;
             if (isTempName(name) && ctx.infos.has(name)) {
                 this.define(env, name, assign.right, list, index, ctx);
@@ -2495,25 +2530,25 @@ export class TempVariableSimplify implements ISimplify {
         ctx: FunctionContext,
     ): void {
         if (!node) return;
-        if (TYPE.isIdentifier(node)) return;
-        if (TYPE.isMemberExpression(node) || TYPE.isOptionalMemberExpression(node)) {
+        if (isIdentifier(node)) return;
+        if (isMemberExpression(node) || isOptionalMemberExpression(node)) {
             node.object = this.rewriteExpr(node.object as TYPE.Expression, env, list, index, ctx, false);
             if (node.computed) {
                 node.property = this.rewriteExpr(node.property as TYPE.Expression, env, list, index, ctx, false);
             }
             return;
         }
-        if (TYPE.isRestElement(node)) {
+        if (isRestElement(node)) {
             this.rewriteLVal(node.argument as any, env, list, index, ctx);
-        } else if (TYPE.isAssignmentPattern(node)) {
+        } else if (isAssignmentPattern(node)) {
             this.rewriteLVal(node.left as any, env, list, index, ctx);
             node.right = this.rewriteExpr(node.right, env, list, index, ctx, false);
-        } else if (TYPE.isArrayPattern(node)) {
+        } else if (isArrayPattern(node)) {
             for (const e of node.elements) if (e) this.rewriteLVal(e as any, env, list, index, ctx);
-        } else if (TYPE.isObjectPattern(node)) {
+        } else if (isObjectPattern(node)) {
             for (const p of node.properties) {
-                if (TYPE.isRestElement(p)) this.rewriteLVal(p.argument as any, env, list, index, ctx);
-                else if (TYPE.isObjectProperty(p)) {
+                if (isRestElement(p)) this.rewriteLVal(p.argument as any, env, list, index, ctx);
+                else if (isObjectProperty(p)) {
                     if (p.computed) p.key = this.rewriteExpr(p.key as TYPE.Expression, env, list, index, ctx, false);
                     this.rewriteLVal(p.value as any, env, list, index, ctx);
                 }
@@ -2530,11 +2565,11 @@ export class TempVariableSimplify implements ISimplify {
         allowImpure: boolean,
     ): TYPE.Expression {
         if (!node) return node;
-        if (TYPE.isIdentifier(node)) {
+        if (isIdentifier(node)) {
             return this.resolveIdentifier(node, env, list, index, ctx, allowImpure);
         }
         if (isFunctionLike(node)) return node;
-        if (TYPE.isClassExpression(node)) {
+        if (isClassExpression(node)) {
             // 只处理 extends 表达式,不进入 class body(方法有独立作用域)
             if (node.superClass) {
                 node.superClass = this.rewriteExpr(
@@ -2542,7 +2577,7 @@ export class TempVariableSimplify implements ISimplify {
             }
             return node;
         }
-        if (TYPE.isClassDeclaration(node)) return node;
+        if (isClassDeclaration(node)) return node;
 
         switch (node.type) {
             case "MemberExpression":
@@ -2561,7 +2596,7 @@ export class TempVariableSimplify implements ISimplify {
                 this.rewriteLVal(n.left, env, list, index, ctx);
                 n.right = this.rewriteExpr(n.right, env, list, index, ctx, false);
                 this.invalidateAssignTarget(n.left, env);
-                if (n.operator === "=" && TYPE.isIdentifier(n.left)) {
+                if (n.operator === "=" && isIdentifier(n.left)) {
                     const name = n.left.name;
                     if (isTempName(name) && ctx.infos.has(name)) this.define(env, name, n.right, list, index, ctx);
                 }
@@ -2569,7 +2604,7 @@ export class TempVariableSimplify implements ISimplify {
             }
             case "UpdateExpression": {
                 const n = node as TYPE.UpdateExpression;
-                if (TYPE.isIdentifier(n.argument)) {
+                if (isIdentifier(n.argument)) {
                     env.invalidate(n.argument.name);
                 } else {
                     this.rewriteLVal(n.argument as any, env, list, index, ctx);
@@ -2622,7 +2657,7 @@ export class TempVariableSimplify implements ISimplify {
                 n.callee = this.rewriteExpr(n.callee as TYPE.Expression, env, list, index, ctx, allowImpure) as any;
                 let canMove = allowImpure && isPureExpression(n.callee as TYPE.Expression);
                 n.arguments = n.arguments.map((arg) => {
-                    if (TYPE.isSpreadElement(arg)) {
+                    if (isSpreadElement(arg)) {
                         arg.argument = this.rewriteExpr(arg.argument, env, list, index, ctx, canMove);
                         if (canMove && !isPureExpression(arg.argument)) canMove = false;
                         return arg;
@@ -2674,7 +2709,7 @@ export class TempVariableSimplify implements ISimplify {
                 let canMove = allowImpure;
                 n.elements = n.elements.map((e) => {
                     if (!e) return e;
-                    if (TYPE.isSpreadElement(e)) {
+                    if (isSpreadElement(e)) {
                         e.argument = this.rewriteExpr(e.argument, env, list, index, ctx, canMove);
                         if (canMove && !isPureExpression(e.argument)) canMove = false;
                         return e;
@@ -2689,12 +2724,12 @@ export class TempVariableSimplify implements ISimplify {
                 const n = node as TYPE.ObjectExpression;
                 let canMove = allowImpure;
                 n.properties = n.properties.map((p) => {
-                    if (TYPE.isSpreadElement(p)) {
+                    if (isSpreadElement(p)) {
                         p.argument = this.rewriteExpr(p.argument, env, list, index, ctx, canMove);
                         if (canMove && !isPureExpression(p.argument)) canMove = false;
                         return p;
                     }
-                    if (TYPE.isObjectProperty(p)) {
+                    if (isObjectProperty(p)) {
                         if (p.computed) {
                             p.key = this.rewriteExpr(p.key as TYPE.Expression, env, list, index, ctx, canMove);
                             if (canMove && !isPureExpression(p.key as TYPE.Expression)) canMove = false;
@@ -2731,16 +2766,16 @@ export class TempVariableSimplify implements ISimplify {
         index: number,
         ctx: FunctionContext,
     ): TYPE.Expression {
-        const keys = (TYPE.VISITOR_KEYS as any)[node.type] as string[] | undefined;
+        const keys = (VISITOR_KEYS as any)[node.type] as string[] | undefined;
         if (!keys) return node;
         for (const key of keys) {
             const value = (node as any)[key];
             if (Array.isArray(value)) {
                 (node as any)[key] = value.map((child: any) =>
-                    child && TYPE.isExpression(child)
+                    child && isExpression(child)
                         ? this.rewriteExpr(child, env, list, index, ctx, false)
                         : child);
-            } else if (value && TYPE.isExpression(value)) {
+            } else if (value && isExpression(value)) {
                 (node as any)[key] = this.rewriteExpr(value, env, list, index, ctx, false);
             }
         }
@@ -2749,7 +2784,7 @@ export class TempVariableSimplify implements ISimplify {
 
     private registerCloneRefs(node: TYPE.Node, ctx: FunctionContext): void {
         walkNode(node, (n, parent) => {
-            if (TYPE.isIdentifier(n) && parent && TYPE.isReferenced(n, parent)) {
+            if (isIdentifier(n) && parent && isReferenced(n, parent)) {
                 const info = ctx.infos.get(n.name);
                 if (info) info.refs.add(n);
             }
@@ -2757,8 +2792,8 @@ export class TempVariableSimplify implements ISimplify {
     }
 
     private isPureLVal(node: TYPE.LVal | TYPE.OptionalMemberExpression): boolean {
-        if (TYPE.isIdentifier(node)) return true;
-        if (TYPE.isMemberExpression(node) || TYPE.isOptionalMemberExpression(node)) {
+        if (isIdentifier(node)) return true;
+        if (isMemberExpression(node) || isOptionalMemberExpression(node)) {
             return isPureExpression(node.object as TYPE.Node)
                 && (!node.computed || isPureExpression(node.property as TYPE.Node));
         }
@@ -2773,18 +2808,18 @@ export class TempVariableSimplify implements ISimplify {
     }
 
     private isPureStatement(stmt: TYPE.Statement): boolean {
-        if (TYPE.isEmptyStatement(stmt)) return true;
-        if (TYPE.isExpressionStatement(stmt)) {
+        if (isEmptyStatement(stmt)) return true;
+        if (isExpressionStatement(stmt)) {
             const expr = stmt.expression;
-            if (TYPE.isAssignmentExpression(expr)) {
-                return TYPE.isIdentifier(expr.left) && isPureExpression(expr.right);
+            if (isAssignmentExpression(expr)) {
+                return isIdentifier(expr.left) && isPureExpression(expr.right);
             }
             return isPureExpression(expr);
         }
-        if (TYPE.isVariableDeclaration(stmt)) {
+        if (isVariableDeclaration(stmt)) {
             return stmt.declarations.every((d) => !d.init || isPureExpression(d.init));
         }
-        if (TYPE.isBlockStatement(stmt)) {
+        if (isBlockStatement(stmt)) {
             return stmt.body.every((s) => this.isPureStatement(s));
         }
         return false;
@@ -2795,10 +2830,10 @@ export class TempVariableSimplify implements ISimplify {
      * 只对二元运算放开:这类累加链的旧值在本条语句后失效,可以安全搬移前一条语句的结果。
      */
     private statementOverwritesSelf(stmt: TYPE.Statement | undefined, name: string, id: TYPE.Identifier): boolean {
-        if (!stmt || !TYPE.isExpressionStatement(stmt) || !TYPE.isAssignmentExpression(stmt.expression)) return false;
+        if (!stmt || !isExpressionStatement(stmt) || !isAssignmentExpression(stmt.expression)) return false;
         const assign = stmt.expression;
-        if (assign.operator !== "=" || !TYPE.isIdentifier(assign.left) || assign.left.name !== name) return false;
-        if (!TYPE.isBinaryExpression(assign.right)) return false;
+        if (assign.operator !== "=" || !isIdentifier(assign.left) || assign.left.name !== name) return false;
+        if (!isBinaryExpression(assign.right)) return false;
         return assign.right.left === id || assign.right.right === id;
     }
 
@@ -2809,9 +2844,9 @@ export class TempVariableSimplify implements ISimplify {
      *   acc = p0.trim(); acc = acc.length;  ->  acc = p0.trim().length;
      */
     private statementOverwritesSelfAssign(stmt: TYPE.Statement | undefined, name: string, id: TYPE.Identifier): boolean {
-        if (!stmt || !TYPE.isExpressionStatement(stmt) || !TYPE.isAssignmentExpression(stmt.expression)) return false;
+        if (!stmt || !isExpressionStatement(stmt) || !isAssignmentExpression(stmt.expression)) return false;
         const assign = stmt.expression;
-        if (assign.operator !== "=" || !TYPE.isIdentifier(assign.left) || assign.left.name !== name) return false;
+        if (assign.operator !== "=" || !isIdentifier(assign.left) || assign.left.name !== name) return false;
         return this.countReadsInNode(assign.right, name) === 1 && this.containsNode(assign.right, id);
     }
 
@@ -2822,12 +2857,12 @@ export class TempVariableSimplify implements ISimplify {
      * 裸成员装载(`acc = acc.test`)是 AccCallSimplify 依赖的中间形态,必须保持原样。
      */
     private isCalleeReceiverRead(stmt: TYPE.Statement | null | undefined, id: TYPE.Identifier): boolean {
-        if (!stmt || !TYPE.isExpressionStatement(stmt) || !TYPE.isAssignmentExpression(stmt.expression)) return false;
+        if (!stmt || !isExpressionStatement(stmt) || !isAssignmentExpression(stmt.expression)) return false;
         let current: TYPE.Node = stmt.expression.right;
-        while (TYPE.isUnaryExpression(current) && current.prefix) current = current.argument;
-        if (!TYPE.isCallExpression(current)) return false;
+        while (isUnaryExpression(current) && current.prefix) current = current.argument;
+        if (!isCallExpression(current)) return false;
         const callee = current.callee;
-        return TYPE.isMemberExpression(callee) && callee.object === id;
+        return isMemberExpression(callee) && callee.object === id;
     }
 
     /**
@@ -2839,20 +2874,20 @@ export class TempVariableSimplify implements ISimplify {
         const next = list[index + 1];
         if (!next) return false;
         let expr: TYPE.Node | null = null;
-        if (TYPE.isExpressionStatement(next)) {
+        if (isExpressionStatement(next)) {
             expr = next.expression;
-            if (TYPE.isAssignmentExpression(expr)) expr = expr.right;
-        } else if (TYPE.isReturnStatement(next) && next.argument) {
+            if (isAssignmentExpression(expr)) expr = expr.right;
+        } else if (isReturnStatement(next) && next.argument) {
             expr = next.argument;
         }
         if (!expr) return false;
-        while (TYPE.isUnaryExpression(expr) && expr.prefix) expr = expr.argument;
-        if (!TYPE.isCallExpression(expr)) return false;
+        while (isUnaryExpression(expr) && expr.prefix) expr = expr.argument;
+        if (!isCallExpression(expr)) return false;
         const callee = expr.callee;
-        return TYPE.isMemberExpression(callee)
+        return isMemberExpression(callee)
             && !callee.computed
-            && TYPE.isIdentifier(callee.object) && callee.object.name === name
-            && TYPE.isIdentifier(callee.property) && callee.property.name === "call";
+            && isIdentifier(callee.object) && callee.object.name === name
+            && isIdentifier(callee.property) && callee.property.name === "call";
     }
 
     /**
@@ -2864,7 +2899,7 @@ export class TempVariableSimplify implements ISimplify {
             if (alias === name || !isTempName(alias)) continue;
             const info = ctx.infos.get(alias);
             if (!info || info.captured) continue;
-            if (TYPE.isIdentifier(entry.expr) && entry.expr.name === name) return alias;
+            if (isIdentifier(entry.expr) && entry.expr.name === name) return alias;
         }
         return null;
     }
@@ -2874,9 +2909,9 @@ export class TempVariableSimplify implements ISimplify {
         let count = 0;
         walkNode(node, (n, parent) => {
             if (isFunctionLike(n) || isClassLike(n)) return false;
-            if (!TYPE.isIdentifier(n) || n.name !== name) return true;
-            if (!parent || TYPE.isReferenced(n, parent)) count++;
-            else if (TYPE.isAssignmentExpression(parent) && parent.left === n && parent.operator !== "=") count++;
+            if (!isIdentifier(n) || n.name !== name) return true;
+            if (!parent || isReferenced(n, parent)) count++;
+            else if (isAssignmentExpression(parent) && parent.left === n && parent.operator !== "=") count++;
             return true;
         });
         return count;
@@ -2901,14 +2936,14 @@ export class TempVariableSimplify implements ISimplify {
      */
     private branchReadsNameBeforeWrite(stmt: TYPE.Statement | null | undefined, name: string): boolean {
         if (!stmt) return false;
-        if (TYPE.isBlockStatement(stmt)) {
+        if (isBlockStatement(stmt)) {
             for (const s of stmt.body) {
                 if (this.definitelyWritesBeforeRead(s, name)) return false;
                 if (this.branchReadsNameBeforeWrite(s, name)) return true;
             }
             return false;
         }
-        if (TYPE.isIfStatement(stmt)) {
+        if (isIfStatement(stmt)) {
             if (collectReadNames(stmt.test).has(name)) return true;
             return this.branchReadsNameBeforeWrite(stmt.consequent, name)
                 || this.branchReadsNameBeforeWrite(stmt.alternate, name);
@@ -2919,26 +2954,26 @@ export class TempVariableSimplify implements ISimplify {
     /** 语句是否一定会在读取 name 之前写入 name(所有执行路径)。 */
     private definitelyWritesBeforeRead(stmt: TYPE.Statement | null | undefined, name: string): boolean {
         if (!stmt) return false;
-        if (TYPE.isBlockStatement(stmt)) {
+        if (isBlockStatement(stmt)) {
             for (const s of stmt.body) {
                 if (this.definitelyWritesBeforeRead(s, name)) return true;
                 if (collectReadNames(s).has(name)) return false;
             }
             return false;
         }
-        if (TYPE.isIfStatement(stmt)) {
+        if (isIfStatement(stmt)) {
             if (collectReadNames(stmt.test).has(name)) return false;
             return stmt.alternate != null
                 && this.definitelyWritesBeforeRead(stmt.consequent, name)
                 && this.definitelyWritesBeforeRead(stmt.alternate, name);
         }
         // do-while 先执行 body 再求值 test:body 一定先写 name 时,test 读到的是新值
-        if (TYPE.isDoWhileStatement(stmt)) {
+        if (isDoWhileStatement(stmt)) {
             return this.doWhileKillsTestReads(stmt, name);
         }
-        if (TYPE.isExpressionStatement(stmt) && TYPE.isAssignmentExpression(stmt.expression)) {
+        if (isExpressionStatement(stmt) && isAssignmentExpression(stmt.expression)) {
             const assign = stmt.expression;
-            return assign.operator === "=" && TYPE.isIdentifier(assign.left) && assign.left.name === name
+            return assign.operator === "=" && isIdentifier(assign.left) && assign.left.name === name
                 && !collectReadNames(assign.right).has(name);
         }
         return false;
@@ -2951,7 +2986,7 @@ export class TempVariableSimplify implements ISimplify {
     private doWhileKillsTestReads(stmt: TYPE.DoWhileStatement, name: string): boolean {
         let hasContinue = false;
         walkNode(stmt.body, (node) => {
-            if (TYPE.isContinueStatement(node)) {
+            if (isContinueStatement(node)) {
                 hasContinue = true;
                 return false;
             }
@@ -2967,7 +3002,7 @@ export class TempVariableSimplify implements ISimplify {
      */
     private isLastReadInStatement(stmt: TYPE.Statement | null | undefined, id: TYPE.Identifier): boolean {
         if (!stmt || this.countReadsInNode(stmt, id.name) <= 1) return true;
-        if (!TYPE.isIfStatement(stmt) || !this.containsNode(stmt.test, id)) return false;
+        if (!isIfStatement(stmt) || !this.containsNode(stmt.test, id)) return false;
         if (this.countReadsInNode(stmt.test, id.name) > 1) return false;
         return !this.branchReadsNameBeforeWrite(stmt.consequent, id.name)
             && !this.branchReadsNameBeforeWrite(stmt.alternate, id.name);
@@ -2991,7 +3026,7 @@ export class TempVariableSimplify implements ISimplify {
             if (size <= ctx.cloneBudget) {
                 info.refs.delete(id);
                 ctx.cloneBudget -= size;
-                const clone = TYPE.cloneNode(entry.expr, true) as TYPE.Expression;
+                const clone = cloneNode(entry.expr, true) as TYPE.Expression;
                 this.registerCloneRefs(clone, ctx);
                 this.changed = true;
                 return clone;
@@ -3008,7 +3043,7 @@ export class TempVariableSimplify implements ISimplify {
         let deadAfter = liveAfter != null && !liveAfter.has(id.name);
         // if 的 test 读取:分支可能通过 break/return 跳出后继续读该变量,
         // liveAfter(if 之后的语句)看不到这条路径,要看分支的 live-in。
-        if (deadAfter && TYPE.isIfStatement(list[index]) && this.containsNode(list[index].test, id)) {
+        if (deadAfter && isIfStatement(list[index]) && this.containsNode(list[index].test, id)) {
             const branchLive = ctx.branchLive.get(list[index]);
             if (branchLive && branchLive.has(id.name)) deadAfter = false;
         }
@@ -3028,7 +3063,7 @@ export class TempVariableSimplify implements ISimplify {
         // 把 new RegExp 搬进 test 后,v0 = new RegExp 成为死存储,
         // 整个结构才能折成 `v0 = A && !new RegExp(...).test(p0)`。
         const ifStmt = list[index];
-        const testLastUse = TYPE.isIfStatement(ifStmt) && ifStmt.alternate != null
+        const testLastUse = isIfStatement(ifStmt) && ifStmt.alternate != null
             && this.containsNode(ifStmt.test, id)
             && this.definitelyWritesBeforeRead(ifStmt.consequent, id.name)
             && this.definitelyWritesBeforeRead(ifStmt.alternate, id.name);
@@ -3044,7 +3079,7 @@ export class TempVariableSimplify implements ISimplify {
                 const size = nodeSize(value);
                 if (size <= ctx.cloneBudget) {
                     ctx.cloneBudget -= size;
-                    value = TYPE.cloneNode(value, true) as TYPE.Expression;
+                    value = cloneNode(value, true) as TYPE.Expression;
                     this.registerCloneRefs(value, ctx);
                 } else {
                     ctx.moved.set(value, list[index]);
@@ -3121,7 +3156,7 @@ export class TempVariableSimplify implements ISimplify {
         for (let i = stmts.length - 1; i >= 0; i--) {
             const stmt = stmts[i];
             ctx.liveAfter.set(stmt, new Set(live));
-            const before = this.transferLive(stmt, live, ctx, loop);
+            const before = this.transfer(stmt, live, ctx, loop, false);
             live.clear();
             for (const name of before) live.add(name);
         }
@@ -3129,153 +3164,8 @@ export class TempVariableSimplify implements ISimplify {
     }
 
     private analyzeNested(stmt: TYPE.Statement, liveOut: Set<string>, ctx: FunctionContext, loop?: LoopLive): Set<string> {
-        if (TYPE.isBlockStatement(stmt)) return this.analyzeList(stmt.body, liveOut, ctx, loop);
-        return this.transferLive(stmt, liveOut, ctx, loop);
-    }
-
-    private transferLive(stmt: TYPE.Statement, liveOut: Set<string>, ctx: FunctionContext, loop?: LoopLive): Set<string> {
-        // 非列表位置(else-if 链的 if、直接作为循环体的语句等)也要登记 liveAfter,
-        // 否则 isNameDeadAfterTest / matchConditionPattern 拿到 undefined 会放弃折叠。
-        // analyzeList 对列表语句写入的值与此处相同,重复写入无副作用。
-        ctx.liveAfter.set(stmt, new Set(liveOut));
-        switch (stmt.type) {
-            case "ExpressionStatement":
-            case "VariableDeclaration": {
-                const reads = this.tempReads(stmt, ctx);
-                const writes = this.tempWrites(stmt, ctx);
-                const result = new Set(reads);
-                for (const name of liveOut) if (!writes.has(name)) result.add(name);
-                return result;
-            }
-            case "IfStatement": {
-                const testReads = this.tempReads(stmt.test, ctx);
-                const testWrites = this.tempWrites(stmt.test, ctx);
-                const after = new Set<string>();
-                for (const name of liveOut) if (!testWrites.has(name)) after.add(name);
-                const consequentIn = this.analyzeNested(stmt.consequent, after, ctx, loop);
-                const alternateIn = stmt.alternate
-                    ? this.analyzeNested(stmt.alternate, after, ctx, loop)
-                    : after;
-                ctx.branchLive.set(stmt, TempVariableSimplify.union(consequentIn, alternateIn));
-                return TempVariableSimplify.union(testReads, consequentIn, alternateIn);
-            }
-            case "WhileStatement": {
-                const testReads = this.tempReads(stmt.test, ctx);
-                let bodyOut = TempVariableSimplify.union(liveOut, testReads);
-                let bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx, TempVariableSimplify.loopLive(liveOut, bodyOut));
-                for (let k = 0; k < 4; k++) {
-                    const next = TempVariableSimplify.union(bodyOut, bodyIn);
-                    if (TempVariableSimplify.sameSet(next, bodyOut)) break;
-                    bodyOut = next;
-                    bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx, TempVariableSimplify.loopLive(liveOut, bodyOut));
-                }
-                ctx.loopBodyIn.set(stmt, new Set(bodyIn));
-                return TempVariableSimplify.union(testReads, bodyIn, liveOut);
-            }
-            case "DoWhileStatement": {
-                const testReads = this.tempReads(stmt.test, ctx);
-                let bodyOut = TempVariableSimplify.union(liveOut, testReads);
-                let bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx, TempVariableSimplify.loopLive(liveOut, bodyOut));
-                for (let k = 0; k < 4; k++) {
-                    const next = TempVariableSimplify.union(bodyOut, bodyIn);
-                    if (TempVariableSimplify.sameSet(next, bodyOut)) break;
-                    bodyOut = next;
-                    bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx, TempVariableSimplify.loopLive(liveOut, bodyOut));
-                }
-                // test 在 body 之后执行:body 一定先写 name 时,test 读到的是新值,
-                // 不应把这次读取算作循环入口处旧值的活跃使用。
-                ctx.loopBodyIn.set(stmt, new Set(bodyIn));
-                const result = new Set(bodyIn);
-                for (const name of testReads) if (!this.doWhileKillsTestReads(stmt, name)) result.add(name);
-                for (const name of liveOut) result.add(name);
-                return result;
-            }
-            case "ForStatement": {
-                const testReads = stmt.test ? this.tempReads(stmt.test, ctx) : new Set<string>();
-                const updateReads = stmt.update ? this.tempReads(stmt.update, ctx) : new Set<string>();
-                let bodyOut = TempVariableSimplify.union(liveOut, testReads, updateReads);
-                let bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx, TempVariableSimplify.loopLive(liveOut, bodyOut));
-                for (let k = 0; k < 4; k++) {
-                    const next = TempVariableSimplify.union(bodyOut, bodyIn);
-                    if (TempVariableSimplify.sameSet(next, bodyOut)) break;
-                    bodyOut = next;
-                    bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx, TempVariableSimplify.loopLive(liveOut, bodyOut));
-                }
-                const updateIn = stmt.update
-                    ? this.transferLive(stmt.update as unknown as TYPE.Statement, TempVariableSimplify.union(bodyOut, bodyIn), ctx, loop)
-                    : new Set<string>();
-                const afterInit = TempVariableSimplify.union(bodyIn, testReads, updateIn, liveOut);
-                ctx.loopBodyIn.set(stmt, new Set(bodyIn));
-                const initReads = stmt.init ? this.tempReads(stmt.init, ctx) : new Set<string>();
-                const initWrites = stmt.init ? this.tempWrites(stmt.init, ctx) : new Set<string>();
-                const result = new Set(initReads);
-                for (const name of afterInit) if (!initWrites.has(name)) result.add(name);
-                return result;
-            }
-            case "ForInStatement":
-            case "ForOfStatement": {
-                const rightReads = this.tempReads((stmt as TYPE.ForInStatement).right, ctx);
-                let bodyOut = new Set(liveOut);
-                let bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx, TempVariableSimplify.loopLive(liveOut, bodyOut));
-                for (let k = 0; k < 4; k++) {
-                    const next = TempVariableSimplify.union(bodyOut, bodyIn);
-                    if (TempVariableSimplify.sameSet(next, bodyOut)) break;
-                    bodyOut = next;
-                    bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx, TempVariableSimplify.loopLive(liveOut, bodyOut));
-                }
-                return TempVariableSimplify.union(rightReads, bodyIn, liveOut);
-            }
-            case "BlockStatement":
-                return this.analyzeList(stmt.body, liveOut, ctx, loop);
-            case "LabeledStatement":
-                return this.analyzeNested(stmt.body, liveOut, ctx, loop);
-            case "TryStatement": {
-                const finalizerReads = stmt.finalizer ? this.tempReads(stmt.finalizer, ctx) : new Set<string>();
-                const after = TempVariableSimplify.union(liveOut, finalizerReads);
-                const blockIn = this.analyzeNested(stmt.block, after, ctx, loop);
-                const handlerIn = stmt.handler
-                    ? this.analyzeNested(stmt.handler.body, after, ctx, loop)
-                    : after;
-                const finalizerIn = stmt.finalizer
-                    ? this.analyzeNested(stmt.finalizer, liveOut, ctx, loop)
-                    : liveOut;
-                return TempVariableSimplify.union(blockIn, handlerIn, finalizerIn, liveOut);
-            }
-            case "SwitchStatement": {
-                const result = this.tempReads(stmt.discriminant, ctx);
-                const caseLoop: LoopLive = {
-                    breakLive: liveOut,
-                    continueLive: loop?.continueLive ?? liveOut,
-                    inSwitch: true,
-                };
-                for (const c of stmt.cases) {
-                    const caseIn = this.analyzeList(c.consequent, liveOut, ctx, caseLoop);
-                    for (const name of caseIn) result.add(name);
-                    for (const name of liveOut) result.add(name);
-                }
-                return result;
-            }
-            case "ReturnStatement":
-            case "ThrowStatement":
-                return this.tempReads(stmt.argument, ctx);
-            case "ExportNamedDeclaration":
-                if (stmt.declaration && TYPE.isStatement(stmt.declaration)) {
-                    return this.transferLive(stmt.declaration as TYPE.Statement, liveOut, ctx, loop);
-                }
-                return new Set(liveOut);
-            case "ExportDefaultDeclaration":
-                return this.tempReads(stmt.declaration as TYPE.Node, ctx);
-            case "BreakStatement":
-                // break 跳出循环后,活跃集是循环之后的代码;switch 里的 break 只跳出 switch。
-                // 必须返回副本:调用方会 live.clear() 后把返回值写回 live,
-                // 直接返回 liveOut 时 before 与 live 是同一个 Set,clear() 会一起清空。
-                return new Set(loop && !loop.inSwitch ? loop.breakLive : liveOut);
-            case "ContinueStatement":
-                // continue 跳到循环头(test/update),循环头的读取仍然活跃。
-                return new Set(loop ? loop.continueLive : liveOut);
-            default:
-                return new Set(liveOut);
-        }
+        if (isBlockStatement(stmt)) return this.analyzeList(stmt.body, liveOut, ctx, loop);
+        return this.transfer(stmt, liveOut, ctx, loop, false);
     }
 
     // ---------------------------------------------------------------- 死存储
@@ -3294,6 +3184,16 @@ export class TempVariableSimplify implements ISimplify {
             if (ctx.infos.has(name)) result.add(name);
         }
         return result;
+    }
+
+    /** 同时收集读取/写入;只保留当前函数里登记的临时变量名。 */
+    private tempReadWrites(node: TYPE.Node | null | undefined, ctx: FunctionContext): { reads: Set<string>; writes: Set<string> } {
+        const { reads, writes } = collectReadWriteNames(node);
+        const tempReads = new Set<string>();
+        const tempWrites = new Set<string>();
+        for (const name of reads) if (ctx.infos.has(name)) tempReads.add(name);
+        for (const name of writes) if (ctx.infos.has(name)) tempWrites.add(name);
+        return { reads: tempReads, writes: tempWrites };
     }
 
     private static union(...sets: Set<string>[]): Set<string> {
@@ -3323,61 +3223,74 @@ export class TempVariableSimplify implements ISimplify {
                 for (const name of dead.remainingReads) live.add(name);
                 continue;
             }
-            const before = this.transfer(stmt, live, ctx, loop);
+            const before = this.transfer(stmt, live, ctx, loop, true);
             live.clear();
             for (const name of before) live.add(name);
         }
         return live;
     }
 
-    private transfer(stmt: TYPE.Statement, liveOut: Set<string>, ctx: FunctionContext, loop?: LoopLive): Set<string> {
+    /**
+     * 活跃性传递。两种模式共用同一套控制流结构:
+     *   cleanup=false 只做分析(结果登记到 ctx.liveAfter / branchLive / loopBodyIn);
+     *   cleanup=true  同时删除死存储(由 cleanupStatements 驱动)。
+     * 唯一的语义差异是 if 分支的 live-out(分析时减去 test 的写入)和嵌套处理方式,
+     * 之前 analyze/cleanup 各维护一份几乎相同的 switch,改一处容易漏掉另一处。
+     */
+    private transfer(
+        stmt: TYPE.Statement,
+        liveOut: Set<string>,
+        ctx: FunctionContext,
+        loop: LoopLive | undefined,
+        cleanup: boolean,
+    ): Set<string> {
+        if (!cleanup) {
+            // 非列表位置(else-if 链的 if、直接作为循环体的语句等)也要登记 liveAfter,
+            // 否则 isNameDeadAfterTest / matchConditionPattern 拿到 undefined 会放弃折叠。
+            ctx.liveAfter.set(stmt, new Set(liveOut));
+        }
         switch (stmt.type) {
             case "ExpressionStatement":
             case "VariableDeclaration": {
-                const reads = this.tempReads(stmt, ctx);
-                const writes = this.tempWrites(stmt, ctx);
+                const { reads, writes } = this.tempReadWrites(stmt, ctx);
                 const result = new Set(reads);
                 for (const name of liveOut) if (!writes.has(name)) result.add(name);
                 return result;
             }
             case "IfStatement": {
-                // 分支的 live-out 就是 if 之后的 live-out。
-                // 不能减去 test 的写入:test 里的临时赋值不会让分支里的同名赋值变成死代码
-                // (例如 test 写 acc、两个分支也分别写 acc,而 if 之后还要读 acc)。
+                // 分支的 live-out 就是 if 之后的 live-out。清理模式不能减去 test 的写入:
+                // test 里的临时赋值不会让分支里的同名赋值变成死代码。
                 const testReads = this.tempReads(stmt.test, ctx);
-                const branchOut = new Set(liveOut);
-                const consequentIn = this.cleanupNested(stmt.consequent, ctx, branchOut, loop);
+                let branchOut: Set<string>;
+                if (cleanup) {
+                    branchOut = new Set(liveOut);
+                } else {
+                    const testWrites = this.tempWrites(stmt.test, ctx);
+                    branchOut = new Set();
+                    for (const name of liveOut) if (!testWrites.has(name)) branchOut.add(name);
+                }
+                const consequentIn = this.transferNested(stmt.consequent, branchOut, ctx, loop, cleanup);
                 const alternateIn = stmt.alternate
-                    ? this.cleanupNested(stmt.alternate, ctx, branchOut, loop)
-                    : new Set(branchOut);
+                    ? this.transferNested(stmt.alternate, branchOut, ctx, loop, cleanup)
+                    : branchOut;
                 ctx.branchLive.set(stmt, TempVariableSimplify.union(consequentIn, alternateIn));
                 return TempVariableSimplify.union(testReads, consequentIn, alternateIn);
             }
-            case "WhileStatement": {
-                const testReads = this.tempReads(stmt.test, ctx);
-                let bodyOut = TempVariableSimplify.union(liveOut, testReads);
-                let bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx, TempVariableSimplify.loopLive(liveOut, bodyOut));
-                for (let k = 0; k < 4; k++) {
-                    const next = TempVariableSimplify.union(bodyOut, bodyIn);
-                    if (TempVariableSimplify.sameSet(next, bodyOut)) break;
-                    bodyOut = next;
-                    bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx, TempVariableSimplify.loopLive(liveOut, bodyOut));
-                }
-                const cleaned = this.cleanupNested(stmt.body, ctx, bodyOut, TempVariableSimplify.loopLive(liveOut, bodyOut));
-                return TempVariableSimplify.union(testReads, cleaned, liveOut);
-            }
+            case "WhileStatement":
             case "DoWhileStatement": {
                 const testReads = this.tempReads(stmt.test, ctx);
-                let bodyOut = TempVariableSimplify.union(liveOut, testReads);
-                let bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx, TempVariableSimplify.loopLive(liveOut, bodyOut));
-                for (let k = 0; k < 4; k++) {
-                    const next = TempVariableSimplify.union(bodyOut, bodyIn);
-                    if (TempVariableSimplify.sameSet(next, bodyOut)) break;
-                    bodyOut = next;
-                    bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx, TempVariableSimplify.loopLive(liveOut, bodyOut));
+                const initialOut = TempVariableSimplify.union(liveOut, testReads);
+                const body = this.analyzeLoopBody(stmt.body, initialOut, ctx, liveOut);
+                if (!cleanup) ctx.loopBodyIn.set(stmt, new Set(body.bodyIn));
+                const resultIn = cleanup
+                    ? this.cleanupNested(stmt.body, ctx, body.bodyOut, TempVariableSimplify.loopLive(liveOut, body.bodyOut))
+                    : body.bodyIn;
+                if (stmt.type === "WhileStatement") {
+                    return TempVariableSimplify.union(testReads, resultIn, liveOut);
                 }
-                const cleaned = this.cleanupNested(stmt.body, ctx, bodyOut, TempVariableSimplify.loopLive(liveOut, bodyOut));
-                const result = new Set(cleaned);
+                // do-while 的 test 在 body 之后执行:body 一定先写 name 时,test 读到的是新值,
+                // 不应把这次读取算作循环入口处旧值的活跃使用。
+                const result = new Set(resultIn);
                 for (const name of testReads) if (!this.doWhileKillsTestReads(stmt, name)) result.add(name);
                 for (const name of liveOut) result.add(name);
                 return result;
@@ -3385,18 +3298,19 @@ export class TempVariableSimplify implements ISimplify {
             case "ForStatement": {
                 const testReads = stmt.test ? this.tempReads(stmt.test, ctx) : new Set<string>();
                 const updateReads = stmt.update ? this.tempReads(stmt.update, ctx) : new Set<string>();
-                let bodyOut = TempVariableSimplify.union(liveOut, testReads, updateReads);
-                let bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx, TempVariableSimplify.loopLive(liveOut, bodyOut));
-                for (let k = 0; k < 4; k++) {
-                    const next = TempVariableSimplify.union(bodyOut, bodyIn);
-                    if (TempVariableSimplify.sameSet(next, bodyOut)) break;
-                    bodyOut = next;
-                    bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx, TempVariableSimplify.loopLive(liveOut, bodyOut));
-                }
-                const cleaned = this.cleanupNested(stmt.body, ctx, bodyOut, TempVariableSimplify.loopLive(liveOut, bodyOut));
+                const body = this.analyzeLoopBody(
+                    stmt.body,
+                    TempVariableSimplify.union(liveOut, testReads, updateReads),
+                    ctx,
+                    liveOut,
+                );
+                if (!cleanup) ctx.loopBodyIn.set(stmt, new Set(body.bodyIn));
+                const resultIn = cleanup
+                    ? this.cleanupNested(stmt.body, ctx, body.bodyOut, TempVariableSimplify.loopLive(liveOut, body.bodyOut))
+                    : body.bodyIn;
                 const initReads = stmt.init ? this.tempReads(stmt.init, ctx) : new Set<string>();
                 const initWrites = stmt.init ? this.tempWrites(stmt.init, ctx) : new Set<string>();
-                const afterInit = TempVariableSimplify.union(cleaned, testReads, updateReads, liveOut);
+                const afterInit = TempVariableSimplify.union(resultIn, testReads, updateReads, liveOut);
                 const result = new Set(initReads);
                 for (const name of afterInit) if (!initWrites.has(name)) result.add(name);
                 return result;
@@ -3404,43 +3318,39 @@ export class TempVariableSimplify implements ISimplify {
             case "ForInStatement":
             case "ForOfStatement": {
                 const rightReads = this.tempReads((stmt as TYPE.ForInStatement).right, ctx);
-                let bodyOut = new Set(liveOut);
-                let bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx, TempVariableSimplify.loopLive(liveOut, bodyOut));
-                for (let k = 0; k < 4; k++) {
-                    const next = TempVariableSimplify.union(bodyOut, bodyIn);
-                    if (TempVariableSimplify.sameSet(next, bodyOut)) break;
-                    bodyOut = next;
-                    bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx, TempVariableSimplify.loopLive(liveOut, bodyOut));
-                }
-                const cleaned = this.cleanupNested(stmt.body, ctx, bodyOut, TempVariableSimplify.loopLive(liveOut, bodyOut));
-                return TempVariableSimplify.union(rightReads, cleaned, liveOut);
+                const body = this.analyzeLoopBody(stmt.body, new Set(liveOut), ctx, liveOut);
+                const resultIn = cleanup
+                    ? this.cleanupNested(stmt.body, ctx, body.bodyOut, TempVariableSimplify.loopLive(liveOut, body.bodyOut))
+                    : body.bodyIn;
+                return TempVariableSimplify.union(rightReads, resultIn, liveOut);
             }
             case "BlockStatement":
-                return this.cleanupStatements(stmt.body, ctx, liveOut, loop);
+                return this.transferNested(stmt, liveOut, ctx, loop, cleanup);
             case "LabeledStatement":
-                return this.cleanupNested(stmt.body, ctx, liveOut, loop);
+                return this.transferNested(stmt.body, liveOut, ctx, loop, cleanup);
             case "TryStatement": {
                 const finalizerReads = stmt.finalizer ? this.tempReads(stmt.finalizer, ctx) : new Set<string>();
-                const afterFinalizer = TempVariableSimplify.union(liveOut, finalizerReads);
-                const finalizerIn = stmt.finalizer
-                    ? this.cleanupNested(stmt.finalizer, ctx, liveOut, loop)
-                    : liveOut;
+                const after = TempVariableSimplify.union(liveOut, finalizerReads);
+                const blockIn = this.transferNested(stmt.block, after, ctx, loop, cleanup);
                 const handlerIn = stmt.handler
-                    ? this.cleanupNested(stmt.handler.body, ctx, afterFinalizer, loop)
-                    : afterFinalizer;
-                const blockIn = this.cleanupNested(stmt.block, ctx, afterFinalizer, loop);
+                    ? this.transferNested(stmt.handler.body, after, ctx, loop, cleanup)
+                    : after;
+                const finalizerIn = stmt.finalizer
+                    ? this.transferNested(stmt.finalizer, liveOut, ctx, loop, cleanup)
+                    : liveOut;
                 return TempVariableSimplify.union(blockIn, handlerIn, finalizerIn, liveOut);
             }
             case "SwitchStatement": {
-                const reads = this.tempReads(stmt.discriminant, ctx);
-                const result = new Set(reads);
+                const result = this.tempReads(stmt.discriminant, ctx);
                 const caseLoop: LoopLive = {
                     breakLive: liveOut,
                     continueLive: loop?.continueLive ?? liveOut,
                     inSwitch: true,
                 };
                 for (const c of stmt.cases) {
-                    const caseIn = this.cleanupStatements(c.consequent, ctx, liveOut, caseLoop);
+                    const caseIn = cleanup
+                        ? this.cleanupStatements(c.consequent, ctx, liveOut, caseLoop)
+                        : this.analyzeList(c.consequent, liveOut, ctx, caseLoop);
                     for (const name of caseIn) result.add(name);
                     for (const name of liveOut) result.add(name);
                 }
@@ -3451,7 +3361,9 @@ export class TempVariableSimplify implements ISimplify {
                 // return/throw 之后没有代码,只有返回表达式里的读取需要保留
                 return this.tempReads(stmt.argument, ctx);
             case "ExportNamedDeclaration":
-                if (stmt.declaration) return this.transfer(stmt.declaration as TYPE.Statement, liveOut, ctx, loop);
+                if (stmt.declaration && isStatementNode(stmt.declaration)) {
+                    return this.transfer(stmt.declaration as TYPE.Statement, liveOut, ctx, loop, cleanup);
+                }
                 return new Set(liveOut);
             case "ExportDefaultDeclaration":
                 return this.tempReads(stmt.declaration as TYPE.Node, ctx);
@@ -3468,9 +3380,39 @@ export class TempVariableSimplify implements ISimplify {
         }
     }
 
+    private transferNested(
+        stmt: TYPE.Statement,
+        liveOut: Set<string>,
+        ctx: FunctionContext,
+        loop: LoopLive | undefined,
+        cleanup: boolean,
+    ): Set<string> {
+        return cleanup
+            ? this.cleanupNested(stmt, ctx, liveOut, loop)
+            : this.analyzeNested(stmt, liveOut, ctx, loop);
+    }
+
+    /** 循环体的活跃性定点迭代:bodyOut 收敛后同时返回入口活跃集与最终 live-out。 */
+    private analyzeLoopBody(
+        body: TYPE.Statement,
+        initialOut: Set<string>,
+        ctx: FunctionContext,
+        liveOut: Set<string>,
+    ): { bodyIn: Set<string>; bodyOut: Set<string> } {
+        let bodyOut = initialOut;
+        let bodyIn = this.analyzeNested(body, bodyOut, ctx, TempVariableSimplify.loopLive(liveOut, bodyOut));
+        for (let k = 0; k < 4; k++) {
+            const next = TempVariableSimplify.union(bodyOut, bodyIn);
+            if (TempVariableSimplify.sameSet(next, bodyOut)) break;
+            bodyOut = next;
+            bodyIn = this.analyzeNested(body, bodyOut, ctx, TempVariableSimplify.loopLive(liveOut, bodyOut));
+        }
+        return { bodyIn, bodyOut };
+    }
+
     private cleanupNested(stmt: TYPE.Statement, ctx: FunctionContext, liveOut: Set<string>, loop?: LoopLive): Set<string> {
-        if (TYPE.isBlockStatement(stmt)) return this.cleanupStatements(stmt.body, ctx, liveOut, loop);
-        return this.transfer(stmt, liveOut, ctx, loop);
+        if (isBlockStatement(stmt)) return this.cleanupStatements(stmt.body, ctx, liveOut, loop);
+        return this.transfer(stmt, liveOut, ctx, loop, true);
     }
 
     /**
@@ -3482,9 +3424,9 @@ export class TempVariableSimplify implements ISimplify {
         ctx: FunctionContext,
         live: Set<string>,
     ): { replace: TYPE.Statement | null; remainingReads: Set<string> } | null {
-        if (!TYPE.isExpressionStatement(stmt) || !TYPE.isAssignmentExpression(stmt.expression)) return null;
+        if (!isExpressionStatement(stmt) || !isAssignmentExpression(stmt.expression)) return null;
         const assign = stmt.expression;
-        if (assign.operator !== "=" || !TYPE.isIdentifier(assign.left)) return null;
+        if (assign.operator !== "=" || !isIdentifier(assign.left)) return null;
         const name = assign.left.name;
         if (!isTempName(name)) return null;
         const info = ctx.infos.get(name);
@@ -3494,10 +3436,10 @@ export class TempVariableSimplify implements ISimplify {
         // 纯调用(p0.trim() 等)没有副作用,删除死存储不可能丢失任何值,不适用该守卫:
         // 否则 `acc = E; X = acc; ... return acc(新版本)` 会留下 `acc = E` 死赋值,
         // 并让 X 复制出第二份调用(`acc = p0.trim(); v2 = p0.trim();`)。
-        if (ctx.returned.has(name) && TYPE.isCallExpression(assign.right)
+        if (ctx.returned.has(name) && isCallExpression(assign.right)
             && !isPureExpression(assign.right) && !ctx.moved.has(assign.right)) return null;
         // v = v 恒等于无操作,无论 v 之后是否活跃都可以删除
-        if (TYPE.isIdentifier(assign.right) && assign.right.name === name) {
+        if (isIdentifier(assign.right) && assign.right.name === name) {
             this.removeRefs(assign.right, ctx);
             return { replace: null, remainingReads: new Set() };
         }
@@ -3510,17 +3452,17 @@ export class TempVariableSimplify implements ISimplify {
             if (!isFinalDestination || isPureExpression(rhs) || isDeclarationValue(rhs)) {
                 return { replace: null, remainingReads: new Set() };
             }
-            return { replace: TYPE.expressionStatement(rhs), remainingReads: reads };
+            return { replace: expressionStatement(rhs), remainingReads: reads };
         }
         if (isDeclarationValue(rhs)) {
             // 函数/类表达式需要保留,SyntaxRewriteSimplify/ClassSyntaxSimplify 会转成声明
-            return { replace: TYPE.expressionStatement(rhs), remainingReads: reads };
+            return { replace: expressionStatement(rhs), remainingReads: reads };
         }
         if (isPureExpression(rhs)) {
             this.removeRefs(rhs, ctx);
             return { replace: null, remainingReads: new Set() };
         }
         // 调用等有副作用:保留表达式本身
-        return { replace: TYPE.expressionStatement(rhs), remainingReads: reads };
+        return { replace: expressionStatement(rhs), remainingReads: reads };
     }
 }

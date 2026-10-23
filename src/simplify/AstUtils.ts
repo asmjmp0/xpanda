@@ -1,5 +1,37 @@
 import * as TYPE from "@babel/types";
 
+
+const {
+    VISITOR_KEYS,
+    expressionStatement,
+    isArrayPattern,
+    isAssignmentExpression,
+    isAssignmentPattern,
+    isBlockStatement,
+    isCallExpression,
+    isExpressionStatement,
+    isForInStatement,
+    isForOfStatement,
+    isFunctionDeclaration,
+    isFunctionExpression,
+    isClassDeclaration,
+    isClassExpression,
+    isArrowFunctionExpression,
+    isIdentifier,
+    isMemberExpression,
+    isNodesEquivalent,
+    isObjectPattern,
+    isObjectProperty,
+    isOptionalMemberExpression,
+    isReferenced,
+    isRestElement,
+    isSpreadElement,
+    isStringLiteral,
+    isUpdateExpression,
+    isVariableDeclaration,
+    isVariableDeclarator,
+} = TYPE;
+
 /**
  * simplify 阶段共用的 AST 判定与遍历工具。
  *
@@ -15,19 +47,18 @@ export function isTempName(name: string): boolean {
         || /^panda_jmp0_reserved_param_p\d+$/.test(name);
 }
 
+const FUNCTION_TYPES = new Set([
+    "FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression",
+    "ObjectMethod", "ClassMethod", "ClassPrivateMethod",
+]);
+const CLASS_TYPES = new Set(["ClassDeclaration", "ClassExpression"]);
+
 export function isFunctionLike(node: TYPE.Node | null | undefined): boolean {
-    return !!node && (
-        TYPE.isFunctionDeclaration(node) ||
-        TYPE.isFunctionExpression(node) ||
-        TYPE.isArrowFunctionExpression(node) ||
-        TYPE.isObjectMethod(node) ||
-        TYPE.isClassMethod(node) ||
-        TYPE.isClassPrivateMethod(node)
-    );
+    return !!node && FUNCTION_TYPES.has(node.type);
 }
 
 export function isClassLike(node: TYPE.Node | null | undefined): boolean {
-    return !!node && (TYPE.isClassDeclaration(node) || TYPE.isClassExpression(node));
+    return !!node && CLASS_TYPES.has(node.type);
 }
 
 /** 遍历子树;返回 false 时跳过该节点的子节点 */
@@ -39,7 +70,7 @@ export function walkNode(
 ): void {
     if (!node || typeof (node as any).type !== "string") return;
     if (visit(node, parent, key) === false) return;
-    const keys = (TYPE.VISITOR_KEYS as any)[node.type] as string[] | undefined;
+    const keys = (VISITOR_KEYS as any)[node.type] as string[] | undefined;
     if (!keys) return;
     for (const k of keys) {
         const value = (node as any)[k];
@@ -60,7 +91,7 @@ export function walkNode(
  */
 export function replaceNodeInTree(root: TYPE.Node | null | undefined, target: TYPE.Node, replacement: TYPE.Node): boolean {
     if (!root || root === target) return false;
-    const keys = (TYPE.VISITOR_KEYS as any)[root.type] as string[] | undefined;
+    const keys = (VISITOR_KEYS as any)[root.type] as string[] | undefined;
     if (!keys) return false;
     for (const key of keys) {
         const value = (root as any)[key];
@@ -109,14 +140,14 @@ const PURE_GLOBAL_CALLS = new Set([
  */
 export function isPureBuiltinCall(node: TYPE.CallExpression): boolean {
     const callee = node.callee;
-    if (TYPE.isIdentifier(callee)) return PURE_GLOBAL_CALLS.has(callee.name);
-    if (!TYPE.isMemberExpression(callee) || callee.optional) return false;
+    if (isIdentifier(callee)) return PURE_GLOBAL_CALLS.has(callee.name);
+    if (!isMemberExpression(callee) || callee.optional) return false;
     const object = callee.object;
     const property = callee.property;
-    const name = !callee.computed && TYPE.isIdentifier(property) ? property.name
-        : (TYPE.isStringLiteral(property) ? property.value : null);
+    const name = !callee.computed && isIdentifier(property) ? property.name
+        : (isStringLiteral(property) ? property.value : null);
     if (!name) return false;
-    if (TYPE.isIdentifier(object) && object.name === "Math") return PURE_MATH_METHODS.has(name);
+    if (isIdentifier(object) && object.name === "Math") return PURE_MATH_METHODS.has(name);
     return PURE_STRING_METHODS.has(name);
 }
 
@@ -206,7 +237,7 @@ export function nodeSize(node: TYPE.Node | null | undefined, limit: number = Num
         if (!current || typeof (current as any).type !== "string") continue;
         count++;
         if (count >= limit) return count;
-        const keys = (TYPE.VISITOR_KEYS as any)[current.type] as string[] | undefined;
+        const keys = (VISITOR_KEYS as any)[current.type] as string[] | undefined;
         if (!keys) continue;
         for (const key of keys) {
             const value = (current as any)[key];
@@ -261,11 +292,11 @@ export function isPureExpression(node: TYPE.Node | null | undefined): boolean {
         }
         case "ArrayExpression":
             return (node as TYPE.ArrayExpression).elements.every((e) =>
-                e == null || (TYPE.isSpreadElement(e) ? isPureExpression(e.argument) : isPureExpression(e as TYPE.Expression)));
+                e == null || (isSpreadElement(e) ? isPureExpression(e.argument) : isPureExpression(e as TYPE.Expression)));
         case "ObjectExpression":
             return (node as TYPE.ObjectExpression).properties.every((prop) => {
-                if (TYPE.isSpreadElement(prop)) return isPureExpression(prop.argument);
-                if (TYPE.isObjectProperty(prop)) {
+                if (isSpreadElement(prop)) return isPureExpression(prop.argument);
+                if (isObjectProperty(prop)) {
                     return (!prop.computed || isPureExpression(prop.key as TYPE.Expression))
                         && isPureExpression(prop.value as TYPE.Expression);
                 }
@@ -277,7 +308,7 @@ export function isPureExpression(node: TYPE.Node | null | undefined): boolean {
         case "CallExpression":
             return isPureBuiltinCall(node as TYPE.CallExpression)
                 && (node as TYPE.CallExpression).arguments.every((arg) =>
-                    TYPE.isSpreadElement(arg) ? isPureExpression(arg.argument) : isPureExpression(arg as TYPE.Expression));
+                    isSpreadElement(arg) ? isPureExpression(arg.argument) : isPureExpression(arg as TYPE.Expression));
         case "ParenthesizedExpression":
             return isPureExpression((node as any).expression);
         default:
@@ -288,30 +319,30 @@ export function isPureExpression(node: TYPE.Node | null | undefined): boolean {
 
 /** 函数/类表达式作为语句保留时,后续 pass 会把它转换为声明。 */
 export function isDeclarationValue(node: TYPE.Node | null | undefined): boolean {
-    return !!node && (TYPE.isFunctionExpression(node) || TYPE.isClassExpression(node)
-        || TYPE.isArrowFunctionExpression(node));
+    return !!node && (isFunctionExpression(node) || isClassExpression(node)
+        || isArrowFunctionExpression(node));
 }
 
 /** 判断 obj.next().value 结构(用于 for-of / 迭代器识别),不再调用 generator。 */
 export function isNextValue(node: TYPE.Node | null | undefined): boolean {
-    if (!TYPE.isMemberExpression(node) || node.computed) return false;
-    if (!TYPE.isIdentifier(node.property) || node.property.name !== "value") return false;
-    if (!TYPE.isCallExpression(node.object)) return false;
+    if (!isMemberExpression(node) || node.computed) return false;
+    if (!isIdentifier(node.property) || node.property.name !== "value") return false;
+    if (!isCallExpression(node.object)) return false;
     const callee = node.object.callee;
-    if (!TYPE.isMemberExpression(callee) || callee.computed) return false;
-    return TYPE.isIdentifier(callee.property) && callee.property.name === "next";
+    if (!isMemberExpression(callee) || callee.computed) return false;
+    return isIdentifier(callee.property) && callee.property.name === "next";
 }
 
 export function isDoneMember(node: TYPE.Node | null | undefined): boolean {
-    return !!node && TYPE.isMemberExpression(node) && !node.computed
-        && TYPE.isIdentifier(node.property) && node.property.name === "done";
+    return !!node && isMemberExpression(node) && !node.computed
+        && isIdentifier(node.property) && node.property.name === "done";
 }
 
 /** 收集子树中所有标识符名字(用于依赖记录,宁可多收集)。 */
 export function collectIdentifierNames(node: TYPE.Node | null | undefined): Set<string> {
     const names = new Set<string>();
     walkNode(node, (n) => {
-        if (TYPE.isIdentifier(n)) names.add(n.name);
+        if (isIdentifier(n)) names.add(n.name);
         // 不进入嵌套函数体:闭包里的局部变量与当前作用域无关
         if (isFunctionLike(n) || isClassLike(n)) return false;
     });
@@ -333,10 +364,10 @@ export function collectMemberWriteTargets(
     walkNode(node, (n) => {
         if (isFunctionLike(n) || isClassLike(n)) return false;
         let target: TYPE.Node | null = null;
-        if (TYPE.isAssignmentExpression(n)) {
-            if (TYPE.isMemberExpression(n.left) || TYPE.isOptionalMemberExpression(n.left)) target = n.left;
-        } else if (TYPE.isUpdateExpression(n)) {
-            if (TYPE.isMemberExpression(n.argument) || TYPE.isOptionalMemberExpression(n.argument)) target = n.argument;
+        if (isAssignmentExpression(n)) {
+            if (isMemberExpression(n.left) || isOptionalMemberExpression(n.left)) target = n.left;
+        } else if (isUpdateExpression(n)) {
+            if (isMemberExpression(n.argument) || isOptionalMemberExpression(n.argument)) target = n.argument;
         }
         if (target) {
             const m = target as TYPE.MemberExpression;
@@ -351,13 +382,13 @@ export function collectMemberWriteTargets(
 export function collectAssignedNames(node: TYPE.Node | null | undefined, out: Set<string> = new Set()): Set<string> {
     walkNode(node, (n) => {
         if (isFunctionLike(n) || isClassLike(n)) return false;
-        if (TYPE.isAssignmentExpression(n)) {
+        if (isAssignmentExpression(n)) {
             addPatternNames(n.left, out);
-        } else if (TYPE.isUpdateExpression(n)) {
-            if (TYPE.isIdentifier(n.argument)) out.add(n.argument.name);
-        } else if (TYPE.isVariableDeclarator(n)) {
+        } else if (isUpdateExpression(n)) {
+            if (isIdentifier(n.argument)) out.add(n.argument.name);
+        } else if (isVariableDeclarator(n)) {
             addPatternNames(n.id, out);
-        } else if (TYPE.isForInStatement(n) || TYPE.isForOfStatement(n)) {
+        } else if (isForInStatement(n) || isForOfStatement(n)) {
             addPatternNames(n.left, out);
         }
         return true;
@@ -367,17 +398,17 @@ export function collectAssignedNames(node: TYPE.Node | null | undefined, out: Se
 
 export function addPatternNames(node: TYPE.Node | null | undefined, out: Set<string>): void {
     if (!node) return;
-    if (TYPE.isIdentifier(node)) {
+    if (isIdentifier(node)) {
         out.add(node.name);
-    } else if (TYPE.isRestElement(node)) {
+    } else if (isRestElement(node)) {
         addPatternNames(node.argument, out);
-    } else if (TYPE.isAssignmentPattern(node)) {
+    } else if (isAssignmentPattern(node)) {
         addPatternNames(node.left, out);
-    } else if (TYPE.isArrayPattern(node)) {
+    } else if (isArrayPattern(node)) {
         for (const e of node.elements) addPatternNames(e, out);
-    } else if (TYPE.isObjectPattern(node)) {
+    } else if (isObjectPattern(node)) {
         for (const prop of node.properties) {
-            if (TYPE.isRestElement(prop)) addPatternNames(prop.argument, out);
+            if (isRestElement(prop)) addPatternNames(prop.argument, out);
             else addPatternNames(prop.value, out);
         }
     }
@@ -388,11 +419,11 @@ export function collectReadNames(node: TYPE.Node | null | undefined): Set<string
     const names = new Set<string>();
     const visit = (n: TYPE.Node, parent: TYPE.Node | null, key: string | null): boolean | void => {
         if (isFunctionLike(n) || isClassLike(n)) return false;
-        if (TYPE.isIdentifier(n)) {
+        if (isIdentifier(n)) {
             // 根本身就是标识符时没有父节点,按读取处理(如 return acc / if (acc))
-            if (!parent || TYPE.isReferenced(n, parent)) names.add(n.name);
+            if (!parent || isReferenced(n, parent)) names.add(n.name);
             // 复合赋值(x += y / x |= y)左侧也会读取旧值;Babel 的 isReferenced 对赋值左值统一返回 false
-            else if (parent && TYPE.isAssignmentExpression(parent) && parent.left === n && parent.operator !== "=") {
+            else if (parent && isAssignmentExpression(parent) && parent.left === n && parent.operator !== "=") {
                 names.add(n.name);
             }
             return;
@@ -402,16 +433,47 @@ export function collectReadNames(node: TYPE.Node | null | undefined): Set<string
     return names;
 }
 
+/**
+ * 一次遍历同时收集读取与写入的变量名。
+ * 活跃性分析里 reads/writes 经常成对使用(transfer 的表达式语句分支),
+ * 分开调用 collectReadNames / collectAssignedNames 会把同一棵子树扫描两遍。
+ */
+export function collectReadWriteNames(
+    node: TYPE.Node | null | undefined,
+    reads: Set<string> = new Set<string>(),
+    writes: Set<string> = new Set<string>(),
+): { reads: Set<string>; writes: Set<string> } {
+    walkNode(node, (n, parent) => {
+        if (isFunctionLike(n) || isClassLike(n)) return false;
+        if (isIdentifier(n)) {
+            if (!parent || isReferenced(n, parent)) reads.add(n.name);
+            else if (isAssignmentExpression(parent) && parent.left === n && parent.operator !== "=") reads.add(n.name);
+            return;
+        }
+        if (isAssignmentExpression(n)) {
+            addPatternNames(n.left, writes);
+        } else if (isUpdateExpression(n)) {
+            if (isIdentifier(n.argument)) writes.add(n.argument.name);
+        } else if (isVariableDeclarator(n)) {
+            addPatternNames(n.id, writes);
+        } else if (isForInStatement(n) || isForOfStatement(n)) {
+            addPatternNames(n.left, writes);
+        }
+        return true;
+    });
+    return { reads, writes };
+}
+
 /** 将字符串形式的语句节点转换为表达式语句,方便替换。 */
 export function toExpressionStatement(node: TYPE.Expression): TYPE.ExpressionStatement {
-    return TYPE.expressionStatement(node);
+    return expressionStatement(node);
 }
 
 export function isNodeEqual(a: TYPE.Node | null | undefined, b: TYPE.Node | null | undefined): boolean {
     if (a === b) return true;
     if (!a || !b) return false;
     try {
-        return TYPE.isNodesEquivalent(a, b);
+        return isNodesEquivalent(a, b);
     } catch {
         return false;
     }
@@ -431,11 +493,11 @@ export function walkStatementSkipFunctions(
 
 /** 函数体顶层的 let/const/var/函数/类声明会遮蔽整个函数作用域(TDZ 下内部读取只会抛错,不会读到外层) */
 function addFunctionTopLevelDecls(stmt: TYPE.Statement, out: Set<string>): void {
-    if (TYPE.isVariableDeclaration(stmt)) {
+    if (isVariableDeclaration(stmt)) {
         for (const d of stmt.declarations) addPatternNames(d.id, out);
-    } else if (TYPE.isFunctionDeclaration(stmt) && stmt.id) {
+    } else if (isFunctionDeclaration(stmt) && stmt.id) {
         out.add(stmt.id.name);
-    } else if (TYPE.isClassDeclaration(stmt) && stmt.id) {
+    } else if (isClassDeclaration(stmt) && stmt.id) {
         out.add(stmt.id.name);
     }
 }
@@ -464,7 +526,7 @@ export function scanCapturedRead(
         const body: TYPE.Node | null = isFunctionLike(node)
             ? (node as TYPE.Function).body
             : (node as TYPE.Class).body;
-        if (body && TYPE.isBlockStatement(body)) {
+        if (body && isBlockStatement(body)) {
             for (const stmt of body.body) addFunctionTopLevelDecls(stmt, inner);
         }
         const remaining = new Set([...names].filter((n) => !inner.has(n)));
@@ -472,11 +534,11 @@ export function scanCapturedRead(
         return scanCapturedRead(body, node, remaining, inner, true);
     }
     // 只关心嵌套函数体内的读取;顶层线性读取由调用方的逐语句检查负责
-    if (insideFunction && TYPE.isIdentifier(node) && names.has(node.name) && !shadowed.has(node.name)
-        && parent && TYPE.isReferenced(node, parent)) {
+    if (insideFunction && isIdentifier(node) && names.has(node.name) && !shadowed.has(node.name)
+        && parent && isReferenced(node, parent)) {
         return true;
     }
-    const keys = (TYPE.VISITOR_KEYS as any)[node.type] as string[] | undefined;
+    const keys = (VISITOR_KEYS as any)[node.type] as string[] | undefined;
     if (!keys) return false;
     for (const key of keys) {
         const value = (node as any)[key];
@@ -504,15 +566,15 @@ export function tempReadBeforeWrite(stmts: TYPE.Statement[], from: number, name:
         const stmt = stmts[j];
         let read = false;
         walkStatementSkipFunctions(stmt, (node, parent) => {
-            if (TYPE.isIdentifier(node) && node.name === name
-                && parent && TYPE.isReferenced(node, parent)) {
+            if (isIdentifier(node) && node.name === name
+                && parent && isReferenced(node, parent)) {
                 read = true;
             }
         });
         if (read && !killed) return true;
-        if (TYPE.isExpressionStatement(stmt) && TYPE.isAssignmentExpression(stmt.expression)
+        if (isExpressionStatement(stmt) && isAssignmentExpression(stmt.expression)
             && stmt.expression.operator === "="
-            && TYPE.isIdentifier(stmt.expression.left)
+            && isIdentifier(stmt.expression.left)
             && stmt.expression.left.name === name) {
             killed = true;
         }

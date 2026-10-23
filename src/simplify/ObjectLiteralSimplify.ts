@@ -4,6 +4,27 @@ import traverse from "@babel/traverse";
 import * as TYPE from "@babel/types";
 import { isTempName, walkNode } from "./AstUtils";
 
+
+const {
+    VISITOR_KEYS,
+    file,
+    isAssignmentExpression,
+    isBigIntLiteral,
+    isBooleanLiteral,
+    isExpressionStatement,
+    isIdentifier,
+    isMemberExpression,
+    isNullLiteral,
+    isNumericLiteral,
+    isObjectExpression,
+    isObjectProperty,
+    isRegExpLiteral,
+    isReturnStatement,
+    isStringLiteral,
+    objectProperty,
+    returnStatement,
+} = TYPE;
+
 /**
  * 还原 `createobjectwithbuffer` 的“模板对象 + 逐属性赋值” lowering:
  *
@@ -25,7 +46,7 @@ import { isTempName, walkNode } from "./AstUtils";
 export class ObjectLiteralSimplify implements ISimplify {
     simplify(node: Program): boolean {
         let changed = false;
-        traverse(TYPE.file(node), {
+        traverse(file(node), {
             Program: (path) => {
                 if (this.processList(path, path.node.body)) changed = true;
             },
@@ -40,9 +61,9 @@ export class ObjectLiteralSimplify implements ISimplify {
         let changed = false;
         for (let i = 0; i < stmts.length; i++) {
             const stmt = stmts[i];
-            if (!TYPE.isExpressionStatement(stmt) || !TYPE.isAssignmentExpression(stmt.expression)) continue;
+            if (!isExpressionStatement(stmt) || !isAssignmentExpression(stmt.expression)) continue;
             const assign = stmt.expression;
-            if (assign.operator !== "=" || !TYPE.isIdentifier(assign.left) || !TYPE.isObjectExpression(assign.right)) continue;
+            if (assign.operator !== "=" || !isIdentifier(assign.left) || !isObjectExpression(assign.right)) continue;
 
             const name = assign.left.name;
             if (!isTempName(name)) continue;
@@ -56,7 +77,7 @@ export class ObjectLiteralSimplify implements ISimplify {
             let valid = object.properties.length > 0;
             for (const property of object.properties) {
                 if (!valid) break;
-                if (!TYPE.isObjectProperty(property) || property.computed) {
+                if (!isObjectProperty(property) || property.computed) {
                     valid = false;
                     break;
                 }
@@ -83,11 +104,11 @@ export class ObjectLiteralSimplify implements ISimplify {
             let next = i + 1;
             for (; next < stmts.length; next++) {
                 const candidate = stmts[next];
-                if (!TYPE.isExpressionStatement(candidate) || !TYPE.isAssignmentExpression(candidate.expression)) break;
+                if (!isExpressionStatement(candidate) || !isAssignmentExpression(candidate.expression)) break;
                 const memberAssign = candidate.expression;
-                if (memberAssign.operator !== "=" || !TYPE.isMemberExpression(memberAssign.left) || memberAssign.left.optional) break;
+                if (memberAssign.operator !== "=" || !isMemberExpression(memberAssign.left) || memberAssign.left.optional) break;
                 const member = memberAssign.left;
-                if (!TYPE.isIdentifier(member.object) || member.object.name !== name) break;
+                if (!isIdentifier(member.object) || member.object.name !== name) break;
                 const key = this.memberKeyName(member);
                 if (!key) break;
                 const index = keyIndex.get(key);
@@ -103,16 +124,16 @@ export class ObjectLiteralSimplify implements ISimplify {
             object.properties = properties.map((property, index) => {
                 const key = this.keyName(property.key)!;
                 const value = assigned.get(key) ?? property.value;
-                return TYPE.objectProperty(property.key, value, false);
+                return objectProperty(property.key, value, false);
             });
             const returnStmt = stmts[next];
-            const canInlineReturn = TYPE.isReturnStatement(returnStmt)
-                && TYPE.isIdentifier(returnStmt.argument)
+            const canInlineReturn = isReturnStatement(returnStmt)
+                && isIdentifier(returnStmt.argument)
                 && returnStmt.argument.name === name
                 && this.canInlineReturn(path, name, i, [stmt, ...assignmentStmts, returnStmt]);
             stmts.splice(i + 1, next - i - 1);
             if (canInlineReturn) {
-                stmts.splice(i, 2, TYPE.returnStatement(object));
+                stmts.splice(i, 2, returnStatement(object));
             }
             changed = true;
         }
@@ -133,7 +154,7 @@ export class ObjectLiteralSimplify implements ISimplify {
         let found = false;
         walkNode(node, (current) => {
             if (found) return false;
-            if (TYPE.isIdentifier(current) && current.name === name) {
+            if (isIdentifier(current) && current.name === name) {
                 found = true;
                 return false;
             }
@@ -178,7 +199,7 @@ export class ObjectLiteralSimplify implements ISimplify {
         const kb = bPath.key;
         if (typeof ka === "number" && typeof kb === "number") return ka < kb;
         if (typeof ka === "string" && typeof kb === "string" && aPath.parentPath) {
-            const keys = TYPE.VISITOR_KEYS[aPath.parentPath.node.type] ?? [];
+            const keys = VISITOR_KEYS[aPath.parentPath.node.type] ?? [];
             const ia = keys.indexOf(ka);
             const ib = keys.indexOf(kb);
             if (ia >= 0 && ib >= 0) return ia < ib;
@@ -187,28 +208,28 @@ export class ObjectLiteralSimplify implements ISimplify {
     }
 
     private keyName(key: TYPE.Node): string | null {
-        if (TYPE.isIdentifier(key)) return key.name;
-        if (TYPE.isStringLiteral(key)) return key.value;
-        if (TYPE.isNumericLiteral(key)) return String(key.value);
+        if (isIdentifier(key)) return key.name;
+        if (isStringLiteral(key)) return key.value;
+        if (isNumericLiteral(key)) return String(key.value);
         return null;
     }
 
     private memberKeyName(member: TYPE.MemberExpression): string | null {
-        if (!member.computed) return TYPE.isIdentifier(member.property) ? member.property.name : null;
-        if (TYPE.isStringLiteral(member.property)) return member.property.value;
-        if (TYPE.isNumericLiteral(member.property)) return String(member.property.value);
+        if (!member.computed) return isIdentifier(member.property) ? member.property.name : null;
+        if (isStringLiteral(member.property)) return member.property.value;
+        if (isNumericLiteral(member.property)) return String(member.property.value);
         return null;
     }
 
     /** 模板字段只允许字面量/undefined，避免提前求值有副作用的表达式 */
     private isTemplateValue(value: TYPE.Node): boolean {
-        return TYPE.isNullLiteral(value)
-            || TYPE.isBooleanLiteral(value)
-            || TYPE.isNumericLiteral(value)
-            || TYPE.isStringLiteral(value)
-            || TYPE.isBigIntLiteral(value)
-            || TYPE.isRegExpLiteral(value)
-            || (TYPE.isIdentifier(value, { name: "undefined" }))
-            || (TYPE.isIdentifier(value, { name: "null" }));
+        return isNullLiteral(value)
+            || isBooleanLiteral(value)
+            || isNumericLiteral(value)
+            || isStringLiteral(value)
+            || isBigIntLiteral(value)
+            || isRegExpLiteral(value)
+            || (isIdentifier(value, { name: "undefined" }))
+            || (isIdentifier(value, { name: "null" }));
     }
 }
