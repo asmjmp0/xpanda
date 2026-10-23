@@ -10,7 +10,7 @@ import { parseStrictJson } from "@normalized:N&&&core/src/main/ets/navigation/St
 let AppDestinationName, LOCAL_DRAFT_ID_LENGTH, MAX_DECIMAL_CONTENT_ID_LENGTH, MAX_PEOPLE_IDENTIFIER_LENGTH, MAX_SEARCH_QUERY_LENGTH, decodeAppDestination, isAppDestinationName, isInfrastructureDestination, isSafeDecimalContentId, isSafeLocalDraftId, isSafePeopleIdentifier, isSafePinContentId, isSafeSearchDestinationQuery, isSafeWhatsNewVersion, shouldReloadAfterAuthentication;
 let local_0_0, local_0_1, local_0_2, local_0_3, local_0_4, local_0_5, local_0_6, local_0_7, local_0_8, local_0_9, local_0_10, local_0_11, local_0_12, local_0_13, local_0_14, local_0_15, local_0_16;
 decodeAppDestination = function (p0, p1) {
-  let v0 /*parseStrictJson*/, v1 /*JsonObjectValue*/, v2, v3, v4, v5, v6, v7, v8, v10, acc;
+  let v0 /*parseStrictJson*/, v1 /*JsonObjectValue*/, v2, v3, v4, v5, v6, v7, v8, v10;
   if (!isAppDestinationName(p0)) {
     return undefined;
   } else {
@@ -255,11 +255,10 @@ decodeAppDestination = function (p0, p1) {
         v2 = local_0_0(v0, "commentId") !== undefined;
       }
       if (!v2) {
-        acc = !local_0_11(v0, ["name", "query"]);
-        return acc ? undefined : {
+        return local_0_11(v0, ["name", "query"]) ? {
           "name": AppDestinationName.SEARCH,
           "query": v1
-        };
+        } : undefined;
       } else {
         return undefined;
       }
@@ -313,22 +312,21 @@ local_0_2 = function (p0, p1) {
   }
 };
 local_0_3 = function (p0) {
-  let v0, v1, acc;
+  let v0, v1;
   v0 = local_0_0(p0, "entryName");
   v1 = local_0_0(p0, "title");
   if (local_0_12(v0) && local_0_13(v1)) {
-    acc = !local_0_11(p0, ["name", "entryName", "title"]);
-    return acc ? undefined : {
+    return local_0_11(p0, ["name", "entryName", "title"]) ? {
       "name": AppDestinationName.NOTIFICATION_ENTRY,
       "entryName": v0,
       "title": v1
-    };
+    } : undefined;
   } else {
     return undefined;
   }
 };
 local_0_4 = function (p0) {
-  let v0, v1, v2, v3, acc;
+  let v0, v1, v2, v3;
   v0 = local_0_0(p0, "peerId");
   v1 = local_0_0(p0, "peerName");
   v2 = local_0_0(p0, "avatarUrl");
@@ -340,13 +338,12 @@ local_0_4 = function (p0) {
     v3 = !local_0_16(v2);
   }
   if (!v3) {
-    acc = !local_0_11(p0, ["name", "peerId", "peerName", "avatarUrl"]);
-    return acc ? undefined : {
+    return local_0_11(p0, ["name", "peerId", "peerName", "avatarUrl"]) ? {
       "name": AppDestinationName.PRIVATE_MESSAGE,
       "peerId": v0,
       "peerName": v1,
       "avatarUrl": v2
-    };
+    } : undefined;
   } else {
     return undefined;
   }
@@ -397,18 +394,17 @@ local_0_6 = function (p0) {
   }
 };
 local_0_7 = function (p0) {
-  let v0, v1, acc;
+  let v0, v1;
   v0 = local_0_0(p0, "draftId");
   v1 = v0 === undefined;
   if (v0 !== undefined) {
     v1 = !isSafeLocalDraftId(v0);
   }
   if (!v1) {
-    acc = !local_0_11(p0, ["name", "draftId"]);
-    return acc ? undefined : {
+    return local_0_11(p0, ["name", "draftId"]) ? {
       "name": AppDestinationName.WRITE_PIN,
       "draftId": v0
-    };
+    } : undefined;
   } else {
     return undefined;
   }

@@ -126,8 +126,7 @@ local_0_0 = function (p0, p1) {
         v0 = v2.params.get("target");
         return v0 === undefined ? undefined : local_0_0(v0, p1 + 1);
       } else if (v5 === "zhuanlan.zhihu.com") {
-        v1 = v6.length === v1 && v6[0] === "p";
-        return v1 && isSafeDecimalContentId(v6[1]) ? {
+        return v6.length === v1 && v6[0] === "p" && isSafeDecimalContentId(v6[1]) ? {
           "type": DeepLinkType.ARTICLE,
           "id": v6[1],
           "query": ""

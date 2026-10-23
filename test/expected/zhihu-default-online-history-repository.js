@@ -8,14 +8,9 @@ import { decodeOnlineHistoryPage } from "@normalized:N&&&data/src/main/ets/domai
 let DefaultOnlineHistoryRepository, ONLINE_HISTORY_BASE_URL, ONLINE_HISTORY_BATCH_DEL_URL, ONLINE_HISTORY_LIMIT, ONLINE_HISTORY_MAX_OFFSET, OnlineHistoryRepositoryFailure, OnlineHistoryRepositoryFailureKind, buildBatchDelBody, buildOnlineHistoryUrl, canonicalOnlineHistoryCursorKey, isOnlineHistoryCursorUrl, onlineHistoryDeletePairOf, onlineHistoryOffsetOf;
 let local_0_0, local_0_1, local_0_2;
 buildBatchDelBody = function (p0, p1) {
-  let v0, acc;
-  v0 = "{\"pairs\":[" + p0.map(function (p0) {
+  return "{\"pairs\":[" + p0.map(function (p0) {
     return "{\"content_token\":\"" + p0.contentToken + "\",\"content_type\":\"" + p0.contentType + "\"}";
-  }).join(",");
-  v0 += "],\"clear\":";
-  acc = p1 ? "true" : "false";
-  acc = v0 + acc;
-  return acc + "}";
+  }).join(",") + "],\"clear\":" + (p1 ? "true" : "false") + "}";
 };
 buildOnlineHistoryUrl = function (p0) {
   let v0 /*OnlineHistoryRepositoryFailure*/;
@@ -27,9 +22,7 @@ buildOnlineHistoryUrl = function (p0) {
   }
 };
 canonicalOnlineHistoryCursorKey = function (p0) {
-  let v0;
-  v0 = "" + ONLINE_HISTORY_BASE_URL + "?" + p0.substring(p0.indexOf("?") + 1).split("&").slice().sort().join("&");
-  return v0 + "";
+  return "" + ONLINE_HISTORY_BASE_URL + "?" + p0.substring(p0.indexOf("?") + 1).split("&").slice().sort().join("&") + "";
 };
 local_0_1 = function (p0) {
   let local_1_0;

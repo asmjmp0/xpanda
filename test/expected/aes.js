@@ -158,9 +158,7 @@ v1 = {
       v7 = v7 + 1 + 1 + 1;
       v11 = p0.charCodeAt(v11);
       v12 = v9 >> 2;
-      v9 &= 3;
-      v9 <<= 4;
-      v9 |= v10 >> 4;
+      v9 = (v9 & 3) << 4 | v10 >> 4;
       if (isNaN(v10)) {
         v10 = 64;
         v11 = 64;
@@ -171,9 +169,7 @@ v1 = {
         v10 = (v10 & 15) << 2 | v11 >> 6;
         v11 &= 63;
       }
-      v8 += this.characters.charAt(v12);
-      v8 += this.characters.charAt(v9);
-      v8 += this.characters.charAt(v10);
+      v8 = v8 + this.characters.charAt(v12) + this.characters.charAt(v9) + this.characters.charAt(v10);
     }
     return v8;
   },
@@ -191,11 +187,8 @@ v1 = {
       v11 = this.characters.indexOf(v8.charAt(v12 + 1));
       v6 = v12 + 1 + 1 + 1;
       v12 = this.characters.indexOf(v8.charAt(v12 + 1 + 1));
-      v9 <<= 2;
-      v9 |= v10 >> 4;
-      v10 &= 15;
-      v10 <<= 4;
-      v10 |= v11 >> 2;
+      v9 = v9 << 2 | v10 >> 4;
+      v10 = (v10 & 15) << 4 | v11 >> 2;
       v7 += String.fromCharCode(v9);
       if (v11 !== 64) {
         v7 += String.fromCharCode(v10);

@@ -8,24 +8,18 @@ import { DeepLinkType } from "@normalized:N&&&core/src/main/ets/navigation/DeepL
 import { decodeAppDestination } from "@normalized:N&&&core/src/main/ets/navigation/AppDestination&1.0.0";
 let LatestOperationGuard, StartupDestinationChannel, appDestinationIdentity, findAppDestinationStackIndex, shouldPushAppDestination, startupDestinationChannel, toAppDestination;
 appDestinationIdentity = function (p0) {
-  let v2, acc;
   if (p0.name === AppDestinationName.QUESTION || p0.name === AppDestinationName.ANSWER || p0.name === AppDestinationName.ARTICLE || p0.name === AppDestinationName.VIDEO || p0.name === AppDestinationName.PIN || p0.name === AppDestinationName.PEOPLE || p0.name === AppDestinationName.COLLECTION || p0.name === AppDestinationName.COLLECTIONS) {
     return "" + p0.name + ":" + encodeURIComponent(p0.id) + "";
   } else if (p0.name === AppDestinationName.WRITE_ANSWER) {
-    v2 = p0.answerId ?? "";
-    return "" + p0.name + ":" + encodeURIComponent(p0.questionId) + ":" + encodeURIComponent(v2);
+    return "" + p0.name + ":" + encodeURIComponent(p0.questionId) + ":" + encodeURIComponent(p0.answerId ?? "");
   } else if (p0.name === AppDestinationName.WRITE_PIN) {
     return "" + p0.name + ":" + encodeURIComponent(p0.draftId) + "";
   } else if (p0.name === AppDestinationName.COMMENT) {
-    v2 = p0.commentId ?? "";
-    acc = "" + p0.name + ":" + p0.contentType + ":" + encodeURIComponent(p0.contentId) + ":" + encodeURIComponent(v2);
-    v2 = p0.segmentId ?? "";
-    return acc + ":" + encodeURIComponent(v2);
+    return "" + p0.name + ":" + p0.contentType + ":" + encodeURIComponent(p0.contentId) + ":" + encodeURIComponent(p0.commentId ?? "") + ":" + encodeURIComponent(p0.segmentId ?? "");
   } else if (p0.name === AppDestinationName.SEARCH) {
     return "" + p0.name + ":" + encodeURIComponent(p0.query) + "";
   } else if (p0.name === AppDestinationName.WHATS_NEW) {
-    v2 = p0.version ?? "";
-    return "" + p0.name + ":" + encodeURIComponent(v2) + "";
+    return "" + p0.name + ":" + encodeURIComponent(p0.version ?? "") + "";
   } else {
     return p0.name;
   }

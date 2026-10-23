@@ -146,6 +146,36 @@ function stringToUint8Array(p0) {
 }
 
 /**
+ * 回归:累加器链折叠。
+ *   v0 = E; v0 = v0 + MID; acc = C ? A : B; acc = v0 + acc; return acc + "}"
+ * 应还原成 `return E + MID + (C ? A : B) + "}"`。
+ * 之前复制传播因 E 含调用(p0.map/join)不允许克隆/搬移,整条链停留在多步赋值。
+ */
+function verifyAccumulatorChainFold(): void {
+    const program = NodeFactory.parse(`
+function buildBatchDelBody(p0, p1) {
+  let v0, acc;
+  v0 = "{\\"pairs\\":[" + p0.map(function (p0) {
+    return "{\\"content_token\\":\\"" + p0.contentToken + "\\"}";
+  }).join(",");
+  v0 = v0 + "],\\"clear\\":";
+  acc = p1 ? "true" : "false";
+  acc = v0 + acc;
+  return acc + "}";
+}
+`);
+    SimplifyExport.simplify(program);
+    const code = NodeFactory.generate(program);
+    if (!code.includes('return "{\\"pairs\\":[" + p0.map(')
+        || !code.includes('}).join(",") + "],\\"clear\\":" + (p1 ? "true" : "false") + "}"')) {
+        throw new Error(`simplify: 累加器链未折叠成单个 return\n${code}`);
+    }
+    if (code.includes("acc = ") || code.includes("let v0, acc")) {
+        throw new Error(`simplify: 累加器链仍残留中间赋值\n${code}`);
+    }
+}
+
+/**
  * 回归:闭包只写不读的外层变量必须视为被捕获。
  * 旧实现只从 binding.referencePaths 判断捕获,而赋值写在 constantViolations 里;
  * 一旦闭包里对该变量的读取被优化掉,外层 `local_1_1 = undefined` 就会被当作唯一值
@@ -697,7 +727,7 @@ function verifyZhihuStartupDestinationChannel(): void {
  *        acc = A; v1 = A; if (acc) { v1 = B }
  *   另外非块 consequent(`if (A) if (B) ...`)整条分支被条件折叠递归跳过。
  *   修复后:acc 不再出现在输出中,feed 条件折成 `v6.length === 0`,
- *   zhuanlan 条件折成 `v1 = v6.length === v1 && v6[0] === "p"`。
+ *   zhuanlan 条件折成 `v6.length === v1 && v6[0] === "p" && ...` 并直接折进 return。
  * 同时在沙箱里执行解析函数,校验各 URL 形态的还原语义。
  */
 function verifyZhihuDeepLinkResolver(): void {
@@ -720,7 +750,7 @@ function verifyZhihuDeepLinkResolver(): void {
     if (code.includes(", acc = ") || code.includes("acc = !(")) {
         throw new Error(`DeepLinkResolver: test 序列仍残留布尔物化死赋值\n${code}`);
     }
-    if (!code.includes('v1 = v6.length === v1 && v6[0] === "p";')) {
+    if (!code.includes('v6.length === v1 && v6[0] === "p" && isSafeDecimalContentId(v6[1])')) {
         throw new Error(`DeepLinkResolver: zhuanlan 的跨变量布尔物化链未折叠\n${code}`);
     }
     if (!code.includes('v5 === "feed" && v6.length === 0') || !code.includes("v2.hasUserInfo || v2.port.length > 0")) {
@@ -1301,6 +1331,10 @@ function verifyLogicalChainFormatting(): void {
 async function main(): Promise<void> {
     console.log("[test] simplify return liveness");
     verifyReturnValueLiveness();
+    console.log("    ok");
+
+    console.log("[test] simplify accumulator chain fold");
+    verifyAccumulatorChainFold();
     console.log("    ok");
 
     console.log("[test] simplify closure written variable");

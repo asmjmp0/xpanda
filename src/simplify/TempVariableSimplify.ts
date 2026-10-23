@@ -336,6 +336,8 @@ export class TempVariableSimplify implements ISimplify {
             return true;
         });
         if (this.returnsOnly) {
+            // 尾部三元合成后可能留下累加器链(见 foldAccumulatorChains),
+            // 先折链再折 return,才能把整段拼接还原成单个表达式。
             this.foldReturnAssignments(body, ctx);
             this.removeUnusedDeclarations(body, ctx);
             return;
@@ -379,29 +381,168 @@ export class TempVariableSimplify implements ISimplify {
      */
     /** X = E; return X; -> return E; */
     private foldReturnAssignments(stmts: TYPE.Statement[], ctx: FunctionContext): void {
-        for (let i = stmts.length - 2; i >= 0; i--) {
-            const assignStmt = stmts[i];
-            const returnStmt = stmts[i + 1];
-            if (!TYPE.isExpressionStatement(assignStmt) || !TYPE.isAssignmentExpression(assignStmt.expression)) continue;
-            const assign = assignStmt.expression;
-            if (assign.operator !== "=" || !TYPE.isIdentifier(assign.left)) continue;
-            if (!TYPE.isReturnStatement(returnStmt) || !TYPE.isIdentifier(returnStmt.argument)) continue;
-            if (returnStmt.argument.name !== assign.left.name) continue;
-            // 直接读取右值里的 X(如 new Promise(acc))在赋值前求值,折叠后仍是同一个旧值;
-            // 若右值会写入 X(X++ / X = ...),折叠会改变写入次数,直接跳过。
-            if (collectAssignedNames(assign.right).has(assign.left.name)) continue;
-            // 只有闭包/类字段里延迟读取 X 时,赋值是否发生才会影响结果,必须保守跳过。
-            if (this.hasDeferredSelfReference(assign.right, assign.left.name)) continue;
-            ctx.infos.get(assign.left.name)?.refs.delete(returnStmt.argument);
-            returnStmt.argument = assign.right;
-            stmts.splice(i, 1);
-            this.changed = true;
-            i--;
-        }
+        // 先折累加器链:X = E; X = X + F -> X = E + F。
+        // HighLevelGrammarSimplify 在定点迭代之后才把条件物化合成三元赋值,
+        // 轮内已经跑过的复制传播来不及处理 acc = C ? A : B; acc = v0 + acc。
+        if (this.returnsOnly) this.foldAccumulatorChains(stmts, ctx);
+        let repeat = false;
+        do {
+            repeat = false;
+            for (let i = stmts.length - 2; i >= 0; i--) {
+                if (!this.tryFoldReturnAssignment(stmts, i, ctx)) continue;
+                this.changed = true;
+                repeat = this.returnsOnly;
+                // 保留原有步进:i-- 让下一轮从更靠前的语句继续
+                i--;
+            }
+        } while (repeat);
         // 递归处理嵌套块(else 分支、循环体等):流水线尾部的三元合成
         // (`acc = C ? A : B` + `return acc`)大多发生在嵌套块里,
         // 只扫顶层会让 `acc = ...; return acc;` 残留到输出。
         for (const stmt of stmts) this.foldReturnAssignmentsInChildren(stmt, ctx);
+    }
+
+    /**
+     * 尝试折叠 stmts[i] / stmts[i + 1] 这一对(赋值 + return)。
+     * 常规形态是 `X = E; return X`;尾部模式下还允许 return 表达式里只读一次 X:
+     *   `X = E; return X + "}"` -> `return E + "}"`
+     */
+    private tryFoldReturnAssignment(stmts: TYPE.Statement[], i: number, ctx: FunctionContext): boolean {
+        const assignStmt = stmts[i];
+        const returnStmt = stmts[i + 1];
+        if (!TYPE.isExpressionStatement(assignStmt) || !TYPE.isAssignmentExpression(assignStmt.expression)) return false;
+        const assign = assignStmt.expression;
+        if (assign.operator !== "=" || !TYPE.isIdentifier(assign.left)) return false;
+        if (!TYPE.isReturnStatement(returnStmt) || !returnStmt.argument) return false;
+        const name = assign.left.name;
+        // 直接读取右值里的 X(如 new Promise(acc))在赋值前求值,折叠后仍是同一个旧值;
+        // 若右值会写入 X(X++ / X = ...),折叠会改变写入次数,直接跳过。
+        if (collectAssignedNames(assign.right).has(name)) return false;
+        // 只有闭包/类字段里延迟读取 X 时,赋值是否发生才会影响结果,必须保守跳过。
+        if (this.hasDeferredSelfReference(assign.right, name)) return false;
+        const info = ctx.infos.get(name);
+        if (TYPE.isIdentifier(returnStmt.argument) && returnStmt.argument.name === name) {
+            info?.refs.delete(returnStmt.argument);
+            returnStmt.argument = assign.right;
+            stmts.splice(i, 1);
+            return true;
+        }
+        if (!this.returnsOnly || !isTempName(name) || !info) return false;
+        // return 表达式里必须只直接读取一次 X;闭包里的读取不能替换,否则删掉赋值后
+        // 闭包看到的是更旧的值。
+        if (this.hasDeferredSelfReference(returnStmt.argument, name)) return false;
+        if (this.countReadsInNode(returnStmt.argument, name) !== 1) return false;
+        let id: TYPE.Identifier | null = null;
+        walkNode(returnStmt.argument, (node, parent) => {
+            if (isFunctionLike(node) || isClassLike(node)) return false;
+            if (TYPE.isIdentifier(node) && node.name === name && parent && TYPE.isReferenced(node, parent)) {
+                id = node;
+                return false;
+            }
+            return true;
+        });
+        if (!id) return false;
+        const value = assign.right;
+        if (!isPureExpression(value)) {
+            // 右值有副作用:只有 X 位于 return 表达式里最先求值的位置时,
+            // 把它搬到 return 里才和原赋值语句的求值时序一致。
+            if (!this.isFirstEvaluatedOccurrence(returnStmt.argument, id)) return false;
+        } else {
+            // 纯右值搬进 return 后可能越过 return 里先求值的写入:
+            //   X = Y; return (Y = 1, X)  ->  return (Y = 1, Y)
+            const assigned = collectAssignedNames(returnStmt.argument);
+            for (const dep of collectIdentifierNames(value)) {
+                if (dep !== name && assigned.has(dep)) return false;
+            }
+        }
+        info.refs.delete(id);
+        if (returnStmt.argument === id) returnStmt.argument = value;
+        else if (!replaceNodeInTree(returnStmt.argument, id, value)) return false;
+        stmts.splice(i, 1);
+        return true;
+    }
+
+    /**
+     * 累加器链:`X = E; X = <二元运算, 其中 X 只出现一次>` -> `X = ...E...`。
+     *
+     * 编译器为字符串拼接生成 `v0 = v0 + "..."; acc = v0 + acc; return acc + "}"`,
+     * 这些语句各自只消费旧值一次,可以整体合并成一个表达式。E 含有调用(如
+     * `p0.map(...).join(...)`)时复制传播不允许克隆,只能靠本方法整块搬移。
+     */
+    private foldAccumulatorChains(stmts: TYPE.Statement[], ctx: FunctionContext): void {
+        for (let i = 0; i < stmts.length; i++) {
+            // 合并后的语句仍可能和下一条继续成链
+            while (i + 1 < stmts.length && this.tryFoldAccumulatorPair(stmts, i, ctx)) {
+                // retry same index
+            }
+        }
+    }
+
+    private tryFoldAccumulatorPair(stmts: TYPE.Statement[], i: number, ctx: FunctionContext): boolean {
+        const first = stmts[i];
+        const second = stmts[i + 1];
+        if (!TYPE.isExpressionStatement(first) || !TYPE.isAssignmentExpression(first.expression)) return false;
+        if (!TYPE.isExpressionStatement(second) || !TYPE.isAssignmentExpression(second.expression)) return false;
+        const a = first.expression;
+        const b = second.expression;
+        if (a.operator !== "=" || b.operator !== "=") return false;
+        if (!TYPE.isIdentifier(a.left) || !TYPE.isIdentifier(b.left)) return false;
+        const name = a.left.name;
+        if (b.left.name !== name || !isTempName(name)) return false;
+        const info = ctx.infos.get(name);
+        if (!info || info.captured) return false;
+        if (!TYPE.isBinaryExpression(b.right)) return false;
+        if (this.countReadsInNode(b.right, name) !== 1) return false;
+        if (collectAssignedNames(b.right).has(name)) return false;
+        // 闭包里对 X 的延迟读取在两种写法里看到的都是最终值,但立即执行的闭包
+        // (IIFE)会读到不同的旧值,保守跳过。
+        if (this.hasDeferredSelfReference(a.right, name) || this.hasDeferredSelfReference(b.right, name)) return false;
+        const leftId = TYPE.isIdentifier(b.right.left) && b.right.left.name === name ? b.right.left : null;
+        const rightId = TYPE.isIdentifier(b.right.right) && b.right.right.name === name ? b.right.right : null;
+        if (!leftId && !rightId) return false;
+        const value = a.right;
+        if (rightId) {
+            // X 是右操作数:X = F + X -> X = F + E。
+            // 求值顺序从 E、F 变成 F、E,因此 E 必须无副作用,且 F 的写入不能影响 E 的读取。
+            if (!isPureExpression(value)) return false;
+            const assigned = collectAssignedNames(b.right);
+            for (const dep of collectIdentifierNames(value)) {
+                if (dep !== name && assigned.has(dep)) return false;
+            }
+        }
+        info.refs.delete(leftId ?? rightId!);
+        if (leftId) b.right.left = value;
+        else b.right.right = value;
+        stmts.splice(i, 1);
+        this.changed = true;
+        return true;
+    }
+
+    /**
+     * target 是否是 root 中最先求值的子表达式。
+     * 用于判断有副作用的右值能否搬进该位置(搬过去后仍先于其它操作求值)。
+     */
+    private isFirstEvaluatedOccurrence(root: TYPE.Node, target: TYPE.Node): boolean {
+        let node: TYPE.Node = root;
+        while (node !== target) {
+            const next = this.firstEvaluatedChild(node);
+            if (!next) return false;
+            node = next;
+        }
+        return true;
+    }
+
+    private firstEvaluatedChild(node: TYPE.Node): TYPE.Node | null {
+        if (TYPE.isBinaryExpression(node) || TYPE.isLogicalExpression(node)) return node.left;
+        if (TYPE.isConditionalExpression(node)) return node.test;
+        if (TYPE.isSequenceExpression(node)) return node.expressions[0] ?? null;
+        if (TYPE.isUnaryExpression(node) || TYPE.isUpdateExpression(node) || TYPE.isSpreadElement(node)) return node.argument;
+        if (TYPE.isMemberExpression(node)) return node.object;
+        if (TYPE.isOptionalMemberExpression(node)) return node.object;
+        if (TYPE.isCallExpression(node) || TYPE.isNewExpression(node) || TYPE.isOptionalCallExpression(node)) return node.callee;
+        if (TYPE.isTaggedTemplateExpression(node)) return node.tag;
+        if (TYPE.isAssignmentExpression(node)) return node.left;
+        return null;
     }
 
     private foldReturnAssignmentsInChildren(stmt: TYPE.Statement, ctx: FunctionContext): void {

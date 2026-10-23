@@ -36,9 +36,7 @@ local_0_14 = function (p0, p1) {
   }
 };
 local_0_10 = function (p0) {
-  let acc;
-  acc = new RegExp("^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$").test(p0);
-  return acc && !p0.includes("..");
+  return new RegExp("^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$").test(p0) && !p0.includes("..");
 };
 local_0_13 = function (p0, p1) {
   let v0;

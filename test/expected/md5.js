@@ -143,8 +143,7 @@
   function cmn(p0, p1, p2, p3, p4, p5) {
     let v0;
     v0 = add32(add32(p1, p0), add32(p3, p5));
-    v0 = v0 << p4 | v0 >>> 32 - p4;
-    return add32(v0, p2);
+    return add32(v0 << p4 | v0 >>> 32 - p4, p2);
   }
   globalThis.md5 = function md5(p0) {
     return hex(md51(p0));
