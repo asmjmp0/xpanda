@@ -29,7 +29,7 @@
 | `src/cli.ts` | CLI:`decompile <file.abc|file.hap> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N]`、`unpack-index <resources.index> [-o outDir] [--stdout]` |
 | `resources/isa.yaml` | ArkCompiler 指令集描述(v24.0.0.0) |
 | `scripts/gen-opcodes.ts` | 生成 `src/disasm/opcodes.ts` |
-| `test/` | 集成测试 + 样本(`md5.abc`、`class.abc`、`aes.abc`、`bilibili_open.abc`) |
+| `test/` | 集成测试 + 样本(`md5.abc`、`class.abc`、`aes.abc`、`zhihupp0.59.hap`) |
 | `test/expected/` | 反编译输出快照(`md5.js`、`class.js`、`aes.js`) |
 | `scripts/test-mcp.ts` | MCP Server 端到端测试(子进程 + JSON-RPC) |
 | `docs/ARCHITECTURE.md` | 架构文档 |
@@ -50,14 +50,14 @@ npx tsx src/cli.ts decompile test/resources/md5.abc -o out --quiet
 npx tsx src/cli.ts decompile test/resources/zhihupp0.59.hap -o out --quiet
 
 # 大文件按类并行 simplify(worker_threads)
-npx tsx src/cli.ts decompile test/resources/bilibili_open.abc -o out -j 4 --quiet
+npx tsx src/cli.ts decompile test/resources/zhihupp0.59.hap -o out -j 4 --quiet
 
 # 跳过优化器,验证解析/反汇编改动
-npx tsx src/cli.ts decompile test/resources/bilibili_open.abc -o out --no-simplify --quiet
+npx tsx src/cli.ts decompile test/resources/zhihupp0.59.hap -o out --no-simplify --quiet
 
 # 大文件加堆
 NODE_OPTIONS=--max-old-space-size=4096 \
-  npx tsx src/cli.ts decompile test/resources/bilibili_open.abc -o out --quiet
+  npx tsx src/cli.ts decompile test/resources/zhihupp0.59.hap -o out --quiet
 
 # 启动 MCP Server(stdio)/ MCP 端到端测试
 npm run mcp
@@ -96,7 +96,7 @@ npm run test:mcp
 
 ### 修改文件格式解析
 
-`src/file/` 对应类;注意保持偏移掩码、缓存语义、边界处理等格式语义。改完用 `md5.abc`、`class.abc` 和 `bilibili_open.abc` 验证。
+`src/file/` 对应类;注意保持偏移掩码、缓存语义、边界处理等格式语义。改完用 `md5.abc`、`class.abc` 和 `zhihupp0.59.hap` 验证。
 
 ### 修改优化器
 
@@ -126,7 +126,7 @@ npm run test:mcp
 3. `simplifyConditionalSequence` 会把 `if (A) ... if (B) ...` 合并成 `OrLogicalExpressionStatement` 并设置 `logicalRegion`;`reduceSequence` 合并这种 Region 时必须传播 `logicalRegion`,否则后续只能用 `acc` 生成 test,会丢掉 `A || B` 的计算。
 4. `Region.copy()`(不可归约 Tail 复制)必须保留 `conditionalExp` / `logicalRegion` / `exceptionLandingPad` / `tryCatchHelperRegion` 标志。
 5. 合并后的子区域如果已经是 `LogicalExpressionStatement`(`(A || B)` / `(A && B)`),**不要再追加 `acc`/`!acc`**:它的表达式本身就是条件值,追加会把 `acc` 里最后一个比较结果覆盖到条件上(`name === A || ((name === B, acc) || ...)` 既是语义错误,又会留下 `(acc = E, !E)` 死赋值)。`||` 的操作数是跳转条件、`&&` 的操作数是 fallthrough 条件,父子类型不同时要取反。
-6. 改完用 `zhihupp0.59.hap` 的 `AbsoluteUrlParser` / `ZhihuHttpClient`、`AppDestination.shouldReloadAfterAuthentication`(17 项 `===` 的 `||` 链)、`aes.abc` 的 `Counter.increment`(必须是 `!== 255`)和大样本 `bilibili_open.abc` 验证。
+6. 改完用 `zhihupp0.59.hap` 的 `AbsoluteUrlParser` / `ZhihuHttpClient`、`AppDestination.shouldReloadAfterAuthentication`(17 项 `===` 的 `||` 链)和 `aes.abc` 的 `Counter.increment`(必须是 `!== 255`)验证。
 
 ## 测试
 
@@ -137,7 +137,6 @@ npm run test:mcp
 | `test/resources/md5.abc` | 小样本,测试中还会执行输出并校验 MD5 结果 |
 | `test/resources/class.abc` | 类/访问器/原型方法还原样本 |
 | `test/resources/aes.abc` | AES 加解密样本,测试中还会执行输出并校验加解密自检结果为 `true`;快照覆盖条件极性(`Counter.increment` 必须是 `!== 255`)和 test 序列死赋值清理 |
-| `test/resources/bilibili_open.abc` | 大文件回归样本,通常手动验证 |
 | `test/resources/zhihupp0.59.hap` | HAP 应用包样本(字节码版本 13.0.1.0,含 `callruntime.supercallforwardallargs`),完整反编译约 1 分钟,测试只做重点类校验;`AbsoluteUrlParser` / `ZhihuHttpClient` 是逻辑条件与取反链的重点回归类,`DeepLinkResolver` 是累加器物化、重复调用消除、test 序列死赋值与跨变量布尔物化折叠(`acc = A; v1 = A; if (acc) { v1 = B }` → `v1 = A && B`)的重点回归类 |
 
 更新快照前先确认输出变化是预期的;不要为了通过测试而直接覆盖快照。

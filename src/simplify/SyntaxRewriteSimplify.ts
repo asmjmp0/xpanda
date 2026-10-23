@@ -61,6 +61,142 @@ export class SyntaxRewriteSimplify implements ISimplify {
         return changed;
     }
 
+    /**
+     * 去掉 ArkTS 13 的 `hole` 哨兵守卫。
+     *
+     * 编译器的 try/finally 收尾会写成
+     *   X = hole;                     // 没有未决异常
+     *   if (X != pending) throw pending;
+     * `pending` 只在（未被结构化进区域图的）catch handler 里被赋值,反编译结果里
+     * 没有 try/catch,哨兵槽不可能变成异常值,于是收尾退化成
+     *   if (hole == vN) { <正常路径> } else { throw vN; }
+     * 或 `if (hole != vN) throw vN;`。这些分支里的 `hole` 是未定义的标识符,
+     * 原样输出连执行都不行。这里按“没有未决异常”取正常路径,并删掉 throw 分支。
+     *
+     * 只处理异常分支确实以 throw 结束的守卫,避免误改普通条件。
+     */
+    public static foldSentinelGuards(node: Program): boolean {
+        let changed = false;
+        traverse(TYPE.file(node), {
+            IfStatement(path) {
+                const test = path.node.test;
+                if (!TYPE.isBinaryExpression(test) || !["==", "===", "!=", "!=="].includes(test.operator)) return;
+                const holeLeft = TYPE.isIdentifier(test.left, { name: "hole" });
+                const holeRight = TYPE.isIdentifier(test.right, { name: "hole" });
+                if (!holeLeft && !holeRight) return;
+                // 排除 `hole == hole`:交给 foldConstantConditions 折叠成常量
+                if (holeLeft && holeRight) return;
+                const isEqual = test.operator === "==" || test.operator === "===";
+                const normalBranch = isEqual ? path.node.consequent : path.node.alternate;
+                const exceptionBranch = isEqual ? path.node.alternate : path.node.consequent;
+                if (!exceptionBranch || !SyntaxRewriteSimplify.isThrowOnly(exceptionBranch)) return;
+                changed = true;
+                if (normalBranch) {
+                    // 保留原分支的块作用域(let/const 声明);只有单语句且无块级声明时才展平,
+                    // 避免 `if (...) { } else { }` 直接变成一个多余的 `{ return ... }`。
+                    if (TYPE.isBlockStatement(normalBranch) && normalBranch.body.length === 1) {
+                        const only = normalBranch.body[0];
+                        const hasBlockScoped = TYPE.isVariableDeclaration(only) && only.kind !== "var"
+                            || TYPE.isClassDeclaration(only) || TYPE.isFunctionDeclaration(only);
+                        if (!hasBlockScoped) {
+                            path.replaceWith(only);
+                            return;
+                        }
+                    }
+                    path.replaceWith(normalBranch);
+                } else if (path.parentPath && (TYPE.isBlockStatement(path.parentPath.node) || TYPE.isProgram(path.parentPath.node))) {
+                    path.remove();
+                } else {
+                    path.replaceWith(TYPE.emptyStatement());
+                }
+            },
+        });
+        return changed;
+    }
+
+    /** 语句(或块)的所有路径都以 throw 结束时返回 true */
+    private static isThrowOnly(statement: TYPE.Statement): boolean {
+        if (TYPE.isBlockStatement(statement)) {
+            const last = statement.body[statement.body.length - 1];
+            return !!last && SyntaxRewriteSimplify.isThrowOnly(last);
+        }
+        return TYPE.isThrowStatement(statement);
+    }
+
+    /**
+     * 删除终止语句(return/throw/break/continue)之后永远执行不到的兄弟语句。
+     * ArkTS 13 的哨兵守卫 `if (hole == X) { continue; } throw X;` 在
+     * `hole == hole` 被常量折叠后会留下 `continue; throw hole;`,
+     * `hole` 是未定义标识符,不删掉输出就不是合法可执行代码。
+     * 只删除不含声明(let/const/function/class)的尾随语句,保证块级提升语义不变。
+     */
+    public static removeUnreachableStatements(node: Program): boolean {
+        let changed = false;
+        traverse(TYPE.file(node), {
+            BlockStatement: (path) => {
+                const body = path.node.body;
+                for (let i = 0; i < body.length - 1; i++) {
+                    if (!SyntaxRewriteSimplify.terminates(body[i])) continue;
+                    const tail = body.slice(i + 1);
+                    if (tail.some((statement) => TYPE.isVariableDeclaration(statement)
+                        || TYPE.isFunctionDeclaration(statement)
+                        || TYPE.isClassDeclaration(statement))) break;
+                    body.splice(i + 1);
+                    changed = true;
+                    break;
+                }
+            },
+        });
+        return changed;
+    }
+
+    /**
+     * 删除不属于任何循环/switch/label 的 continue/break 伪语句。
+     * Region 归约会用 continue/break 表示“回到循环头 / 跳出去”;当循环被整体
+     * 归约掉后,残留的跳转可能落在循环外(如 `while (true) { ... }` 之后还留一个
+     * `continue;`),这样的 AST 无法再被 Babel 解析,也不表达任何语义。
+     */
+    public static removeOrphanJumps(node: Program): boolean {
+        let changed = false;
+        traverse(TYPE.file(node), {
+            ContinueStatement(path) {
+                if (path.findParent((parent) => parent.isLoop())) return;
+                SyntaxRewriteSimplify.removeJump(path);
+                changed = true;
+            },
+            BreakStatement(path) {
+                if (path.findParent((parent) => parent.isLoop() || parent.isSwitchStatement() || parent.isLabeledStatement())) return;
+                SyntaxRewriteSimplify.removeJump(path);
+                changed = true;
+            },
+        });
+        return changed;
+    }
+
+    private static removeJump(path: NodePath<TYPE.Statement>): void {
+        if (path.parentPath && (TYPE.isBlockStatement(path.parentPath.node) || TYPE.isProgram(path.parentPath.node))) {
+            path.remove();
+        } else {
+            path.replaceWith(TYPE.emptyStatement());
+        }
+    }
+
+    /** 语句本身一定会终止(不落出当前块) */
+    private static terminates(statement: TYPE.Statement): boolean {
+        if (TYPE.isReturnStatement(statement) || TYPE.isThrowStatement(statement)
+            || TYPE.isBreakStatement(statement) || TYPE.isContinueStatement(statement)) return true;
+        if (TYPE.isBlockStatement(statement)) {
+            const last = statement.body[statement.body.length - 1];
+            return !!last && SyntaxRewriteSimplify.terminates(last);
+        }
+        if (TYPE.isIfStatement(statement)) {
+            return statement.alternate != null
+                && SyntaxRewriteSimplify.terminates(statement.consequent)
+                && SyntaxRewriteSimplify.terminates(statement.alternate);
+        }
+        return false;
+    }
+
     /** 在布尔上下文里折叠逻辑表达式;无法判定时原样返回 */
     private static foldBooleanExpression(node: TYPE.Expression): TYPE.Expression {
         if (TYPE.isLogicalExpression(node)) {
@@ -129,6 +265,13 @@ export class SyntaxRewriteSimplify implements ISimplify {
     private static constantEquality(node: TYPE.BinaryExpression): boolean | null {
         const { left, right, operator } = node;
         if (operator !== "==" && operator !== "===" && operator !== "!=" && operator !== "!==") return null;
+        // `hole` 是 Panda 的哨兵值(ldhole),同一个哨兵和自身比较恒相等。
+        // ArkTS 13 在 for...of 的 iterator.close 收尾、try/finally 收尾里会留下
+        // `X = hole; if (X != hole) throw X`,常量传播把 X 换成 hole 后就是
+        // `if (hole != hole) throw hole`——恒 false 的守卫,删掉后代码才可执行。
+        if (TYPE.isIdentifier(left) && TYPE.isIdentifier(right) && left.name === "hole" && right.name === "hole") {
+            return operator === "===" || operator === "==";
+        }
         if (!SyntaxRewriteSimplify.isSimpleConstant(left) || !SyntaxRewriteSimplify.isSimpleConstant(right)) return null;
         const l = SyntaxRewriteSimplify.simpleValue(left);
         const r = SyntaxRewriteSimplify.simpleValue(right);

@@ -194,6 +194,14 @@ export class ClassSyntaxSimplify implements ISimplify {
                     changed = true;
                 }
             },
+            ClassDeclaration: (value: NodePath<TYPE.ClassDeclaration>) => {
+                // 无 extends 的 class 表达式在 ArkTS 13 里父类是 hole 哨兵;
+                // 类表达式被提升成类声明后同样要清掉,否则输出 `class X extends hole`
+                if (TYPE.isIdentifier(value.node.superClass) && value.node.superClass.name === "hole") {
+                    value.node.superClass = null;
+                    changed = true;
+                }
+            },
             CallExpression: (value: NodePath<TYPE.CallExpression>) => {
                 const gsd = new GetterSetterDesc();
                 const kind = this.parseGetterSetterCallExpression(value.node, gsd);

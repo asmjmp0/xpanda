@@ -77,6 +77,12 @@ export class SimplifyExport {
         SyntaxRewriteSimplify.foldCompoundAssignments(node);
         // 静态可判定的 if 条件(如 finally 收尾被常量传播后的 `undefined == undefined`)
         SyntaxRewriteSimplify.foldConstantConditions(node);
+        // ArkTS 13 try/finally / for...of 收尾残留的 `hole` 哨兵守卫
+        SyntaxRewriteSimplify.foldSentinelGuards(node);
+        // 上面两步可能留下不可达语句(如 `continue; throw hole;`)
+        SyntaxRewriteSimplify.removeUnreachableStatements(node);
+        // 循环归约残留的、落在循环外的 continue/break
+        SyntaxRewriteSimplify.removeOrphanJumps(node);
         // newLexEnv 预留但从未读写的块级槽,以及随之变空的块
         TempVariableSimplify.removeUnusedLexicalDeclarations(node);
     }

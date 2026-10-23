@@ -10,6 +10,7 @@ import { SimplifyExport } from "../src/simplify/SimplifyExport";
 import { HapFile } from "../src/hap/HapFile";
 import { ResourceIndexFile } from "../src/res/ResourceIndexFile";
 import { formatLongLogicalChains } from "../src/ast/FormatCode";
+import * as TYPE from "@babel/types";
 
 /**
  * 集成测试:
@@ -389,22 +390,23 @@ function trueBranch(p0) {
 
 /**
  * 回归:按类并行反编译必须与串行逐字一致。
- * 用 bilibili_open.abc 里的几个小类(避开数秒级的大类)验证:
+ * 用 zhihupp0.59.hap 里的几个小类(避开分钟级的大类)验证:
  *   1. 单类输出与处理顺序/worker 数量无关(生成名计数器按类复位);
  *   2. worker 与主线程简化器结果一致。
  */
 async function verifyParallelDeterminism(): Promise<void> {
-    const abcPath = path.join(__dirname, "resources", "bilibili_open.abc");
-    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
+    const hapPath = path.join(__dirname, "resources", "zhihupp0.59.hap");
+    const hap = new HapFile(new Uint8Array(fs.readFileSync(hapPath)));
+    const pandaFile = new PandaFile(hap.readEntry("ets/modules.abc")!);
     const small = pandaFile.getAllClasses()
         .filter((clazz) => clazz.pandaMethods.has(ENTRY_FUNCTION_MAIN))
         .filter((clazz) => {
             let bytes = 0;
             for (const method of clazz.pandaMethods.values()) bytes += method.methodCode?.codeSize ?? 0;
-            return bytes > 0 && bytes < 2000;
+            return bytes > 200 && bytes < 3000;
         })
         .slice(0, 4);
-    if (small.length < 2) throw new Error("bilibili_open.abc: 小类样本不足,无法验证并行一致性");
+    if (small.length < 2) throw new Error("zhihupp0.59.hap: 小类样本不足,无法验证并行一致性");
 
     const serial = new PandaDecompiler();
     const expected = small.map((clazz) => serial.decompileClass(clazz));
@@ -1047,6 +1049,58 @@ function verifyZhihuAbsoluteUrlParser(): void {
 }
 
 /**
+ * 回归:for...of 体内带多重退出路径(continue/return)时的循环词法节点。
+ *
+ * ArkTS 13 会在每条退出路径上内联一份 iterator.close 序列
+ * (`if (it.return != undefined) { it.return(); ... }`),并与回边交织成
+ * 一个条件分支密集的子图。旧实现 getLexicalNodes 只把条件的 第一个 后继
+ * 加入工作队列,另一支上的 close 节点因此不算词法节点;
+ * virtualizeIrregularExits 把它们当成“不规则出口”插入 break/goto 并把区域
+ * 改成 Tail,整段子图从入口断开,后续 DFS 再也归约不到,3000 次迭代后抛
+ * "can not reduce the graph",方法降级成 SimpleAnalysis(local_0_0 输出成一堆
+ * label / decompiler_goto / decompiler_exception_handled_by)。
+ *
+ * 现在 DefaultOnlineHistoryRepository 的 local_0_0 应还原成真正的循环:
+ *   v2 = p0[Symbol.iterator]();
+ *   do { v5 = v2.next(); ... } while (v9 !== p1);
+ * 并且不再出现降级标记与任何 decompiler_ 伪语句。
+ */
+function verifyZhihuForOfIteratorClose(): void {
+    const hapPath = path.join(__dirname, "resources", "zhihupp0.59.hap");
+    const hap = new HapFile(new Uint8Array(fs.readFileSync(hapPath)));
+    const pandaFile = new PandaFile(hap.readEntry("ets/modules.abc")!);
+    const clazz = pandaFile.getAllClasses().find((c) => c.name.content.includes("repository/DefaultOnlineHistoryRepository"));
+    if (!clazz) throw new Error("hap: 未找到 DefaultOnlineHistoryRepository");
+
+    const code = new PandaDecompiler().decompileClass(clazz);
+    NodeFactory.parse(code);
+    if (code.includes("created by SimpleAnalysis")) {
+        throw new Error(`for...of 循环反汇编: local_0_0 仍降级为 SimpleAnalysis\n${code}`);
+    }
+    const start = code.indexOf("local_0_0 = function");
+    if (start < 0) throw new Error(`for...of 循环反汇编: 未找到 local_0_0\n${code}`);
+    const body = code.slice(start, code.indexOf("\n};", start));
+    if (body.includes("decompiler_") || /\blabel_\d+/.test(body)) {
+        throw new Error(`for...of 循环反汇编: 仍残留 goto/label 伪语句\n${body}`);
+    }
+    if (!body.includes("p0[Symbol.iterator]()") || !/(while \(true\)|\}\s*while \()/.test(body)) {
+        throw new Error(`for...of 循环反汇编: 迭代器循环没有还原成 while 结构\n${body}`);
+    }
+    if (!body.includes("decodeURIComponent(") || !body.includes("Number(")) {
+        throw new Error(`for...of 循环反汇编: 循环体语句丢失\n${body}`);
+    }
+    if (/\bhole\b/.test(code)) {
+        throw new Error(`for...of 循环反汇编: iterator.close 收尾仍有 hole 哨兵\n${code}`);
+    }
+
+    const expectedPath = path.join(__dirname, "expected", "zhihu-default-online-history-repository.js");
+    const expected = fs.readFileSync(expectedPath, "utf-8");
+    if (code !== expected) {
+        throw new Error(`DefaultOnlineHistoryRepository: 输出与快照不一致\n${firstDifference(expected, code)}`);
+    }
+}
+
+/**
  * 回归:`createobjectwithbuffer` 的“模板对象 + 逐属性赋值”。
  *   acc = { protocol: null, hostname: null };
  *   acc.protocol = P; acc.hostname = H; return acc;
@@ -1100,6 +1154,120 @@ function f(item) {
     }
     if (code.includes("switch (")) {
         throw new Error(`simplify: 仍残留 nullish switch\n${code}`);
+    }
+}
+
+/**
+ * 回归:ArkTS 13 的 `hole` 哨兵收尾清理。
+ *   - `if (hole == vN) { <正常路径> } else { throw vN; }` → 正常路径;
+ *   - `class X extends hole` → `class X`(无 extends);
+ *   - 终止语句后的不可达语句(`continue; throw hole;`)删除。
+ * 这些形态来自 for...of 的 iterator.close 收尾和 try/finally 收尾,
+ * `hole` 是未定义标识符,不清理会让输出既不可读也不可执行。
+ */
+function verifySentinelGuardCleanup(): void {
+    const program = NodeFactory.parse(`
+function f(v0) {
+  let v1;
+  v1 = hole;
+  if (hole == v1) {
+    return 1;
+  } else {
+    throw v1;
+  }
+}
+function g(p0) {
+  let v0;
+  while (p0) {
+    v0 = p0;
+    if (hole != v0) {
+      throw v0;
+    }
+    continue;
+    throw hole;
+  }
+}
+class HoleBase extends hole {
+  m() {
+    return 1;
+  }
+}
+`);
+    SimplifyExport.simplify(program);
+    const code = NodeFactory.generate(program);
+    if (/\bhole\b/.test(code)) {
+        throw new Error(`哨兵清理: 仍残留 hole\n${code}`);
+    }
+    if (!code.includes("return 1;") || !code.includes("while (p0)")) {
+        throw new Error(`哨兵清理: 正常路径丢失\n${code}`);
+    }
+    if (code.includes("throw v0;") || code.includes("throw hole;")) {
+        throw new Error(`哨兵清理: rethrow 守卫未删除\n${code}`);
+    }
+    if (!code.includes("class HoleBase {") || code.includes("extends")) {
+        throw new Error(`哨兵清理: 无父类 class 仍带 extends\n${code}`);
+    }
+
+    // 循环归约残留的孤儿 continue/break:构造一个含循环的函数,再把跳转挪到循环外
+    const orphanProgram = NodeFactory.parse(`function f(p0) { while (true) { if (p0) break; } }`);
+    const fnBody = (orphanProgram.body[0] as TYPE.FunctionDeclaration).body.body as TYPE.Statement[];
+    fnBody.push(TYPE.continueStatement(), TYPE.breakStatement());
+    SimplifyExport.simplify(orphanProgram);
+    const finalBody = (orphanProgram.body[0] as TYPE.FunctionDeclaration).body.body as TYPE.Statement[];
+    if (finalBody.some((statement) => TYPE.isContinueStatement(statement) || TYPE.isBreakStatement(statement))) {
+        throw new Error(`哨兵清理: 循环外的孤儿跳转未删除\n${NodeFactory.generate(orphanProgram)}`);
+    }
+    NodeFactory.parse(NodeFactory.generate(orphanProgram));
+}
+
+/**
+ * 回归:循环体末条语句是 continue/break 时的活跃性(aliasing)。
+ *
+ * transfer/transferLive 在 Break/Continue 上曾直接返回 liveOut 本身,
+ * 而调用方是 `live.clear(); for (name of before) live.add(name)`——
+ * 同一个 Set 被清空后活跃集丢失,循环 test 的读取不再算使用:
+ *   v0 = p0; while (v0) { v0 = false; continue; }
+ * 被错误折叠成 `while (p0) { continue; }`(死循环)。
+ */
+function verifyLoopLivenessAfterContinue(): void {
+    const program = NodeFactory.parse(`
+function f(p0) {
+  let v0;
+  v0 = p0;
+  while (v0) {
+    v0 = false;
+    continue;
+  }
+}
+`);
+    SimplifyExport.simplify(program);
+    const code = NodeFactory.generate(program);
+    if (!code.includes("while (v0)") || !code.includes("v0 = false;")) {
+        throw new Error(`活跃性: continue 之前的循环变量赋值被误删\n${code}`);
+    }
+    if (code.includes("while (p0)")) {
+        throw new Error(`活跃性: 循环 test 错误地传播成循环前的值\n${code}`);
+    }
+
+    // break 分支跳出循环后仍会读取变量:赋值不能被搬进 test 造成重复求值
+    const breakProgram = NodeFactory.parse(`
+function poll(p0) {
+  let v4;
+  while (true) {
+    v4 = g();
+    if (v4.completed) break;
+    v4 = h();
+  }
+  return v4;
+}
+`);
+    SimplifyExport.simplify(breakProgram);
+    const breakCode = NodeFactory.generate(breakProgram);
+    if (!breakCode.includes("v4 = g();") || !breakCode.includes("if (v4.completed)")) {
+        throw new Error(`活跃性: break 后仍被读取的赋值被搬进 test\n${breakCode}`);
+    }
+    if (breakCode.includes("if (g().completed)")) {
+        throw new Error(`活跃性: 有副作用的调用被复制到 test\n${breakCode}`);
     }
 }
 
@@ -1191,6 +1359,10 @@ async function main(): Promise<void> {
     verifyZhihuAbsoluteUrlParser();
     console.log("    ok");
 
+    console.log("[test] hap for...of iterator close (zhihupp0.59.hap)");
+    verifyZhihuForOfIteratorClose();
+    console.log("    ok");
+
     console.log("[test] hap AppDestination (zhihupp0.59.hap)");
     verifyZhihuAppDestination();
     console.log("    ok");
@@ -1209,6 +1381,14 @@ async function main(): Promise<void> {
 
     console.log("[test] simplify switch transform completeness");
     verifySwitchTransformRequiresAllCases();
+    console.log("    ok");
+
+    console.log("[test] simplify hole sentinel cleanup");
+    verifySentinelGuardCleanup();
+    console.log("    ok");
+
+    console.log("[test] simplify loop liveness after continue");
+    verifyLoopLivenessAfterContinue();
     console.log("    ok");
 
     console.log("[test] output logical chain formatting");

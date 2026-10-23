@@ -63,6 +63,28 @@ interface FunctionContext {
     cloneBudget: number;
     /** 当前函数中出现在 return 表达式里的变量名 */
     returned: Set<string>;
+    /**
+     * if 语句两个分支的 live-in 并集。test 里的读取是否“最后一次使用”不能只看
+     * liveAfter:分支里可能 break/return 到循环外继续读取该变量
+     * (`v4 = parse(); if (v4.completed) break; ...` 之后 `return v4`)。
+     */
+    branchLive: Map<TYPE.Node, Set<string>>;
+}
+
+/**
+ * 循环内 break/continue 的活跃性上下文。
+ * `continue` 跳到循环头(test/update),`break` 跳到循环之后;
+ * 二者都不该沿用“循环体列表里的下一条语句”的 liveOut,否则循环体末尾的
+ * `continue`/`break` 会把整段活跃集清空或放大,造成误删/漏删死赋值:
+ *   v0 = 0; for (...) { if (c) { v1 = this.arr; v1[i] = 1; break; } arr[i] = v0; }
+ */
+interface LoopLive {
+    /** continue 之后仍然活跃的名字(含循环头 test/update 的读取) */
+    continueLive: Set<string>;
+    /** break 之后仍然活跃的名字(循环之后的代码) */
+    breakLive: Set<string>;
+    /** 位于 switch 里的 break 只跳出 switch,不能套用 breakLive */
+    inSwitch: boolean;
 }
 
 /** 属性归一化键:非 computed 标识符与 computed 字符串字面量视为同一属性;动态键返回 null。 */
@@ -303,6 +325,7 @@ export class TempVariableSimplify implements ISimplify {
             liveAfter: new Map(),
             cloneBudget: TempVariableSimplify.CLONE_BUDGET,
             returned: new Set(),
+            branchLive: new Map(),
         };
         this.renameCatchParameters(path, ctx);
         walkNode({ type: "BlockStatement", body } as TYPE.BlockStatement, (node) => {
@@ -2413,7 +2436,13 @@ export class TempVariableSimplify implements ISimplify {
         // statementOverwritesSelfAssign 把这一点推广到任意 `name = RHS` 且 RHS 只读一次
         // name 的语句(如 acc = acc.length):旧值在本语句后立即失效。
         const liveAfter = ctx.liveAfter.get(list[index]);
-        const deadAfter = liveAfter != null && !liveAfter.has(id.name);
+        let deadAfter = liveAfter != null && !liveAfter.has(id.name);
+        // if 的 test 读取:分支可能通过 break/return 跳出后继续读该变量,
+        // liveAfter(if 之后的语句)看不到这条路径,要看分支的 live-in。
+        if (deadAfter && TYPE.isIfStatement(list[index]) && this.containsNode(list[index].test, id)) {
+            const branchLive = ctx.branchLive.get(list[index]);
+            if (branchLive && branchLive.has(id.name)) deadAfter = false;
+        }
         const binarySelf = this.statementOverwritesSelf(list[index], id.name, id);
         // `name = RHS` 且 RHS 只读一次 name:旧值在本语句后立即被覆盖。
         // 这条新路径下若变量名在语句后仍活跃(后续读到的是新值),默认只允许搬进
@@ -2458,9 +2487,13 @@ export class TempVariableSimplify implements ISimplify {
             // 调用/构造/函数/类表达式:跨过的语句必须无副作用,保持求值顺序。
             // assignSelf 路径(靠本语句覆盖才成为 last-use)只允许调用接收者位置,
             // 见上方 assignSelf 的说明。
+            //
+            // deadAfter 必须准确(分支里 break/continue 后仍会读取的情况见 branchLive),
+            // 否则 `v4 = parse(...); if (v4.completed) break; ... return v4;` 会把调用
+            // 搬进 test,造成同一个有副作用的调用执行两次。
             if (allowImpure && entry.list === list && entry.index < index
                 && this.isSafeToMoveBetween(list, entry.index + 1, index)
-                && (deadAfter || binarySelf || this.isCalleeReceiverRead(list[index], id)
+                && (deadAfter || binarySelf || assignSelf || this.isCalleeReceiverRead(list[index], id)
                     || !this.nextStatementIsAccMethodCall(list, index, id.name))) {
                 info.refs.delete(id);
                 ctx.moved.set(entry.expr, list[index]);
@@ -2503,6 +2536,10 @@ export class TempVariableSimplify implements ISimplify {
 
     // ---------------------------------------------------------------- 活跃性(传播前)
 
+    private static loopLive(breakLive: Set<string>, continueLive: Set<string>): LoopLive {
+        return { breakLive, continueLive, inSwitch: false };
+    }
+
     private static sameSet(a: Set<string>, b: Set<string>): boolean {
         if (a.size !== b.size) return false;
         for (const name of a) if (!b.has(name)) return false;
@@ -2510,24 +2547,24 @@ export class TempVariableSimplify implements ISimplify {
     }
 
     /** 不做任何修改的活跃性分析,结果写入 ctx.liveAfter。 */
-    private analyzeList(stmts: TYPE.Statement[], liveOut: Set<string>, ctx: FunctionContext): Set<string> {
+    private analyzeList(stmts: TYPE.Statement[], liveOut: Set<string>, ctx: FunctionContext, loop?: LoopLive): Set<string> {
         const live = new Set(liveOut);
         for (let i = stmts.length - 1; i >= 0; i--) {
             const stmt = stmts[i];
             ctx.liveAfter.set(stmt, new Set(live));
-            const before = this.transferLive(stmt, live, ctx);
+            const before = this.transferLive(stmt, live, ctx, loop);
             live.clear();
             for (const name of before) live.add(name);
         }
         return live;
     }
 
-    private analyzeNested(stmt: TYPE.Statement, liveOut: Set<string>, ctx: FunctionContext): Set<string> {
-        if (TYPE.isBlockStatement(stmt)) return this.analyzeList(stmt.body, liveOut, ctx);
-        return this.transferLive(stmt, liveOut, ctx);
+    private analyzeNested(stmt: TYPE.Statement, liveOut: Set<string>, ctx: FunctionContext, loop?: LoopLive): Set<string> {
+        if (TYPE.isBlockStatement(stmt)) return this.analyzeList(stmt.body, liveOut, ctx, loop);
+        return this.transferLive(stmt, liveOut, ctx, loop);
     }
 
-    private transferLive(stmt: TYPE.Statement, liveOut: Set<string>, ctx: FunctionContext): Set<string> {
+    private transferLive(stmt: TYPE.Statement, liveOut: Set<string>, ctx: FunctionContext, loop?: LoopLive): Set<string> {
         // 非列表位置(else-if 链的 if、直接作为循环体的语句等)也要登记 liveAfter,
         // 否则 isNameDeadAfterTest / matchConditionPattern 拿到 undefined 会放弃折叠。
         // analyzeList 对列表语句写入的值与此处相同,重复写入无副作用。
@@ -2546,33 +2583,34 @@ export class TempVariableSimplify implements ISimplify {
                 const testWrites = this.tempWrites(stmt.test, ctx);
                 const after = new Set<string>();
                 for (const name of liveOut) if (!testWrites.has(name)) after.add(name);
-                const consequentIn = this.analyzeNested(stmt.consequent, after, ctx);
+                const consequentIn = this.analyzeNested(stmt.consequent, after, ctx, loop);
                 const alternateIn = stmt.alternate
-                    ? this.analyzeNested(stmt.alternate, after, ctx)
+                    ? this.analyzeNested(stmt.alternate, after, ctx, loop)
                     : after;
+                ctx.branchLive.set(stmt, TempVariableSimplify.union(consequentIn, alternateIn));
                 return TempVariableSimplify.union(testReads, consequentIn, alternateIn);
             }
             case "WhileStatement": {
                 const testReads = this.tempReads(stmt.test, ctx);
                 let bodyOut = TempVariableSimplify.union(liveOut, testReads);
-                let bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx);
+                let bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx, TempVariableSimplify.loopLive(liveOut, bodyOut));
                 for (let k = 0; k < 4; k++) {
                     const next = TempVariableSimplify.union(bodyOut, bodyIn);
                     if (TempVariableSimplify.sameSet(next, bodyOut)) break;
                     bodyOut = next;
-                    bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx);
+                    bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx, TempVariableSimplify.loopLive(liveOut, bodyOut));
                 }
                 return TempVariableSimplify.union(testReads, bodyIn, liveOut);
             }
             case "DoWhileStatement": {
                 const testReads = this.tempReads(stmt.test, ctx);
                 let bodyOut = TempVariableSimplify.union(liveOut, testReads);
-                let bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx);
+                let bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx, TempVariableSimplify.loopLive(liveOut, bodyOut));
                 for (let k = 0; k < 4; k++) {
                     const next = TempVariableSimplify.union(bodyOut, bodyIn);
                     if (TempVariableSimplify.sameSet(next, bodyOut)) break;
                     bodyOut = next;
-                    bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx);
+                    bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx, TempVariableSimplify.loopLive(liveOut, bodyOut));
                 }
                 // test 在 body 之后执行:body 一定先写 name 时,test 读到的是新值,
                 // 不应把这次读取算作循环入口处旧值的活跃使用。
@@ -2585,15 +2623,15 @@ export class TempVariableSimplify implements ISimplify {
                 const testReads = stmt.test ? this.tempReads(stmt.test, ctx) : new Set<string>();
                 const updateReads = stmt.update ? this.tempReads(stmt.update, ctx) : new Set<string>();
                 let bodyOut = TempVariableSimplify.union(liveOut, testReads, updateReads);
-                let bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx);
+                let bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx, TempVariableSimplify.loopLive(liveOut, bodyOut));
                 for (let k = 0; k < 4; k++) {
                     const next = TempVariableSimplify.union(bodyOut, bodyIn);
                     if (TempVariableSimplify.sameSet(next, bodyOut)) break;
                     bodyOut = next;
-                    bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx);
+                    bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx, TempVariableSimplify.loopLive(liveOut, bodyOut));
                 }
                 const updateIn = stmt.update
-                    ? this.transferLive(stmt.update as unknown as TYPE.Statement, TempVariableSimplify.union(bodyOut, bodyIn), ctx)
+                    ? this.transferLive(stmt.update as unknown as TYPE.Statement, TempVariableSimplify.union(bodyOut, bodyIn), ctx, loop)
                     : new Set<string>();
                 const afterInit = TempVariableSimplify.union(bodyIn, testReads, updateIn, liveOut);
                 const initReads = stmt.init ? this.tempReads(stmt.init, ctx) : new Set<string>();
@@ -2606,35 +2644,40 @@ export class TempVariableSimplify implements ISimplify {
             case "ForOfStatement": {
                 const rightReads = this.tempReads((stmt as TYPE.ForInStatement).right, ctx);
                 let bodyOut = new Set(liveOut);
-                let bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx);
+                let bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx, TempVariableSimplify.loopLive(liveOut, bodyOut));
                 for (let k = 0; k < 4; k++) {
                     const next = TempVariableSimplify.union(bodyOut, bodyIn);
                     if (TempVariableSimplify.sameSet(next, bodyOut)) break;
                     bodyOut = next;
-                    bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx);
+                    bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx, TempVariableSimplify.loopLive(liveOut, bodyOut));
                 }
                 return TempVariableSimplify.union(rightReads, bodyIn, liveOut);
             }
             case "BlockStatement":
-                return this.analyzeList(stmt.body, liveOut, ctx);
+                return this.analyzeList(stmt.body, liveOut, ctx, loop);
             case "LabeledStatement":
-                return this.analyzeNested(stmt.body, liveOut, ctx);
+                return this.analyzeNested(stmt.body, liveOut, ctx, loop);
             case "TryStatement": {
                 const finalizerReads = stmt.finalizer ? this.tempReads(stmt.finalizer, ctx) : new Set<string>();
                 const after = TempVariableSimplify.union(liveOut, finalizerReads);
-                const blockIn = this.analyzeNested(stmt.block, after, ctx);
+                const blockIn = this.analyzeNested(stmt.block, after, ctx, loop);
                 const handlerIn = stmt.handler
-                    ? this.analyzeNested(stmt.handler.body, after, ctx)
+                    ? this.analyzeNested(stmt.handler.body, after, ctx, loop)
                     : after;
                 const finalizerIn = stmt.finalizer
-                    ? this.analyzeNested(stmt.finalizer, liveOut, ctx)
+                    ? this.analyzeNested(stmt.finalizer, liveOut, ctx, loop)
                     : liveOut;
                 return TempVariableSimplify.union(blockIn, handlerIn, finalizerIn, liveOut);
             }
             case "SwitchStatement": {
                 const result = this.tempReads(stmt.discriminant, ctx);
+                const caseLoop: LoopLive = {
+                    breakLive: liveOut,
+                    continueLive: loop?.continueLive ?? liveOut,
+                    inSwitch: true,
+                };
                 for (const c of stmt.cases) {
-                    const caseIn = this.analyzeList(c.consequent, liveOut, ctx);
+                    const caseIn = this.analyzeList(c.consequent, liveOut, ctx, caseLoop);
                     for (const name of caseIn) result.add(name);
                     for (const name of liveOut) result.add(name);
                 }
@@ -2645,16 +2688,21 @@ export class TempVariableSimplify implements ISimplify {
                 return this.tempReads(stmt.argument, ctx);
             case "ExportNamedDeclaration":
                 if (stmt.declaration && TYPE.isStatement(stmt.declaration)) {
-                    return this.transferLive(stmt.declaration as TYPE.Statement, liveOut, ctx);
+                    return this.transferLive(stmt.declaration as TYPE.Statement, liveOut, ctx, loop);
                 }
-                return liveOut;
+                return new Set(liveOut);
             case "ExportDefaultDeclaration":
                 return this.tempReads(stmt.declaration as TYPE.Node, ctx);
             case "BreakStatement":
+                // break 跳出循环后,活跃集是循环之后的代码;switch 里的 break 只跳出 switch。
+                // 必须返回副本:调用方会 live.clear() 后把返回值写回 live,
+                // 直接返回 liveOut 时 before 与 live 是同一个 Set,clear() 会一起清空。
+                return new Set(loop && !loop.inSwitch ? loop.breakLive : liveOut);
             case "ContinueStatement":
-                return liveOut;
+                // continue 跳到循环头(test/update),循环头的读取仍然活跃。
+                return new Set(loop ? loop.continueLive : liveOut);
             default:
-                return liveOut;
+                return new Set(liveOut);
         }
     }
 
@@ -2687,7 +2735,7 @@ export class TempVariableSimplify implements ISimplify {
      * @param liveOut 当前语句列表之后仍然活跃的 temp
      * @returns 语句列表之前仍然活跃的 temp
      */
-    private cleanupStatements(stmts: TYPE.Statement[], ctx: FunctionContext, liveOut: Set<string>): Set<string> {
+    private cleanupStatements(stmts: TYPE.Statement[], ctx: FunctionContext, liveOut: Set<string>, loop?: LoopLive): Set<string> {
         const live = new Set(liveOut);
         for (let i = stmts.length - 1; i >= 0; i--) {
             const stmt = stmts[i];
@@ -2703,14 +2751,14 @@ export class TempVariableSimplify implements ISimplify {
                 for (const name of dead.remainingReads) live.add(name);
                 continue;
             }
-            const before = this.transfer(stmt, live, ctx);
+            const before = this.transfer(stmt, live, ctx, loop);
             live.clear();
             for (const name of before) live.add(name);
         }
         return live;
     }
 
-    private transfer(stmt: TYPE.Statement, liveOut: Set<string>, ctx: FunctionContext): Set<string> {
+    private transfer(stmt: TYPE.Statement, liveOut: Set<string>, ctx: FunctionContext, loop?: LoopLive): Set<string> {
         switch (stmt.type) {
             case "ExpressionStatement":
             case "VariableDeclaration": {
@@ -2726,36 +2774,37 @@ export class TempVariableSimplify implements ISimplify {
                 // (例如 test 写 acc、两个分支也分别写 acc,而 if 之后还要读 acc)。
                 const testReads = this.tempReads(stmt.test, ctx);
                 const branchOut = new Set(liveOut);
-                const consequentIn = this.cleanupNested(stmt.consequent, ctx, branchOut);
+                const consequentIn = this.cleanupNested(stmt.consequent, ctx, branchOut, loop);
                 const alternateIn = stmt.alternate
-                    ? this.cleanupNested(stmt.alternate, ctx, branchOut)
+                    ? this.cleanupNested(stmt.alternate, ctx, branchOut, loop)
                     : new Set(branchOut);
+                ctx.branchLive.set(stmt, TempVariableSimplify.union(consequentIn, alternateIn));
                 return TempVariableSimplify.union(testReads, consequentIn, alternateIn);
             }
             case "WhileStatement": {
                 const testReads = this.tempReads(stmt.test, ctx);
                 let bodyOut = TempVariableSimplify.union(liveOut, testReads);
-                let bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx);
+                let bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx, TempVariableSimplify.loopLive(liveOut, bodyOut));
                 for (let k = 0; k < 4; k++) {
                     const next = TempVariableSimplify.union(bodyOut, bodyIn);
                     if (TempVariableSimplify.sameSet(next, bodyOut)) break;
                     bodyOut = next;
-                    bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx);
+                    bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx, TempVariableSimplify.loopLive(liveOut, bodyOut));
                 }
-                const cleaned = this.cleanupNested(stmt.body, ctx, bodyOut);
+                const cleaned = this.cleanupNested(stmt.body, ctx, bodyOut, TempVariableSimplify.loopLive(liveOut, bodyOut));
                 return TempVariableSimplify.union(testReads, cleaned, liveOut);
             }
             case "DoWhileStatement": {
                 const testReads = this.tempReads(stmt.test, ctx);
                 let bodyOut = TempVariableSimplify.union(liveOut, testReads);
-                let bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx);
+                let bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx, TempVariableSimplify.loopLive(liveOut, bodyOut));
                 for (let k = 0; k < 4; k++) {
                     const next = TempVariableSimplify.union(bodyOut, bodyIn);
                     if (TempVariableSimplify.sameSet(next, bodyOut)) break;
                     bodyOut = next;
-                    bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx);
+                    bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx, TempVariableSimplify.loopLive(liveOut, bodyOut));
                 }
-                const cleaned = this.cleanupNested(stmt.body, ctx, bodyOut);
+                const cleaned = this.cleanupNested(stmt.body, ctx, bodyOut, TempVariableSimplify.loopLive(liveOut, bodyOut));
                 const result = new Set(cleaned);
                 for (const name of testReads) if (!this.doWhileKillsTestReads(stmt, name)) result.add(name);
                 for (const name of liveOut) result.add(name);
@@ -2765,14 +2814,14 @@ export class TempVariableSimplify implements ISimplify {
                 const testReads = stmt.test ? this.tempReads(stmt.test, ctx) : new Set<string>();
                 const updateReads = stmt.update ? this.tempReads(stmt.update, ctx) : new Set<string>();
                 let bodyOut = TempVariableSimplify.union(liveOut, testReads, updateReads);
-                let bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx);
+                let bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx, TempVariableSimplify.loopLive(liveOut, bodyOut));
                 for (let k = 0; k < 4; k++) {
                     const next = TempVariableSimplify.union(bodyOut, bodyIn);
                     if (TempVariableSimplify.sameSet(next, bodyOut)) break;
                     bodyOut = next;
-                    bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx);
+                    bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx, TempVariableSimplify.loopLive(liveOut, bodyOut));
                 }
-                const cleaned = this.cleanupNested(stmt.body, ctx, bodyOut);
+                const cleaned = this.cleanupNested(stmt.body, ctx, bodyOut, TempVariableSimplify.loopLive(liveOut, bodyOut));
                 const initReads = stmt.init ? this.tempReads(stmt.init, ctx) : new Set<string>();
                 const initWrites = stmt.init ? this.tempWrites(stmt.init, ctx) : new Set<string>();
                 const afterInit = TempVariableSimplify.union(cleaned, testReads, updateReads, liveOut);
@@ -2784,37 +2833,42 @@ export class TempVariableSimplify implements ISimplify {
             case "ForOfStatement": {
                 const rightReads = this.tempReads((stmt as TYPE.ForInStatement).right, ctx);
                 let bodyOut = new Set(liveOut);
-                let bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx);
+                let bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx, TempVariableSimplify.loopLive(liveOut, bodyOut));
                 for (let k = 0; k < 4; k++) {
                     const next = TempVariableSimplify.union(bodyOut, bodyIn);
                     if (TempVariableSimplify.sameSet(next, bodyOut)) break;
                     bodyOut = next;
-                    bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx);
+                    bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx, TempVariableSimplify.loopLive(liveOut, bodyOut));
                 }
-                const cleaned = this.cleanupNested(stmt.body, ctx, bodyOut);
+                const cleaned = this.cleanupNested(stmt.body, ctx, bodyOut, TempVariableSimplify.loopLive(liveOut, bodyOut));
                 return TempVariableSimplify.union(rightReads, cleaned, liveOut);
             }
             case "BlockStatement":
-                return this.cleanupStatements(stmt.body, ctx, liveOut);
+                return this.cleanupStatements(stmt.body, ctx, liveOut, loop);
             case "LabeledStatement":
-                return this.cleanupNested(stmt.body, ctx, liveOut);
+                return this.cleanupNested(stmt.body, ctx, liveOut, loop);
             case "TryStatement": {
                 const finalizerReads = stmt.finalizer ? this.tempReads(stmt.finalizer, ctx) : new Set<string>();
                 const afterFinalizer = TempVariableSimplify.union(liveOut, finalizerReads);
                 const finalizerIn = stmt.finalizer
-                    ? this.cleanupNested(stmt.finalizer, ctx, liveOut)
+                    ? this.cleanupNested(stmt.finalizer, ctx, liveOut, loop)
                     : liveOut;
                 const handlerIn = stmt.handler
-                    ? this.cleanupNested(stmt.handler.body, ctx, afterFinalizer)
+                    ? this.cleanupNested(stmt.handler.body, ctx, afterFinalizer, loop)
                     : afterFinalizer;
-                const blockIn = this.cleanupNested(stmt.block, ctx, afterFinalizer);
+                const blockIn = this.cleanupNested(stmt.block, ctx, afterFinalizer, loop);
                 return TempVariableSimplify.union(blockIn, handlerIn, finalizerIn, liveOut);
             }
             case "SwitchStatement": {
                 const reads = this.tempReads(stmt.discriminant, ctx);
                 const result = new Set(reads);
+                const caseLoop: LoopLive = {
+                    breakLive: liveOut,
+                    continueLive: loop?.continueLive ?? liveOut,
+                    inSwitch: true,
+                };
                 for (const c of stmt.cases) {
-                    const caseIn = this.cleanupStatements(c.consequent, ctx, liveOut);
+                    const caseIn = this.cleanupStatements(c.consequent, ctx, liveOut, caseLoop);
                     for (const name of caseIn) result.add(name);
                     for (const name of liveOut) result.add(name);
                 }
@@ -2825,21 +2879,26 @@ export class TempVariableSimplify implements ISimplify {
                 // return/throw 之后没有代码,只有返回表达式里的读取需要保留
                 return this.tempReads(stmt.argument, ctx);
             case "ExportNamedDeclaration":
-                if (stmt.declaration) return this.transfer(stmt.declaration as TYPE.Statement, liveOut, ctx);
-                return liveOut;
+                if (stmt.declaration) return this.transfer(stmt.declaration as TYPE.Statement, liveOut, ctx, loop);
+                return new Set(liveOut);
             case "ExportDefaultDeclaration":
                 return this.tempReads(stmt.declaration as TYPE.Node, ctx);
             case "BreakStatement":
+                // break 跳出循环后,活跃集是循环之后的代码;switch 里的 break 只跳出 switch。
+                // 必须返回副本:调用方会 live.clear() 后把返回值写回 live,
+                // 直接返回 liveOut 时 before 与 live 是同一个 Set,clear() 会一起清空。
+                return new Set(loop && !loop.inSwitch ? loop.breakLive : liveOut);
             case "ContinueStatement":
-                return liveOut;
+                // continue 跳到循环头(test/update),循环头的读取仍然活跃。
+                return new Set(loop ? loop.continueLive : liveOut);
             default:
-                return liveOut;
+                return new Set(liveOut);
         }
     }
 
-    private cleanupNested(stmt: TYPE.Statement, ctx: FunctionContext, liveOut: Set<string>): Set<string> {
-        if (TYPE.isBlockStatement(stmt)) return this.cleanupStatements(stmt.body, ctx, liveOut);
-        return this.transfer(stmt, liveOut, ctx);
+    private cleanupNested(stmt: TYPE.Statement, ctx: FunctionContext, liveOut: Set<string>, loop?: LoopLive): Set<string> {
+        if (TYPE.isBlockStatement(stmt)) return this.cleanupStatements(stmt.body, ctx, liveOut, loop);
+        return this.transfer(stmt, liveOut, ctx, loop);
     }
 
     /**

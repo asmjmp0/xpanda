@@ -415,17 +415,21 @@ export class StructureAnalysis {
 
     private determineFollowLatch(head: Region, loopNodes: Set<Region>): [Region | null, Region | null] {
         const headSucc = this.regionGraph.successors(head);
+        // 循环头有两条边时,出环的那条就是 follow(while 的终止条件)。
+        // 回边(latch)上还可能带着 break/throw 之类的另一条出边,不能拿它当 follow:
+        // 那会把 while 的正常终止条件误判成“不规则出口”,virtualizeIrregularExits 会
+        // 在循环头插 break 并把循环头改成 Tail,循环体剩下的子图随后被从入口切掉。
+        let headerFollow: Region | null = null;
         if (headSucc.length === 2) {
-            let follow: Region | null = null;
             if (!loopNodes.has(headSucc[0])) {
-                follow = headSucc[0];
+                headerFollow = headSucc[0];
             } else if (!loopNodes.has(headSucc[1])) {
-                follow = headSucc[1];
+                headerFollow = headSucc[1];
             }
-            if (follow !== null) {
+            if (headerFollow !== null) {
                 for (const latch of this.regionGraph.predecessors(head)) {
                     if (this.isBackEdge(latch, head) && this.linearSuccessor(latch) === head) {
-                        return [follow, latch];
+                        return [headerFollow, latch];
                     }
                 }
             }
@@ -435,8 +439,17 @@ export class StructureAnalysis {
             if (this.isBackEdge(latch, head)) {
                 const latchSuccs = this.regionGraph.successors(latch);
                 if (latchSuccs.length === 2) {
-                    if (!loopNodes.has(latchSuccs[0])) return [latchSuccs[0], latch];
-                    if (!loopNodes.has(latchSuccs[1])) return [latchSuccs[1], latch];
+                    const outside = latchSuccs.find((successor) => !loopNodes.has(successor));
+                    if (outside) {
+                        // 回边上的另一条出边若是 return/throw(Tail),那是循环体内的提前退出,
+                        // 不是循环的 follow;此时循环头出环的那条边(非 Tail)才是 while 正常结束后
+                        // 的落点。两者都是 Tail 时保持旧行为(do...while 的终止边在回边上)。
+                        const follow = outside.getType() === "Tail"
+                            && headerFollow !== null && headerFollow.getType() !== "Tail"
+                            ? headerFollow
+                            : outside;
+                        return [follow, latch];
+                    }
                 }
             }
         }
@@ -467,12 +480,16 @@ export class StructureAnalysis {
         while (true) {
             for (; i < size; i++) {
                 const node = wl[i];
+                // 必须把 全部 后继加入工作队列:循环体里每个条件的两条分支都可能通往词法节点。
+                // 典型例子是 for...of 体内带 continue/return 时,ArkTS 会在每条退出路径上内联一份
+                // iterator.close 序列(条件和回边交织)。只跟第一个后继时,另一条分支上的节点不会
+                // 进入 lexNodes,virtualizeIrregularExits 会把它们当成"不规则出口"插入 break/goto
+                // 并把区域改成 Tail,把整段子图从入口切掉,后续 DFS 永远归约不到它。
                 if (loopNodes.has(node)) {
                     lexNodes.add(node);
                     for (const successor of this.regionGraph.successors(node)) {
                         if (!lexNodes.has(successor) && !wl.includes(successor)) {
                             wl.push(successor);
-                            break;
                         }
                     }
                 } else if (this.doms.dominatesStrictly(head, node) && !excluded.has(node)) {
@@ -480,7 +497,6 @@ export class StructureAnalysis {
                     for (const successor of this.regionGraph.successors(node)) {
                         if (!lexNodes.has(successor) && !wl.includes(successor)) {
                             wl.push(successor);
-                            break;
                         }
                     }
                 }
