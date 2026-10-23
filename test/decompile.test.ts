@@ -205,6 +205,54 @@ function md5(str) {
     }
 }
 
+/**
+ * 回归:acc 的成员装载链。
+ *   `acc = E; v6 = acc; acc = acc.length; if (acc === 0)`
+ * 应折成 `v6 = E; if (v6.length === 0)`(E 为调用时先经别名搬运,再传播进 test);
+ * 没有别名时 `acc = E; acc = acc.length; obj.x = acc` 也应折成 `obj.x = E.length`。
+ * 同时 `acc = acc.prop; acc.call(recv, ...)` 必须留给 AccCallSimplify。
+ */
+function verifyAccMemberLengthFold(): void {
+    const program = NodeFactory.parse(`
+function withAlias(p0, v2) {
+  let v6, v8, v9, acc;
+  v8 = v2.lastIndexOf(":");
+  if (v8 >= 0) {
+    v9 = v2.slice(0, v8);
+    acc = v2.slice(v8);
+    v6 = acc;
+    acc = acc.length;
+    if (acc === 0) {
+      return undefined;
+    }
+    v2 = v9;
+  }
+  return v2 + v6;
+}
+function withoutAlias(p0) {
+  let v0, acc;
+  v0 = {};
+  acc = p0.filter(function (p1) {
+    return p1;
+  });
+  acc = acc.length;
+  v0.count = acc;
+  return v0;
+}
+`);
+    SimplifyExport.simplify(program);
+    const code = NodeFactory.generate(program);
+    if (code.includes("acc = acc.length")) {
+        throw new Error(`simplify: acc 成员装载未折叠\n${code}`);
+    }
+    if (!code.includes("v6 = v2.slice(v8)") || !code.includes("if (v6.length === 0)")) {
+        throw new Error(`simplify: acc 长度判断未还原为别名成员访问\n${code}`);
+    }
+    if (!code.includes("v0.count = p0.filter(function (p1) {") || !code.includes("}).length;")) {
+        throw new Error(`simplify: 无别名时 acc.length 未折进使用处\n${code}`);
+    }
+}
+
 /** 回归:源临时变量仍然活跃时,不能把 new 表达式再次搬进另一个变量,否则会重复构造。 */
 function verifyNoDuplicateConstruction(): void {
     const program = NodeFactory.parse(`
@@ -370,6 +418,10 @@ async function main(): Promise<void> {
 
     console.log("[test] simplify duplicate construction");
     verifyNoDuplicateConstruction();
+    console.log("    ok");
+
+    console.log("[test] simplify acc member length fold");
+    verifyAccMemberLengthFold();
     console.log("    ok");
 
     console.log("[test] simplify boolean conditional folding");

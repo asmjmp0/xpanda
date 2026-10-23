@@ -1782,6 +1782,45 @@ export class TempVariableSimplify implements ISimplify {
         return TYPE.isMemberExpression(callee) && callee.object === id;
     }
 
+    /**
+     * 当前语句之后紧跟的是 `name.call(...)`(AccCallSimplify 要还原的方法装载形态)。
+     * `name = name.prop` 这种裸成员装载不能提前改成别名读取,否则 AccCallSimplify
+     * 匹配不到 `acc = acc.prop; acc.call(recv, ...)`。
+     */
+    private nextStatementIsAccMethodCall(list: TYPE.Statement[], index: number, name: string): boolean {
+        const next = list[index + 1];
+        if (!next) return false;
+        let expr: TYPE.Node | null = null;
+        if (TYPE.isExpressionStatement(next)) {
+            expr = next.expression;
+            if (TYPE.isAssignmentExpression(expr)) expr = expr.right;
+        } else if (TYPE.isReturnStatement(next) && next.argument) {
+            expr = next.argument;
+        }
+        if (!expr) return false;
+        while (TYPE.isUnaryExpression(expr) && expr.prefix) expr = expr.argument;
+        if (!TYPE.isCallExpression(expr)) return false;
+        const callee = expr.callee;
+        return TYPE.isMemberExpression(callee)
+            && !callee.computed
+            && TYPE.isIdentifier(callee.object) && callee.object.name === name
+            && TYPE.isIdentifier(callee.property) && callee.property.name === "call";
+    }
+
+    /**
+     * 在 env 中查找当前持有 name 旧值的别名临时变量(前面执行过 `alias = name`,
+     * 且两者此后都没有被改写)。返回第一个可用别名。
+     */
+    private findAliasOf(env: EnvState, name: string, ctx: FunctionContext): string | null {
+        for (const [alias, entry] of env.map) {
+            if (alias === name || !isTempName(alias)) continue;
+            const info = ctx.infos.get(alias);
+            if (!info || info.captured) continue;
+            if (TYPE.isIdentifier(entry.expr) && entry.expr.name === name) return alias;
+        }
+        return null;
+    }
+
     /** 统计一条语句里对 name 的读取次数(不含嵌套函数,复合赋值左侧算读取)。 */
     private countReadsInNode(node: TYPE.Node | null | undefined, name: string): number {
         let count = 0;
@@ -1899,9 +1938,10 @@ export class TempVariableSimplify implements ISimplify {
         const deadAfter = liveAfter != null && !liveAfter.has(id.name);
         const binarySelf = this.statementOverwritesSelf(list[index], id.name, id);
         // `name = RHS` 且 RHS 只读一次 name:旧值在本语句后立即被覆盖。
-        // 这条新路径下若变量名在语句后仍活跃(后续读到的是新值),只允许搬进
+        // 这条新路径下若变量名在语句后仍活跃(后续读到的是新值),默认只允许搬进
         // 调用接收者位置,避免破坏 acc = acc.test 这类 AccCallSimplify 依赖的
-        // 方法装载形态;binarySelf(二元自累加)保持原有任意位置搬移的行为。
+        // 方法装载形态;若后面不是 name.call(...),则允许搬进成员装载的其它位置
+        // (如 acc = acc.length)。binarySelf(二元自累加)保持原有任意位置搬移的行为。
         const assignSelf = !binarySelf && this.statementOverwritesSelfAssign(list[index], id.name, id);
         const overwrittenHere = binarySelf || assignSelf;
         // 同一个语句里可能还有别的读取(典型是 if 的 test 和分支体都读同一个
@@ -1930,12 +1970,40 @@ export class TempVariableSimplify implements ISimplify {
             // 见上方 assignSelf 的说明。
             if (allowImpure && entry.list === list && entry.index < index
                 && this.isSafeToMoveBetween(list, entry.index + 1, index)
-                && (deadAfter || binarySelf || this.isCalleeReceiverRead(list[index], id))) {
+                && (deadAfter || binarySelf || this.isCalleeReceiverRead(list[index], id)
+                    || !this.nextStatementIsAccMethodCall(list, index, id.name))) {
                 info.refs.delete(id);
                 ctx.moved.set(entry.expr, list[index]);
                 env.invalidate(id.name);
                 this.changed = true;
                 return entry.expr;
+            }
+        }
+
+        // 裸成员装载 `x = x.prop`(RHS 只读一次 x),但 x 之后仍会读取新值,
+        // 且旧值是不可复制表达式(如 `acc = v2.slice(v8); v6 = acc; acc = acc.length`)。
+        // 此时旧值已经复制给别名 y,把本语句里的 x 改读 y:
+        //   acc = v6.length; 后续 if (acc === 0) 再把 v6.length 传播进 test。
+        // 这样 x 被覆盖后 y 仍持有旧值,下一轮就能把旧值搬到 y 的赋值处。
+        if (assignSelf && !deadAfter && !isCopyable(entry.expr) && !isDeclarationValue(entry.expr)
+            && !this.isCalleeReceiverRead(list[index], id)
+            && !this.nextStatementIsAccMethodCall(list, index, id.name)) {
+            const alias = this.findAliasOf(env, id.name, ctx);
+            if (alias && !entry.deps.includes(alias)) {
+                info.refs.delete(id);
+                ctx.infos.get(alias)?.refs.add(id);
+                id.name = alias;
+                // 别名原先记为 `alias = x`(依赖 x);x 即将被覆盖,
+                // 这里改为直接持有旧值,避免 x 失效时把别名一起级联失效。
+                env.set(alias, {
+                    expr: entry.expr,
+                    list: entry.list,
+                    index: entry.index,
+                    deps: entry.deps.slice(),
+                    unsubstitutedReads: 0,
+                });
+                this.changed = true;
+                return id;
             }
         }
 
