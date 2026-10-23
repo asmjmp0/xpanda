@@ -336,6 +336,9 @@ export class TempVariableSimplify implements ISimplify {
             return true;
         });
         if (this.returnsOnly) {
+            // 尾部三元合成后可能留下累加器链/临时变量别名(见 foldAccumulatorChains /
+            // foldTempAliasAssignments),需要活跃性判断被搬移的旧值是否已死。
+            this.analyzeList(body, new Set(), ctx);
             // 尾部三元合成后可能留下累加器链(见 foldAccumulatorChains),
             // 先折链再折 return,才能把整段拼接还原成单个表达式。
             this.foldReturnAssignments(body, ctx);
@@ -384,7 +387,11 @@ export class TempVariableSimplify implements ISimplify {
         // 先折累加器链:X = E; X = X + F -> X = E + F。
         // HighLevelGrammarSimplify 在定点迭代之后才把条件物化合成三元赋值,
         // 轮内已经跑过的复制传播来不及处理 acc = C ? A : B; acc = v0 + acc。
-        if (this.returnsOnly) this.foldAccumulatorChains(stmts, ctx);
+        if (this.returnsOnly) {
+            // `X = E; Y = X`(X 之后已死)-> `Y = E`,同样针对尾部才生成的三元赋值。
+            this.foldTempAliasAssignments(stmts, ctx);
+            this.foldAccumulatorChains(stmts, ctx);
+        }
         let repeat = false;
         do {
             repeat = false;
@@ -513,6 +520,57 @@ export class TempVariableSimplify implements ISimplify {
         info.refs.delete(leftId ?? rightId!);
         if (leftId) b.right.left = value;
         else b.right.right = value;
+        stmts.splice(i, 1);
+        this.changed = true;
+        return true;
+    }
+
+    /**
+     * 尾部补齐:`X = E; Y = X` -> `Y = E`(X 在之后已死)。
+     *
+     * HighLevelGrammarSimplify 在定点迭代结束后才把条件物化合成
+     * `acc = C ? A : B`,轮内的复制传播来不及处理紧随其后的 `local_x = acc`。
+     * Y 允许被闭包捕获(写入点和求值顺序都不变);X 必须未被捕获且之后不再读取,
+     * 否则删掉赋值会改变其后续读取到的值。
+     */
+    private foldTempAliasAssignments(stmts: TYPE.Statement[], ctx: FunctionContext): void {
+        for (let i = 0; i + 1 < stmts.length; i++) {
+            // 合并后的 Y = E 仍可能继续作为下一条 `Z = Y` 的来源
+            while (i + 1 < stmts.length && this.tryFoldTempAlias(stmts, i, ctx)) {
+                // retry same index
+            }
+        }
+    }
+
+    private tryFoldTempAlias(stmts: TYPE.Statement[], i: number, ctx: FunctionContext): boolean {
+        const first = stmts[i];
+        const second = stmts[i + 1];
+        if (!TYPE.isExpressionStatement(first) || !TYPE.isAssignmentExpression(first.expression)) return false;
+        if (!TYPE.isExpressionStatement(second) || !TYPE.isAssignmentExpression(second.expression)) return false;
+        const a = first.expression;
+        const b = second.expression;
+        if (a.operator !== "=" || b.operator !== "=") return false;
+        if (!TYPE.isIdentifier(a.left) || !TYPE.isIdentifier(b.right)) return false;
+        const source = a.left.name;
+        if (!isTempName(source) || b.right.name !== source) return false;
+        // 目标是变量时保持原有限制;目标是成员(`v0.sbox = acc`)时只要求左值求值无副作用,
+        // 否则把 E 搬到赋值右侧会改变 E 与左值副作用之间的求值顺序。
+        if (TYPE.isIdentifier(b.left)) {
+            if (!isTempName(b.left.name) || b.left.name === source) return false;
+        } else if (TYPE.isMemberExpression(b.left)) {
+            const member = b.left;
+            if (!isPureExpression(member.object as TYPE.Expression)) return false;
+            if (member.computed && !isPureExpression(member.property as TYPE.Expression)) return false;
+        } else {
+            return false;
+        }
+        const info = ctx.infos.get(source);
+        if (!info || info.captured) return false;
+        // X 的旧值在第二条语句之后必须已死;闭包里的读取由 captured 兜底
+        const liveAfter = ctx.liveAfter.get(second);
+        if (!liveAfter || liveAfter.has(source)) return false;
+        info.refs.delete(b.right);
+        b.right = a.right;
         stmts.splice(i, 1);
         this.changed = true;
         return true;

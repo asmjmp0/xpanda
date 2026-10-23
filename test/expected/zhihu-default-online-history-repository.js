@@ -134,18 +134,17 @@ local_0_0 = function (p0, p1) {
   }
 };
 local_0_2 = function (p0) {
-  let v0, v1;
+  let v0;
   v0 = {
     "items": p0.items,
     "cursor": null
   };
-  v1 = {
+  v0.cursor = {
     "isEnd": true,
     "isStart": p0.cursor.isStart,
     "page": p0.cursor.page,
     "total": p0.cursor.total
   };
-  v0.cursor = v1;
   return v0;
 };
 ONLINE_HISTORY_BASE_URL = "https://www.zhihu.com/api/v4/unify-consumption/read_history";
@@ -192,7 +191,7 @@ DefaultOnlineHistoryRepository = class panda_jmp0_reserved_anonymous_1 {
     this.httpClient.cancel();
   }
   async loadPage(p0) {
-    let v0, v2 /*OnlineHistoryRepositoryFailure*/, v3 /*decodeOnlineHistoryPage*/, v4 /*nextDelivered*/, v5 /*items*/, v6, v7 /*items*/, acc;
+    let v0, v2 /*OnlineHistoryRepositoryFailure*/, v3 /*decodeOnlineHistoryPage*/, v4 /*nextDelivered*/, v5 /*items*/, v6, v7 /*items*/;
     let local_1_0, local_1_1;
     if (p0 === undefined) {
       v4 = p0 === undefined ? 0 : onlineHistoryOffsetOf(p0);
@@ -210,8 +209,7 @@ DefaultOnlineHistoryRepository = class panda_jmp0_reserved_anonymous_1 {
         if (this.generation === this.generation) {
           v3 = decodeOnlineHistoryPage(v0.body);
           v5 = p0 === undefined ? new Set() : local_0_1(this.requestedCursors);
-          acc = p0 === undefined ? new Set() : local_0_1(this.deliveredIdentities);
-          local_1_0 = acc;
+          local_1_0 = p0 === undefined ? new Set() : local_0_1(this.deliveredIdentities);
           v5.add(v6);
           local_1_1 = [];
           v3.items.forEach(function (p0) {
@@ -240,14 +238,13 @@ DefaultOnlineHistoryRepository = class panda_jmp0_reserved_anonymous_1 {
             "items": local_1_1,
             "cursor": null
           };
-          v5 = {
+          v4.cursor = {
             "isEnd": v3.cursor.isEnd,
             "isStart": v3.cursor.isStart,
             "next": v2,
             "page": v3.cursor.page,
             "total": v3.cursor.total
           };
-          v4.cursor = v5;
           if (v7) {
             v4 = local_0_2(v4);
           }
@@ -274,8 +271,7 @@ DefaultOnlineHistoryRepository = class panda_jmp0_reserved_anonymous_1 {
         if (this.generation === this.generation) {
           v3 = decodeOnlineHistoryPage(v0.body);
           v5 = p0 === undefined ? new Set() : local_0_1(this.requestedCursors);
-          acc = p0 === undefined ? new Set() : local_0_1(this.deliveredIdentities);
-          local_1_0 = acc;
+          local_1_0 = p0 === undefined ? new Set() : local_0_1(this.deliveredIdentities);
           v5.add(v6);
           local_1_1 = [];
           v3.items.forEach(function (p0) {
@@ -304,14 +300,13 @@ DefaultOnlineHistoryRepository = class panda_jmp0_reserved_anonymous_1 {
             "items": local_1_1,
             "cursor": null
           };
-          v5 = {
+          v4.cursor = {
             "isEnd": v3.cursor.isEnd,
             "isStart": v3.cursor.isStart,
             "next": v2,
             "page": v3.cursor.page,
             "total": v3.cursor.total
           };
-          v4.cursor = v5;
           if (v7) {
             v4 = local_0_2(v4);
           }

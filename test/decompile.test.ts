@@ -218,6 +218,52 @@ function hasMore(p0) {
 
 
 /**
+ * 回归:尾部临时变量别名 `X = E; Y = X` -> `Y = E`。
+ * HighLevelGrammarSimplify 在定点迭代后才把条件物化合成三元赋值,此时
+ * `local_1_0 = acc` 的复制传播已经跑完;X 之后已死时必须能直接搬进 Y。
+ * Y 被闭包捕获不影响折叠(写入点和求值顺序不变)。
+ */
+function verifyTailTempAliasFold(): void {
+    const program = NodeFactory.parse(`
+function collect(p0, items) {
+  let acc, local_1_0;
+  if (p0 === undefined) {
+    acc = new Set();
+  } else {
+    acc = make(p0);
+  }
+  local_1_0 = acc;
+  items.forEach(function (x) {
+    local_1_0.add(x);
+  });
+}
+function setField(p0, obj) {
+  let acc;
+  if (p0) {
+    acc = [1];
+  } else {
+    acc = [2];
+  }
+  obj.sbox = acc;
+}
+`);
+    SimplifyExport.simplify(program);
+    const code = NodeFactory.generate(program);
+    if (!code.includes("local_1_0 = p0 === undefined ? new Set() : make(p0);")) {
+        throw new Error(`simplify: 尾部临时变量别名未合并\n${code}`);
+    }
+    if (!code.includes("obj.sbox = p0 ? [1] : [2];")) {
+        throw new Error(`simplify: 成员目标 X = E; obj.k = X 未合并\n${code}`);
+    }
+    if (/\bacc\b/.test(code)) {
+        throw new Error(`simplify: 尾部别名合并后仍残留 acc\n${code}`);
+    }
+    if (!code.includes("local_1_0.add(x);")) {
+        throw new Error(`simplify: 被闭包捕获的目标变量内容被误改\n${code}`);
+    }
+}
+
+/**
  * 回归:闭包只写不读的外层变量必须视为被捕获。
  * 旧实现只从 binding.referencePaths 判断捕获,而赋值写在 constantViolations 里;
  * 一旦闭包里对该变量的读取被优化掉,外层 `local_1_1 = undefined` 就会被当作唯一值
@@ -1381,6 +1427,10 @@ async function main(): Promise<void> {
 
     console.log("[test] simplify condition materialization into test");
     verifyConditionMaterializationIntoTest();
+    console.log("    ok");
+
+    console.log("[test] simplify tail temp alias fold");
+    verifyTailTempAliasFold();
     console.log("    ok");
 
     console.log("[test] simplify closure written variable");

@@ -186,7 +186,7 @@ prepareSharePayload = function (p0, p1) {
         "source": v2
       };
       if (v3 !== undefined) {
-        v0 = {
+        v4 = {
           "kind": v4.kind,
           "dispatchKind": v4.dispatchKind,
           "title": v4.title,
@@ -195,7 +195,6 @@ prepareSharePayload = function (p0, p1) {
           "source": v4.source,
           "thumbnailUrl": v3
         };
-        v4 = v0;
       }
       return v4;
     case SharePayloadKind.IMAGE:

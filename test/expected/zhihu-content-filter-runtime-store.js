@@ -76,7 +76,7 @@ ContentFilterRuntimeStore = class panda_jmp0_reserved_anonymous_0 {
     local_1_1 = this;
     local_1_0 = p0;
     return local_1_1.enqueue(async function () {
-      let v3, v5, v6, v7, v8 /*VIEW_TABLE*/, v10 /*relationalStore*/, v11;
+      let v3, v5, v6, v8 /*VIEW_TABLE*/, v10 /*relationalStore*/;
       v3 = await local_1_1.database.open();
       v5 = Date.now();
       for (v6 = 0; v6 < local_1_0.length; v6 += 1) {
@@ -99,10 +99,8 @@ ContentFilterRuntimeStore = class panda_jmp0_reserved_anonymous_0 {
                 "contentId": null,
                 "blockedAt": null
               };
-              v11 = local_1_0[v6].content.contentKind ?? "content";
-              v10.contentKind = v11;
-              v7 = local_1_0[v6].content.contentId ?? "unknown";
-              v10.contentId = v7;
+              v10.contentKind = local_1_0[v6].content.contentKind ?? "content";
+              v10.contentId = local_1_0[v6].content.contentId ?? "unknown";
               v10.blockedAt = v5;
               await local_1_1.history.insert(v10);
             }
@@ -156,7 +154,7 @@ ContentFilterRuntimeStore = class panda_jmp0_reserved_anonymous_0 {
     return v6;
   }
   async readComputedStats(p0) {
-    let v0, v2, v3, v7, v8, v10;
+    let v0, v3, v7, v8, v10;
     v0 = await p0.querySql("SELECT COALESCE(SUM(view_count), 0) AS kept_count FROM content_filter_views");
     v3 = v0;
     v7 = 0;
@@ -169,8 +167,7 @@ ContentFilterRuntimeStore = class panda_jmp0_reserved_anonymous_0 {
       "filterRate": null,
       "lastFilteredAt": null
     };
-    v2 = v8 > 0 ? v0.length / v8 : 0;
-    v10.filterRate = v2;
+    v10.filterRate = v8 > 0 ? v0.length / v8 : 0;
     if (v0.length !== 0) {
       v7 = v0[0].blockedAt;
     }
