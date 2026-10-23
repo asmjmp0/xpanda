@@ -45,13 +45,20 @@ const {
 /**
  * ArkTS enum 初始化还原。
  *
- * ArkTS 把 `export enum E { A = "a", B = "b" }` 编译成四条固定语句
+ * ArkTS 把 `export enum E { A = "a", B = "b" }` 编译成
  * (即 TypeScript 经典的 `(function (E) { ... })(E || (E = {}))` 的字节码展开):
  *
+ * 装载形态(4 条语句,字节码 13.0.1.0 等):
  *   v0 = function (p0) { p0.A = "a"; p0.B = "b"; };  // 成员填充函数
  *   v1 = E;                                          // 读全局变量
  *   if (!E) { acc = {}; v1 = acc; E = acc; }         // 惰性创建空对象
  *   v0(v1);                                          // 填充成员
+ *
+ * 直接形态(3 条语句,更新的字节码):区域归约会把 if 汇合点上的公共装载
+ * `v = E` 复制进两条分支的尾部,得到 if/else 结构,中间装载语句消失:
+ *   v0 = function (p0) { p0.A = "a"; ... };
+ *   if (!E) { acc = {}; E = acc; } else { acc = E; }
+ *   v0(acc);
  *
  * 本 pass 在确认安全后把它还原成一条 `E = { A: "a", B: "b" };`,
  * 并顺带删除之前已证明死代码的 `E = undefined;`。
@@ -65,7 +72,11 @@ const {
  *      —— 排除"调用触发闭包把 EnumName 改成真值"的可能;
  *   3. 涉及的临时变量(fnTemp / v / 分支里的别名)在模式之后、被顶层语句
  *      无条件重新赋值之前不被读取,也没有被任何嵌套函数捕获
- *      —— 删除模式语句不会改变它们对后续代码的可见值。
+ *      —— 删除模式语句不会改变它们对后续代码的可见值;
+ *   4. 带 else 分支时,else 里只能是简单赋值、不得重写 EnumName(解析后仍
+ *      指向它自身),且调用参数在两个分支里都解析到"EnumName 当前持有的值"
+ *      —— 结合条件 2,EnumName 在此处必为假值,else 分支实际不可达,
+ *      把模式改写成 `E = {...}` 才与原语义等价。
  *
  * 区域内的 `fnTemp(arg)` 调用如果本身就是另一个(结构匹配的)enum 模式的
  * 填充调用,则视为纯操作豁免:填充函数只往传入对象上挂常量属性,
@@ -77,16 +88,39 @@ const {
 
 /** 填充函数解析出的一个枚举成员 */
 interface EnumMember {
-    key: TYPE.Identifier | TYPE.StringLiteral | TYPE.NumericLiteral;
+    key: TYPE.Identifier | TYPE.StringLiteral | TYPE.NumericLiteral | TYPE.UnaryExpression;
     value: TYPE.Expression;
 }
 
-/** 四条语句的结构匹配结果(不含安全检查) */
+/** 四条/五条语句的结构匹配结果(不含安全检查) */
 interface PatternMatch {
     filler: { fnTemp: string; members: EnumMember[] };
     enumName: string;
-    valueTemp: string;
+    /** if 之前的装载别名(`v1 = E`);没有为 null */
+    valueTemp: string | null;
+    /** if 之后、调用之前的装载别名(`v5 = acc`);没有为 null */
+    postLoad: AliasLoad | null;
     lazyInit: { object: TYPE.ObjectExpression; aliases: Set<string> };
+    /** 模式占据的语句条数(3 ~ 5) */
+    length: number;
+}
+
+/** 惰性初始化 if 语句的分支结构解析结果(不含枚举名相关的校验) */
+interface LazyInitBranches {
+    /** `!X` 里的 X */
+    testArg: string;
+    /** then 分支里的简单赋值:名字 -> 右值 */
+    thenMap: Map<string, TYPE.Expression>;
+    /** else 分支里的简单赋值;没有 else 分支时为 null */
+    elseMap: Map<string, TYPE.Expression> | null;
+    /** then 分支里唯一的空对象字面量 */
+    object: TYPE.ObjectExpression;
+}
+
+/** 调用前后的单条别名装载(`v1 = E` / `v5 = acc`):随模式一起删除的语句 */
+interface AliasLoad {
+    left: string;
+    right: string;
 }
 
 /** 一次成功改写时登记的删除候选:defer 到整个语句列表处理完后统一核对删除 */
@@ -131,10 +165,11 @@ export class EnumSimplify implements ISimplify {
         const stmts = scope.body;
         // 预扫描:先找出所有结构匹配的模式,它们的填充调用(fnTemp(v))是纯操作,
         // 后续安全检查与死初始化删除可以放心豁免这些调用。
+        // 下界 stmts.length - 3:最短形态(填充函数 + if/else + 调用)占 3 条语句。
         const fillerCalls = new Set<TYPE.Statement>();
-        for (let i = stmts.length - 4; i >= 0; i--) {
+        for (let i = stmts.length - 3; i >= 0; i--) {
             const match = this.matchPattern(stmts, i);
-            if (match) fillerCalls.add(stmts[i + 3]);
+            if (match) fillerCalls.add(stmts[i + match.length - 1]);
         }
         let changed = false;
         // `E = undefined` 的删除候选 defer 到循环结束后统一核对:
@@ -143,7 +178,7 @@ export class EnumSimplify implements ISimplify {
         const pendingDeletes: PendingUndefDelete[] = [];
         // 从后往前匹配:连续多个 enum 模式共享同一组临时变量(v0/v1/acc),
         // 先处理后面的模式,前面模式的"之后无读取"检查才不会被后面的调用挡住。
-        for (let i = stmts.length - 4; i >= 0; i--) {
+        for (let i = stmts.length - 3; i >= 0; i--) {
             if (this.tryRewrite(stmts, i, scope, fillerCalls, pendingDeletes)) changed = true;
         }
         for (const pending of pendingDeletes) {
@@ -159,32 +194,79 @@ export class EnumSimplify implements ISimplify {
 
     // ---------------------------------------------------------------- 模式匹配
 
-    private matchPattern(stmts: TYPE.Statement[], i: number): PatternMatch | null {        // S0:fnTemp = function (p) { p.M = expr; ... }; 成员填充函数
+    /**
+     * S0:fnTemp = function (p) { p.M = expr; ... }; 成员填充函数;
+     * S1(可选):`v1 = E` —— if 之前把枚举对象装进临时变量(装载形态);
+     * S2:if (!E / !v) { acc = {}; E = acc; } [else { acc = E; }] —— 惰性初始化。
+     * 区域归约可能把汇合点上的公共装载 `v = E` 复制进两条分支尾部得到 else;
+     * S3(可选):`v5 = acc` —— if 之后把对象装进实参寄存器;
+     * S4:fnTemp(v1 / v5 / acc / E) —— 填充调用。
+     */
+    private matchPattern(stmts: TYPE.Statement[], i: number): PatternMatch | null {
         const filler = this.matchFillerFunction(stmts[i]);
         if (!filler) return null;
 
-        // S1: v = E;(E 只要求是标识符,temp 风格的局部名也允许;
-        // 是否真的持有"初始为假值的本模块变量"由声明检查与区域检查保证)
-        const load = this.matchSimpleAssign(stmts[i + 1]);
-        if (!load || !isIdentifier(load.right)) return null;
-        const enumName = load.right.name;
-        const valueTemp = load.left;
-        if (valueTemp === enumName) return null;
+        // if 的位置二选一:i+1(直接形态)或 i+2(带前置装载的形态)。
+        // i+1 是 if 时就是直接形态,是 `X = Y` 时才尝试前置装载,二者不会歧义。
+        const direct = this.matchLazyInitBranches(stmts[i + 1]);
+        let preLoad: AliasLoad | null = null;
+        let branches: LazyInitBranches | null;
+        if (direct) {
+            branches = direct;
+        } else {
+            const s1 = this.matchSimpleAssign(stmts[i + 1]);
+            if (!s1 || !isIdentifier(s1.right) || s1.left === s1.right.name) return null;
+            preLoad = { left: s1.left, right: s1.right.name };
+            branches = i + 2 < stmts.length ? this.matchLazyInitBranches(stmts[i + 2]) : null;
+            if (!branches) return null;
+        }
 
-        // S2: if (!E / !v) { acc = {}; v = acc; E = acc; }
-        const lazyInit = this.matchLazyInit(stmts[i + 2], enumName, valueTemp);
+        // if 之后允许至多一条别名装载(`v5 = acc`),编译器把汇合后的对象装进实参
+        let postLoad: AliasLoad | null = null;
+        let j = i + (preLoad ? 3 : 2);
+        if (j < stmts.length - 1) {
+            const s3 = this.matchSimpleAssign(stmts[j]);
+            if (s3 && isIdentifier(s3.right) && s3.left !== s3.right.name) {
+                postLoad = { left: s3.left, right: s3.right.name };
+                j++;
+            }
+        }
+
+        // 填充调用:fnTemp(v1 / v5 / acc / E)
+        const callArg = this.matchFillerCall(stmts[j], filler.fnTemp);
+        if (!callArg) return null;
+        const length = j - i + 1;
+
+        // 枚举名:装载形态取 `v1 = E` 的右值;直接形态从分支赋值里发现
+        // (非临时名且解析到空对象的必须恰好一个)。
+        let enumName: string;
+        if (preLoad) {
+            enumName = preLoad.right;
+            // test 必须直接判断 E 或刚装载的 v1
+            if (branches.testArg !== enumName && branches.testArg !== preLoad.left) return null;
+            const lazyInit = this.resolveLazyInit(branches, enumName, preLoad.left);
+            if (!lazyInit) return null;
+            if (!this.callArgHoldsEnum(callArg, enumName, preLoad.left, branches, postLoad)) return null;
+            return { filler, enumName, valueTemp: preLoad.left, postLoad, lazyInit, length };
+        }
+        // 枚举名从分支赋值里发现:必须解析到空对象;带 else 分支时,
+        // 枚举本体在 else 里保持自身(else 只把别名重新装载成 E 的值)。
+        let candidates = [...branches.thenMap.keys()]
+            .filter((name) => this.resolveAlias(branches.thenMap, name, new Set()) === branches.object
+                && (!branches.elseMap || this.resolvesToIdentifier(branches.elseMap, name, name)));
+        if (candidates.length > 1) {
+            // 仍有歧义时优先非 temp 风格的名字(枚举名通常不是 vN/acc)
+            const nonTemp = candidates.filter((name) => !isTempName(name));
+            if (nonTemp.length >= 1) candidates = nonTemp;
+        }
+        if (candidates.length !== 1) return null;
+        enumName = candidates[0];
+        // 没有前置装载,分支里也不一定先给别名赋值,所以 test 必须直接判断枚举名
+        if (branches.testArg !== enumName) return null;
+        const lazyInit = this.resolveLazyInit(branches, enumName, null);
         if (!lazyInit) return null;
-
-        // S3: fnTemp(v) 或 fnTemp(E)
-        const callStmt = stmts[i + 3];
-        if (!isExpressionStatement(callStmt) || !isCallExpression(callStmt.expression)) return null;
-        const call = callStmt.expression;
-        if (call.optional || !isIdentifier(call.callee) || call.callee.name !== filler.fnTemp) return null;
-        if (call.arguments.length !== 1 || !isIdentifier(call.arguments[0])) return null;
-        const argName = call.arguments[0].name;
-        if (argName !== valueTemp && argName !== enumName) return null;
-
-        return { filler, enumName, valueTemp, lazyInit };
+        if (!this.callArgHoldsEnum(callArg, enumName, null, branches, postLoad)) return null;
+        return { filler, enumName, valueTemp: null, postLoad, lazyInit, length };
     }
 
     private tryRewrite(
@@ -199,17 +281,19 @@ export class EnumSimplify implements ISimplify {
         // E 必须在本语句列表顶层声明过,排除被其他模块赋真值的隐式全局变量
         if (!this.isDeclaredInList(stmts, match.enumName)) return false;
 
-        // 模式删除后值会改变的名字:函数、别名 v、分支里所有被赋值的名字。
+        // 模式删除后值会改变的名字:函数、装载别名 v1/v5、分支里所有被赋值的名字。
         // EnumName 本身不算 —— 它的赋值被对象字面量在同位置等价替换,
         // 嵌套函数(如业务函数)读取它看到的都是初始化后的对象。
-        const involved = new Set<string>([match.filler.fnTemp, match.valueTemp, ...match.lazyInit.aliases]);
+        const involved = new Set<string>([match.filler.fnTemp, ...match.lazyInit.aliases]);
+        if (match.valueTemp) involved.add(match.valueTemp);
+        if (match.postLoad) involved.add(match.postLoad.left);
         involved.delete(match.enumName);
 
         const region = this.analyzeEnumRegion(stmts, i, match.enumName, scope, fillerCalls);
         if (!region) return false;
-        if (!this.tempsUnusedAfter(stmts, i, involved, scope)) return false;
+        if (!this.tempsUnusedAfter(stmts, i, involved, scope, match.length)) return false;
 
-        // 四条语句 -> 一条对象字面量赋值(成员值节点直接搬移,表达式纯且不引用会变的变量)
+        // 模式语句 -> 一条对象字面量赋值(成员值节点直接搬移,表达式纯且不引用会变的变量)
         const object = objectExpression(match.filler.members.map((m) => {
             let key: EnumMember["key"] = m.key;
             // 字符串键尽量还原成标识符键;__proto__ 必须保持 computed,
@@ -218,11 +302,14 @@ export class EnumSimplify implements ISimplify {
                 && /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(key.value)) {
                 key = identifier(key.value);
             }
-            return objectProperty(key, m.value, isStringLiteral(key) && key.value === "__proto__");
+            // 负数字面量键只能是 computed(`[-1]: "Unknown"`)
+            const computed = isUnaryExpression(key)
+                || (isStringLiteral(key) && key.value === "__proto__");
+            return objectProperty(key, m.value, computed);
         }));
         const replacement = expressionStatement(
             assignmentExpression("=", identifier(match.enumName), object));
-        stmts.splice(i, 4, replacement);
+        stmts.splice(i, match.length, replacement);
 
         // 之前证明已死的 `E = undefined;` 登记为删除候选,由 processScope 统一核对删除
         const undef = region.lastUndefIndex;
@@ -262,6 +349,11 @@ export class EnumSimplify implements ISimplify {
             } else if (a.left.computed
                 && (isStringLiteral(a.left.property) || isNumericLiteral(a.left.property))) {
                 key = a.left.property;
+            } else if (a.left.computed
+                && isUnaryExpression(a.left.property) && a.left.property.operator === "-"
+                && isNumericLiteral(a.left.property.argument)) {
+                // 负数键(如 TS enum 的负成员值)编译成 `p0[-1] = "Unknown"`
+                key = a.left.property;
             } else {
                 return null;
             }
@@ -299,34 +391,112 @@ export class EnumSimplify implements ISimplify {
         return { left: a.left.name, right: a.right };
     }
 
-    /** S2:if (!E / !v) { 若干 `名字 = 名字/空对象` 赋值,EnumName 与 v 最终都解析到同一个空对象 } */
-    private matchLazyInit(stmt: TYPE.Statement, enumName: string, valueTemp: string):
-        { object: TYPE.ObjectExpression; aliases: Set<string> } | null {
-        if (!isIfStatement(stmt) || stmt.alternate) return null;
+    /**
+     * S(if):if (!X) { 若干 `名字 = 名字/空对象` 赋值 } [else { 若干简单赋值 }];
+     * X 是标识符;then 分支必须恰好出现一个空对象字面量;else 分支(直接
+     * if/else 形态)只能是简单赋值。枚举名相关的校验在 resolveLazyInit 里做。
+     */
+    private matchLazyInitBranches(stmt: TYPE.Statement): LazyInitBranches | null {
+        if (!isIfStatement(stmt)) return null;
         const test = stmt.test;
         if (!isUnaryExpression(test) || test.operator !== "!" || !isIdentifier(test.argument)) return null;
-        if (test.argument.name !== enumName && test.argument.name !== valueTemp) return null;
         if (!isBlockStatement(stmt.consequent)) return null;
 
-        const map = new Map<string, TYPE.Expression>();
+        const thenMap = new Map<string, TYPE.Expression>();
         for (const inner of stmt.consequent.body) {
             const a = this.matchSimpleAssign(inner);
             if (!a) return null;
-            map.set(a.left, a.right);
+            thenMap.set(a.left, a.right);
         }
-        if (map.size === 0) return null;
+        if (thenMap.size === 0) return null;
 
         let object: TYPE.ObjectExpression | null = null;
-        for (const rhs of map.values()) {
+        for (const rhs of thenMap.values()) {
             if (isObjectExpression(rhs) && rhs.properties.length === 0) {
                 if (object) return null; // 出现两个空对象:无法确定共享的是哪一个
                 object = rhs;
             }
         }
         if (!object) return null;
-        if (this.resolveAlias(map, enumName, new Set()) !== object) return null;
-        if (this.resolveAlias(map, valueTemp, new Set()) !== object) return null;
-        return { object, aliases: new Set(map.keys()) };
+
+        let elseMap: Map<string, TYPE.Expression> | null = null;
+        if (stmt.alternate) {
+            if (!isBlockStatement(stmt.alternate)) return null;
+            elseMap = new Map<string, TYPE.Expression>();
+            for (const inner of stmt.alternate.body) {
+                const a = this.matchSimpleAssign(inner);
+                if (!a) return null;
+                elseMap.set(a.left, a.right);
+            }
+        }
+        return { testArg: test.argument.name, thenMap, elseMap, object };
+    }
+
+    /**
+     * 分支结构与枚举名的相容性检查:
+     *   - then 分支:enumName(以及装载形态的 v)最终都解析到空对象;
+     *   - else 分支(若有):enumName 解析后仍指向它自身 —— else 不得重写 E。
+     * 结合区域检查(E 此前只被赋过假值),else 分支实际不可达,
+     * 把模式改写成 `E = {...}` 才不改变语义。
+     */
+    private resolveLazyInit(
+        branches: LazyInitBranches,
+        enumName: string,
+        valueTemp: string | null,
+    ): { object: TYPE.ObjectExpression; aliases: Set<string> } | null {
+        const { thenMap, elseMap, object } = branches;
+        if (this.resolveAlias(thenMap, enumName, new Set()) !== object) return null;
+        if (valueTemp && this.resolveAlias(thenMap, valueTemp, new Set()) !== object) return null;
+        if (elseMap && !this.resolvesToIdentifier(elseMap, enumName, enumName)) return null;
+        const aliases = new Set<string>([...thenMap.keys(), ...(elseMap ? elseMap.keys() : [])]);
+        return { object, aliases };
+    }
+
+    /** S(调用):fnTemp(arg);返回实参名 */
+    private matchFillerCall(stmt: TYPE.Statement, fnTemp: string): string | null {
+        if (!isExpressionStatement(stmt) || !isCallExpression(stmt.expression)) return null;
+        const call = stmt.expression;
+        if (call.optional || !isIdentifier(call.callee) || call.callee.name !== fnTemp) return null;
+        if (call.arguments.length !== 1 || !isIdentifier(call.arguments[0])) return null;
+        return call.arguments[0].name;
+    }
+
+    /**
+     * 实参在两条分支里都必须持有"E 当前持有的值"(即要被填充的那个对象):
+     *   - 实参就是 enumName:then 里被赋成空对象,else 里本就持有对象;
+     *   - 装载形态的 v1:`v1 = E` 在 if 之前装载,两个分支初始都指向 E;
+     *   - 分支别名(如 acc):then 里必须解析到空对象;else 里若被重新装载,
+     *     必须装载自 E,否则放弃(保守:不确认两个分支填同一对象就不改写);
+     *   - 后置装载 `v5 = acc`:拿的是右值(acc)的检查结果。
+     */
+    private callArgHoldsEnum(
+        argName: string,
+        enumName: string,
+        valueTemp: string | null,
+        branches: LazyInitBranches,
+        postLoad: AliasLoad | null,
+    ): boolean {
+        const arg = postLoad && argName === postLoad.left ? postLoad.right : argName;
+        if (arg !== enumName && (valueTemp === null || arg !== valueTemp)) {
+            if (this.resolveAlias(branches.thenMap, arg, new Set()) !== branches.object) return false;
+        }
+        if (!branches.elseMap) return true;
+        if (arg === enumName) return true;
+        if (branches.elseMap.has(arg)) {
+            return this.resolvesToIdentifier(branches.elseMap, arg, enumName);
+        }
+        // else 里没有给实参赋值:只有"if 之前装载过 E"的 v1 才仍持有 E 的值
+        return valueTemp !== null && arg === valueTemp;
+    }
+
+    /** map 里 name 解析后是否最终指向标识符 target(如 else 分支里的 `acc = E`) */
+    private resolvesToIdentifier(
+        map: Map<string, TYPE.Expression>,
+        name: string,
+        target: string,
+    ): boolean {
+        const r = this.resolveAlias(map, name, new Set());
+        return !!r && isIdentifier(r) && r.name === target;
     }
 
     /** 沿分支内的赋值链解析别名;返回最终指向的节点(带环检测) */
@@ -389,19 +559,22 @@ export class EnumSimplify implements ISimplify {
      *      —— 闭包可能在任意时机看到新值;
      *   2. 模式之后的线性代码里,读取之前必须有**顺序上先执行**的顶层无条件赋值
      *      把旧值覆盖掉(块与块之间顺序展开;if/循环/switch/catch 体内的写入是
-     *      条件执行,不参与 kill);余下代码里若出现对 involved 名字的重新声明
-     *      (块级遮蔽),读写归属不可靠,直接放弃。
+     *      条件执行,不参与 kill);余下代码里对 involved 名字的 let/const 重新声明
+     *      按静态作用域遮蔽处理(声明之后读写的是新绑定),var 重新声明保守放弃。
      */
     private tempsUnusedAfter(
         stmts: TYPE.Statement[],
         i: number,
         involved: Set<string>,
         scope: TYPE.Program | TYPE.BlockStatement,
+        patternLength: number,
     ): boolean {
         if (scanCapturedRead(scope, null, involved, new Set(), false)) return false;
 
         for (const name of involved) {
-            if (this.sequenceFlowUnsafe(stmts, i + 4, name, { killed: false })) return false;
+            if (this.sequenceFlowUnsafe(stmts, i + patternLength, name, { killed: false, shadowed: false })) {
+                return false;
+            }
         }
         return true;
     }
@@ -409,12 +582,14 @@ export class EnumSimplify implements ISimplify {
     /**
      * 顺序数据流检查:从 from 开始的语句里,是否存在对 name 的读取
      * 发生在"能覆盖旧值的无条件赋值"之前。
+     * shadowed 为 true 表示 name 已被内层 let/const 重新声明遮蔽:
+     * 静态作用域下后续读写的都是新绑定,与外层旧值无关,直接按安全处理。
      */
     private sequenceFlowUnsafe(
         stmts: TYPE.Statement[],
         from: number,
         name: string,
-        state: { killed: boolean },
+        state: { killed: boolean; shadowed: boolean },
     ): boolean {
         for (let j = from; j < stmts.length; j++) {
             if (this.statementFlowUnsafe(stmts[j], name, state)) return true;
@@ -422,7 +597,8 @@ export class EnumSimplify implements ISimplify {
         return false;
     }
 
-    private statementFlowUnsafe(stmt: TYPE.Statement, name: string, state: { killed: boolean }): boolean {
+    private statementFlowUnsafe(stmt: TYPE.Statement, name: string, state: { killed: boolean; shadowed: boolean }): boolean {
+        if (state.shadowed) return false; // 已被遮蔽:后续读写都是新绑定
         if (isExpressionStatement(stmt)) {
             const expr = stmt.expression;
             if (isAssignmentExpression(expr) && expr.operator === "="
@@ -435,16 +611,40 @@ export class EnumSimplify implements ISimplify {
             return !state.killed && this.exprReadsUnsafe(expr, name);
         }
         if (isBlockStatement(stmt)) {
-            return this.sequenceFlowUnsafe(stmt.body, 0, name, state);
+            const savedKilled = state.killed;
+            const savedShadowed = state.shadowed;
+            const unsafe = this.sequenceFlowUnsafe(stmt.body, 0, name, state);
+            if (state.shadowed !== savedShadowed) {
+                // 块内发生的 let/const 遮蔽只在块内生效:块结束后旧绑定恢复可见;
+                // killed 一并回退 —— 遮蔽之后的赋值写给的是新绑定。
+                state.shadowed = savedShadowed;
+                state.killed = savedKilled;
+            }
+            return unsafe;
         }
         if (isLabeledStatement(stmt)) {
-            return isBlockStatement(stmt.body)
-                ? this.sequenceFlowUnsafe(stmt.body.body, 0, name, state)
-                : this.statementFlowUnsafe(stmt.body, name, state);
+            if (!isBlockStatement(stmt.body)) return this.statementFlowUnsafe(stmt.body, name, state);
+            const savedKilled = state.killed;
+            const savedShadowed = state.shadowed;
+            const unsafe = this.sequenceFlowUnsafe(stmt.body.body, 0, name, state);
+            if (state.shadowed !== savedShadowed) {
+                state.shadowed = savedShadowed;
+                state.killed = savedKilled;
+            }
+            return unsafe;
         }
         if (isVariableDeclaration(stmt)) {
             for (const d of stmt.declarations) {
-                if (isIdentifier(d.id) && d.id.name === name) return true; // 重新声明,遮蔽
+                if (isIdentifier(d.id) && d.id.name === name) {
+                    if (stmt.kind === "let" || stmt.kind === "const") {
+                        // 块级重新声明:静态作用域,声明处之后旧绑定不可见
+                        // (同块内更早的读取会踩 TDZ,合法输出里不存在)
+                        state.shadowed = true;
+                        return false;
+                    }
+                    // var 是同一函数作用域绑定,条件执行的重新初始化不可靠,保守放弃
+                    return true;
+                }
                 if (!state.killed && d.init && this.exprReadsUnsafe(d.init, name)) return true;
             }
             return false;
@@ -484,8 +684,11 @@ export class EnumSimplify implements ISimplify {
             // block / finalizer 无条件执行,可以传播 kill;handler 条件执行。
             // 异常可能中断 block 提前进入 handler:handler/finalizer 检查时用进入前的 kill 状态。
             const saved = state.killed;
+            const savedShadowed = state.shadowed;
             if (this.sequenceFlowUnsafe(stmt.block.body, 0, name, state)) return true;
             state.killed = saved;
+            // block 内的 let/const 遮蔽只在 block 内生效
+            state.shadowed = savedShadowed;
             if (stmt.handler && this.branchFlowUnsafe(stmt.handler.body, name, saved)) return true;
             if (stmt.finalizer && this.sequenceFlowUnsafe(stmt.finalizer.body, 0, name, state)) return true;
             return false;
