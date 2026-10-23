@@ -16,6 +16,7 @@ const {
     isIdentifier,
     isMemberExpression,
     isReturnStatement,
+    isSequenceExpression,
     isStringLiteral,
     isUnaryExpression,
     memberExpression,
@@ -111,6 +112,17 @@ export class AccCallSimplify implements ISimplify {
         return { mode, target, operator, receiver, args: args as TYPE.CallExpression["arguments"], wrappers };
     }
 
+    /** `X = X` 的纯空操作(不改变任何绑定,可安全越过)。 */
+    private isSelfAssignStatement(stmt: TYPE.Statement, name: string): boolean {
+        return isExpressionStatement(stmt)
+            && isAssignmentExpression(stmt.expression)
+            && stmt.expression.operator === "="
+            && isIdentifier(stmt.expression.left)
+            && stmt.expression.left.name === name
+            && isIdentifier(stmt.expression.right)
+            && stmt.expression.right.name === name;
+    }
+
     private matchReceiverAssign(stmt: TYPE.Statement, name: string): boolean {
         return isExpressionStatement(stmt)
             && isAssignmentExpression(stmt.expression)
@@ -158,6 +170,8 @@ export class AccCallSimplify implements ISimplify {
         for (let i = loadIndex - 1; i >= 0; i--) {
             const previous = list[i];
             const writes = collectAssignedNames(previous);
+            // `acc = acc` 是空操作,不能当作“acc 被改写”而阻断接收者回找。
+            if (this.isSelfAssignStatement(previous, "acc")) continue;
             if (writes.has("acc")) return null;
             if (writes.has(receiverName)) {
                 if (this.matchReceiverAssign(previous, receiverName)) return receiverName;
@@ -212,6 +226,35 @@ export class AccCallSimplify implements ISimplify {
         let changed = false;
         for (const body of bodies) {
             if (this.simplifyBody(body)) changed = true;
+        }
+        return changed;
+    }
+
+    /**
+     * 处理只存在于表达式里的方法装载链:条件被结构化分析放进一条 SequenceExpression,
+     * 不在任何语句列表中,常规 simplify 扫不到:
+     *   (acc = acc.prop, v = acc, ..., acc = acc.call(recv, args))
+     * → (acc = recv.prop(args), ...)
+     * 用临时 ExpressionStatement 包装后复用语句层面的匹配,再写回表达式数组。
+     *
+     * 放在流水线末端、ConditionSimplify.foldMaterializedTestArtifacts 之前调用:
+     * 此时序列里的 acc/接收者临时变量都已完成复制传播,提前处理会留下
+     * `X = acc` / `acc = X.test(...)` 这类中间形态,后续轮次的别名传播可能读错版本。
+     */
+    static simplifySequences(node: Program): boolean {
+        const pass = new AccCallSimplify();
+        const sequences: TYPE.SequenceExpression[] = [];
+        walkNode(node, (n) => {
+            if (isSequenceExpression(n)) sequences.push(n);
+            return true;
+        });
+        let changed = false;
+        for (const seq of sequences) {
+            if (seq.expressions.length < 2) continue;
+            const stmts = seq.expressions.map((e) => expressionStatement(e as TYPE.Expression));
+            if (!pass.simplifyBody(stmts)) continue;
+            seq.expressions = stmts.map((s) => (s as TYPE.ExpressionStatement).expression) as TYPE.Expression[];
+            changed = true;
         }
         return changed;
     }

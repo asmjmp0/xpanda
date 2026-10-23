@@ -467,6 +467,11 @@ export class SyntaxRewriteSimplify implements ISimplify {
         if (alternateBool === false) return logicalExpression("&&", test, consequent);
         if (consequentBool === true) return logicalExpression("||", test, alternate);
         if (alternateBool === true) return logicalExpression("||", this.invertExpression(test), consequent);
+        // T ? B : T -> T && B;T ? T : B -> T || B。布尔物化链里的补值写法:
+        //   !T ? T : B 先交换成 T ? B : T,再折成 T && B。
+        // 两个方向都与三元逐值等价(真值分支返回 B/T,假值分支返回 T/B)。
+        if (isNodeEqual(alternate, test)) return logicalExpression("&&", test, consequent);
+        if (isNodeEqual(consequent, test)) return logicalExpression("||", test, alternate);
         return null;
     }
 

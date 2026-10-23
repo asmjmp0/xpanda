@@ -36,7 +36,7 @@ isOnlineHistoryCursorUrl = function (p0) {
   if (p0.length !== 0) {
     v1 = p0.length > 4096;
   }
-  if (v1 || (v1 = new RegExp("[\\u0000-\\u0020\\u007F-\\uFFFF]"), v1.test.call(v1, p0))) {
+  if (v1 || new RegExp("[\\u0000-\\u0020\\u007F-\\uFFFF]").test(p0)) {
     return false;
   } else if (!p0.startsWith("" + ONLINE_HISTORY_BASE_URL + "?")) {
     return false;

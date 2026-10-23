@@ -125,9 +125,9 @@ local_0_14 = function (p0) {
   let v4, v11;
   v4 = new local_0_15 /*FormatByteRange*/();
   for (v11 of sabrReadFields(p0)) {
-    if ((v11.number === 1 ? v11.number === 1 : v11.number === 3) && v11.wireType === WIRE_VARINT) {
+    if ((v11.number === 1 || v11.number === 3) && v11.wireType === WIRE_VARINT) {
       v4.start = v11.varint;
-    } else if ((v11.number === 2 ? v11.number === 2 : v11.number === 4) && v11.wireType === WIRE_VARINT) {
+    } else if ((v11.number === 2 || v11.number === 4) && v11.wireType === WIRE_VARINT) {
       v4.end = v11.varint;
     }
   }
@@ -273,45 +273,21 @@ local_0_6 = function (p0) {
   return v4;
 };
 isRecoverableIntegrityIssues = function (p0) {
-  let v9, v10, v13, v14, v15, v16, acc;
+  let v10;
   if (p0.length === 0) {
     return false;
   } else {
-    v9 = p0[Symbol.iterator]();
-    acc = false;
-    do {
-      v10 = v9.next();
-      if (v10.done) {
-        return true;
-      }
-      acc = !v10.value.startsWith("length-mismatch:");
-      v16 = acc;
-      acc = !acc;
-      acc = acc ? v16 : !v10.value.startsWith("missing-media-end:");
-      v15 = acc;
-      acc = !acc;
-      acc = acc ? v15 : !v10.value.startsWith("missing-media:");
-      v14 = acc;
-      acc = !acc;
-      acc = acc ? v14 : !v10.value.startsWith("media-without-header:");
-      v13 = acc;
-      acc = !acc;
-      acc = acc ? v13 : !v10.value.startsWith("media-end-without-header:");
-      if (!acc) {
+    for (v10 of p0) {
+      if (v10.startsWith("length-mismatch:") || v10.startsWith("missing-media-end:") || v10.startsWith("missing-media:") || v10.startsWith("media-without-header:") || v10.startsWith("media-end-without-header:")) {
         continue;
       }
-      acc = !v10.value.startsWith("truncated-ump-response:");
-      acc = !acc;
-    } while (acc);
-    if (v9.return != undefined) {
-      v9.return();
+      if (!v10.startsWith("truncated-ump-response:")) return false;
     }
-    return false;
+    return true;
   }
 };
 requireUmpContentType = function (p0, p1) {
-  let v8;
-  if (!p0 || v8.indexOf.call(v8, "application/vnd.yt-ump") < 0) {
+  if (!p0 || p0.toLowerCase().indexOf("application/vnd.yt-ump") < 0) {
     throw new SabrProtocolException("Expected UMP response, got content type: " + p0 + ", status=" + p1 + "");
   } else {
     return;

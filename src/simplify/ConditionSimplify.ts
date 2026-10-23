@@ -204,6 +204,10 @@ export class ConditionSimplify implements ISimplify {
         if (!consumer) return false;
         const name = this.tempTestName(consumer.test);
         if (name === null || !isTempName(name)) return false;
+        // 循环体里的 continue 会带着 X 的新值直接跳到循环 test:
+        //   do { X = !X; if (X) continue; ... } while (X)
+        // 折叠取反链后 X 在 continue 路径上的值不再相等,循环 test 会提前退出。
+        if (this.continueEdgeReadsLoopTest(stmtPath, name)) return false;
 
         // 向前数连续的 `X = !X`
         let count = 0;
@@ -261,6 +265,47 @@ export class ConditionSimplify implements ISimplify {
             }
         }
         return unaryExpression("!", node);
+    }
+
+    /**
+     * if 的分支里含 continue 时,continue 会把当前变量值带到最近循环的 test/update。
+     * 若 test/update 读取 name,不能把 `X = !X` 折进 if 的 test,否则 continue 边上的
+     * X 值被改变。典型:
+     *   do { acc = !acc; if (acc) continue; ... } while (acc)
+     * 折叠成 `if (!acc) continue` 后,continue 跳到 test 时 acc 是折叠前的旧值。
+     */
+    private continueEdgeReadsLoopTest(stmtPath: NodePath<TYPE.Statement>, name: string): boolean {
+        const stmt = stmtPath.node;
+        if (!isIfStatement(stmt)) return false;
+        const branches: TYPE.Statement[] = [stmt.consequent];
+        if (stmt.alternate) branches.push(stmt.alternate);
+        let hasContinue = false;
+        walkNode({ type: "BlockStatement", body: branches } as TYPE.BlockStatement, (n) => {
+            if (isFunctionLike(n) || isClassLike(n)) return false;
+            if (n.type === "ContinueStatement") {
+                hasContinue = true;
+                return false;
+            }
+            return true;
+        });
+        if (!hasContinue) return false;
+
+        // continue 作用于最近一层循环;只看它的 test/update,其它祖先循环不会被这条边直接执行。
+        let current: NodePath | null = stmtPath.parentPath;
+        while (current) {
+            const node = current.node;
+            if (node.type === "DoWhileStatement" || node.type === "WhileStatement") {
+                return collectReadNames((node as TYPE.WhileStatement).test).has(name);
+            }
+            if (node.type === "ForStatement") {
+                const loop = node as TYPE.ForStatement;
+                return (!!loop.test && collectReadNames(loop.test).has(name))
+                    || (!!loop.update && collectReadNames(loop.update).has(name));
+            }
+            if (node.type === "ForInStatement" || node.type === "ForOfStatement") return false;
+            current = current.parentPath;
+        }
+        return false;
     }
 
     /**
@@ -650,8 +695,13 @@ export class ConditionSimplify implements ISimplify {
         started: boolean,
         written: boolean,
     ): { readBefore: boolean; started: boolean; written: boolean } {
-        if (node === skip) return { readBefore: false, started, written };
+        // anchor 与 skip 可能指向同一节点(dropDeadSaveElement 删除的就是 anchor 本身):
+        // 必须先判断 anchor,让后续元素处于“已越过 anchor”的状态,否则 anchor 之后的
+        // 读取会全部被当成 anchor 之前而漏检。例如:
+        //   (acc = p0.toLowerCase(), v8 = acc, ..., acc.call(v8, ...), acc < 0)
+        // 删除 `acc = p0.toLowerCase()` 时,`v8 = acc` 读到的是被删掉的旧值。
         if (node === anchor) return { readBefore: false, started: true, written: false };
+        if (node === skip) return { readBefore: false, started, written };
         const value = node as unknown as { expression?: TYPE.Expression };
         if (isParenthesizedExpression(node)) {
             return this.readsNameBeforeWriteAfterAnchor(value.expression as TYPE.Expression, anchor, name, skip, started, written);

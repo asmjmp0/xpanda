@@ -43,7 +43,7 @@ local_0_13 = function (p0, p1) {
   if (p0.length !== 0) {
     v0 = p0.length > p1;
   }
-  if (v0 || (v0 = new RegExp("[\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F]"), v0.test.call(v0, p0))) {
+  if (v0 || new RegExp("[\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F]").test(p0)) {
     return false;
   } else {
     return !new RegExp("<\\/?[A-Za-z][^>]*>").test(p0)

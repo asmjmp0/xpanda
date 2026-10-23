@@ -3,7 +3,7 @@ import {ISimplify} from "./ISimplify";
 import * as TYPE from "@babel/types";
 import traverse, {NodePath} from "@babel/traverse";
 import {SyntaxRewriteSimplify} from "./SyntaxRewriteSimplify";
-import {isDoneMember, isNextValue, isNodeEqual} from "./AstUtils";
+import {collectIdentifierNames, isDoneMember, isNextValue, isNodeEqual} from "./AstUtils";
 
 
 const {
@@ -20,6 +20,7 @@ const {
     isProgram,
     optionalMemberExpression,
     switchCase,
+    unaryExpression: unaryExpressionBuilder,
     assignmentExpression: assignmentExpressionBuilder,
     blockStatement: blockStatementBuilder,
     conditionalExpression: conditionalExpressionBuilder,
@@ -564,6 +565,193 @@ export class HighLevelGrammarSimplify implements ISimplify {
         return true;
     }
 
+    /** test 去掉偶数个 `!` 后是标识符时返回名字;`!X`(奇数次)返回 null。 */
+    private loopTestSimpleName(test: TYPE.Expression): string | null {
+        let expr: TYPE.Expression = test;
+        let negated = false;
+        while (TYPE.isUnaryExpression(expr) && expr.operator === "!") {
+            negated = !negated;
+            expr = expr.argument as TYPE.Expression;
+        }
+        return !negated && isIdentifierNode(expr) ? expr.name : null;
+    }
+
+    /**
+     * 还原“提前 return 的 for...of”被 lower 成的 do-while:
+     *
+     *   it = arr[Symbol.iterator]();
+     *   do {
+     *     v = it.next();
+     *     if (v.done) return true;
+     *     ...;                       // 含 if (acc) continue;
+     *     acc = ...;                 // 循环 test 的物化
+     *   } while (acc);
+     *   close(it);
+     *   return false;
+     *
+     * → for (const v of arr) {
+     *     ...;
+     *     if (!acc) return false;    // 原来的循环出口
+     *   }
+     *   return true;
+     *
+     * 与 while(true)+break 形态不同,这里的 done 分支 return 的是循环正常结束值,
+     * 循环 test 为假则走循环后的 return。只有 continue 的守卫能保证 test 在 continue
+     * 路径上为真时才转换,否则 for-of 的 continue 会跳过附加的出口判断。
+     */
+    private checkAndTransformDoWhileToForOfStatement(value: NodePath<TYPE.DoWhileStatement>): boolean {
+        const testName = this.loopTestSimpleName(value.node.test);
+        if (testName === null) return false;
+
+        // 循环前紧邻的可能还有不读取迭代器的临时初始化(如 `acc = false`),
+        // 向后找到真正的 `it = arr[Symbol.iterator]()` 即可,这些语句保留在原位。
+        let initPath: NodePath | null = value.getPrevSibling();
+        let init: TYPE.AssignmentExpression | null = null;
+        let iterable: TYPE.Expression | null = null;
+        for (let skipped = 0; initPath && skipped < 4; skipped++) {
+            if (!isExpressionStatementNode(initPath.node) || !isAssignmentExpressionNode(initPath.node.expression)) break;
+            const candidate = initPath.node.expression;
+            if (!isIdentifierNode(candidate.left)) break;
+            const candidateIterable = this.iterableOfIteratorInit(candidate.right as TYPE.Expression);
+            if (candidateIterable) {
+                init = candidate;
+                iterable = candidateIterable;
+                break;
+            }
+            // 只允许跨过不读取任何名字的简单常量初始化。
+            if (isBooleanLiteral(candidate.right) || isNullLiteralNode(candidate.right)
+                || (isIdentifierNode(candidate.right) && candidate.right.name === "undefined")) {
+                initPath = initPath.getPrevSibling();
+                continue;
+            }
+            break;
+        }
+        if (!init || !iterable || !initPath) return false;
+        const iterName = (init.left as TYPE.Identifier).name;
+        const iterBinding = value.scope.getBinding(iterName);
+        if (!iterBinding) return false;
+
+        const body = value.get('body');
+        if (!isBlockStatementNode(body.node)) return false;
+        const bodyStatements = (body as NodePath<TYPE.BlockStatement>).get('body');
+        if (bodyStatements.length < 3) return false;
+
+        // body[0]: vv = it.next()
+        const nextStatement = bodyStatements[0].node;
+        if (!isExpressionStatementNode(nextStatement) || !isAssignmentExpressionNode(nextStatement.expression)) return false;
+        const nextAssign = nextStatement.expression;
+        if (nextAssign.operator !== "=" || !isIdentifierNode(nextAssign.left)
+            || !this.isNextCallOf(nextAssign.right, iterName)) return false;
+        const vv = nextAssign.left;
+        if (vv.name === iterName) return false;
+
+        // body[1]: if (vv.done) return <常量>
+        const doneStmt = bodyStatements[1];
+        if (!doneStmt.isIfStatement() || doneStmt.node.alternate) return false;
+        const doneTest = doneStmt.get('test');
+        if (!isDoneMember(doneTest.node)) return false;
+        const doneObject = (doneTest.node as TYPE.MemberExpression).object;
+        if (!isIdentifierNode(doneObject) || doneObject.name !== vv.name) return false;
+        const doneConsequent = doneStmt.get('consequent');
+        let doneReturn: TYPE.Expression | null = null;
+        if (doneConsequent.isReturnStatement() && doneConsequent.node.argument) {
+            doneReturn = doneConsequent.node.argument;
+        } else if (doneConsequent.isBlockStatement() && doneConsequent.node.body.length === 1) {
+            const only = doneConsequent.node.body[0];
+            if (isReturnStatementNode(only) && only.argument) doneReturn = only.argument;
+        }
+        // 循环结束值会被搬到循环之后,只接受常量,避免依赖循环内被修改的状态。
+        if (!doneReturn || !isBooleanLiteral(doneReturn)) return false;
+
+        // 循环后的 iterator.close + return <常量>
+        const extras: NodePath<TYPE.Statement>[] = [];
+        let cursor = value.getNextSibling();
+        while (cursor && cursor.isIfStatement() && collectIdentifierNames(cursor.node).has(iterName)) {
+            extras.push(cursor as NodePath<TYPE.Statement>);
+            cursor = cursor.getNextSibling();
+        }
+        if (extras.length === 0 || !cursor || !cursor.isReturnStatement()) return false;
+        const exitPath = cursor as NodePath<TYPE.ReturnStatement>;
+        if (!exitPath.node.argument || !isBooleanLiteral(exitPath.node.argument)) return false;
+        const exitReturn = exitPath.node.argument;
+
+        // 转换后 it/vv 都不再存在:it 只能出现在 init/next()/close 里,
+        // vv 只能在循环体内使用。
+        const iterObjectNode = ((nextAssign.right as TYPE.CallExpression).callee as TYPE.MemberExpression).object;
+        for (const ref of iterBinding.referencePaths) {
+            if (!ref.node || ref.node === iterObjectNode) continue;
+            if (extras.some((e) => ref.findParent((parent) => parent.node === e.node))) continue;
+            return false;
+        }
+        for (const violation of iterBinding.constantViolations) {
+            if (!violation.node || violation.node === init) continue;
+            return false;
+        }
+        const valueBinding = value.scope.getBinding(vv.name);
+        if (valueBinding) {
+            for (const ref of valueBinding.referencePaths) {
+                if (!ref.node) continue;
+                if (!ref.findParent((parent) => parent.node === value.node)) return false;
+            }
+        }
+
+        // 循环 test 在 continue 路径上必须为真,否则附加的出口判断会被跳过。
+        let valid = true;
+        body.traverse({
+            Function: (p) => p.skip(),
+            ContinueStatement: (p) => {
+                const owner = p.findParent((parent) => parent.isWhileStatement() || parent.isDoWhileStatement()
+                    || parent.isForStatement() || parent.isForInStatement() || parent.isForOfStatement());
+                if (!owner || owner.node !== value.node) return;
+                let child: NodePath = p;
+                let parent = p.parentPath;
+                while (parent && parent.isBlockStatement()) {
+                    child = parent;
+                    parent = parent.parentPath;
+                }
+                if (!parent || !parent.isIfStatement() || parent.node.alternate
+                    || child.node !== parent.node.consequent
+                    || this.loopTestSimpleName(parent.node.test) !== testName) {
+                    valid = false;
+                    p.stop();
+                }
+            },
+            BreakStatement: (p) => {
+                const owner = p.findParent((parent) => parent.isWhileStatement() || parent.isDoWhileStatement()
+                    || parent.isForStatement() || parent.isForInStatement() || parent.isForOfStatement()
+                    || parent.isSwitchStatement());
+                if (!owner || owner.node !== value.node) return;
+                valid = false;
+                p.stop();
+            },
+        });
+        if (!valid) return false;
+
+        // 只替换迭代器结果对象自己的 .value。
+        body.traverse({
+            MemberExpression: (path) => {
+                if (path.node.computed) return;
+                if (!isIdentifierNode(path.node.object) || path.node.object.name !== vv.name) return;
+                if (!isIdentifierNode(path.node.property) || path.node.property.name !== "value") return;
+                path.replaceWith(identifier(vv.name));
+            },
+        });
+
+        const arr: TYPE.Statement[] = [];
+        for (let i = 2; i < bodyStatements.length; i++) arr.push(bodyStatements[i].node);
+        arr.push(TYPE.ifStatement(
+            unaryExpressionBuilder("!", identifier(testName)),
+            returnStatementBuilder(exitReturn)));
+        const forOfStatement = forOfStatementBuilder(vv, iterable as TYPE.Expression, blockStatementBuilder(arr));
+
+        for (const extra of extras) extra.remove();
+        exitPath.remove();
+        value.replaceWith(forOfStatement);
+        value.insertAfter(returnStatementBuilder(doneReturn));
+        initPath.remove();
+        return true;
+    }
+
     simplify(node: Program): boolean {
         let changed = false;
         traverse(file(node), {
@@ -572,6 +760,11 @@ export class HighLevelGrammarSimplify implements ISimplify {
                 if (this.checkAndTransformToForStatement(value)) changed = true;
                 if (this.checkAndTransformToForInStatement(value)) changed = true;
                 if (this.checkAndTransformToForOfStatement(value)) changed = true;
+            },
+            DoWhileStatement:{
+                exit:(value)=>{
+                    if (this.checkAndTransformDoWhileToForOfStatement(value)) changed = true;
+                },
             },
             IfStatement:{
                 // 用 exit 自底向上折叠:嵌套 if / else-if 先折成赋值语句,

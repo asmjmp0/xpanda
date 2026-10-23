@@ -433,6 +433,7 @@ export class TempVariableSimplify implements ISimplify {
             this.foldLoopTestTemps(body, ctx);
         }
         this.foldTestSequences(body, ctx);
+        if (this.conditionsOnly) this.foldBooleanAliasAssignments(body, ctx);
         this.cleanupConditionAssignments(body, ctx);
         if (!this.conditionsOnly) {
             this.foldShortCircuitChains(body, ctx);
@@ -1029,6 +1030,167 @@ export class TempVariableSimplify implements ISimplify {
         stmt.test = newTest;
         this.changed = true;
         return true;
+    }
+
+    /**
+     * 折叠布尔三目刚展开出来的别名链:
+     *   X = E; Y = X && F; ...   ->   Y = E && F; ...
+     * 仅当 X 是未被捕获的临时变量、E 不读取 X、且 X 在本条语句之后已死。
+     * 重复应用后 `v16 = !A; v15 = v16 && !B; ...` 会收敛成一条逻辑表达式,
+     * 再交给 cleanupConditionAssignments 搬进紧随其后的 if test。
+     */
+    private foldBooleanAliasAssignments(stmts: TYPE.Statement[], ctx: FunctionContext): void {
+        let folded = true;
+        while (folded) {
+            folded = false;
+            for (let i = 0; i + 1 < stmts.length; i++) {
+                if (this.tryFoldBooleanMaterialization(stmts, i, ctx)) {
+                    folded = true;
+                    break;
+                }
+                if (!this.tryFoldBooleanAlias(stmts, i, ctx)) continue;
+                folded = true;
+                break;
+            }
+        }
+        // 折叠后可能留下只写不读的临时赋值(如循环前的 `acc = false`),
+        // 删除它们后 removeUnusedDeclarations 才能清掉对应声明。
+        for (let i = stmts.length - 1; i >= 0; i--) {
+            const stmt = stmts[i];
+            if (!isExpressionStatement(stmt) || !isAssignmentExpression(stmt.expression)) continue;
+            const assign = stmt.expression;
+            if (assign.operator !== "=" || !isIdentifier(assign.left)) continue;
+            const name = assign.left.name;
+            if (!isTempName(name) || isDeclarationValue(assign.right) || !isPureExpression(assign.right)) continue;
+            const info = ctx.infos.get(name);
+            if (!info || info.captured || info.refs.size !== 0) continue;
+            stmts.splice(i, 1);
+            this.changed = true;
+        }
+        for (const stmt of stmts) this.foldBooleanAliasChildren(stmt, ctx);
+    }
+
+    /**
+     * 布尔三目物化链:
+     *   X = E; Y = X; X = !X; X = X ? Y : F   ->   X = E && F
+     * 逐值等价:E 为假时原式得到 Y(=E),新式短路返回 E;E 为真时原式取 F,
+     * 新式继续求值 F。要求 Y 之后已死、F 不读取 X/Y。
+     */
+    private tryFoldBooleanMaterialization(stmts: TYPE.Statement[], i: number, ctx: FunctionContext): boolean {
+        if (i + 3 >= stmts.length) return false;
+        const s1 = stmts[i];
+        const s2 = stmts[i + 1];
+        const s3 = stmts[i + 2];
+        const s4 = stmts[i + 3];
+        if (!isExpressionStatement(s1) || !isAssignmentExpression(s1.expression)) return false;
+        if (!isExpressionStatement(s2) || !isAssignmentExpression(s2.expression)) return false;
+        if (!isExpressionStatement(s3) || !isAssignmentExpression(s3.expression)) return false;
+        if (!isExpressionStatement(s4) || !isAssignmentExpression(s4.expression)) return false;
+        const a = s1.expression;
+        const b = s2.expression;
+        const c = s3.expression;
+        const d = s4.expression;
+        if (a.operator !== "=" || !isIdentifier(a.left)) return false;
+        if (b.operator !== "=" || !isIdentifier(b.left) || !isIdentifier(b.right)) return false;
+        if (c.operator !== "=" || !isIdentifier(c.left)) return false;
+        if (d.operator !== "=" || !isIdentifier(d.left)) return false;
+        const name = a.left.name;
+        if (!isTempName(name) || !isTempName(b.left.name)) return false;
+        if (b.right.name !== name || c.left.name !== name || d.left.name !== name) return false;
+        if (!isUnaryExpression(c.right) || c.right.operator !== "!"
+            || !isIdentifier(c.right.argument) || c.right.argument.name !== name) return false;
+        if (!TYPE.isConditionalExpression(d.right)) return false;
+        const conditional = d.right;
+        if (!isIdentifier(conditional.test) || conditional.test.name !== name) return false;
+        if (!isIdentifier(conditional.consequent) || conditional.consequent.name !== b.left.name) return false;
+        const fallback = conditional.alternate as TYPE.Expression;
+        if (collectReadNames(fallback).has(name) || collectReadNames(fallback).has(b.left.name)) return false;
+
+        const info = ctx.infos.get(name);
+        const aliasInfo = ctx.infos.get(b.left.name);
+        if (!info || info.captured || !aliasInfo || aliasInfo.captured) return false;
+        if (isDeclarationValue(a.right) || collectReadNames(a.right).has(name)) return false;
+        // 别名变量 Y 在这次物化之后不能再被读取。
+        const liveAfter = ctx.liveAfter.get(s4);
+        if (liveAfter && liveAfter.has(b.left.name)) return false;
+
+        this.removeRefs(b.right, ctx);
+        this.removeRefs(c.right, ctx);
+        this.removeRefs(conditional.test, ctx);
+        this.removeRefs(conditional.consequent, ctx);
+        a.right = logicalExpression("&&", a.right, fallback);
+        stmts.splice(i + 1, 3);
+        this.changed = true;
+        return true;
+    }
+
+    private tryFoldBooleanAlias(stmts: TYPE.Statement[], i: number, ctx: FunctionContext): boolean {
+        const first = stmts[i];
+        const second = stmts[i + 1];
+        if (!isExpressionStatement(first) || !isAssignmentExpression(first.expression)) return false;
+        if (!isExpressionStatement(second) || !isAssignmentExpression(second.expression)) return false;
+        const a = first.expression;
+        const b = second.expression;
+        if (a.operator !== "=" || !isIdentifier(a.left)) return false;
+        if (b.operator !== "=" || !isIdentifier(b.left)) return false;
+        const xName = a.left.name;
+        const yName = b.left.name;
+        if (!isTempName(xName) || !isTempName(yName)) return false;
+        const aInfo = ctx.infos.get(xName);
+        const bInfo = ctx.infos.get(yName);
+        if (!aInfo || aInfo.captured || !bInfo || bInfo.captured) return false;
+        if (isDeclarationValue(a.right)) return false;
+        // E 必须只读取旧值一次;这里要求它完全不读 X,避免搬移后读取到更旧的值。
+        if (collectReadNames(a.right).has(xName)) return false;
+
+        const rhs = b.right;
+        if (!isLogicalExpression(rhs)) return false;
+        if (!isIdentifier(rhs.left) || rhs.left.name !== xName) return false;
+        if (this.countReadsInNode(rhs, xName) !== 1) return false;
+        // X 的值在这次使用之后不能再被读取(闭包读取已由 captured 排除)。
+        const liveAfter = ctx.liveAfter.get(second);
+        if (liveAfter && liveAfter.has(xName)) return false;
+
+        this.removeRefs(rhs.left, ctx);
+        rhs.left = a.right as TYPE.Expression;
+        stmts.splice(i, 1);
+        this.changed = true;
+        return true;
+    }
+
+    private foldBooleanAliasChildren(stmt: TYPE.Statement, ctx: FunctionContext): void {
+        switch (stmt.type) {
+            case "BlockStatement":
+                this.foldBooleanAliasAssignments(stmt.body, ctx);
+                break;
+            case "IfStatement":
+                if (isBlockStatement(stmt.consequent)) this.foldBooleanAliasAssignments(stmt.consequent.body, ctx);
+                else this.foldBooleanAliasChildren(stmt.consequent, ctx);
+                if (stmt.alternate) {
+                    if (isBlockStatement(stmt.alternate)) this.foldBooleanAliasAssignments(stmt.alternate.body, ctx);
+                    else this.foldBooleanAliasChildren(stmt.alternate, ctx);
+                }
+                break;
+            case "WhileStatement":
+            case "DoWhileStatement":
+            case "ForStatement":
+            case "ForInStatement":
+            case "ForOfStatement":
+            case "LabeledStatement":
+                if (isBlockStatement(stmt.body)) this.foldBooleanAliasAssignments(stmt.body.body, ctx);
+                else this.foldBooleanAliasChildren(stmt.body, ctx);
+                break;
+            case "TryStatement":
+                this.foldBooleanAliasAssignments(stmt.block.body, ctx);
+                if (stmt.handler) this.foldBooleanAliasAssignments(stmt.handler.body.body, ctx);
+                if (stmt.finalizer) this.foldBooleanAliasAssignments(stmt.finalizer.body, ctx);
+                break;
+            case "SwitchStatement":
+                for (const c of stmt.cases) this.foldBooleanAliasAssignments(c.consequent, ctx);
+                break;
+            default:
+                break;
+        }
     }
 
     /** X = E; (X = !X;)? if (!X / X / 含 X 的复合条件) -> if (E / !E / ...) */
@@ -2266,6 +2428,11 @@ export class TempVariableSimplify implements ISimplify {
                         stmt.init = this.processExpression(stmt.init, env, list, index, ctx);
                     }
                 }
+                // test/update/body 在第二次及之后的迭代里读到的是上一轮写入的值,
+                // 不能沿用 init 刚建立的常量(否则 `for (v = 0; v < n; v = v + 1)`
+                // 会被传播成 `0 < n` / `v = 0 + 1`)。只清掉循环内会被改写的名字。
+                this.invalidateRegionWrites(
+                    this.collectRegionWrites([stmt.test, stmt.update, stmt.body]), env);
                 stmt.test = this.rewriteExpr(stmt.test, env, list, index, ctx, false);
                 if (stmt.update) stmt.update = this.processExpression(stmt.update, env.copy(), list, index, ctx, false);
                 this.processNestedStatement(stmt.body, env.copy(), ctx);

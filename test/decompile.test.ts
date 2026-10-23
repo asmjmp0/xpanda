@@ -850,6 +850,36 @@ function f(acc, v0) {
 }
 
 /**
+ * 回归:test 序列里的死保存不能把仍被后续元素读取的赋值删掉。
+ *
+ * 字节码把 `p0.toLowerCase().indexOf(...)` 物化成一串 acc 中转:
+ *   (acc = p0.toLowerCase(), v0 = acc, acc = acc, acc = acc.indexOf,
+ *    acc = acc.call(v0, ...), acc < 0)
+ * 删除 `acc = p0.toLowerCase()` 时,`v0 = acc` 会读到未初始化的 acc,
+ * 最终输出成 `if (!p0 || v0.indexOf.call(v0, ...))`(v0 只有声明)。
+ * anchor 与 skip 是同一节点时必须先标记“已越过 anchor”,再检查后续读取。
+ */
+function verifyTestSequenceKeepsReadValue(): void {
+    const program = NodeFactory.parse(`
+function f(p0) {
+  let v0, acc;
+  if (!p0 || (acc = p0.toLowerCase(), v0 = acc, acc = acc, acc = acc.indexOf, acc = acc.call(v0, "application/vnd.yt-ump"), acc < 0)) {
+    return;
+  }
+}
+`);
+    SimplifyExport.simplify(program);
+    const code = NodeFactory.generate(program);
+    // 允许后续进一步折成 p0.toLowerCase().indexOf(...),但不能只剩未赋值的 v0
+    if (!code.includes("v0 = p0.toLowerCase()") && !code.includes("p0.toLowerCase().indexOf")) {
+        throw new Error(`simplify: test 序列删掉了仍被读取的赋值,留下未初始化的临时变量\n${code}`);
+    }
+    if (code.includes("if (!p0 || v0.indexOf.call(v0")) {
+        throw new Error(`simplify: v0 在赋值前被读取\n${code}`);
+    }
+}
+
+/**
  * 回归:三元 test 里的临时保存必须有“版本”意识。
  *   - test 里先保存旧值、随后同一路径上又覆盖的保存可以删:
  *       (v0 = p0.kind, ...) && (v0 = p0.text.trim(), v0.length > 0)
@@ -1496,6 +1526,23 @@ function verifyYourpipeSabrResponseDecoder(): void {
             throw new Error(`SabrResponseDecoder: 复用迭代器的 for...of 未还原(${iterable})\n${code}`);
         }
     }
+    // isRecoverableIntegrityIssues 的 for...of 体内有提前 return,被 lower 成
+    // `do { v = it.next(); if (v.done) return true; ... } while (cond)` + iterator.close。
+    // 应还原成 for...of,并把 `acc = !... ? ...` 布尔物化链折成已知类型判断的 || 链;
+    // 曾经因为把 `acc = !acc` 折进 `if (acc) continue` 而没有同步 do-while test 的值,
+    // 导致已知问题类型被误判成不可恢复。
+    const recStart = code.indexOf("isRecoverableIntegrityIssues =");
+    if (recStart < 0) throw new Error(`SabrResponseDecoder: 未找到 isRecoverableIntegrityIssues\n${code}`);
+    const recBody = code.slice(recStart, code.indexOf("\n};", recStart));
+    if (!recBody.includes("for (v10 of p0)") || recBody.includes("[Symbol.iterator]()")) {
+        throw new Error(`SabrResponseDecoder: isRecoverableIntegrityIssues 的 for...of 未还原\n${recBody}`);
+    }
+    if (!/if \(v10\.startsWith\("length-mismatch:"\) \|\|/.test(recBody)) {
+        throw new Error(`SabrResponseDecoder: 已知问题类型的布尔链未折算\n${recBody}`);
+    }
+    if (!recBody.includes('if (!v10.startsWith("truncated-ump-response:")) return false;')) {
+        throw new Error(`SabrResponseDecoder: 循环出口判断未还原\n${recBody}`);
+    }
 
     const expectedPath = path.join(__dirname, "expected", "yourpipe-sabr-response-decoder.js");
     const expected = fs.readFileSync(expectedPath, "utf-8");
@@ -1777,6 +1824,10 @@ async function main(): Promise<void> {
 
     console.log("[test] simplify test sequence scratch removal");
     verifyTestSequenceScratchRemoval();
+    console.log("    ok");
+
+    console.log("[test] simplify test sequence keeps read value");
+    verifyTestSequenceKeepsReadValue();
     console.log("    ok");
 
     console.log("[test] simplify branch value kept in test folds");

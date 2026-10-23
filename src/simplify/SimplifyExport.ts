@@ -54,6 +54,10 @@ export class SimplifyExport {
         TempVariableSimplify.foldShortCircuitAssignments(node);
         // HighLevelGrammarSimplify 会把 nullish 检查合成 switch;这里还原成 ??
         new NullishCoalescingSimplify().simplify(node);
+        // 只在条件表达式序列里出现的方法装载链(`acc = acc.method; acc = acc.call(recv, ...)`)
+        // 不在语句列表里,常规 AccCallSimplify 扫不到。等到定点迭代/复制传播结束后再还原,
+        // 避免中间形态在后续轮次被别名传播误解;随后由 foldMaterializedTestArtifacts 清理 acc 残留。
+        AccCallSimplify.simplifySequences(node);
         // 条件物化残留要在所有“消费它”的 pass(nullish 合成、短路折叠等)跑完后再清:
         //   acc = !(v3 !== undefined); if (v3 !== undefined && (acc = call(), v3 = acc, acc === v2))
         // → if (v3 !== undefined && call() === v2);以及 `A || !(acc = X !== Y, X !== Y)` 的死保存元素
@@ -69,6 +73,10 @@ export class SimplifyExport {
         TempVariableSimplify.foldConditionAssignments(node);
         // HighLevelGrammarSimplify 可能新生成 if/三元,再归一化一次 test,
         // 并把 `!T ? A : B` / `T ? false : B` 这类布尔三元折成逻辑运算
+        SyntaxRewriteSimplify.normalizeConditionTests(node);
+        // normalizeConditionTests 会把布尔三目折成 `X = Y && Z`,暴露出新的临时别名链。
+        // 再跑一次条件折叠(只做条件赋值/别名,不做整轮复制传播)并归一化 test。
+        TempVariableSimplify.foldConditionAssignments(node);
         SyntaxRewriteSimplify.normalizeConditionTests(node);
         // if (A || (v1 = 0, v2 = 2, B)) 里的纯常量前缀提到 if 前,
         // 避免条件里出现一串只给累加器/临时变量赋常量的 sequence
