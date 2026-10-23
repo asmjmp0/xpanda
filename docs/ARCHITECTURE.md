@@ -101,6 +101,7 @@ NormalizeDeclarations
   → CallResultSimplify
   → [ReservedIdentifierSimplifier → TempVariableSimplify → AccCallSimplify → EnumSimplify → ConditionSimplify → SyntaxRewriteSimplify → ClassSyntaxSimplify] × N
   → HighLevelGrammarSimplify
+  → TempVariableSimplify.foldReturnAssignments(returnsOnly)
   → TempVariableSimplify.foldConditionAssignments
   → normalizeConditionTests
   → SyntaxRewriteSimplify.hoistTestPrefixes
@@ -109,8 +110,9 @@ NormalizeDeclarations
 
 每个 pass 返回 `boolean` 表示是否修改 AST;稳定后立即停止,最多 5 轮。
 
-流水线尾部有三步专门处理“条件形态”(最后再做 `foldCompoundAssignments`):
+流水线尾部有四步专门处理“条件/返回值形态”(最后再做 `foldCompoundAssignments`):
 
+- `foldReturnAssignments`(returnsOnly):`HighLevelGrammarSimplify` 的三目合成(`if (C) { X = A } else { X = B }` → `X = C ? A : B`)发生在定点迭代之后,轮内的返回值折叠已经错过;这里补一轮 `X = E; return X` 折叠,并清理随之失去引用的声明;
 - `foldConditionAssignments`:定点迭代结束后,`HighLevelGrammarSimplify` 可能把 `if (!X) { X = true } else { X = false }` 合成为 `X = !X`,与已有的 `X = !X`(`callruntime.isfalse`)形成新的取反链;这一步只做 `X = E; (X = !X)*; if (X/!X)` 折叠,不重新跑复制传播;
 - `normalizeConditionTests`:再归一化 if/三元 test(`!!a`、`!binary`、`!逻辑表达式` 等);
 - `hoistTestPrefixes`:把 `if (A || (v1 = 0, v2 = 2, B))` 里“只给临时变量赋常量字面量”的前缀提到 if 前,要求短路分支直接 return/throw、不读取这些临时变量,且不在带 `finally` 的 try 内。
@@ -121,8 +123,8 @@ NormalizeDeclarations
 | `NormalizeDeclarations.ts` | 归一化重复 `let` / import 声明,避免 Babel scope 冲突 |
 | `ReservedIdentifierSimplifier.ts` | 还原 `panda_jmp0_reserved_*` 保留标识符 |
 | `EnumSimplify.ts` | 还原 ArkTS enum 的惰性初始化字节码模式为对象字面量(`v0 = function...; v1 = E; if (!E) {...}; v0(v1)` → `E = { ... }`) |
-| `TempVariableSimplify.ts` | 临时变量复制传播、死存储消除、序列表达式清理、返回值折叠、函数提升、catch 参数隔离;支持条件取反链按奇偶性折叠、test 序列内死赋值/自取反折叠,并限制非纯表达式只在真正最后一次读取时搬移 |
-| `AccCallSimplify.ts` | 还原 `recv = acc; acc = acc.method; acc.call(recv, ...)` 为 `recv.method(...)` |
+| `TempVariableSimplify.ts` | 临时变量复制传播、死存储消除、序列表达式清理、返回值折叠、函数提升、catch 参数隔离;支持条件取反链按奇偶性折叠、test 序列内死赋值/自取反折叠,并限制非纯表达式只在真正最后一次读取时搬移;`X = E; if (X/!X) { X = B; }` 物化链按值级 last-use 折叠为 `X = E &&/|| B`(连续 if 链经定点迭代合并成一条逻辑链),自取反链头 `X = !X` 留给尾部 `foldConditionAssignments` 按奇偶性处理 |
+| `AccCallSimplify.ts` | 还原 `recv = acc; acc = acc.method; acc.call(recv, ...)` 为 `recv.method(...)`;调用外层的前缀一元运算(如 `v0 = !acc.call(...)`)会剥出后再包回 |
 | `ConditionSimplify.ts` | 提升 if test 中无条件求值的序列表达式、清理条件临时赋值、折叠语句级自取反链、合并 null/undefined 判断 |
 | `SyntaxRewriteSimplify.ts` | if 条件化简、if/else 归一化、`.call` 还原、函数表达式/数组字面量/内置函数优化;末尾提供 `hoistTestPrefixes` |
 | `ClassSyntaxSimplify.ts` | getter/setter、prototype 方法、class 表达式还原 |

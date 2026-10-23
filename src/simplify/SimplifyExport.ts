@@ -43,6 +43,10 @@ export class SimplifyExport {
             if (!SimplifyExport.simplifyALL(node)) break;
         }
         new HighLevelGrammarSimplify().simplify(node);
+        // HighLevelGrammarSimplify 的三目合成(`if (C) { X = A } else { X = B }` →
+        // `X = C ? A : B`)发生在定点迭代之后,轮内的返回值折叠已经错过;
+        // 这里补一轮 `X = E; return X` 折叠,并清理随之失去引用的声明。
+        TempVariableSimplify.foldReturnAssignments(node);
         // HighLevelGrammarSimplify 会把 `if (!X) { X = true } else { X = false }`
         // 合成为 `X = !X`;这一步会和已有的 `X = !X`(callruntime.isfalse)形成新的
         // 连续自取反链,因此在末尾只针对条件赋值再做一轮折叠(不做复制传播,

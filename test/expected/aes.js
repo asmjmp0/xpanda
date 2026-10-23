@@ -29,7 +29,7 @@ v0.sbox = acc;
 v1 = [[0, 0, 0, 0], [1, 0, 0, 0], [2, 0, 0, 0], [4, 0, 0, 0], [8, 0, 0, 0], [16, 0, 0, 0], [32, 0, 0, 0], [64, 0, 0, 0], [128, 0, 0, 0], [27, 0, 0, 0], [54, 0, 0, 0]];
 v0.rcon = v1;
 v0.cipher = function cipher(p0, p1) {
-  let v0, v1, v4, v5, v6, acc;
+  let v0, v1, v4, v5, v6;
   v0 = 0;
   v1 = 1;
   v4 = [new Array(4), new Array(4), new Array(4), new Array(4)];
@@ -46,9 +46,7 @@ v0.cipher = function cipher(p0, p1) {
   this.subBytes(v4, 4);
   this.shiftRows(v4, 4);
   for (this.addRoundKey(v4, p1, v1, 4); v0 < v5.length; v0 += 1) {
-    acc = Math.floor(v0 / 4);
-    acc = v4[v0 % 4][acc];
-    v5[v0] = acc;
+    v5[v0] = v4[v0 % 4][Math.floor(v0 / 4)];
   }
   return v5;
 };

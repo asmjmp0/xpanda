@@ -103,6 +103,8 @@ npm run test:mcp
 - 复制传播必须限制表达式大小/克隆预算,避免 `v2 = v1 + v1; v3 = v2 + v2; ...` 指数膨胀;
 - 不活跃变量、SequenceExpression、return 语句、catch 参数的清理要经过 liveness / 作用域检查;
 - **捕获判定必须同时看 `binding.referencePaths` 和 `binding.constantViolations`**。闭包里"只写不读"的外层变量只在 constantViolations 里;只看读取会把外层初始化(如 `local_1_1 = undefined`)当成唯一值传播到闭包之后的读取,并删掉声明;
+- **名字级活跃性分不清临时变量的新旧版本**:`X = RHS` 且 RHS 只读一次 X 时,这次读取是旧值的最后一次使用(`acc = p0.trim(); acc = acc.length` → `acc = p0.trim().length`)。此时若变量名在语句后仍活跃(后续读到的是新值),不可复制的右值只允许搬进调用接收者位置(`v0 = !v0.test(p0)`);裸成员装载 `acc = acc.test` 是 AccCallSimplify 依赖的中间形态,提前内联会让 `acc.call(recv, ...)` 无法还原;
+- **`foldShortCircuitChains` 把 `X = E; if (X/!X) { X = B; }` 物化链折成 `X = E &&/|| B`**(test 被结构化归约重新物化成原表达式时要求 E 纯)。以 `X = !X` 自取反开头的链必须跳过:整条取反链的奇偶性归尾部 `foldConditionAssignments`,提前吃掉链头会让 `X = has(); X = !X; if (!X) { X = set() }` 无法折回 `if (!has())`;
 - **非纯表达式(`call` / `new` / 函数/类)只能在真正最后一次读取时搬移**;`if` 的 test 和分支体都读同一临时变量时不能搬,否则会把调用复制成两次;
 - `acc = !acc` 既可能来自 `callruntime.isfalse`,也可能来自条件物化(`istrue + jnez + ldtrue/ldfalse`);折叠时按取反次数的奇偶性处理,不能只删一层;
 - test 序列里的自取反链(`if (A || (X = E, X = !X, !X))`)只有在 `X` 在 test 后已死、test 外无其它读取、分支/前缀不会先读后写时才折叠;循环 test 暂不处理;
@@ -141,5 +143,5 @@ npm run test:mcp
 - `--no-simplify` 不执行优化器,适合验证解析/反汇编;大文件完整优化耗时主要来自逐类按函数分析和定点迭代。
 - `acc` 是 Panda 累加器,不是源码变量:`acc = !acc` 可能来自 `callruntime.isfalse`,也可能来自编译器对条件的布尔物化;二者叠加时看起来是两条取反,实际源码可能只有一个 `!`。
 - `HighLevelGrammarSimplify` 会把 `if (!X) { X = true } else { X = false }` 合成为 `X = !X`,可能和已有的 `X = !X` 形成新的连续取反链;因此流水线末尾必须再跑一次 `TempVariableSimplify.foldConditionAssignments`,不要删掉这一步。
-- 优化器尾部顺序固定为:`HighLevelGrammarSimplify` → `foldConditionAssignments` → `normalizeConditionTests` → `hoistTestPrefixes` → `foldCompoundAssignments`。调整顺序前先确认条件极性、复合赋值和 `test` 序列折叠不会互相覆盖。
+- 优化器尾部顺序固定为:HighLevelGrammarSimplify → foldReturnAssignments(补折 `X = E; return X`,三目合成发生在定点迭代之后) → foldConditionAssignments → normalizeConditionTests → hoistTestPrefixes → foldCompoundAssignments。调整顺序前先确认条件极性、复合赋值和 `test` 序列折叠不会互相覆盖。
 - 测试 test 序列取反链和条件赋值折叠时,优先用 `zhihupp0.59.hap` 的 `AbsoluteUrlParser`(`if (host.length === 0 || host.startsWith("["))`)与 `aes.abc` 的 `Counter.increment`(`if (arr[i] !== 255)`)做回归。

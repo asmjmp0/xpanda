@@ -42,7 +42,9 @@ export class AccCallSimplify implements ISimplify {
         return null;
     }
 
-    /** 匹配 `acc.call(recv, ...)` 及其赋值/返回包装;赋值目标可以是任意左值(结果存进哪个寄存器都支持)。 */
+    /** 匹配 `acc.call(recv, ...)` 及其赋值/返回包装;赋值目标可以是任意左值(结果存进哪个寄存器都支持)。
+     *  调用外层允许有前缀一元运算(如 `v0 = !acc.call(v0, p0)`),wrappers 记录由外到内的运算符,
+     *  改写后再按原顺序包回去。 */
     private matchAccCall(stmt: TYPE.Statement): {
         mode: "assign" | "expr" | "return";
         /** assign 模式下的赋值左值(acc / 其他变量 / 成员);expr/return 为 null */
@@ -51,6 +53,8 @@ export class AccCallSimplify implements ISimplify {
         operator: string;
         receiver: TYPE.Expression;
         args: TYPE.CallExpression["arguments"];
+        /** 调用外层的前缀一元运算符(由外到内),改写后需要重新包上 */
+        wrappers: TYPE.UnaryExpression["operator"][];
     } | null {
         let call: TYPE.Node | null = null;
         let target: TYPE.Identifier | TYPE.MemberExpression | null = null;
@@ -71,6 +75,12 @@ export class AccCallSimplify implements ISimplify {
                 call = expr;
             }
         }
+        // 剥掉外层前缀一元运算(!、void、typeof 等;delete 需要左值引用,不剥)
+        const wrappers: TYPE.UnaryExpression["operator"][] = [];
+        while (TYPE.isUnaryExpression(call) && call.prefix && call.operator !== "delete") {
+            wrappers.push(call.operator);
+            call = call.argument;
+        }
         if (!call || !TYPE.isCallExpression(call)) return null;
         const callee = call.callee;
         if (!TYPE.isMemberExpression(callee) || callee.computed) return null;
@@ -79,7 +89,7 @@ export class AccCallSimplify implements ISimplify {
         if (call.arguments.length === 0) return null;
         const [receiver, ...args] = call.arguments;
         if (!TYPE.isExpression(receiver)) return null;
-        return { mode, target, operator, receiver, args: args as TYPE.CallExpression["arguments"] };
+        return { mode, target, operator, receiver, args: args as TYPE.CallExpression["arguments"], wrappers };
     }
 
     private matchReceiverAssign(stmt: TYPE.Statement, name: string): boolean {
@@ -144,7 +154,10 @@ export class AccCallSimplify implements ISimplify {
         const method = this.matchMethodLoad(list[loadIndex])!;
         const call = this.matchAccCall(list[loadIndex + 1])!;
         const member = TYPE.memberExpression(TYPE.identifier(receiverName), TYPE.identifier(method), false);
-        const newCall = TYPE.callExpression(member, call.args);
+        let newCall: TYPE.Expression = TYPE.callExpression(member, call.args);
+        for (let i = call.wrappers.length - 1; i >= 0; i--) {
+            newCall = TYPE.unaryExpression(call.wrappers[i], newCall);
+        }
         if (call.mode === "assign") {
             // 目标可能是 acc,也可能是其他变量/成员/复合赋值(字节码把结果存进哪个寄存器就还原成哪个)
             list[loadIndex + 1] = TYPE.expressionStatement(

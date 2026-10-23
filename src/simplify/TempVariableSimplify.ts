@@ -11,6 +11,7 @@ import {
     isCopyable,
     isDeclarationValue,
     isFunctionLike,
+    isNodeEqual,
     isPureExpression,
     isTempName,
     nodeSize,
@@ -126,6 +127,8 @@ export class TempVariableSimplify implements ISimplify {
     private cleanupVersion = 0;
     /** true:只做 `X = E; (X = !X)*; if (X/!X)` 折叠,不做复制传播等其他改写 */
     private conditionsOnly = false;
+    /** true:只折叠 `X = E; return X` 并清理失去引用的声明,其余一律不动 */
+    private returnsOnly = false;
 
     simplify(node: Program): boolean {
         this.changed = false;
@@ -147,6 +150,22 @@ export class TempVariableSimplify implements ISimplify {
         const pass = new TempVariableSimplify();
         pass.changed = false;
         pass.conditionsOnly = true;
+        traverse(TYPE.file(node), {
+            Program: (path) => pass.processScope(path),
+            Function: (path) => pass.processScope(path),
+        });
+        return pass.changed;
+    }
+
+    /**
+     * 只折叠 `X = E; return X`(不做复制传播/条件改写),并清理随之失去引用的声明。
+     * HighLevelGrammarSimplify 在定点迭代结束后把 `if (C) { X = A } else { X = B }`
+     * 合成为 `X = C ? A : B`,轮内的返回值折叠此时已经跑完,需要在尾部补一轮。
+     */
+    static foldReturnAssignments(node: Program): boolean {
+        const pass = new TempVariableSimplify();
+        pass.changed = false;
+        pass.returnsOnly = true;
         traverse(TYPE.file(node), {
             Program: (path) => pass.processScope(path),
             Function: (path) => pass.processScope(path),
@@ -190,6 +209,11 @@ export class TempVariableSimplify implements ISimplify {
             }
             return true;
         });
+        if (this.returnsOnly) {
+            this.foldReturnAssignments(body, ctx);
+            this.removeUnusedDeclarations(body, ctx);
+            return;
+        }
         // 复制传播前先算一遍活跃性,用于判断某次读取是否是当前值的最后一次使用
         this.analyzeList(body, new Set(), ctx);
         if (!this.conditionsOnly) {
@@ -205,6 +229,7 @@ export class TempVariableSimplify implements ISimplify {
         this.foldTestSequences(body, ctx);
         this.cleanupConditionAssignments(body, ctx);
         if (!this.conditionsOnly) {
+            this.foldShortCircuitChains(body, ctx);
             this.foldReturnAssignments(body, ctx);
             this.hoistNamedFunctionExpressions(body, ctx, scope);
             this.foldSplitStringArrays(body, ctx);
@@ -629,6 +654,145 @@ export class TempVariableSimplify implements ISimplify {
             expr: expression.right,
             invert: testNegated !== (negations % 2 === 1),
         };
+    }
+
+    /**
+     * 逆变换编译器对 `A && B` / `A || B` 的“物化 + 跳转”lowering:
+     *
+     *   X = E; if (X)  { X = B; }  ->  X = E && B
+     *   X = E; if (!X) { X = B; }  ->  X = E || B
+     *
+     * 结构化归约会把 if 的 test 重新生成成原表达式(X = E; if (E) {...}),
+     * E 为纯表达式时同样处理(test 改读 X 再折叠,避免同一表达式求值两次)。
+     * 连续的 `if (X) { X = B; }` 通过定点迭代逐轮合并成一条逻辑运算链,
+     * 最后由 foldReturnAssignments 折进 return。
+     *
+     * 等价性:if (X) { X = B } 中 X 为真才求值 B、否则 X 保持原值,
+     * 与 `X = E && B` 的短路语义完全一致(X 为假时整个表达式取 X 的旧值);
+     * `!X` 对应 `E || B` 同理。条件:
+     *   - X 是未被闭包捕获的临时变量,赋值语句与 if 紧邻(中间不能有其它语句);
+     *   - if 没有 else,分支体只有一条 `X = B`;
+     *   - B 不是函数/类表达式(保护 hoistNamedFunctionExpressions 的提升机会),
+     *     且 B 里没有延迟读取 X 的闭包(B 求值期间 X 的新旧值时序在两种写法中不同)。
+     */
+    private foldShortCircuitChains(stmts: TYPE.Statement[], ctx: FunctionContext): void {
+        for (let i = 0; i < stmts.length; i++) {
+            const folded = this.matchShortCircuitFold(stmts, i, ctx);
+            if (folded) {
+                const assignStmt = stmts[i] as TYPE.ExpressionStatement;
+                (assignStmt.expression as TYPE.AssignmentExpression).right = folded.value;
+                this.removeRefs(folded.removedTest, ctx);
+                stmts.splice(i + 1, 1);
+                this.changed = true;
+                // 新赋值可能继续与后面的 if 成链,原地重试
+                i--;
+                continue;
+            }
+            this.foldShortCircuitChildren(stmts[i], ctx);
+        }
+    }
+
+    private foldShortCircuitChildren(stmt: TYPE.Statement, ctx: FunctionContext): void {
+        switch (stmt.type) {
+            case "BlockStatement":
+                this.foldShortCircuitChains(stmt.body, ctx);
+                break;
+            case "IfStatement":
+                if (TYPE.isBlockStatement(stmt.consequent)) this.foldShortCircuitChains(stmt.consequent.body, ctx);
+                else this.foldShortCircuitChildren(stmt.consequent, ctx);
+                if (stmt.alternate) {
+                    if (TYPE.isBlockStatement(stmt.alternate)) this.foldShortCircuitChains(stmt.alternate.body, ctx);
+                    else this.foldShortCircuitChildren(stmt.alternate, ctx);
+                }
+                break;
+            case "WhileStatement":
+            case "DoWhileStatement":
+            case "ForStatement":
+            case "ForInStatement":
+            case "ForOfStatement":
+            case "LabeledStatement":
+                if (TYPE.isBlockStatement(stmt.body)) this.foldShortCircuitChains(stmt.body.body, ctx);
+                else this.foldShortCircuitChildren(stmt.body, ctx);
+                break;
+            case "TryStatement":
+                this.foldShortCircuitChains(stmt.block.body, ctx);
+                if (stmt.handler) this.foldShortCircuitChains(stmt.handler.body.body, ctx);
+                if (stmt.finalizer) this.foldShortCircuitChains(stmt.finalizer.body, ctx);
+                break;
+            case "SwitchStatement":
+                for (const c of stmt.cases) this.foldShortCircuitChains(c.consequent, ctx);
+                break;
+            default:
+                break;
+        }
+    }
+
+    /**
+     * 匹配 stmts[i] = `X = E` 且 stmts[i + 1] = 可折叠 if 的模式。
+     * 返回合并后的右值以及需要从引用集合里移除的旧 test 节点。
+     */
+    private matchShortCircuitFold(
+        stmts: TYPE.Statement[],
+        i: number,
+        ctx: FunctionContext,
+    ): { value: TYPE.Expression; removedTest: TYPE.Expression } | null {
+        if (i + 1 >= stmts.length) return null;
+        const assignStmt = stmts[i];
+        if (!TYPE.isExpressionStatement(assignStmt) || !TYPE.isAssignmentExpression(assignStmt.expression)) return null;
+        const assign = assignStmt.expression;
+        if (assign.operator !== "=" || !TYPE.isIdentifier(assign.left)) return null;
+        const name = assign.left.name;
+        if (!isTempName(name)) return null;
+        const info = ctx.infos.get(name);
+        if (!info || info.captured) return null;
+        // X = !X 是条件物化(isfalse / 布尔 if-else 合成)的自取反链片段,
+        // 整条链的奇偶性归流水线尾部的 foldConditionAssignments 处理——
+        // 那里能看到 HighLevelGrammarSimplify 合成后的完整链,把
+        // `X = has(); X = !X; if (!X) { X = set(...) }` 折成 if (!has())。
+        // 若在这里以自取反为链头抢先折叠成 `X = !X || set(...)`,
+        // 会让尾部折叠失去链头,输出反而退化。函数/类表达式保持语句形态,
+        // 留给 hoistNamedFunctionExpressions 提升。
+        if (TYPE.isUnaryExpression(assign.right) && assign.right.operator === "!"
+            && TYPE.isIdentifier(assign.right.argument) && assign.right.argument.name === name) return null;
+        if (isDeclarationValue(assign.right)) return null;
+
+        const ifStmt = stmts[i + 1];
+        if (!TYPE.isIfStatement(ifStmt) || ifStmt.alternate) return null;
+
+        // 分支体必须是唯一一条 `X = B`
+        let body: TYPE.Statement[];
+        if (TYPE.isBlockStatement(ifStmt.consequent)) {
+            if (ifStmt.consequent.body.length !== 1) return null;
+            body = ifStmt.consequent.body;
+        } else {
+            body = [ifStmt.consequent];
+        }
+        const only = body[0];
+        if (!TYPE.isExpressionStatement(only) || !TYPE.isAssignmentExpression(only.expression)) return null;
+        const inner = only.expression;
+        if (inner.operator !== "=" || !TYPE.isIdentifier(inner.left) || inner.left.name !== name) return null;
+        if (isDeclarationValue(inner.right)) return null;
+        if (this.hasDeferredSelfReference(inner.right, name)) return null;
+
+        const test = ifStmt.test;
+        if (TYPE.isIdentifier(test) && test.name === name) {
+            return { value: TYPE.logicalExpression("&&", assign.right, inner.right), removedTest: test };
+        }
+        if (TYPE.isUnaryExpression(test) && test.operator === "!"
+            && TYPE.isIdentifier(test.argument) && test.argument.name === name) {
+            return { value: TYPE.logicalExpression("||", assign.right, inner.right), removedTest: test };
+        }
+        // test 是结构化归约重新物化的同一表达式:X = E; if (E) { X = B } / if (!E) {...}
+        // 只有 E 纯(重复求值无副作用)才能把两次求值合并成一次。
+        const testNegated = TYPE.isUnaryExpression(test) && test.operator === "!";
+        const testValue = testNegated ? (test as TYPE.UnaryExpression).argument : test;
+        if (testValue && isNodeEqual(testValue, assign.right) && isPureExpression(assign.right)) {
+            return {
+                value: TYPE.logicalExpression(testNegated ? "||" : "&&", assign.right, inner.right),
+                removedTest: test,
+            };
+        }
+        return null;
     }
 
     /**
@@ -1590,6 +1754,34 @@ export class TempVariableSimplify implements ISimplify {
         return assign.right.left === id || assign.right.right === id;
     }
 
+    /**
+     * 语句形如 `name = RHS`(plain =),且 RHS 里对 name 只有 id 这一次读取:
+     * 旧值在本语句执行后立即被覆盖,因此这次读取就是旧值的最后一次使用。
+     * 名字级活跃性分不清 acc 的新旧版本(后续读取读到的是新值),这里按值补判。例如:
+     *   acc = p0.trim(); acc = acc.length;  ->  acc = p0.trim().length;
+     */
+    private statementOverwritesSelfAssign(stmt: TYPE.Statement | undefined, name: string, id: TYPE.Identifier): boolean {
+        if (!stmt || !TYPE.isExpressionStatement(stmt) || !TYPE.isAssignmentExpression(stmt.expression)) return false;
+        const assign = stmt.expression;
+        if (assign.operator !== "=" || !TYPE.isIdentifier(assign.left) || assign.left.name !== name) return false;
+        return this.countReadsInNode(assign.right, name) === 1 && this.containsNode(assign.right, id);
+    }
+
+    /**
+     * id 在当前语句里是否以“方法调用接收者”的身份被读取:语句形如 `X = ... X.m(args)`。
+     * 当这次读取是靠“本语句覆盖 X”才成为旧值最后用法时,只允许把不可复制的右值
+     * (如 `v0 = new RegExp(...)` 的 newExpr)搬进这种形态,搬移后等价于 newExpr.m(args);
+     * 裸成员装载(`acc = acc.test`)是 AccCallSimplify 依赖的中间形态,必须保持原样。
+     */
+    private isCalleeReceiverRead(stmt: TYPE.Statement | null | undefined, id: TYPE.Identifier): boolean {
+        if (!stmt || !TYPE.isExpressionStatement(stmt) || !TYPE.isAssignmentExpression(stmt.expression)) return false;
+        let current: TYPE.Node = stmt.expression.right;
+        while (TYPE.isUnaryExpression(current) && current.prefix) current = current.argument;
+        if (!TYPE.isCallExpression(current)) return false;
+        const callee = current.callee;
+        return TYPE.isMemberExpression(callee) && callee.object === id;
+    }
+
     /** 统计一条语句里对 name 的读取次数(不含嵌套函数,复合赋值左侧算读取)。 */
     private countReadsInNode(node: TYPE.Node | null | undefined, name: string): number {
         let count = 0;
@@ -1701,13 +1893,21 @@ export class TempVariableSimplify implements ISimplify {
         // 注意 liveness 只看“名字是否还活着”,分不清 acc 的新旧版本:
         //   acc = f(); acc = x + acc; y = acc;
         // 第 2 条读取的是旧 acc,但旧值在本条语句结束后就被覆盖,因此也应视为 last use。
+        // statementOverwritesSelfAssign 把这一点推广到任意 `name = RHS` 且 RHS 只读一次
+        // name 的语句(如 acc = acc.length):旧值在本语句后立即失效。
         const liveAfter = ctx.liveAfter.get(list[index]);
-        const overwrittenHere = this.statementOverwritesSelf(list[index], id.name, id);
+        const deadAfter = liveAfter != null && !liveAfter.has(id.name);
+        const binarySelf = this.statementOverwritesSelf(list[index], id.name, id);
+        // `name = RHS` 且 RHS 只读一次 name:旧值在本语句后立即被覆盖。
+        // 这条新路径下若变量名在语句后仍活跃(后续读到的是新值),只允许搬进
+        // 调用接收者位置,避免破坏 acc = acc.test 这类 AccCallSimplify 依赖的
+        // 方法装载形态;binarySelf(二元自累加)保持原有任意位置搬移的行为。
+        const assignSelf = !binarySelf && this.statementOverwritesSelfAssign(list[index], id.name, id);
+        const overwrittenHere = binarySelf || assignSelf;
         // 同一个语句里可能还有别的读取(典型是 if 的 test 和分支体都读同一个
         // 临时变量)。只有分支在读取前会先覆盖该变量时,测试里的这次读取才算
         // 最后一次读取;否则搬移调用会复制一份调用。
-        const lastUse = (overwrittenHere || (liveAfter != null && !liveAfter.has(id.name)))
-            && this.isLastReadInStatement(list[index], id);
+        const lastUse = (overwrittenHere || deadAfter) && this.isLastReadInStatement(list[index], id);
         if (lastUse && entry.unsubstitutedReads === 0) {
             if (isPureExpression(entry.expr) && !isDeclarationValue(entry.expr)) {
                 // 数组/对象字面量:只在唯一使用处求值一次,原赋值稍后会被作为死存储删除
@@ -1725,9 +1925,12 @@ export class TempVariableSimplify implements ISimplify {
                 this.changed = true;
                 return value;
             }
-            // 调用/构造/函数/类表达式:跨过的语句必须无副作用,保持求值顺序
+            // 调用/构造/函数/类表达式:跨过的语句必须无副作用,保持求值顺序。
+            // assignSelf 路径(靠本语句覆盖才成为 last-use)只允许调用接收者位置,
+            // 见上方 assignSelf 的说明。
             if (allowImpure && entry.list === list && entry.index < index
-                && this.isSafeToMoveBetween(list, entry.index + 1, index)) {
+                && this.isSafeToMoveBetween(list, entry.index + 1, index)
+                && (deadAfter || binarySelf || this.isCalleeReceiverRead(list[index], id))) {
                 info.refs.delete(id);
                 ctx.moved.set(entry.expr, list[index]);
                 env.invalidate(id.name);
