@@ -382,13 +382,13 @@ docs/                   架构文档、MCP 文档
 
 ## 优化器
 
-`SimplifyExport` 以定点迭代方式运行,直到 AST 不再变化(最多 5 轮):
+`SimplifyExport` 以定点迭代方式运行,直到 AST 不再变化(最多 5 轮),主要做三件事:
 
-- `ReservedIdentifierSimplifier`:清理 `panda_jmp0_reserved_*` 占位符;
-- `TempVariableSimplify`:临时变量(`acc` / `vN` / `local_L_i`)复制传播、死存储消除、闭包函数声明提升;区分 `acc` 的新旧版本,支持 `acc = f(); acc = x + acc; y = acc` → `y = x + f()`,并修正 `if` 分支赋值被误判为死存储的问题;
-- `ConditionSimplify`:把 `if` 条件中无条件求值的逗号表达式前缀提升为语句,清理只用于条件计算的临时赋值,并把 `x === null || x === undefined` 合并为 `x == null`;
-- `SyntaxRewriteSimplify`:调用形式重写、函数表达式转声明、条件/循环清理,并在流水线末尾统一折叠复合赋值(`x = x + y` → `x += y`);
-- `ClassSyntaxSimplify` / `HighLevelGrammarSimplify`:类语法与高阶语法还原。
+- 清理 `panda_jmp0_reserved_*` 占位符、累加器临时变量和死代码;
+- 还原函数/类、if/switch、循环、模块等高层语法;
+- 重写调用形式,折叠复合赋值、逻辑条件和常见表达式。
+
+优化器的 pass 顺序、条件极性规则和回归样本见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
 `PandaLexical` 先解析每个方法的词法环境:闭包从定义处的层级开始,`newlexenv` / `stlexvar` / `ldlexvar` 统一换算为绝对层级,再据此还原 `local_L_i` / `sendable_L_i` 变量。
 

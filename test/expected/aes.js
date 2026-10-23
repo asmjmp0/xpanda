@@ -116,7 +116,7 @@ v0.keyExpansion = function keyExpansion(p0) {
       for (v1 = 0; v1 < 4; v1 += 1) {
         v8[v1] = v8[v1] ^ globalThis.AES.rcon[v0 / (p0.length / 4)][v1];
       }
-    } else if (p0.length / 4 > 6 && (v1 = v0 % (p0.length / 4), v0 % (p0.length / 4) === 4)) {
+    } else if (p0.length / 4 > 6 && v0 % (p0.length / 4) === 4) {
       this.subWord(v8);
     }
     for (v1 = 0; v1 < 4; v1 += 1) {

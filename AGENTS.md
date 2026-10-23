@@ -18,10 +18,10 @@
 | `src/file/` | `.abc` 文件格式解析(PandaFile / Header / PandaClass / PandaMethod / 字面量 / 模块元数据) |
 | `src/codec/` | Leb128 / MUTF8 / Adler32 |
 | `src/disasm/` | 反汇编:`opcodes.ts`(生成)、`PandaInstruction.ts`(统一指令模型 + KIND_MAP)、`PandaIRCFG`、`passes.ts`、`PandaLexical.ts` |
-| `src/decompiler/` | `StructureAnalysis.ts`(Region 归约核心)、`statements.ts`、`MethodHandler.ts`(HANDLES 分发)、`SimpleAnalysis.ts`、`ValueGraph.ts`、`DominatorGraph.ts` |
+| `src/decompiler/` | `StructureAnalysis.ts`(Region 归约核心)、`Region.ts` / `RegionGraphBuilder.ts`(区域、条件/逻辑标志、不可归约 Tail 复制)、`statements.ts`、`MethodHandler.ts`(HANDLES 分发)、`SimpleAnalysis.ts`、`ValueGraph.ts`、`DominatorGraph.ts` |
 | `src/codegen/CodeGenerator.ts` | AST 生成入口(包装 `src/ast/`) |
 | `src/ast/` | `NodeFactory` / `NodeUtils`(Babel AST 工具) |
-| `src/simplify/` | 优化器流水线(`SimplifyExport`、`TempVariableSimplify`、`ConditionSimplify`、`SyntaxRewriteSimplify`、`ClassSyntaxSimplify`、`HighLevelGrammarSimplify`、`AstUtils`、`NormalizeDeclarations`) |
+| `src/simplify/` | 优化器流水线(`SimplifyExport`、`TempVariableSimplify`、`ConditionSimplify`、`SyntaxRewriteSimplify`、`ClassSyntaxSimplify`、`HighLevelGrammarSimplify`、`AstUtils`、`NormalizeDeclarations`);末尾含 `foldConditionAssignments`(条件取反链二次折叠)与 `hoistTestPrefixes`(常量前缀提升) |
 | `src/parallel/` | 按类并行的 simplify worker 池(`ParallelDecompiler.ts` 调度、`simplify-worker.ts` worker 入口) |
 | `src/hap/` | HAP 应用包适配:`ZipFile.ts`(只读 ZIP 解析,store/deflate)、`HapFile.ts`(.abc 条目/module.json/resources.index) |
 | `src/mcp/` | MCP Server(`server.ts` stdio 入口、`registry.ts` abc/hap 会话注册表、`tools/` 十个工具),文档见 [docs/MCP.md](docs/MCP.md) |
@@ -87,7 +87,8 @@ npm run test:mcp
 
 1. 在 `src/simplify/` 实现 `ISimplify`;
 2. 在 `SimplifyExport.ts` 注册(常规 pass 加进 `simplifyALL` 数组,全局性 pass 放流水线首尾,如 `CallResultSimplify`、`HighLevelGrammarSimplify`);
-3. 运行 `npm test`,确认快照变化符合预期。
+3. 只有需要在定点迭代中反复运行的 pass 才放进 `simplifyALL`;只跑一次的收尾步骤(如 `TempVariableSimplify.foldConditionAssignments`、`SyntaxRewriteSimplify.hoistTestPrefixes`)直接在 `SimplifyExport.simplify()` 末尾调用;
+4. 运行 `npm test`,确认快照变化符合预期。
 
 ### 升级支持的字节码版本
 
@@ -101,7 +102,21 @@ npm run test:mcp
 
 - 复制传播必须限制表达式大小/克隆预算,避免 `v2 = v1 + v1; v3 = v2 + v2; ...` 指数膨胀;
 - 不活跃变量、SequenceExpression、return 语句、catch 参数的清理要经过 liveness / 作用域检查;
+- **非纯表达式(`call` / `new` / 函数/类)只能在真正最后一次读取时搬移**;`if` 的 test 和分支体都读同一临时变量时不能搬,否则会把调用复制成两次;
+- `acc = !acc` 既可能来自 `callruntime.isfalse`,也可能来自条件物化(`istrue + jnez + ldtrue/ldfalse`);折叠时按取反次数的奇偶性处理,不能只删一层;
+- test 序列里的自取反链(`if (A || (X = E, X = !X, !X))`)只有在 `X` 在 test 后已死、test 外无其它读取、分支/前缀不会先读后写时才折叠;循环 test 暂不处理;
+- `if (A || (v1 = 0, v2 = 2, B))` 这类常量前缀提升(`hoistTestPrefixes`)要求:前缀只是临时变量赋常量、短路分支直接 return/throw 且不读取这些临时变量、不在带 `finally` 的 `try` 中;
 - 修改输出后,更新 `test/expected/*.js` 快照并在提交说明中解释变化。
+
+### 修改 Region 归约 / 条件极性
+
+结构化分析里最容易出错的是“条件该不该取反”:
+
+1. **不要依赖 `regionGraph.successors()` 的返回顺序**。`ValueGraph` 按插入顺序返回,与 true/false 边无关;判断分支极性必须用 `edgeValueOrThrow(region, succ)`。
+2. `conditionalExp` 描述的是 fallthrough(false 边)分支的条件:jnez 时 false 边为 `!acc`,jeqz 时 false 边为 `acc`;折叠 true 边(`coalesceTailRegion`)时才需要 `expInvert()`。
+3. `simplifyConditionalSequence` 会把 `if (A) ... if (B) ...` 合并成 `OrLogicalExpressionStatement` 并设置 `logicalRegion`;`reduceSequence` 合并这种 Region 时必须传播 `logicalRegion`,否则后续只能用 `acc` 生成 test,会丢掉 `A || B` 的计算。
+4. `Region.copy()`(不可归约 Tail 复制)必须保留 `conditionalExp` / `logicalRegion` / `exceptionLandingPad` / `tryCatchHelperRegion` 标志。
+5. 改完用 `zhihupp0.59.hap` 的 `AbsoluteUrlParser` / `ZhihuHttpClient`、`aes.abc` 的 `Counter.increment`(必须是 `!== 255`)和大样本 `bilibili_open.abc` 验证。
 
 ## 测试
 
@@ -111,9 +126,9 @@ npm run test:mcp
 | `scripts/test-mcp.ts` | 以子进程启动 MCP Server,按 JSON-RPC 调用全部工具,快照比对 + 错误路径校验(含 hap 加载/解 abc/资源查询) |
 | `test/resources/md5.abc` | 小样本,测试中还会执行输出并校验 MD5 结果 |
 | `test/resources/class.abc` | 类/访问器/原型方法还原样本 |
-| `test/resources/aes.abc` | AES 加解密样本,测试中还会执行输出并校验加解密自检结果为 `true` |
+| `test/resources/aes.abc` | AES 加解密样本,测试中还会执行输出并校验加解密自检结果为 `true`;快照覆盖条件极性(`Counter.increment` 必须是 `!== 255`)和 test 序列死赋值清理 |
 | `test/resources/bilibili_open.abc` | 大文件回归样本,通常手动验证 |
-| `test/resources/zhihupp0.59.hap` | HAP 应用包样本(字节码版本 13.0.1.0,含 `callruntime.supercallforwardallargs`),完整反编译约 1 分钟,测试只做轻量校验 |
+| `test/resources/zhihupp0.59.hap` | HAP 应用包样本(字节码版本 13.0.1.0,含 `callruntime.supercallforwardallargs`),完整反编译约 1 分钟,测试只做轻量校验;`AbsoluteUrlParser` / `ZhihuHttpClient` 是逻辑条件与取反链的重点回归类 |
 
 更新快照前先确认输出变化是预期的;不要为了通过测试而直接覆盖快照。
 
@@ -123,3 +138,7 @@ npm run test:mcp
 - 前缀指令占 2 字节(首字节 ≥ 251),`PandaDisAssembler` 有特殊处理;新增指令名(kind 映射)用 isa.yaml 的 `sig` 首词(如 `wide.callrange`)。
 - 类名形如 `Lpkg/Name;`,输出前由 `PandaDecompiler.saveFile()` demangle。
 - `--no-simplify` 不执行优化器,适合验证解析/反汇编;大文件完整优化耗时主要来自逐类按函数分析和定点迭代。
+- `acc` 是 Panda 累加器,不是源码变量:`acc = !acc` 可能来自 `callruntime.isfalse`,也可能来自编译器对条件的布尔物化;二者叠加时看起来是两条取反,实际源码可能只有一个 `!`。
+- `HighLevelGrammarSimplify` 会把 `if (!X) { X = true } else { X = false }` 合成为 `X = !X`,可能和已有的 `X = !X` 形成新的连续取反链;因此流水线末尾必须再跑一次 `TempVariableSimplify.foldConditionAssignments`,不要删掉这一步。
+- 优化器尾部顺序固定为:`HighLevelGrammarSimplify` → `foldConditionAssignments` → `normalizeConditionTests` → `hoistTestPrefixes` → `foldCompoundAssignments`。调整顺序前先确认条件极性、复合赋值和 `test` 序列折叠不会互相覆盖。
+- 测试 test 序列取反链和条件赋值折叠时,优先用 `zhihupp0.59.hap` 的 `AbsoluteUrlParser`(`if (host.length === 0 || host.startsWith("["))`)与 `aes.abc` 的 `Counter.increment`(`if (arr[i] !== 255)`)做回归。

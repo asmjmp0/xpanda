@@ -78,6 +78,12 @@ export class Region implements IPandaDecompileAble {
         const copyOne = new Region(this.block, this.type);
         copyOne.clearStatements();
         copyOne.addRegion(this);
+        // copy() 用于 fixIrreducibleByTailRegion 复制共享的 Tail 区域;
+        // 条件/逻辑区域标志必须一起复制,否则副本会退化成只读 acc。
+        copyOne.conditionalExp = this.conditionalExp;
+        copyOne.logicalRegion = this.logicalRegion;
+        copyOne.exceptionLandingPad = this.exceptionLandingPad;
+        copyOne.tryCatchHelperRegion = this.tryCatchHelperRegion;
         return copyOne;
     }
 

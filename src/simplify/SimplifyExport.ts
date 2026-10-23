@@ -51,6 +51,9 @@ export class SimplifyExport {
         // HighLevelGrammarSimplify 可能新生成 if/三元,再归一化一次 test,
         // 并把 `!T ? A : B` / `T ? false : B` 这类布尔三元折成逻辑运算
         SyntaxRewriteSimplify.normalizeConditionTests(node);
+        // if (A || (v1 = 0, v2 = 2, B)) 里的纯常量前缀提到 if 前,
+        // 避免条件里出现一串只给累加器/临时变量赋常量的 sequence
+        SyntaxRewriteSimplify.hoistTestPrefixes(node);
         // 复合赋值放到最后一轮之后,避免提前改写成 += 后影响活跃性/复制传播
         SyntaxRewriteSimplify.foldCompoundAssignments(node);
     }

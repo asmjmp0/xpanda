@@ -211,6 +211,7 @@ export class TempVariableSimplify implements ISimplify {
             }
             this.cleanupSequenceExpressions(body, ctx);
         }
+        this.foldTestSequences(body, ctx);
         this.cleanupConditionAssignments(body, ctx);
         if (!this.conditionsOnly) {
             this.foldReturnAssignments(body, ctx);
@@ -623,6 +624,157 @@ export class TempVariableSimplify implements ISimplify {
             expr: expression.right,
             invert: testNegated !== (negations % 2 === 1),
         };
+    }
+
+    /**
+     * 折叠 boolean 上下文 test 序列里的自取反链:
+     *   if (A || (X = E, X = !X, !X)) -> if (A || E)          // X 在 test 后已死
+     *   if (X = E, E)                  -> if (E)              // X 在 test 后已死
+     * 只处理 if(不处理循环 test,循环每次迭代都会重新求值),且要求 X 在 test 之后
+     * 不再被读取、短路分支也不会先读后写,避免改变 X 的最终值。
+     */
+    private foldTestSequences(stmts: TYPE.Statement[], ctx: FunctionContext): void {
+        for (const stmt of stmts) this.foldTestSequencesInStatement(stmt, ctx);
+    }
+
+    private foldTestSequencesInStatement(stmt: TYPE.Statement, ctx: FunctionContext): void {
+        switch (stmt.type) {
+            case "IfStatement":
+                stmt.test = this.foldBooleanExpr(stmt.test, stmt, ctx);
+                this.foldTestSequencesInStatement(stmt.consequent, ctx);
+                if (stmt.alternate) this.foldTestSequencesInStatement(stmt.alternate, ctx);
+                return;
+            case "BlockStatement":
+                this.foldTestSequences(stmt.body, ctx);
+                return;
+            case "WhileStatement":
+            case "DoWhileStatement":
+            case "ForStatement":
+                // 循环 test 每轮都会重新求值,不做跨语句的取反链折叠
+                if (stmt.body) this.foldTestSequencesInStatement(stmt.body, ctx);
+                return;
+            case "TryStatement":
+                this.foldTestSequences(stmt.block.body, ctx);
+                if (stmt.handler) this.foldTestSequences(stmt.handler.body.body, ctx);
+                if (stmt.finalizer) this.foldTestSequences(stmt.finalizer.body, ctx);
+                return;
+            case "SwitchStatement":
+                for (const c of stmt.cases) this.foldTestSequences(c.consequent, ctx);
+                return;
+            case "LabeledStatement":
+                this.foldTestSequencesInStatement(stmt.body, ctx);
+                return;
+            default:
+                return;
+        }
+    }
+
+    private foldBooleanExpr(expr: TYPE.Expression, stmt: TYPE.Statement, ctx: FunctionContext): TYPE.Expression {
+        if (TYPE.isLogicalExpression(expr)) {
+            expr.left = this.foldBooleanExpr(expr.left, stmt, ctx);
+            expr.right = this.foldBooleanExpr(expr.right, stmt, ctx);
+            return expr;
+        }
+        if (TYPE.isUnaryExpression(expr) && expr.operator === "!") {
+            expr.argument = this.foldBooleanExpr(expr.argument as TYPE.Expression, stmt, ctx);
+            return expr;
+        }
+        if (TYPE.isSequenceExpression(expr)) {
+            const folded = this.foldTestSequence(expr, stmt, ctx);
+            if (folded) return folded;
+            const last = expr.expressions.length - 1;
+            if (last >= 0) expr.expressions[last] = this.foldBooleanExpr(expr.expressions[last] as TYPE.Expression, stmt, ctx);
+            return expr;
+        }
+        return expr;
+    }
+
+    private foldTestSequence(
+        seq: TYPE.SequenceExpression,
+        stmt: TYPE.Statement,
+        ctx: FunctionContext,
+    ): TYPE.Expression | null {
+        const exprs = seq.expressions;
+        if (exprs.length < 2) return null;
+        const last = exprs[exprs.length - 1];
+        let name: string | null = null;
+        let lastBang = false;
+        if (TYPE.isIdentifier(last)) {
+            name = last.name;
+        } else if (TYPE.isUnaryExpression(last) && last.operator === "!"
+            && TYPE.isIdentifier(last.argument)) {
+            name = last.argument.name;
+            lastBang = true;
+        }
+        if (name !== null && isTempName(name)) {
+            // (X = E, X = !X, ..., X/!X)
+            let neg = 0;
+            let j = exprs.length - 2;
+            while (j >= 0) {
+                const e = exprs[j];
+                if (TYPE.isAssignmentExpression(e) && e.operator === "="
+                    && TYPE.isIdentifier(e.left) && e.left.name === name
+                    && TYPE.isUnaryExpression(e.right) && e.right.operator === "!"
+                    && TYPE.isIdentifier(e.right.argument) && e.right.argument.name === name) {
+                    neg++;
+                    j--;
+                    continue;
+                }
+                break;
+            }
+            const base = j >= 0 ? exprs[j] : null;
+            if (base && TYPE.isAssignmentExpression(base) && base.operator === "="
+                && TYPE.isIdentifier(base.left) && base.left.name === name
+                && !this.headReadsNameBeforeWrite(exprs, j, name)
+                && this.isNameDeadAfterTest(stmt, name, ctx)
+                && this.countReadsInNode(stmt, name) === this.countReadsInNode(seq, name)) {
+                const parity = (neg + (lastBang ? 1 : 0)) % 2;
+                const replacement = parity === 0 ? base.right : TYPE.unaryExpression("!", base.right);
+                const kept = exprs.slice(0, j) as TYPE.Expression[];
+                kept.push(replacement);
+                return kept.length === 1 ? kept[0] : TYPE.sequenceExpression(kept);
+            }
+        }
+        // (X = E, <last>) 且 E 无副作用、last 不读取 X、X 在 test 后已死:直接丢掉 X = E
+        const base = exprs[exprs.length - 2];
+        if (TYPE.isAssignmentExpression(base) && base.operator === "="
+            && TYPE.isIdentifier(base.left) && isTempName(base.left.name)
+            && isPureExpression(base.right)
+            && !this.headReadsNameBeforeWrite(exprs, exprs.length - 2, base.left.name)
+            && this.countReadsInNode(last, base.left.name) === 0
+            && this.isNameDeadAfterTest(stmt, base.left.name, ctx)
+            && this.countReadsInNode(stmt, base.left.name) === this.countReadsInNode(seq, base.left.name)) {
+            const kept = exprs.slice(0, exprs.length - 2) as TYPE.Expression[];
+            kept.push(last);
+            return kept.length === 1 ? kept[0] : TYPE.sequenceExpression(kept);
+        }
+        return null;
+    }
+
+    /** 序列前缀是否可能在写入 name 之前读取它(循环里会把上一轮的值带进来)。 */
+    private headReadsNameBeforeWrite(exprs: TYPE.Expression[], end: number, name: string): boolean {
+        let killed = false;
+        for (let i = 0; i < end; i++) {
+            const e = exprs[i];
+            if (TYPE.isAssignmentExpression(e) && e.operator === "="
+                && TYPE.isIdentifier(e.left) && e.left.name === name) {
+                if (!killed && this.countReadsInNode(e.right, name) > 0) return true;
+                killed = true;
+                continue;
+            }
+            if (!killed && this.countReadsInNode(e, name) > 0) return true;
+        }
+        return false;
+    }
+
+    /** X 在该 test 之后(含分支体)是否已经不再被读取。 */
+    private isNameDeadAfterTest(stmt: TYPE.Statement, name: string, ctx: FunctionContext): boolean {
+        if (!TYPE.isIfStatement(stmt)) return false;
+        const liveAfter = ctx.liveAfter.get(stmt);
+        if (!liveAfter || liveAfter.has(name)) return false;
+        if (this.branchReadsNameBeforeWrite(stmt.consequent, name)) return false;
+        if (this.branchReadsNameBeforeWrite(stmt.alternate, name)) return false;
+        return true;
     }
 
     /** 清理 SequenceExpression 中的死赋值,例如 if 条件里的 (v0 = x, v1 = y, ...)。 */
@@ -1433,6 +1585,88 @@ export class TempVariableSimplify implements ISimplify {
         return assign.right.left === id || assign.right.right === id;
     }
 
+    /** 统计一条语句里对 name 的读取次数(不含嵌套函数,复合赋值左侧算读取)。 */
+    private countReadsInNode(node: TYPE.Node | null | undefined, name: string): number {
+        let count = 0;
+        walkNode(node, (n, parent) => {
+            if (isFunctionLike(n) || isClassLike(n)) return false;
+            if (!TYPE.isIdentifier(n) || n.name !== name) return true;
+            if (!parent || TYPE.isReferenced(n, parent)) count++;
+            else if (TYPE.isAssignmentExpression(parent) && parent.left === n && parent.operator !== "=") count++;
+            return true;
+        });
+        return count;
+    }
+
+    private containsNode(root: TYPE.Node | null | undefined, target: TYPE.Node): boolean {
+        let found = false;
+        walkNode(root, (n) => {
+            if (n === target) { found = true; return false; }
+            return true;
+        });
+        return found;
+    }
+
+    /**
+     * 分支体是否可能在写入 name 之前读取它。
+     * 只按顺序看块内语句;遇到“所有路径都会先写 name”的语句(直接赋值,
+     * 或 if/else 两个分支都先写)就认为后续读取都读到新值,可以提前结束。
+     */
+    private branchReadsNameBeforeWrite(stmt: TYPE.Statement | null | undefined, name: string): boolean {
+        if (!stmt) return false;
+        if (TYPE.isBlockStatement(stmt)) {
+            for (const s of stmt.body) {
+                if (this.definitelyWritesBeforeRead(s, name)) return false;
+                if (collectReadNames(s).has(name)) return true;
+                if (this.branchReadsNameBeforeWrite(s, name)) return true;
+            }
+            return false;
+        }
+        if (TYPE.isIfStatement(stmt)) {
+            if (collectReadNames(stmt.test).has(name)) return true;
+            return this.branchReadsNameBeforeWrite(stmt.consequent, name)
+                || this.branchReadsNameBeforeWrite(stmt.alternate, name);
+        }
+        return collectReadNames(stmt).has(name);
+    }
+
+    /** 语句是否一定会在读取 name 之前写入 name(所有执行路径)。 */
+    private definitelyWritesBeforeRead(stmt: TYPE.Statement | null | undefined, name: string): boolean {
+        if (!stmt) return false;
+        if (TYPE.isBlockStatement(stmt)) {
+            for (const s of stmt.body) {
+                if (this.definitelyWritesBeforeRead(s, name)) return true;
+                if (collectReadNames(s).has(name)) return false;
+            }
+            return false;
+        }
+        if (TYPE.isIfStatement(stmt)) {
+            if (collectReadNames(stmt.test).has(name)) return false;
+            return stmt.alternate != null
+                && this.definitelyWritesBeforeRead(stmt.consequent, name)
+                && this.definitelyWritesBeforeRead(stmt.alternate, name);
+        }
+        if (TYPE.isExpressionStatement(stmt) && TYPE.isAssignmentExpression(stmt.expression)) {
+            const assign = stmt.expression;
+            return assign.operator === "=" && TYPE.isIdentifier(assign.left) && assign.left.name === name
+                && !collectReadNames(assign.right).has(name);
+        }
+        return false;
+    }
+
+    /**
+     * 当前 id 是否是所在语句里对该名字的最后一次读取。
+     * 绝大多数语句里保持原来的保守判断;只有 if 的 test 读取且两个分支都会先写后读时,
+     * 才允许把非纯右值搬进 test(例如 `acc = f(); if (acc) { ... acc = x; use(acc) }`)。
+     */
+    private isLastReadInStatement(stmt: TYPE.Statement | null | undefined, id: TYPE.Identifier): boolean {
+        if (!stmt || this.countReadsInNode(stmt, id.name) <= 1) return true;
+        if (!TYPE.isIfStatement(stmt) || !this.containsNode(stmt.test, id)) return false;
+        if (this.countReadsInNode(stmt.test, id.name) > 1) return false;
+        return !this.branchReadsNameBeforeWrite(stmt.consequent, id.name)
+            && !this.branchReadsNameBeforeWrite(stmt.alternate, id.name);
+    }
+
     private resolveIdentifier(
         id: TYPE.Identifier,
         env: EnvState,
@@ -1464,7 +1698,11 @@ export class TempVariableSimplify implements ISimplify {
         // 第 2 条读取的是旧 acc,但旧值在本条语句结束后就被覆盖,因此也应视为 last use。
         const liveAfter = ctx.liveAfter.get(list[index]);
         const overwrittenHere = this.statementOverwritesSelf(list[index], id.name, id);
-        const lastUse = overwrittenHere || (liveAfter != null && !liveAfter.has(id.name));
+        // 同一个语句里可能还有别的读取(典型是 if 的 test 和分支体都读同一个
+        // 临时变量)。只有分支在读取前会先覆盖该变量时,测试里的这次读取才算
+        // 最后一次读取;否则搬移调用会复制一份调用。
+        const lastUse = (overwrittenHere || (liveAfter != null && !liveAfter.has(id.name)))
+            && this.isLastReadInStatement(list[index], id);
         if (lastUse && entry.unsubstitutedReads === 0) {
             if (isPureExpression(entry.expr) && !isDeclarationValue(entry.expr)) {
                 // 数组/对象字面量:只在唯一使用处求值一次,原赋值稍后会被作为死存储删除

@@ -383,13 +383,13 @@ docs/                   architecture documentation, MCP documentation
 
 ## Optimizer
 
-`SimplifyExport` runs to a fixed point until the AST stops changing (at most 5 rounds):
+`SimplifyExport` runs to a fixed point until the AST stops changing (at most 5 rounds). It mainly:
 
-- `ReservedIdentifierSimplifier`: removes `panda_jmp0_reserved_*` placeholders;
-- `TempVariableSimplify`: copy propagation for temps (`acc` / `vN` / `local_L_i`), dead-store elimination and closure-function hoisting; it distinguishes old and new values of `acc`, so `acc = f(); acc = x + acc; y = acc` becomes `y = x + f()`, and it no longer deletes `if`-branch assignments as dead stores;
-- `ConditionSimplify`: hoists unconditionally evaluated `SequenceExpression` prefixes out of `if` tests, removes scratch temp assignments, and folds `x === null || x === undefined` into `x == null`;
-- `SyntaxRewriteSimplify`: call rewriting, function-expression-to-declaration, condition/loop cleanup, and a final compound-assignment fold (`x = x + y` → `x += y`);
-- `ClassSyntaxSimplify` / `HighLevelGrammarSimplify`: class and high-level syntax recovery.
+- removes `panda_jmp0_reserved_*` placeholders, accumulator temps and dead code;
+- recovers functions/classes, if/switch, loops and module syntax;
+- rewrites call forms and folds compound assignments, logical conditions and common expressions.
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the pass order, condition-polarity rules and regression samples.
 
 `PandaLexical` first resolves each method's lexical environments: a closure starts at the depth of its definition site, and `newlexenv` / `stlexvar` / `ldlexvar` are normalized to absolute depths. The optimizer then uses those depths to recover `local_L_i` / `sendable_L_i` variables.
 

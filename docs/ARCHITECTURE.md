@@ -78,6 +78,9 @@ docs/ARCHITECTURE.md     本文档
   - `reduceAcyclic` 处理 if/then/else、sequence 拼接;`reduceCyclic` 处理 while / do-while / 自环;
   - 复杂循环通过 `DominatorGraph`、`LoopFinder`、`refineLoop`、`virtualizeIrregularExits` 还原 continue/break/goto;
   - 不可归约图通过 Tail 复制修复;
+  - `simplifyConditionalSequence` 生成的逻辑条件 Region 必须带 `logicalRegion`;`reduceSequence` 合并这类 Region 时要继续传播该标志,否则后续 `coalesceTailRegion` 只能用 `acc` 生成 test,丢掉 `A || B` 的计算;
+  - `coalesceTailRegion` 判断是否取反时必须看 `edgeValueOrThrow()` 的 true/false 边,不能依赖 `ValueGraph.successors()` 的返回顺序;
+  - `Region.copy()` 用于复制共享 Tail,必须保留 `conditionalExp` / `logicalRegion` / `exceptionLandingPad` / `tryCatchHelperRegion` 标志;
   - 超过 500 基本块或未处理的控制流会降级到 `SimpleAnalysis`。
 - **`statements.ts`**:语句树(`If/While/DoWhile/Break/Continue/Goto/Label/TryCatch/LogicalExpression`),再回填为 Babel AST。
 - **`SimpleAnalysis.ts`**:结构化失败时的线性降级输出,使用 `decompiler_goto` / label 模拟跳转。
@@ -98,10 +101,19 @@ NormalizeDeclarations
   → CallResultSimplify
   → [ReservedIdentifierSimplifier → TempVariableSimplify → AccCallSimplify → EnumSimplify → ConditionSimplify → SyntaxRewriteSimplify → ClassSyntaxSimplify] × N
   → HighLevelGrammarSimplify
-  → normalizeConditionTests / foldCompoundAssignments
+  → TempVariableSimplify.foldConditionAssignments
+  → normalizeConditionTests
+  → SyntaxRewriteSimplify.hoistTestPrefixes
+  → foldCompoundAssignments
 ```
 
 每个 pass 返回 `boolean` 表示是否修改 AST;稳定后立即停止,最多 5 轮。
+
+流水线尾部有三步专门处理“条件形态”(最后再做 `foldCompoundAssignments`):
+
+- `foldConditionAssignments`:定点迭代结束后,`HighLevelGrammarSimplify` 可能把 `if (!X) { X = true } else { X = false }` 合成为 `X = !X`,与已有的 `X = !X`(`callruntime.isfalse`)形成新的取反链;这一步只做 `X = E; (X = !X)*; if (X/!X)` 折叠,不重新跑复制传播;
+- `normalizeConditionTests`:再归一化 if/三元 test(`!!a`、`!binary`、`!逻辑表达式` 等);
+- `hoistTestPrefixes`:把 `if (A || (v1 = 0, v2 = 2, B))` 里“只给临时变量赋常量字面量”的前缀提到 if 前,要求短路分支直接 return/throw、不读取这些临时变量,且不在带 `finally` 的 try 内。
 
 | 文件 | 职责 |
 |---|---|
@@ -109,10 +121,10 @@ NormalizeDeclarations
 | `NormalizeDeclarations.ts` | 归一化重复 `let` / import 声明,避免 Babel scope 冲突 |
 | `ReservedIdentifierSimplifier.ts` | 还原 `panda_jmp0_reserved_*` 保留标识符 |
 | `EnumSimplify.ts` | 还原 ArkTS enum 的惰性初始化字节码模式为对象字面量(`v0 = function...; v1 = E; if (!E) {...}; v0(v1)` → `E = { ... }`) |
-| `TempVariableSimplify.ts` | 临时变量复制传播、死存储消除、序列表达式清理、返回值折叠、函数提升、catch 参数隔离 |
+| `TempVariableSimplify.ts` | 临时变量复制传播、死存储消除、序列表达式清理、返回值折叠、函数提升、catch 参数隔离;支持条件取反链按奇偶性折叠、test 序列内死赋值/自取反折叠,并限制非纯表达式只在真正最后一次读取时搬移 |
 | `AccCallSimplify.ts` | 还原 `recv = acc; acc = acc.method; acc.call(recv, ...)` 为 `recv.method(...)` |
-| `ConditionSimplify.ts` | 提升 if test 中无条件求值的序列表达式、清理条件临时赋值、合并 null/undefined 判断 |
-| `SyntaxRewriteSimplify.ts` | if 条件化简、if/else 归一化、`.call` 还原、函数表达式/数组字面量/内置函数优化 |
+| `ConditionSimplify.ts` | 提升 if test 中无条件求值的序列表达式、清理条件临时赋值、折叠语句级自取反链、合并 null/undefined 判断 |
+| `SyntaxRewriteSimplify.ts` | if 条件化简、if/else 归一化、`.call` 还原、函数表达式/数组字面量/内置函数优化;末尾提供 `hoistTestPrefixes` |
 | `ClassSyntaxSimplify.ts` | getter/setter、prototype 方法、class 表达式还原 |
 | `HighLevelGrammarSimplify.ts` | if → switch / 三目、while → for / for-of、optional chaining 等 |
 | `CallResultSimplify.ts` | 处理 `callIns` 调用结果被下一条 `acc` 赋值覆盖的情况 |
@@ -122,6 +134,8 @@ NormalizeDeclarations
 
 - 复制传播限制表达式大小(默认 24 节点)并设置每函数克隆预算,避免链式表达式指数膨胀;
 - 复制传播、死存储和返回值折叠都经过 liveness 与作用域检查;
+- 非纯表达式(`call` / `new` / 函数/类)只在真正最后一次读取时搬移;`if` 的 test 与分支体都读同一临时变量时必须保留原赋值,否则会把调用复制成两次;
+- test 序列折叠要求被赋值的临时变量在 test 之后已死、test 外无其它读取、分支/序列前缀不会先读后写;循环 test 暂不处理;
 - 函数/类表达式只在安全位置搬移,避免重复执行带副作用的调用;
 - 不在循环内频繁 `scope.crawl()`,大 AST 上保持线性分析。
 
@@ -153,6 +167,8 @@ npx tsx src/cli.ts decompile <file.abc> [-o outDir] [--no-simplify] [--stdout] [
 - 与 `test/expected/md5.js`、`test/expected/class.js` 逐字比较;
 - 使用 Babel 再次解析输出;
 - `md5.abc` 输出会实际执行,校验 `md5("admin")` 与 Node `crypto` 一致;
+- `aes.abc` 输出会执行加解密自检,并通过快照覆盖条件极性(`Counter.increment` 必须是 `!== 255`)和 test 序列死赋值清理;
+- `zhihupp0.59.hap` 做 HAP 轻量回归;`AbsoluteUrlParser` / `ZhihuHttpClient` 是逻辑条件传播与取反链折叠的重点样本;
 - `bilibili_open.abc` 用于大文件手动回归。
 
 ```bash
@@ -170,3 +186,6 @@ npm run typecheck
 4. 运行时只需 Node.js ≥ 18;`typescript` / `tsx` 仅开发期使用。
 5. 降级输出可能包含 `decompiler_goto`、`break` 作用域问题或 `export ... from` 语法,解析时需要对应的 parser 配置。
 6. **单类输出必须是该类的纯函数**:不要引入跨类的可变状态(全局计数器、按偏移共享的可变缓存等),否则 `-j` 并行结果会与串行不一致。生成名计数器已按类复位。
+7. **条件极性由 CFG 边值决定**:`ValueGraph.successors()` 是插入顺序,不是 true/false 边顺序;`coalesceTailRegion`、`reduceIfRegion` 等必须用 `edgeValueOrThrow()`。
+8. **逻辑条件 Region 的标志必须完整传播**:`reduceSequence` 要传播 `logicalRegion`,`Region.copy()` 要保留全部条件/try-catch 标志,否则 `A || B` 会退化成只读 `acc`。
+9. **删除/搬移临时变量前必须做 liveness 与分支检查**:test 序列折叠、非纯表达式搬移都可能改变 `acc` 的最终值或复制调用;宁可少优化,不能改变语义。

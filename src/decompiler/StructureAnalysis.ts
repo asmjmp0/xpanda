@@ -302,6 +302,10 @@ export class StructureAnalysis {
         region.setType(nextRegion.getType());
         if (nextRegion.getType() === "Condition") {
             region.conditionalExp = nextRegion.isConditionalExp();
+            // 合并的是逻辑条件区域(if (A || B) / if (A && B))时,后续
+            // coalesceTailRegion/reduceIfRegion 需要用它生成 test 表达式,
+            // 否则会退化成只读 acc,丢掉 A/B 的计算。
+            region.logicalRegion = nextRegion.isLogicalRegion();
         }
         region.addRegion(nextRegion);
         this.regionGraph.removeEdge(region, nextRegion);

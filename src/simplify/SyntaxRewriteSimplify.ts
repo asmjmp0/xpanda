@@ -2,7 +2,7 @@ import { Program } from "@babel/types";
 import { ISimplify } from "./ISimplify";
 import traverse, { NodePath } from "@babel/traverse";
 import * as TYPE from "@babel/types";
-import { collectIdentifierNames, isDeclarationValue, isNodeEqual, isPureExpression } from "./AstUtils";
+import { collectIdentifierNames, isDeclarationValue, isNodeEqual, isPureExpression, isTempName } from "./AstUtils";
 
 /**
  * 通用语法重写:
@@ -207,6 +207,72 @@ export class SyntaxRewriteSimplify implements ISimplify {
                     path.replaceWith(folded);
                     break;
                 }
+            },
+        });
+    }
+
+    /**
+     * 把 `if (A || (v1 = 0, v2 = 2, B)) return;` 里只给临时变量赋常量字面量的
+     * 前缀语句提到 if 前面:
+     *   v1 = 0;
+     *   v2 = 2;
+     *   if (A || B) return;
+     * 只有短路分支直接 return/throw、且不读取这些临时变量时才安全
+     * (短路时原本不会执行前缀,提到前面后会在 A 为真时也执行;
+     * 分支直接退出且不读取,就不会观察到这个差异)。
+     */
+    public static hoistTestPrefixes(node: Program): void {
+        const isHoistableValue = (expr: TYPE.Node | null | undefined): boolean => {
+            if (!expr) return false;
+            if (TYPE.isNumericLiteral(expr) || TYPE.isStringLiteral(expr)
+                || TYPE.isBooleanLiteral(expr) || TYPE.isNullLiteral(expr)) return true;
+            if (TYPE.isIdentifier(expr) && expr.name === "undefined") return true;
+            if (TYPE.isUnaryExpression(expr)) {
+                if (expr.operator === "void") return TYPE.isNumericLiteral(expr.argument);
+                return (expr.operator === "-" || expr.operator === "+") && TYPE.isNumericLiteral(expr.argument);
+            }
+            return false;
+        };
+        const alwaysExits = (stmt: TYPE.Statement | null | undefined): boolean => {
+            if (!stmt) return false;
+            if (TYPE.isReturnStatement(stmt) || TYPE.isThrowStatement(stmt)) return true;
+            if (TYPE.isBlockStatement(stmt)) return stmt.body.some(alwaysExits);
+            if (TYPE.isIfStatement(stmt)) {
+                return stmt.alternate != null && alwaysExits(stmt.consequent) && alwaysExits(stmt.alternate);
+            }
+            return false;
+        };
+        traverse(TYPE.file(node), {
+            IfStatement: (path) => {
+                const test = path.node.test;
+                if (!TYPE.isLogicalExpression(test) || test.operator !== "||") return;
+                const right = test.right;
+                if (!TYPE.isSequenceExpression(right) || right.expressions.length < 2) return;
+                const prefix: TYPE.ExpressionStatement[] = [];
+                const names = new Set<string>();
+                for (let i = 0; i < right.expressions.length - 1; i++) {
+                    const expr = right.expressions[i];
+                    if (!TYPE.isAssignmentExpression(expr) || expr.operator !== "=") return;
+                    if (!TYPE.isIdentifier(expr.left) || !isTempName(expr.left.name)) return;
+                    if (!isHoistableValue(expr.right)) return;
+                    names.add(expr.left.name);
+                    prefix.push(TYPE.expressionStatement(expr));
+                }
+                if (prefix.length === 0) return;
+                // A 侧不能读写这些临时变量(提到前面会改变 A 看到的值)
+                for (const name of names) {
+                    if (collectIdentifierNames(test.left).has(name)) return;
+                }
+                // 短路分支必须直接退出,且不读取这些临时变量
+                const consequent = path.node.consequent;
+                if (!alwaysExits(consequent)) return;
+                for (const name of names) {
+                    if (collectIdentifierNames(consequent).has(name)) return;
+                }
+                // finally 能观察到提前赋值后的值
+                if (path.findParent((p) => p.isTryStatement() && p.node.finalizer != null)) return;
+                path.insertBefore(prefix);
+                test.right = right.expressions[right.expressions.length - 1] as TYPE.Expression;
             },
         });
     }
