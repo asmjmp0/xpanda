@@ -1,0 +1,170 @@
+/*
+* class name:L&core/src/main/ets/navigation/StartupDestinationChannel&1.0.0;
+* Source code created from a .abc file.
+* powered by xpanda decompiler, author: jmp0
+*/
+import { AppDestinationName } from "@normalized:N&&&core/src/main/ets/navigation/AppDestination&1.0.0";
+import { DeepLinkType } from "@normalized:N&&&core/src/main/ets/navigation/DeepLinkResolver&1.0.0";
+import { decodeAppDestination } from "@normalized:N&&&core/src/main/ets/navigation/AppDestination&1.0.0";
+let LatestOperationGuard, StartupDestinationChannel, appDestinationIdentity, findAppDestinationStackIndex, shouldPushAppDestination, startupDestinationChannel, toAppDestination;
+appDestinationIdentity = function (p0) {
+  let v2, acc;
+  if (p0.name === AppDestinationName.QUESTION || !(acc = p0.name !== AppDestinationName.ANSWER, p0.name !== AppDestinationName.ANSWER) || !(acc = p0.name !== AppDestinationName.ARTICLE, p0.name !== AppDestinationName.ARTICLE) || !(acc = p0.name !== AppDestinationName.VIDEO, p0.name !== AppDestinationName.VIDEO) || !(acc = p0.name !== AppDestinationName.PIN, p0.name !== AppDestinationName.PIN) || !(acc = p0.name !== AppDestinationName.PEOPLE, p0.name !== AppDestinationName.PEOPLE) || !(acc = p0.name !== AppDestinationName.COLLECTION, p0.name !== AppDestinationName.COLLECTION) || p0.name === AppDestinationName.COLLECTIONS) {
+    return "" + p0.name + ":" + encodeURIComponent(p0.id) + "";
+  } else if (p0.name === AppDestinationName.WRITE_ANSWER) {
+    v2 = p0.answerId ?? "";
+    return "" + p0.name + ":" + encodeURIComponent(p0.questionId) + ":" + encodeURIComponent(v2);
+  } else if (p0.name === AppDestinationName.WRITE_PIN) {
+    return "" + p0.name + ":" + encodeURIComponent(p0.draftId) + "";
+  } else if (p0.name === AppDestinationName.COMMENT) {
+    v2 = p0.commentId ?? "";
+    acc = "" + p0.name + ":" + p0.contentType + ":" + encodeURIComponent(p0.contentId) + ":" + encodeURIComponent(v2);
+    v2 = p0.segmentId ?? "";
+    return acc + ":" + encodeURIComponent(v2);
+  } else if (p0.name === AppDestinationName.SEARCH) {
+    return "" + p0.name + ":" + encodeURIComponent(p0.query) + "";
+  } else if (p0.name === AppDestinationName.WHATS_NEW) {
+    v2 = p0.version ?? "";
+    return "" + p0.name + ":" + encodeURIComponent(v2) + "";
+  } else {
+    return p0.name;
+  }
+};
+findAppDestinationStackIndex = function (p0, p1) {
+  let v1, v2, v3 /*decodeAppDestination*/, acc;
+  v1 = 0;
+  for (v2 = appDestinationIdentity(p1); v1 < p0.length; v1 += 1) {
+    v3 = p0[v1].param === undefined ? decodeAppDestination(p0[v1].name, new Object()) : decodeAppDestination(p0[v1].name, p0[v1].param);
+    acc = !(v3 !== undefined);
+    if (v3 !== undefined && (acc = appDestinationIdentity(v3), v3 = acc, acc === v2)) {
+      return v1;
+    }
+  }
+  return -1;
+};
+shouldPushAppDestination = function (p0, p1) {
+  let v0;
+  v0 = p0 === undefined;
+  if (p0 !== undefined) {
+    v0 = appDestinationIdentity(p0) !== appDestinationIdentity(p1);
+  }
+  return v0;
+};
+toAppDestination = function (p0) {
+  switch (p0.type) {
+    case DeepLinkType.MAIN_TABS:
+      return {
+        "name": AppDestinationName.HOME
+      };
+    case DeepLinkType.ANSWER:
+      return {
+        "name": AppDestinationName.ANSWER,
+        "id": p0.id
+      };
+    case DeepLinkType.QUESTION:
+      return {
+        "name": AppDestinationName.QUESTION,
+        "id": p0.id
+      };
+    case DeepLinkType.ARTICLE:
+      return {
+        "name": AppDestinationName.ARTICLE,
+        "id": p0.id
+      };
+    case DeepLinkType.VIDEO:
+      return {
+        "name": AppDestinationName.VIDEO,
+        "id": p0.id
+      };
+    case DeepLinkType.PIN:
+      return {
+        "name": AppDestinationName.PIN,
+        "id": p0.id
+      };
+    case DeepLinkType.PERSON:
+      return {
+        "name": AppDestinationName.PEOPLE,
+        "id": p0.id
+      };
+    case DeepLinkType.SEARCH:
+      return {
+        "name": AppDestinationName.SEARCH,
+        "query": p0.query
+      };
+    default:
+      return;
+  }
+};
+LatestOperationGuard = class panda_jmp0_reserved_anonymous_0 {
+  constructor() {
+    this.generation = 0;
+  }
+  next() {
+    this.generation = this.generation + 1;
+    return this.generation;
+  }
+  invalidate() {
+    this.generation = this.generation + 1;
+  }
+  isCurrent(p0) {
+    return p0 === this.generation;
+  }
+};
+StartupDestinationChannel = class panda_jmp0_reserved_anonymous_1 {
+  constructor() {
+    this.listeners = [];
+    this.pending = undefined;
+    this.activeIdentity = undefined;
+  }
+  publish(p0) {
+    let v0;
+    let local_0_0;
+    local_0_0 = p0;
+    if (this.listeners.length === 0) {
+      this.pending = local_0_0;
+      return;
+    } else {
+      v0 = appDestinationIdentity(local_0_0);
+      if (v0 === this.activeIdentity) {
+        return;
+      } else {
+        this.activeIdentity = v0;
+        this.listeners.slice().forEach(function (p0) {
+          return p0(local_0_0);
+        });
+        return;
+      }
+    }
+  }
+  subscribe(p0) {
+    let v0;
+    let local_0_0, local_0_1;
+    local_0_1 = this;
+    local_0_0 = p0;
+    local_0_1.listeners.push(local_0_0);
+    v0 = local_0_1.pending;
+    local_0_1.pending = undefined;
+    if (v0 !== undefined) {
+      local_0_1.activeIdentity = appDestinationIdentity(v0);
+      local_0_0(v0);
+    }
+    return function () {
+      let v1;
+      v1 = local_0_1.listeners.indexOf(local_0_0);
+      if (v1 >= 0) {
+        local_0_1.listeners.splice(v1, 1);
+      }
+      if (local_0_1.listeners.length === 0) {
+        local_0_1.activeIdentity = undefined;
+      }
+    };
+  }
+};
+startupDestinationChannel = new StartupDestinationChannel();
+export { LatestOperationGuard };
+export { StartupDestinationChannel };
+export { appDestinationIdentity };
+export { findAppDestinationStackIndex };
+export { shouldPushAppDestination };
+export { startupDestinationChannel };
+export { toAppDestination };

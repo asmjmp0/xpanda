@@ -5,6 +5,7 @@ import * as TYPE from "@babel/types";
 import {
     addPatternNames,
     collectAssignedNames,
+    collectMemberWriteTargets,
     collectIdentifierNames,
     collectReadNames,
     isClassLike,
@@ -16,6 +17,7 @@ import {
     isTempName,
     nodeSize,
     walkNode,
+    MemberWriteTarget,
 } from "./AstUtils";
 
 /**
@@ -62,12 +64,50 @@ interface FunctionContext {
     returned: Set<string>;
 }
 
+/** 属性归一化键:非 computed 标识符与 computed 字符串字面量视为同一属性;动态键返回 null。 */
+function memberPropertyKey(property: TYPE.Expression, computed: boolean): string | null {
+    if (!computed && TYPE.isIdentifier(property)) return property.name;
+    if (computed && TYPE.isStringLiteral(property)) return String(property.value);
+    return null;
+}
+
+/** expr 中是否存在读取 `object.<key>` 的成员装载;key 为 null(动态键)时按同基对象保守命中。 */
+function exprReadsMember(expr: TYPE.Node, object: TYPE.Expression, key: string | null): boolean {
+    let found = false;
+    walkNode(expr, (n) => {
+        if (found) return false;
+        if (isFunctionLike(n) || isClassLike(n)) return false;
+        if (TYPE.isMemberExpression(n) || TYPE.isOptionalMemberExpression(n)) {
+            const m = n as TYPE.MemberExpression;
+            if (isNodeEqual(m.object as TYPE.Expression, object)) {
+                const k = memberPropertyKey(m.property as TYPE.Expression, m.computed);
+                // 任一方是动态键时无法证明属性不同,保守视为命中
+                if (key === null || k === null || k === key) found = true;
+            }
+        }
+        return !found;
+    });
+    return found;
+}
+
 class EnvState {
     readonly map = new Map<string, EnvEntry>();
     private readonly deps = new Map<string, Set<string>>();
 
     get(name: string): EnvEntry | undefined {
         return this.map.get(name);
+    }
+
+    /** 使缓存中读取了 `object.property` 这一成员路径的项失效。
+     *  成员写入只改对象属性,不改变变量绑定,因此别名(如 `v8 = acc`)与
+     *  模板对象(`acc = {...}`)不受影响,不能按基对象一刀切。 */
+    invalidateMemberReads(object: TYPE.Expression, property: TYPE.Expression, computed: boolean): void {
+        const key = memberPropertyKey(property, computed);
+        const doomed: string[] = [];
+        for (const [name, entry] of this.map) {
+            if (exprReadsMember(entry.expr, object, key)) doomed.push(name);
+        }
+        for (const name of doomed) this.invalidate(name);
     }
 
     set(name: string, entry: EnvEntry): void {
@@ -1332,6 +1372,48 @@ export class TempVariableSimplify implements ISimplify {
         }
     }
 
+    /** 收集区域的写入(标识符名 + 成员目标);必须在处理该区域之前调用,处理会改写 AST。 */
+    private collectRegionWrites(
+        nodes: Array<TYPE.Node | null | undefined>,
+    ): { names: Set<string>; members: MemberWriteTarget[] } {
+        const names = new Set<string>();
+        const members: MemberWriteTarget[] = [];
+        for (const node of nodes) {
+            if (!node) continue;
+            collectAssignedNames(node, names);
+            collectMemberWriteTargets(node, members);
+        }
+        return { names, members };
+    }
+
+    /** 处理完区域后调用:区域内的写入使外层 env 的缓存失效。 */
+    private invalidateRegionWrites(
+        writes: { names: Set<string>; members: MemberWriteTarget[] },
+        env: EnvState,
+    ): void {
+        for (const name of writes.names) env.invalidate(name);
+        for (const target of writes.members) {
+            env.invalidateMemberReads(target.object, target.property, target.computed);
+        }
+    }
+
+    /** 单个赋值/更新目标引发的失效:成员左值按“同对象.同属性”精确失效,其余按名字失效。 */
+    private invalidateAssignTarget(
+        target: TYPE.LVal | TYPE.OptionalMemberExpression,
+        env: EnvState,
+    ): void {
+        if (TYPE.isMemberExpression(target) || TYPE.isOptionalMemberExpression(target)) {
+            const m = target as TYPE.MemberExpression;
+            env.invalidateMemberReads(m.object as TYPE.Expression, m.property as TYPE.Expression, m.computed);
+            return;
+        }
+        if (TYPE.isIdentifier(target)) {
+            env.invalidate(target.name);
+            return;
+        }
+        for (const name of collectAssignedNames(target)) env.invalidate(name);
+    }
+
     private processStatement(
         stmt: TYPE.Statement,
         env: EnvState,
@@ -1348,38 +1430,31 @@ export class TempVariableSimplify implements ISimplify {
                 return;
             case "IfStatement": {
                 stmt.test = this.rewriteExpr(stmt.test, env, list, index, ctx, true);
-                const writes = collectAssignedNames(stmt.consequent);
-                if (stmt.alternate) for (const name of collectAssignedNames(stmt.alternate)) writes.add(name);
+                const writes = this.collectRegionWrites([stmt.consequent, stmt.alternate]);
                 this.processNestedStatement(stmt.consequent, env.copy(), ctx);
                 if (stmt.alternate) this.processNestedStatement(stmt.alternate, env.copy(), ctx);
-                for (const name of writes) env.invalidate(name);
+                this.invalidateRegionWrites(writes, env);
                 return;
             }
             case "WhileStatement": {
-                const writes = collectAssignedNames(stmt.test);
-                for (const name of collectAssignedNames(stmt.body)) writes.add(name);
-                for (const name of writes) env.invalidate(name);
+                const writes = this.collectRegionWrites([stmt.test, stmt.body]);
+                this.invalidateRegionWrites(writes, env);
                 stmt.test = this.rewriteExpr(stmt.test, env, list, index, ctx, false);
                 this.processNestedStatement(stmt.body, env.copy(), ctx);
-                for (const name of writes) env.invalidate(name);
+                this.invalidateRegionWrites(writes, env);
                 return;
             }
             case "DoWhileStatement": {
-                const writes = collectAssignedNames(stmt.body);
-                for (const name of collectAssignedNames(stmt.test)) writes.add(name);
-                for (const name of writes) env.invalidate(name);
+                const writes = this.collectRegionWrites([stmt.body, stmt.test]);
+                this.invalidateRegionWrites(writes, env);
                 this.processNestedStatement(stmt.body, env.copy(), ctx);
                 stmt.test = this.rewriteExpr(stmt.test, env, list, index, ctx, false);
-                for (const name of writes) env.invalidate(name);
+                this.invalidateRegionWrites(writes, env);
                 return;
             }
             case "ForStatement": {
-                const writes = new Set<string>();
-                if (stmt.init) for (const name of collectAssignedNames(stmt.init)) writes.add(name);
-                for (const name of collectAssignedNames(stmt.test)) writes.add(name);
-                if (stmt.update) for (const name of collectAssignedNames(stmt.update)) writes.add(name);
-                for (const name of collectAssignedNames(stmt.body)) writes.add(name);
-                for (const name of writes) env.invalidate(name);
+                const writes = this.collectRegionWrites([stmt.init, stmt.test, stmt.update, stmt.body]);
+                this.invalidateRegionWrites(writes, env);
                 if (stmt.init) {
                     if (TYPE.isVariableDeclaration(stmt.init)) {
                         this.processVariableDeclaration(stmt.init, env, list, index, ctx);
@@ -1390,18 +1465,17 @@ export class TempVariableSimplify implements ISimplify {
                 stmt.test = this.rewriteExpr(stmt.test, env, list, index, ctx, false);
                 if (stmt.update) stmt.update = this.processExpression(stmt.update, env.copy(), list, index, ctx, false);
                 this.processNestedStatement(stmt.body, env.copy(), ctx);
-                for (const name of writes) env.invalidate(name);
+                this.invalidateRegionWrites(writes, env);
                 return;
             }
             case "ForInStatement":
             case "ForOfStatement": {
-                const writes = collectAssignedNames(stmt.left);
-                for (const name of collectAssignedNames(stmt.body)) writes.add(name);
-                for (const name of writes) env.invalidate(name);
+                const writes = this.collectRegionWrites([stmt.left, stmt.body]);
+                this.invalidateRegionWrites(writes, env);
                 (stmt as TYPE.ForInStatement).right = this.rewriteExpr(
                     (stmt as TYPE.ForInStatement).right, env, list, index, ctx, true);
                 this.processNestedStatement(stmt.body, env.copy(), ctx);
-                for (const name of writes) env.invalidate(name);
+                this.invalidateRegionWrites(writes, env);
                 return;
             }
             case "BlockStatement":
@@ -1411,10 +1485,16 @@ export class TempVariableSimplify implements ISimplify {
                 this.processNestedStatement(stmt.body, env, ctx);
                 return;
             case "TryStatement": {
-                const tryWrites = collectAssignedNames(stmt.block);
-                if (stmt.handler) for (const name of collectAssignedNames(stmt.handler.body)) tryWrites.add(name);
-                const writes = new Set(tryWrites);
-                if (stmt.finalizer) for (const name of collectAssignedNames(stmt.finalizer)) writes.add(name);
+                const tryWrites = this.collectRegionWrites([stmt.block, stmt.handler?.body]);
+                const writes = {
+                    names: new Set(tryWrites.names),
+                    members: tryWrites.members.slice(),
+                };
+                if (stmt.finalizer) {
+                    const finalizerWrites = this.collectRegionWrites([stmt.finalizer]);
+                    for (const name of finalizerWrites.names) writes.names.add(name);
+                    for (const target of finalizerWrites.members) writes.members.push(target);
+                }
                 this.processNestedStatement(stmt.block, env.copy(), ctx);
                 if (stmt.handler) this.processNestedStatement(stmt.handler.body, env.copy(), ctx);
                 if (stmt.finalizer) {
@@ -1422,22 +1502,21 @@ export class TempVariableSimplify implements ISimplify {
                     // 的别名关系:try 里写过的名字在 finally 入口必须视为未知,
                     // 否则 `v2 = acc` 会在 acc 已被改写后仍被折叠成 acc。
                     const finalEnv = env.copy();
-                    for (const name of tryWrites) finalEnv.invalidate(name);
+                    this.invalidateRegionWrites(tryWrites, finalEnv);
                     this.processNestedStatement(stmt.finalizer, finalEnv, ctx);
                 }
-                for (const name of writes) env.invalidate(name);
+                this.invalidateRegionWrites(writes, env);
                 return;
             }
             case "SwitchStatement": {
-                const writes = new Set<string>();
-                for (const c of stmt.cases) for (const name of collectAssignedNames(c)) writes.add(name);
+                const writes = this.collectRegionWrites(stmt.cases);
                 stmt.discriminant = this.rewriteExpr(stmt.discriminant, env, list, index, ctx, true);
                 for (const c of stmt.cases) {
                     const caseEnv = env.copy();
                     if (c.test) c.test = this.rewriteExpr(c.test, caseEnv, list, index, ctx, true);
                     this.processStatements(c.consequent, caseEnv, ctx);
                 }
-                for (const name of writes) env.invalidate(name);
+                this.invalidateRegionWrites(writes, env);
                 return;
             }
             case "ReturnStatement":
@@ -1606,9 +1685,10 @@ export class TempVariableSimplify implements ISimplify {
             }
         }
 
-        const writes = new Set<string>();
-        addPatternNames(assign.left, writes);
-        for (const name of writes) env.invalidate(name);
+        // 标识符/解构写入使依赖名字的缓存失效;成员左值(this.x = v)按
+        // “同对象.同属性”精确失效——成员写入不改变变量绑定,别名与模板对象
+        // 必须跨成员写入存活(ObjectLiteralSimplify 依赖该形态)。
+        this.invalidateAssignTarget(assign.left, env);
         if (assign.operator === "=" && TYPE.isIdentifier(assign.left)) {
             const name = assign.left.name;
             if (isTempName(name) && ctx.infos.has(name)) {
@@ -1711,9 +1791,7 @@ export class TempVariableSimplify implements ISimplify {
                 const n = node as TYPE.AssignmentExpression;
                 this.rewriteLVal(n.left, env, list, index, ctx);
                 n.right = this.rewriteExpr(n.right, env, list, index, ctx, false);
-                const writes = new Set<string>();
-                addPatternNames(n.left, writes);
-                for (const name of writes) env.invalidate(name);
+                this.invalidateAssignTarget(n.left, env);
                 if (n.operator === "=" && TYPE.isIdentifier(n.left)) {
                     const name = n.left.name;
                     if (isTempName(name) && ctx.infos.has(name)) this.define(env, name, n.right, list, index, ctx);
@@ -1726,6 +1804,8 @@ export class TempVariableSimplify implements ISimplify {
                     env.invalidate(n.argument.name);
                 } else {
                     this.rewriteLVal(n.argument as any, env, list, index, ctx);
+                    // this.x++ 同样读取并写入成员:按“同对象.同属性”精确失效
+                    this.invalidateAssignTarget(n.argument as any, env);
                 }
                 return n;
             }
@@ -1747,7 +1827,7 @@ export class TempVariableSimplify implements ISimplify {
                 n.right = this.rewriteExpr(n.right, rightEnv, list, index, ctx, false);
                 // 右值可能执行,也可能不执行;它写入的变量在 outer env 中必须视为未知,
                 // 否则分支里会把 v7 错误地继续当成 acc(acc 已被右值改掉)。
-                for (const name of collectAssignedNames(n.right)) env.invalidate(name);
+                this.invalidateRegionWrites(this.collectRegionWrites([n.right]), env);
                 return n;
             }
             case "BinaryExpression": {
@@ -1764,10 +1844,7 @@ export class TempVariableSimplify implements ISimplify {
                 n.consequent = this.rewriteExpr(n.consequent, env.copy(), list, index, ctx, false);
                 n.alternate = this.rewriteExpr(n.alternate, env.copy(), list, index, ctx, false);
                 // consequent/alternate 只会执行其中一个,写入的变量在 outer env 中都视为未知
-                const writes = new Set<string>();
-                collectAssignedNames(n.consequent, writes);
-                collectAssignedNames(n.alternate, writes);
-                for (const name of writes) env.invalidate(name);
+                this.invalidateRegionWrites(this.collectRegionWrites([n.consequent, n.alternate]), env);
                 return n;
             }
             case "CallExpression":

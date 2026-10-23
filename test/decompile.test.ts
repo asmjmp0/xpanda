@@ -582,6 +582,53 @@ function verifyZhihuAppDestination(): void {
 }
 
 /**
+ * 回归:成员写入后的“取走并清空”模式,旧值副本不得被复制传播回成员装载。
+ * 源码语义(StartupDestinationChannel.subscribe):
+ *   const pending = this.pending;
+ *   this.pending = undefined;
+ *   if (pending !== undefined) { this.activeIdentity = identity(pending); listener(pending); }
+ * 旧实现在成员写入(`local_0_1.pending = undefined`)时不失效缓存装载,
+ * 把旧值临时变量的读取替换回 `local_0_1.pending`,生成
+ *   local_0_1.pending = undefined;
+ *   if (local_0_1.pending !== undefined)   ← 恒为 false 的死代码
+ * 导致新监听者订阅时永远收不到暂存的目的地。
+ */
+function verifyZhihuStartupDestinationChannel(): void {
+    const hapPath = path.join(__dirname, "resources", "zhihupp0.59.hap");
+    const hap = new HapFile(new Uint8Array(fs.readFileSync(hapPath)));
+    const pandaFile = new PandaFile(hap.readEntry("ets/modules.abc")!);
+    const clazz = pandaFile.getAllClasses().find((c) => c.name.content.includes("StartupDestinationChannel"));
+    if (!clazz) throw new Error("hap: 未找到 StartupDestinationChannel");
+
+    const code = new PandaDecompiler().decompileClass(clazz);
+    NodeFactory.parse(code);
+
+    const subscribeStart = code.indexOf("subscribe(p0)");
+    if (subscribeStart < 0) throw new Error(`StartupDestinationChannel: 未找到 subscribe\n${code}`);
+    const subscribeBody = code.slice(subscribeStart, code.indexOf("\n  }", subscribeStart));
+
+    // 旧值先读入临时变量 → 清空字段 → 用临时变量做判断,三者必须针对不同的左值
+    const tempMatch = subscribeBody.match(/(\w+) = local_0_1\.pending;\n    local_0_1\.pending = undefined;\n    if \(\1 !== undefined\) \{/);
+    if (!tempMatch) {
+        throw new Error(`StartupDestinationChannel: subscribe 旧值副本被成员写入错误覆盖\n${subscribeBody}`);
+    }
+    const temp = tempMatch[1];
+    if (!subscribeBody.includes(`local_0_1.activeIdentity = appDestinationIdentity(${temp})`)
+        || !subscribeBody.includes(`${temp});\n    }`)) {
+        throw new Error(`StartupDestinationChannel: subscribe 分支体未使用旧值 ${temp}\n${subscribeBody}`);
+    }
+    if (subscribeBody.includes("if (local_0_1.pending !== undefined)")) {
+        throw new Error(`StartupDestinationChannel: 清空后仍判断字段本身(恒 false 死代码)\n${subscribeBody}`);
+    }
+
+    const expectedPath = path.join(__dirname, "expected", "zhihu-startup-destination-channel.js");
+    const expected = fs.readFileSync(expectedPath, "utf-8");
+    if (code !== expected) {
+        throw new Error(`StartupDestinationChannel: 输出与快照不一致\n${firstDifference(expected, code)}`);
+    }
+}
+
+/**
  * 回归:switch 合成必须保证整个 `||` test 都能拆成 case。
  * 旧实现只收集能识别的比较项,把 `x === "a" || flag` 里的 `flag` 直接丢掉,
  * 生成只比较 `x` 的 switch,改变语义。无法完整拆分时应保持 if 链。
@@ -802,6 +849,10 @@ async function main(): Promise<void> {
 
     console.log("[test] hap AppDestination (zhihupp0.59.hap)");
     verifyZhihuAppDestination();
+    console.log("    ok");
+
+    console.log("[test] hap StartupDestinationChannel (zhihupp0.59.hap)");
+    verifyZhihuStartupDestinationChannel();
     console.log("    ok");
 
     console.log("[test] simplify switch transform completeness");

@@ -124,11 +124,12 @@ v0.keyExpansion = function keyExpansion(p0) {
   return v7;
 };
 v0.rotWord = function rotWord(p0) {
-  let v2;
-  for (v2 = 0; v2 < 3; v2 += 1) {
+  let v2, v3;
+  v2 = 0;
+  for (v3 = p0[0]; v2 < 3; v2 += 1) {
     p0[v2] = p0[v2 + 1];
   }
-  p0[3] = p0[0];
+  p0[3] = v3;
 };
 v0.subWord = function subWord(p0) {
   let v1;

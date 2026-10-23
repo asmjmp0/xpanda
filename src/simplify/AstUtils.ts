@@ -286,6 +286,35 @@ export function collectIdentifierNames(node: TYPE.Node | null | undefined): Set<
     return names;
 }
 
+/** 成员形式的写入目标(`a.b = v` / `a[b] = v` / `a.b++`):基对象 + 属性。 */
+export interface MemberWriteTarget {
+    object: TYPE.Expression;
+    property: TYPE.Expression;
+    computed: boolean;
+}
+
+/** 收集子树中成员形式的写入目标(跳过嵌套函数/类,它们有独立作用域)。 */
+export function collectMemberWriteTargets(
+    node: TYPE.Node | null | undefined,
+    out: MemberWriteTarget[] = [],
+): MemberWriteTarget[] {
+    walkNode(node, (n) => {
+        if (isFunctionLike(n) || isClassLike(n)) return false;
+        let target: TYPE.Node | null = null;
+        if (TYPE.isAssignmentExpression(n)) {
+            if (TYPE.isMemberExpression(n.left) || TYPE.isOptionalMemberExpression(n.left)) target = n.left;
+        } else if (TYPE.isUpdateExpression(n)) {
+            if (TYPE.isMemberExpression(n.argument) || TYPE.isOptionalMemberExpression(n.argument)) target = n.argument;
+        }
+        if (target) {
+            const m = target as TYPE.MemberExpression;
+            out.push({ object: m.object as TYPE.Expression, property: m.property as TYPE.Expression, computed: m.computed });
+        }
+        return true;
+    }, null, null);
+    return out;
+}
+
 /** 收集子树中被写入的变量名(跳过嵌套函数/类,它们有独立作用域)。 */
 export function collectAssignedNames(node: TYPE.Node | null | undefined, out: Set<string> = new Set()): Set<string> {
     walkNode(node, (n) => {
