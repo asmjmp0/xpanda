@@ -104,6 +104,8 @@ npm run test:mcp
 - 不活跃变量、SequenceExpression、return 语句、catch 参数的清理要经过 liveness / 作用域检查;
 - **捕获判定必须同时看 `binding.referencePaths` 和 `binding.constantViolations`**。闭包里"只写不读"的外层变量只在 constantViolations 里;只看读取会把外层初始化(如 `local_1_1 = undefined`)当成唯一值传播到闭包之后的读取,并删掉声明;
 - **名字级活跃性分不清临时变量的新旧版本**:`X = RHS` 且 RHS 只读一次 X 时,这次读取是旧值的最后一次使用(`acc = p0.trim(); acc = acc.length` → `acc = p0.trim().length`)。此时若变量名在语句后仍活跃(后续读到的是新值),不可复制的右值只允许搬进调用接收者位置(`v0 = !v0.test(p0)`);裸成员装载 `acc = acc.test` 是 AccCallSimplify 依赖的中间形态,提前内联会让 `acc.call(recv, ...)` 无法还原;
+- **自引用成员链 `X = X.prop; X = f(X)` → `X = f(X.prop)`**(`foldSelfReadChains`):`X = X.prop` 的右值读取旧值,复制传播不会缓存这类表达式;若它的结果只被紧随其后的赋值消费一次,可在两条赋值之间整体搬移。要求 A 为纯成员装载、B 只读一次 X、B 不写 X 也不写 A 依赖的名字;
+- **嵌套 if / else-if 的布尔物化要自底向上折叠**:`if (!p2) { if (!f) acc = true else acc = false } else if (!g) acc = true else acc = false` 应折成 `if (p2 ? !g : !f)`。`HighLevelGrammarSimplify` 的 IfStatement 折叠改用 `exit`,保证内层先变成赋值语句;return 链不折成嵌套三目,保留 `else if ... else` 结构;
 - **`foldShortCircuitChains` 把 `X = E; if (X/!X) { X = B; }` 物化链折成 `X = E &&/|| B`**(test 被结构化归约重新物化成原表达式时要求 E 纯)。以 `X = !X` 自取反开头的链必须跳过:整条取反链的奇偶性归尾部 `foldConditionAssignments`,提前吃掉链头会让 `X = has(); X = !X; if (!X) { X = set() }` 无法折回 `if (!has())`;
 - **非纯表达式(`call` / `new` / 函数/类)只能在真正最后一次读取时搬移**;`if` 的 test 和分支体都读同一临时变量时不能搬,否则会把调用复制成两次;**例外**:if 的 test 读取、且两个分支都一定在读取前覆盖该变量(`definitelyWritesBeforeRead`)时,旧值在 test 后已死,可以搬进 test(`v0 = new RegExp(...); if (!v0.test(p0)) {...} else {...}` → `if (!new RegExp(...).test(p0))`);
 - `acc = !acc` 既可能来自 `callruntime.isfalse`,也可能来自条件物化(`istrue + jnez + ldtrue/ldfalse`);折叠时按取反次数的奇偶性处理,不能只删一层;
@@ -130,7 +132,7 @@ npm run test:mcp
 
 | 测试 | 用途 |
 |---|---|
-| `test/decompile.test.ts` | 反编译 `md5.abc` / `class.abc` / `aes.abc`,与 `test/expected/*.js` 比较,并做 Babel 再解析;另含并行一致性回归与 HAP 包(`zhihupp0.59.hap`)的 5 个重点类回归(AppDestination / AbsoluteUrlParser / ContentFilterRuntimeStore / StartupDestinationChannel / DeepLinkResolver,最后一个含沙箱行为校验) |
+| `test/decompile.test.ts` | 反编译 `md5.abc` / `class.abc` / `aes.abc`,与 `test/expected/*.js` 比较,并做 Babel 再解析;另含并行一致性回归与 HAP 包(`zhihupp0.59.hap`)的 6 个重点类回归(AppDestination / AbsoluteUrlParser / ContentFilterRuntimeStore / StartupDestinationChannel / DeepLinkResolver / ShareContracts,后两者含沙箱行为校验) |
 | `scripts/test-mcp.ts` | 以子进程启动 MCP Server,按 JSON-RPC 调用全部工具,快照比对 + 错误路径校验(含 hap 加载/解 abc/资源查询) |
 | `test/resources/md5.abc` | 小样本,测试中还会执行输出并校验 MD5 结果 |
 | `test/resources/class.abc` | 类/访问器/原型方法还原样本 |

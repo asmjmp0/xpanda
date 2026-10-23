@@ -53,6 +53,38 @@ export function walkNode(
     }
 }
 
+/**
+ * 把 root 子树里的 target 节点替换为 replacement(按父节点/数组下标原地替换)。
+ * 不依赖 Babel traverse,适合在已有的线性 AST pass 里替换深层表达式节点。
+ * 返回是否找到并替换。
+ */
+export function replaceNodeInTree(root: TYPE.Node | null | undefined, target: TYPE.Node, replacement: TYPE.Node): boolean {
+    if (!root || root === target) return false;
+    const keys = (TYPE.VISITOR_KEYS as any)[root.type] as string[] | undefined;
+    if (!keys) return false;
+    for (const key of keys) {
+        const value = (root as any)[key];
+        if (value === target) {
+            (root as any)[key] = replacement;
+            return true;
+        }
+        if (Array.isArray(value)) {
+            for (let i = 0; i < value.length; i++) {
+                if (value[i] === target) {
+                    value[i] = replacement;
+                    return true;
+                }
+                if (value[i] && typeof value[i].type === "string"
+                    && replaceNodeInTree(value[i], target, replacement)) return true;
+            }
+        } else if (value && typeof value.type === "string"
+            && replaceNodeInTree(value, target, replacement)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 const PURE_STRING_METHODS = new Set([
     "charAt", "charCodeAt", "codePointAt", "startsWith", "endsWith", "includes",
     "indexOf", "lastIndexOf", "localeCompare", "toLowerCase", "toUpperCase",

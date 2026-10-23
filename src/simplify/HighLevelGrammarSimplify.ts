@@ -19,11 +19,20 @@ class SwitchCaseDesc {
 
 export class HighLevelGrammarSimplify implements ISimplify {
     private getBlockOnlyOneAssignmentExpression(path:NodePath<TYPE.Statement>):NodePath<TYPE.AssignmentExpression>|null{
+        if (!path.node) return null;
+        // else-if 折叠后分支可能直接是裸赋值语句(`if (A) { X = a } else if (B) ...`
+        // 里的 alternate),因此除单语句块外也要接受裸 ExpressionStatement。
+        let expression: NodePath<TYPE.Node> | null = null;
         if (path.isBlockStatement() && path.get('body').length == 1){
             const statement = path.get('body')[0];
-            if (statement.isExpressionStatement() && statement.get('expression')){
-                return statement.get('expression') as NodePath<TYPE.AssignmentExpression>;
+            if (statement.isExpressionStatement()){
+                expression = statement.get('expression');
             }
+        } else if (path.isExpressionStatement()) {
+            expression = path.get('expression');
+        }
+        if (expression && expression.isAssignmentExpression()) {
+            return expression as NodePath<TYPE.AssignmentExpression>;
         }
         return null;
     }
@@ -51,8 +60,13 @@ export class HighLevelGrammarSimplify implements ISimplify {
     }
 
     private checkAndTransformToConditionalExpression(value:NodePath<TYPE.IfStatement>):boolean{
-        //check parent is no self
-        if(value.getStatementParent() !== value) return false;
+        // if 只能出现在语句位置(Program/Block 的 body、if 的 consequent/alternate、
+        // switch case 等),这些位置都能安全替换成赋值语句。
+        // 注意不能要求 getStatementParent() === value:else-if 的 alternate 位于
+        // 外层 if 之下,getStatementParent() 会返回外层 if。
+        // 不过 return 链要保持 `else if ... else ...` 结构,只允许非嵌套的 if
+        // 折成 return 三目,否则会生成 `else return A ? ... : B` 这样的多层嵌套。
+        const nested = value.getStatementParent() !== value;
         const consequent = value.get('consequent');
         const alternate = value.get('alternate');
         const consequentAssign = this.getBlockOnlyOneAssignmentExpression(consequent);
@@ -69,6 +83,8 @@ export class HighLevelGrammarSimplify implements ISimplify {
             value.replaceWith(TYPE.expressionStatement(newAssignmentExpression));
             return true;
         }
+        // return 三目只在非嵌套位置折叠,保留 else-if 链的可读结构
+        if (nested) return false;
         const consequentRet = this.getBlockOnlyOneReturnExpression(consequent);
         const alternateRet = this.getBlockOnlyOneReturnExpression(alternate);
         if (consequentRet !== null && alternateRet !== null){
@@ -327,9 +343,12 @@ export class HighLevelGrammarSimplify implements ISimplify {
                 if (this.checkAndTransformToForInStatement(value)) changed = true;
                 if (this.checkAndTransformToForOfStatement(value)) changed = true;
             },
-            IfStatement:(value)=>{
-                // transform to conditional expression
-                if (this.checkAndTransformToConditionalExpression(value)) changed = true;
+            IfStatement:{
+                // 用 exit 自底向上折叠:嵌套 if / else-if 先折成赋值语句,
+                // 外层再与其合成三目(`if (!p2) {...} else if (B) { X = a } else { X = b }`)。
+                exit:(value)=>{
+                    if (this.checkAndTransformToConditionalExpression(value)) changed = true;
+                },
             },
             ForInStatement:(value)=>{
                 if (TYPE.isIdentifier(value.node.right) && value.node.right.name === 'reserved'){

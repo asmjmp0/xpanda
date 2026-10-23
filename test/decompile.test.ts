@@ -22,7 +22,8 @@ import { formatLongLogicalChains } from "../src/ast/FormatCode";
  *   7. 校验 test 序列里的死赋值清理(Constant/Accumulator 物化);
  *   8. 校验 createobjectwithbuffer 模板对象到对象字面量的还原;
  *   9. 校验 nullish coalescing 的 switch lowering 还原;
- *  10. 校验 DeepLinkResolver 的累加器/重复调用/布尔物化清理与解析语义(沙箱执行)。
+ *  10. 校验 DeepLinkResolver 的累加器/重复调用/布尔物化清理与解析语义(沙箱执行);
+ *  11. 校验 ShareContracts 的自引用成员链、嵌套布尔物化与临时分享文件校验语义(沙箱执行)。
  */
 
 interface Sample {
@@ -256,6 +257,59 @@ function withoutAlias(p0) {
     }
     if (!code.includes("v0.count = p0.filter(function (p1) {") || !code.includes("}).length;")) {
         throw new Error(`simplify: 无别名时 acc.length 未折进使用处\n${code}`);
+    }
+}
+
+/**
+ * 回归:自引用成员链与嵌套布尔物化。
+ *   `v0 = v0.length; v0 = p0.substring(v0)` -> `v0 = p0.substring(v0.length)`
+ * (`X = X.prop` 的旧值读取不会被复制传播缓存,需要在相邻赋值间整体搬移);
+ *   `if (!p2) { if (!isFile) acc = true else acc = false } else if ...`
+ * -> `if (p2 ? !isImage : !isFile)`,不残留 acc。
+ */
+function verifySelfReadChainAndNestedConditional(): void {
+    const program = NodeFactory.parse(`
+function dir(p0) {
+  return p0 + "/";
+}
+function cut(p0, p1, flag) {
+  let v0;
+  v0 = dir(p1);
+  if (flag) {
+    v0 = v0.length;
+    v0 = p0.substring(v0);
+  }
+  return v0;
+}
+function check(p0, p1, p2, isFileMime, isImageMime) {
+  let acc;
+  if (!p2) {
+    if (!isFileMime(p0)) {
+      acc = true;
+    } else {
+      acc = false;
+    }
+  } else if (!isImageMime(p0)) {
+    acc = true;
+  } else {
+    acc = false;
+  }
+  if (acc) {
+    throw new Error("bad");
+  }
+  return p1;
+}
+`);
+    SimplifyExport.simplify(program);
+    const code = NodeFactory.generate(program);
+    if (code.includes("v0 = v0.length") || !code.includes("v0 = p0.substring(v0.length)")) {
+        throw new Error(`simplify: 自引用成员链未折叠\n${code}`);
+    }
+    if (!code.includes("if (p2 ? !isImageMime(p0) : !isFileMime(p0))")) {
+        throw new Error(`simplify: 嵌套布尔物化未合成三目\n${code}`);
+    }
+    if (code.includes("acc")) {
+        throw new Error(`simplify: 布尔物化仍残留 acc\n${code}`);
     }
 }
 
@@ -762,6 +816,123 @@ function verifyZhihuDeepLinkResolver(): void {
     if (described !== "回答：42") throw new Error(`DeepLinkResolver: describeDeepLink 输出不符合预期:${described}`);
 }
 
+/**
+ * 回归:ShareContracts 的临时分享文件校验。
+ *   1. `v0 = v0.length; v0 = p0.path.substring(v0)` 应折成 `v0 = p0.path.substring(v0.length)`;
+ *   2. 嵌套 if / else-if 的 mime 布尔物化应折成
+ *      `if (p2 ? !isImageMime(...) : !isFileMime(...))`,不残留 acc;
+ *   3. 输出与快照一致,并在沙箱里执行时间戳/目录前缀/mime/lifecycle 语义校验。
+ */
+function verifyZhihuShareContracts(): void {
+    const hapPath = path.join(__dirname, "resources", "zhihupp0.59.hap");
+    const hap = new HapFile(new Uint8Array(fs.readFileSync(hapPath)));
+    const pandaFile = new PandaFile(hap.readEntry("ets/modules.abc")!);
+    const clazz = pandaFile.getAllClasses().find((c) => c.name.content.includes("platform/ShareContracts"));
+    if (!clazz) throw new Error("hap: 未找到 ShareContracts");
+
+    const code = new PandaDecompiler().decompileClass(clazz);
+    NodeFactory.parse(code);
+    if (!code.includes("v0 = p0.path.substring(v0.length)")) {
+        throw new Error(`ShareContracts: 自引用成员链未折叠\n${code}`);
+    }
+    if (!code.includes("if (p2 ? !local_0_11(p0.mimeType) : !local_0_12(p0.mimeType))")) {
+        throw new Error(`ShareContracts: 嵌套布尔物化未合成三目\n${code}`);
+    }
+    if (code.includes("acc = true") || code.includes("acc = false")) {
+        throw new Error(`ShareContracts: 布尔物化仍残留 acc\n${code}`);
+    }
+
+    const expectedPath = path.join(__dirname, "expected", "zhihu-share-contracts.js");
+    const expected = fs.readFileSync(expectedPath, "utf-8");
+    if (code !== expected) {
+        throw new Error(`ShareContracts: 输出与快照不一致\n${firstDifference(expected, code)}`);
+    }
+
+    // 行为校验:去掉 export 后在沙箱执行,直接调用导出的校验函数。
+    const body = code.replace(/^export\s+\{[^}]*\};\s*$/gm, "")
+        + "\nglobalThis.__exports = {"
+        + " createTemporaryShareLifecycle, markSharePanelOpened, prepareSharePayload,"
+        + " shouldCleanupTemporaryShareFile, ShareFailureKind,"
+        + " SHARE_PANEL_GRACE_MILLIS, SHARE_TEMPORARY_MAX_AGE_MILLIS };";
+    const sandbox: Record<string, unknown> = {};
+    sandbox.globalThis = sandbox;
+    vm.runInNewContext(body, sandbox, { timeout: 5000 });
+    const exported = sandbox.__exports as Record<string, any>;
+    const kinds = exported.ShareFailureKind as Record<string, string>;
+    const prepare = exported.prepareSharePayload as (payload: any, now: any) => any;
+    const createLifecycle = exported.createTemporaryShareLifecycle as (file: any) => any;
+    const markOpened = exported.markSharePanelOpened as (lifecycle: any, at: number) => any;
+    const cleanup = exported.shouldCleanupTemporaryShareFile as (lifecycle: any, now: number) => boolean;
+    const grace = exported.SHARE_PANEL_GRACE_MILLIS as number;
+    const maxAge = exported.SHARE_TEMPORARY_MAX_AGE_MILLIS as number;
+
+    const now = { nowMillis: 1_000_000, cacheDir: "/data/cache" };
+    const makeFile = (over: Record<string, unknown> = {}): any => ({
+        path: "/data/cache/share/abc.png",
+        createdAtMillis: 999_000,
+        mimeType: "image/png",
+        ...over,
+    });
+    const prepareWith = (kind: string, temporaryFile: any, at: any = now): any =>
+        prepare({ kind, title: "t", summary: "s", temporaryFile }, at);
+    const expectPayload = (kind: string, file: any, mime: string): void => {
+        const payload = prepareWith(kind, file);
+        if (payload.kind !== kind || payload.mimeType !== mime || payload.source !== file.path) {
+            throw new Error(`ShareContracts: ${kind}/${mime} 载荷不符合预期:${JSON.stringify(payload)}`);
+        }
+    };
+    const expectFileFailure = (file: any, kindName: string, at: any = now): void => {
+        try {
+            prepareWith("file", file, at);
+        } catch (e) {
+            if ((e as any).kind === kindName) return;
+            throw new Error(`ShareContracts: 期望 ${kindName},实际 ${(e as any).kind}`);
+        }
+        throw new Error(`ShareContracts: 期望抛出 ${kindName},实际未抛出`);
+    };
+
+    // 文件载荷允许图片/text/pdf;图片载荷只允许图片 mime。
+    expectPayload("file", makeFile(), "image/png");
+    expectPayload("file", makeFile({ mimeType: "text/plain" }), "text/plain");
+    expectPayload("image", makeFile({ mimeType: "image/webp" }), "image/webp");
+    const imageFile = makeFile({ mimeType: "text/plain" });
+    try {
+        prepareWith("image", imageFile);
+        throw new Error("ShareContracts: 图片载荷不应接受 text/plain");
+    } catch (e) {
+        if ((e as any).kind !== kinds.INVALID_PAYLOAD) throw e;
+    }
+
+    // 时间戳:非有限、未来、超过 24h 均不可用。
+    expectFileFailure(makeFile({ createdAtMillis: Number.NaN }), kinds.FILE_UNAVAILABLE);
+    expectFileFailure(makeFile({ createdAtMillis: 2_000_000 }), kinds.FILE_UNAVAILABLE);
+    expectFileFailure(makeFile({ createdAtMillis: 1 }), kinds.FILE_UNAVAILABLE,
+        { nowMillis: 1_000_000_000, cacheDir: "/data/cache" });
+    // 目录前缀/文件名安全检查。
+    expectFileFailure(makeFile({ path: "/data/other/abc.png" }), kinds.INVALID_PAYLOAD);
+    expectFileFailure(makeFile({ path: "/data/cache/share/a..b" }), kinds.INVALID_PAYLOAD);
+
+    // lifecycle:创建、打开面板后的清理时间取 min(面板宽限, 临时文件最大存活)。
+    const lifecycle = createLifecycle(makeFile());
+    if (lifecycle.cleanupAfterMillis !== 999_000 + maxAge) {
+        throw new Error(`ShareContracts: lifecycle cleanupAfterMillis 不符合预期:${JSON.stringify(lifecycle)}`);
+    }
+    let early = false;
+    try {
+        markOpened(lifecycle, 998_999);
+    } catch (e) {
+        early = true;
+        if ((e as any).kind !== kinds.INVALID_PAYLOAD) throw e;
+    }
+    if (!early) throw new Error("ShareContracts: 早于 createdAtMillis 的面板时间应被拒绝");
+    const opened = markOpened(lifecycle, 1_000_000);
+    if (opened.cleanupAfterMillis !== Math.min(1_000_000 + grace, 999_000 + maxAge)) {
+        throw new Error(`ShareContracts: markSharePanelOpened cleanupAfterMillis 不符合预期:${JSON.stringify(opened)}`);
+    }
+    if (!cleanup(lifecycle, lifecycle.cleanupAfterMillis)) throw new Error("ShareContracts: 到期后应清理临时文件");
+    if (cleanup(lifecycle, lifecycle.cleanupAfterMillis - 1)) throw new Error("ShareContracts: 未到期不应清理临时文件");
+}
+
 /** 行为校验用的最小 URL 解析桩(与 AbsoluteUrlParser 的输出字段对齐)。 */
 function parseUrlStub(url: string): unknown {
     const m = /^([a-zA-Z][a-zA-Z0-9+.-]*:)\/\/([^/?#]*)([^?#]*)(\?[^#]*)?(#.*)?$/.exec(url);
@@ -980,6 +1151,10 @@ async function main(): Promise<void> {
     verifyAccMemberLengthFold();
     console.log("    ok");
 
+    console.log("[test] simplify self read chain + nested conditional");
+    verifySelfReadChainAndNestedConditional();
+    console.log("    ok");
+
     console.log("[test] simplify boolean conditional folding");
     verifyBooleanConditionalFolding();
     console.log("    ok");
@@ -1026,6 +1201,10 @@ async function main(): Promise<void> {
 
     console.log("[test] hap DeepLinkResolver (zhihupp0.59.hap)");
     verifyZhihuDeepLinkResolver();
+    console.log("    ok");
+
+    console.log("[test] hap ShareContracts (zhihupp0.59.hap)");
+    verifyZhihuShareContracts();
     console.log("    ok");
 
     console.log("[test] simplify switch transform completeness");

@@ -37,8 +37,7 @@ extractZhihuLinkFromText = function (p0) {
   } else {
     v1 = new RegExp("https?:\\/\\/[-a-zA-Z0-9@:%_+.~#?&/=]*", "g");
     for (v2 = v1.exec(p0); v2 !== null; v2 = v1.exec(p0)) {
-      v2 = v2[0];
-      v2 = resolveZhihuLink(v2);
+      v2 = resolveZhihuLink(v2[0]);
       if (v2 !== undefined) {
         return v2;
       }

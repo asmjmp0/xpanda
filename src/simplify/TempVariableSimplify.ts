@@ -16,6 +16,7 @@ import {
     isPureExpression,
     isTempName,
     nodeSize,
+    replaceNodeInTree,
     walkNode,
     MemberWriteTarget,
 } from "./AstUtils";
@@ -324,6 +325,8 @@ export class TempVariableSimplify implements ISimplify {
         // 复制传播前先算一遍活跃性,用于判断某次读取是否是当前值的最后一次使用
         this.analyzeList(body, new Set(), ctx);
         if (!this.conditionsOnly) {
+            // 自引用链(`X = X.length; X = f(X)`)先折叠,让后续活跃性/传播看到更紧凑的形态
+            this.foldSelfReadChains(body, ctx);
             this.processStatements(body, new EnvState(), ctx);
             // do { ...; X = E; } while (!X) -> do { ... } while (!E)
             this.foldDoWhileTestAssignments(body, ctx);
@@ -938,6 +941,109 @@ export class TempVariableSimplify implements ISimplify {
                 continue;
             }
             this.foldShortCircuitChildren(stmts[i], ctx);
+        }
+    }
+
+    /**
+     * `X = A; X = B`(两者各只读取一次 X、A 为纯表达式):
+     *   X = X.length; X = p0.path.substring(X)  ->  X = p0.path.substring(X.length)
+     *
+     * A 的右值读取旧 X 并写回 X,复制传播为了安全不会缓存这类自引用表达式;
+     * 但 A 的结果只可能被紧随其后的 B 消费一次,因此可以整体搬进 B 的读取位置。
+     * 常用于 `v0 = v0.length; v0 = p0.path.substring(v0)` 这类先取长度再切片的链。
+     */
+    private foldSelfReadChains(stmts: TYPE.Statement[], ctx: FunctionContext): void {
+        for (let i = 0; i < stmts.length; i++) {
+            if (i + 1 < stmts.length && this.tryFoldSelfReadChain(stmts, i, ctx)) {
+                // 合并后的语句仍可能继续与下一条组成链,原地重试
+                i--;
+                continue;
+            }
+            // 最后一条语句同样要下钻,否则函数体/分支末尾的 if 里的链不会被处理
+            this.foldSelfReadChainChildren(stmts[i], ctx);
+        }
+    }
+
+    /** 尝试折叠 stmts[i] / stmts[i + 1],成功时修改列表并返回 true。 */
+    private tryFoldSelfReadChain(stmts: TYPE.Statement[], i: number, ctx: FunctionContext): boolean {
+        const first = stmts[i];
+        const second = stmts[i + 1];
+        if (!TYPE.isExpressionStatement(first) || !TYPE.isAssignmentExpression(first.expression)) return false;
+        if (!TYPE.isExpressionStatement(second) || !TYPE.isAssignmentExpression(second.expression)) return false;
+        const a = first.expression;
+        const b = second.expression;
+        if (a.operator !== "=" || b.operator !== "=") return false;
+        if (!TYPE.isIdentifier(a.left) || !TYPE.isIdentifier(b.left)) return false;
+        const name = a.left.name;
+        if (b.left.name !== name || !isTempName(name)) return false;
+        const info = ctx.infos.get(name);
+        if (!info || info.captured) return false;
+        // A 必须只读取一次旧 X 且无副作用;B 必须只消费一次新 X,
+        // 并且在 B 内部没有再写入 X(避免 sequence 里混入 X = ...)。
+        // 只处理成员装载(X = X.prop / X.length):其它自引用形态
+        // (X = X + 1、X = !X)分别由 foldCompoundAssignments / 条件折叠负责。
+        if (!TYPE.isMemberExpression(a.right) && !TYPE.isOptionalMemberExpression(a.right)) return false;
+        if (this.countReadsInNode(a.right, name) !== 1) return false;
+        if (this.countReadsInNode(b.right, name) !== 1) return false;
+        if (!isPureExpression(a.right)) return false;
+        const assignedInB = collectAssignedNames(b.right);
+        if (assignedInB.has(name)) return false;
+        // A 里依赖的名字不能在 B 中被重新赋值,否则搬进 B 后读到的是新值
+        for (const dep of collectIdentifierNames(a.right)) {
+            if (dep !== name && assignedInB.has(dep)) return false;
+        }
+        let id: TYPE.Identifier | null = null;
+        walkNode(b.right, (node, parent) => {
+            if (isFunctionLike(node) || isClassLike(node)) return false;
+            if (TYPE.isIdentifier(node) && node.name === name && parent && TYPE.isReferenced(node, parent)) {
+                id = node;
+                return false;
+            }
+            return true;
+        });
+        if (!id) return false;
+        const clone = TYPE.cloneNode(a.right, true) as TYPE.Expression;
+        if (!replaceNodeInTree(b.right, id, clone)) return false;
+        info.refs.delete(id);
+        this.removeRefs(a.right, ctx);
+        this.registerCloneRefs(clone, ctx);
+        stmts.splice(i, 1);
+        this.changed = true;
+        return true;
+    }
+
+    private foldSelfReadChainChildren(stmt: TYPE.Statement, ctx: FunctionContext): void {
+        switch (stmt.type) {
+            case "BlockStatement":
+                this.foldSelfReadChains(stmt.body, ctx);
+                break;
+            case "IfStatement":
+                if (TYPE.isBlockStatement(stmt.consequent)) this.foldSelfReadChains(stmt.consequent.body, ctx);
+                else this.foldSelfReadChainChildren(stmt.consequent, ctx);
+                if (stmt.alternate) {
+                    if (TYPE.isBlockStatement(stmt.alternate)) this.foldSelfReadChains(stmt.alternate.body, ctx);
+                    else this.foldSelfReadChainChildren(stmt.alternate, ctx);
+                }
+                break;
+            case "WhileStatement":
+            case "DoWhileStatement":
+            case "ForStatement":
+            case "ForInStatement":
+            case "ForOfStatement":
+            case "LabeledStatement":
+                if (TYPE.isBlockStatement(stmt.body)) this.foldSelfReadChains(stmt.body.body, ctx);
+                else this.foldSelfReadChainChildren(stmt.body, ctx);
+                break;
+            case "TryStatement":
+                this.foldSelfReadChains(stmt.block.body, ctx);
+                if (stmt.handler) this.foldSelfReadChains(stmt.handler.body.body, ctx);
+                if (stmt.finalizer) this.foldSelfReadChains(stmt.finalizer.body, ctx);
+                break;
+            case "SwitchStatement":
+                for (const c of stmt.cases) this.foldSelfReadChains(c.consequent, ctx);
+                break;
+            default:
+                break;
         }
     }
 
