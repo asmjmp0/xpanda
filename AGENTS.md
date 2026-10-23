@@ -130,13 +130,13 @@ npm run test:mcp
 
 | 测试 | 用途 |
 |---|---|
-| `test/decompile.test.ts` | 反编译 `md5.abc` / `class.abc` / `aes.abc`,与 `test/expected/*.js` 比较,并做 Babel 再解析;另含并行一致性回归与 HAP 包(`zhihupp0.59.hap`)轻量回归 |
+| `test/decompile.test.ts` | 反编译 `md5.abc` / `class.abc` / `aes.abc`,与 `test/expected/*.js` 比较,并做 Babel 再解析;另含并行一致性回归与 HAP 包(`zhihupp0.59.hap`)的 5 个重点类回归(AppDestination / AbsoluteUrlParser / ContentFilterRuntimeStore / StartupDestinationChannel / DeepLinkResolver,最后一个含沙箱行为校验) |
 | `scripts/test-mcp.ts` | 以子进程启动 MCP Server,按 JSON-RPC 调用全部工具,快照比对 + 错误路径校验(含 hap 加载/解 abc/资源查询) |
 | `test/resources/md5.abc` | 小样本,测试中还会执行输出并校验 MD5 结果 |
 | `test/resources/class.abc` | 类/访问器/原型方法还原样本 |
 | `test/resources/aes.abc` | AES 加解密样本,测试中还会执行输出并校验加解密自检结果为 `true`;快照覆盖条件极性(`Counter.increment` 必须是 `!== 255`)和 test 序列死赋值清理 |
 | `test/resources/bilibili_open.abc` | 大文件回归样本,通常手动验证 |
-| `test/resources/zhihupp0.59.hap` | HAP 应用包样本(字节码版本 13.0.1.0,含 `callruntime.supercallforwardallargs`),完整反编译约 1 分钟,测试只做轻量校验;`AbsoluteUrlParser` / `ZhihuHttpClient` 是逻辑条件与取反链的重点回归类 |
+| `test/resources/zhihupp0.59.hap` | HAP 应用包样本(字节码版本 13.0.1.0,含 `callruntime.supercallforwardallargs`),完整反编译约 1 分钟,测试只做重点类校验;`AbsoluteUrlParser` / `ZhihuHttpClient` 是逻辑条件与取反链的重点回归类,`DeepLinkResolver` 是累加器物化、重复调用消除、test 序列死赋值与跨变量布尔物化折叠(`acc = A; v1 = A; if (acc) { v1 = B }` → `v1 = A && B`)的重点回归类 |
 
 更新快照前先确认输出变化是预期的;不要为了通过测试而直接覆盖快照。
 

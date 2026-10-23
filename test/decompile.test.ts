@@ -21,7 +21,8 @@ import { formatLongLogicalChains } from "../src/ast/FormatCode";
  *   6. 校验 ArkTS 13 的 try/finally 还原与空 lexenv 块清理;
  *   7. 校验 test 序列里的死赋值清理(Constant/Accumulator 物化);
  *   8. 校验 createobjectwithbuffer 模板对象到对象字面量的还原;
- *   9. 校验 nullish coalescing 的 switch lowering 还原。
+ *   9. 校验 nullish coalescing 的 switch lowering 还原;
+ *  10. 校验 DeepLinkResolver 的累加器/重复调用/布尔物化清理与解析语义(沙箱执行)。
  */
 
 interface Sample {
@@ -629,6 +630,174 @@ function verifyZhihuStartupDestinationChannel(): void {
 }
 
 /**
+ * 回归:DeepLinkResolver 的深链接解析函数。
+ *
+ * 旧输出有三类可读性/正确性问题:
+ *   1. 累加器死赋值未被清理,并把不可复制的调用克隆成两次求值:
+ *        acc = v2.protocol.toLowerCase(); v4 = v2.protocol.toLowerCase();
+ *   2. test 序列里残留布尔物化死赋值:
+ *        v5 === "feed" && (v1 = v6.length, acc = !(v6.length === 0), v6.length === 0)
+ *   3. 跨变量布尔物化链未折叠:
+ *        acc = A; v1 = A; if (acc) { v1 = B }
+ *   另外非块 consequent(`if (A) if (B) ...`)整条分支被条件折叠递归跳过。
+ *   修复后:acc 不再出现在输出中,feed 条件折成 `v6.length === 0`,
+ *   zhuanlan 条件折成 `v1 = v6.length === v1 && v6[0] === "p"`。
+ * 同时在沙箱里执行解析函数,校验各 URL 形态的还原语义。
+ */
+function verifyZhihuDeepLinkResolver(): void {
+    const hapPath = path.join(__dirname, "resources", "zhihupp0.59.hap");
+    const hap = new HapFile(new Uint8Array(fs.readFileSync(hapPath)));
+    const pandaFile = new PandaFile(hap.readEntry("ets/modules.abc")!);
+    const clazz = pandaFile.getAllClasses().find((c) => c.name.content.includes("navigation/DeepLinkResolver"));
+    if (!clazz) throw new Error("hap: 未找到 DeepLinkResolver");
+
+    const code = new PandaDecompiler().decompileClass(clazz);
+    NodeFactory.parse(code);
+
+    if (/\bacc\b/.test(code)) {
+        throw new Error(`DeepLinkResolver: 输出仍残留累加器 acc\n${code}`);
+    }
+    if (code.split("v2.protocol.toLowerCase()").length !== 2
+        || code.split("v2.hostname.toLowerCase()").length !== 2) {
+        throw new Error(`DeepLinkResolver: protocol/hostname 的 toLowerCase 被重复求值\n${code}`);
+    }
+    if (code.includes(", acc = ") || code.includes("acc = !(")) {
+        throw new Error(`DeepLinkResolver: test 序列仍残留布尔物化死赋值\n${code}`);
+    }
+    if (!code.includes('v1 = v6.length === v1 && v6[0] === "p";')) {
+        throw new Error(`DeepLinkResolver: zhuanlan 的跨变量布尔物化链未折叠\n${code}`);
+    }
+    if (!code.includes('v5 === "feed" && v6.length === 0') || !code.includes("v2.hasUserInfo || v2.port.length > 0")) {
+        throw new Error(`DeepLinkResolver: test 序列死赋值未清理\n${code}`);
+    }
+
+    const expectedPath = path.join(__dirname, "expected", "zhihu-deep-link-resolver.js");
+    const expected = fs.readFileSync(expectedPath, "utf-8");
+    if (code !== expected) {
+        throw new Error(`DeepLinkResolver: 输出与快照不一致\n${firstDifference(expected, code)}`);
+    }
+
+    // 行为校验:去掉 import/export 后在沙箱执行,提供三个被引用模块的桩实现。
+    // 顶层 let 不会挂到 globalThis 上,末尾显式收集要校验的绑定。
+    const body = code
+        .replace(/^import\s+.*\n/gm, "")
+        .replace(/^export\s+\{[^}]*\};\s*$/gm, "")
+        + "\nglobalThis.__exports = { DeepLinkType, MAX_DEEP_LINK_INPUT_LENGTH, describeDeepLink, extractZhihuLinkFromText, resolveZhihuLink };";
+    const sandbox: Record<string, unknown> = {
+        isSafeDecimalContentId: (id: unknown): boolean => typeof id === "string" && /^\d+$/.test(id) && id.length > 0,
+        isSafeSearchDestinationQuery: (q: unknown): boolean => typeof q === "string" && q.length <= 200,
+        parseAbsoluteUrl: (url: string): unknown => parseUrlStub(url),
+    };
+    sandbox.globalThis = sandbox;
+    vm.runInNewContext(body, sandbox, { timeout: 5000 });
+    const exported = sandbox.__exports as Record<string, unknown>;
+    const resolve = exported.resolveZhihuLink as (url: string) => { type: string; id: string; query: string } | undefined;
+    const describe = exported.describeDeepLink as (d: { type: string; id: string; query: string }) => string | undefined;
+    const extract = exported.extractZhihuLinkFromText as (text: string) => { type: string; id: string; query: string } | undefined;
+    const MAX = exported.MAX_DEEP_LINK_INPUT_LENGTH as number;
+
+    const type = exported.DeepLinkType as Record<string, string>;
+    const expectDest = (actual: unknown, want: { type: string; id?: string; query?: string }): void => {
+        const label = JSON.stringify(want);
+        if (typeof actual !== "object" || actual === null) {
+            throw new Error(`DeepLinkResolver: 期望 ${label},实际 ${String(actual)}`);
+        }
+        const dest = actual as { type: string; id: string; query: string };
+        if (dest.type !== want.type || dest.id !== (want.id ?? "") || dest.query !== (want.query ?? "")) {
+            throw new Error(`DeepLinkResolver: 期望 ${label},实际 ${JSON.stringify(dest)}`);
+        }
+    };
+
+    // 主站各形态
+    expectDest(resolve("https://www.zhihu.com/question/123456/answer/789012"), { type: type.ANSWER, id: "789012" });
+    expectDest(resolve("https://zhihu.com/answer/42"), { type: type.ANSWER, id: "42" });
+    expectDest(resolve("https://www.zhihu.com/question/42"), { type: type.QUESTION, id: "42" });
+    expectDest(resolve("https://zhuanlan.zhihu.com/p/123456"), { type: type.ARTICLE, id: "123456" });
+    expectDest(resolve("https://www.zhihu.com/oia/articles/777"), { type: type.ARTICLE, id: "777" });
+    expectDest(resolve("https://www.zhihu.com/people/jmp0"), { type: type.PERSON, id: "jmp0" });
+    expectDest(resolve("https://www.zhihu.com/video/998877"), { type: type.VIDEO, id: "998877" });
+    expectDest(resolve("https://www.zhihu.com/pin/660011"), { type: type.PIN, id: "660011" });
+    expectDest(resolve("https://www.zhihu.com/appview/p/554433"), { type: type.ARTICLE, id: "554433" });
+    expectDest(resolve("https://www.zhihu.com/appview/answer/112233"), { type: type.ANSWER, id: "112233" });
+    expectDest(resolve("https://www.zhihu.com/search?q=%E7%9F%A5%E4%B9%8E"), { type: type.SEARCH, query: "知乎" });
+
+    // scheme 深链
+    expectDest(resolve("zhihu://feed"), { type: type.MAIN_TABS });
+    expectDest(resolve("zhihu://search?q=abc"), { type: type.SEARCH, query: "abc" });
+    expectDest(resolve("zhihu://answers/9527"), { type: type.ANSWER, id: "9527" });
+    expectDest(resolve("zhihu://questions/111"), { type: type.QUESTION, id: "111" });
+    expectDest(resolve("zhihu://articles/222"), { type: type.ARTICLE, id: "222" });
+    expectDest(resolve("zhihu://pin/333"), { type: type.PIN, id: "333" });
+
+    // link.zhihu.com 跳转(带一层 URL 编码)
+    const wrapped = "https://link.zhihu.com/?target=" + encodeURIComponent("https://www.zhihu.com/people/inner-user");
+    expectDest(resolve(wrapped), { type: type.PERSON, id: "inner-user" });
+
+    // 非法输入:非知乎域名、坏路径、用户信息、非数字 id、超长输入、递归超限
+    const shouldFail = (url: string): void => {
+        const r = resolve(url);
+        if (r !== undefined) throw new Error(`DeepLinkResolver: ${url} 应解析为 undefined,实际 ${JSON.stringify(r)}`);
+    };
+    shouldFail("https://evil.com/question/1/answer/2");
+    shouldFail("https://www.zhihu.com/question/abc/answer/2");
+    shouldFail("https://www.zhihu.com/question/1/answer/2/extra");
+    shouldFail("https://user:pass@www.zhihu.com/question/1/answer/2");
+    shouldFail("https://www.zhihu.com:8080/people/x");
+    shouldFail("ftp://www.zhihu.com/people/x");
+    shouldFail("zhihu://feed/extra/path");
+    shouldFail("zhihu://unknown/123");
+    shouldFail(`https://www.zhihu.com/people/${"x".repeat(9000)}`);
+    const tripleWrapped = "https://link.zhihu.com/?target="
+        + encodeURIComponent("https://link.zhihu.com/?target="
+            + encodeURIComponent("https://link.zhihu.com/?target="
+                + encodeURIComponent("https://www.zhihu.com/people/deep")));
+    shouldFail(tripleWrapped);
+    if (MAX !== 8192) throw new Error(`DeepLinkResolver: MAX_DEEP_LINK_INPUT_LENGTH 应为 8192,实际 ${MAX}`);
+
+    // 文本提取与描述
+    const found = extract("看看这篇 https://zhuanlan.zhihu.com/p/999888 和 https://evil.com/a");
+    expectDest(found, { type: type.ARTICLE, id: "999888" });
+    if (extract("没有任何链接") !== undefined) throw new Error("DeepLinkResolver: 无链接文本应返回 undefined");
+    const described = describe({ type: type.ANSWER, id: "42", query: "" });
+    if (described !== "回答：42") throw new Error(`DeepLinkResolver: describeDeepLink 输出不符合预期:${described}`);
+}
+
+/** 行为校验用的最小 URL 解析桩(与 AbsoluteUrlParser 的输出字段对齐)。 */
+function parseUrlStub(url: string): unknown {
+    const m = /^([a-zA-Z][a-zA-Z0-9+.-]*:)\/\/([^/?#]*)([^?#]*)(\?[^#]*)?(#.*)?$/.exec(url);
+    if (!m) return undefined;
+    let hostPart = m[2];
+    let hasUserInfo = false;
+    const at = hostPart.lastIndexOf("@");
+    if (at >= 0) {
+        hasUserInfo = true;
+        hostPart = hostPart.slice(at + 1);
+    }
+    const params = new Map<string, string>();
+    if (m[4] && m[4].startsWith("?")) {
+        for (const kv of m[4].slice(1).split("&")) {
+            if (kv.length === 0) continue;
+            const eq = kv.indexOf("=");
+            const key = eq < 0 ? kv : kv.slice(0, eq);
+            const value = eq < 0 ? "" : kv.slice(eq + 1);
+            try {
+                params.set(decodeURIComponent(key), decodeURIComponent(value));
+            } catch {
+                params.set(key, value);
+            }
+        }
+    }
+    return {
+        protocol: m[1].toLowerCase(),
+        hostname: hostPart.toLowerCase(),
+        port: "",
+        pathname: m[3].length > 0 ? m[3] : "/",
+        params,
+        hasUserInfo,
+    };
+}
+
+/**
  * 回归:switch 合成必须保证整个 `||` test 都能拆成 case。
  * 旧实现只收集能识别的比较项,把 `x === "a" || flag` 里的 `flag` 直接丢掉,
  * 生成只比较 `x` 的 switch,改变语义。无法完整拆分时应保持 if 链。
@@ -853,6 +1022,10 @@ async function main(): Promise<void> {
 
     console.log("[test] hap StartupDestinationChannel (zhihupp0.59.hap)");
     verifyZhihuStartupDestinationChannel();
+    console.log("    ok");
+
+    console.log("[test] hap DeepLinkResolver (zhihupp0.59.hap)");
+    verifyZhihuDeepLinkResolver();
     console.log("    ok");
 
     console.log("[test] simplify switch transform completeness");

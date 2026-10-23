@@ -372,6 +372,45 @@ export class TempVariableSimplify implements ISimplify {
             this.changed = true;
             i--;
         }
+        // 递归处理嵌套块(else 分支、循环体等):流水线尾部的三元合成
+        // (`acc = C ? A : B` + `return acc`)大多发生在嵌套块里,
+        // 只扫顶层会让 `acc = ...; return acc;` 残留到输出。
+        for (const stmt of stmts) this.foldReturnAssignmentsInChildren(stmt, ctx);
+    }
+
+    private foldReturnAssignmentsInChildren(stmt: TYPE.Statement, ctx: FunctionContext): void {
+        switch (stmt.type) {
+            case "BlockStatement":
+                this.foldReturnAssignments(stmt.body, ctx);
+                break;
+            case "IfStatement":
+                if (TYPE.isBlockStatement(stmt.consequent)) this.foldReturnAssignments(stmt.consequent.body, ctx);
+                else this.foldReturnAssignmentsInChildren(stmt.consequent, ctx);
+                if (stmt.alternate) {
+                    if (TYPE.isBlockStatement(stmt.alternate)) this.foldReturnAssignments(stmt.alternate.body, ctx);
+                    else this.foldReturnAssignmentsInChildren(stmt.alternate, ctx);
+                }
+                break;
+            case "WhileStatement":
+            case "DoWhileStatement":
+            case "ForStatement":
+            case "ForInStatement":
+            case "ForOfStatement":
+            case "LabeledStatement":
+                if (TYPE.isBlockStatement(stmt.body)) this.foldReturnAssignments(stmt.body.body, ctx);
+                else this.foldReturnAssignmentsInChildren(stmt.body, ctx);
+                break;
+            case "TryStatement":
+                if (TYPE.isBlockStatement(stmt.block)) this.foldReturnAssignments(stmt.block.body, ctx);
+                if (stmt.handler) this.foldReturnAssignments(stmt.handler.body.body, ctx);
+                if (stmt.finalizer) this.foldReturnAssignments(stmt.finalizer.body, ctx);
+                break;
+            case "SwitchStatement":
+                for (const c of stmt.cases) this.foldReturnAssignments(c.consequent, ctx);
+                break;
+            default:
+                break;
+        }
     }
 
     /** 右值中是否存在位于函数/类内部、可能在赋值之后才执行的同名读取。 */
@@ -759,7 +798,10 @@ export class TempVariableSimplify implements ISimplify {
                 this.cleanupConditionAssignments(stmt.body, ctx);
                 break;
             case "IfStatement":
+                // consequent 可能是非块的 if(Region 归约会生成 `if (A) if (B) ...`),
+                // 同样需要下钻,否则整条分支里的条件物化都无法折叠。
                 if (TYPE.isBlockStatement(stmt.consequent)) this.cleanupConditionAssignments(stmt.consequent.body, ctx);
+                else this.cleanupConditionChildren(stmt.consequent, ctx);
                 if (stmt.alternate) {
                     if (TYPE.isBlockStatement(stmt.alternate)) this.cleanupConditionAssignments(stmt.alternate.body, ctx);
                     else this.cleanupConditionChildren(stmt.alternate, ctx);
@@ -988,6 +1030,35 @@ export class TempVariableSimplify implements ISimplify {
         if (TYPE.isUnaryExpression(test) && test.operator === "!"
             && TYPE.isIdentifier(test.argument) && test.argument.name === name) {
             return { value: TYPE.logicalExpression("||", assign.right, inner.right), removedTest: test };
+        }
+        // 跨变量布尔物化:`X = E; Y = E; if (X/!X) { Y = B }` -> `Y = E &&/|| B`。
+        // 编译器会把短路条件的左值物化到两个临时变量(一个用于跳转、一个存最终结果),
+        // 形如 `acc = A; v1 = A; if (acc) { v1 = B }`。E 为纯表达式时两次求值等价,
+        // 可合并成 `Y = E && B`;跳转变量 X 在 if 之后必须已死(X = E 的死存储
+        // 由下一轮死存储清除删除)。
+        const crossVar = (holder: string, negated: boolean): { value: TYPE.Expression; removedTest: TYPE.Expression } | null => {
+            if (i < 1) return null;
+            const prevStmt = stmts[i - 1];
+            if (!TYPE.isExpressionStatement(prevStmt) || !TYPE.isAssignmentExpression(prevStmt.expression)) return null;
+            const holderAssign = prevStmt.expression;
+            if (holderAssign.operator !== "="
+                || !TYPE.isIdentifier(holderAssign.left) || holderAssign.left.name !== holder
+                || !isNodeEqual(holderAssign.right, assign.right) || !isPureExpression(assign.right)) return null;
+            const liveAfterIf = ctx.liveAfter.get(ifStmt);
+            if (liveAfterIf && liveAfterIf.has(holder)) return null;
+            return {
+                value: TYPE.logicalExpression(negated ? "||" : "&&", assign.right, inner.right),
+                removedTest: test,
+            };
+        };
+        if (TYPE.isIdentifier(test) && test.name !== name && isTempName(test.name)) {
+            const folded = crossVar(test.name, false);
+            if (folded) return folded;
+        }
+        if (TYPE.isUnaryExpression(test) && test.operator === "!"
+            && TYPE.isIdentifier(test.argument) && test.argument.name !== name && isTempName(test.argument.name)) {
+            const folded = crossVar(test.argument.name, true);
+            if (folded) return folded;
         }
         // test 是结构化归约重新物化的同一表达式:X = E; if (E) { X = B } / if (!E) {...}
         // 只有 E 纯(重复求值无副作用)才能把两次求值合并成一次。
@@ -2126,13 +2197,15 @@ export class TempVariableSimplify implements ISimplify {
      * 分支体是否可能在写入 name 之前读取它。
      * 只按顺序看块内语句;遇到“所有路径都会先写 name”的语句(直接赋值,
      * 或 if/else 两个分支都先写)就认为后续读取都读到新值,可以提前结束。
+     * 注意不能对复合语句(嵌套 if)做整子树的 collectReadNames 短路判断:
+     * 子分支里 `X = true/false; if (X)` 这类“先写后读”会被误判成
+     * “可能读旧值”,导致 test 序列里的死赋值无法清理。
      */
     private branchReadsNameBeforeWrite(stmt: TYPE.Statement | null | undefined, name: string): boolean {
         if (!stmt) return false;
         if (TYPE.isBlockStatement(stmt)) {
             for (const s of stmt.body) {
                 if (this.definitelyWritesBeforeRead(s, name)) return false;
-                if (collectReadNames(s).has(name)) return true;
                 if (this.branchReadsNameBeforeWrite(s, name)) return true;
             }
             return false;
@@ -2349,6 +2422,10 @@ export class TempVariableSimplify implements ISimplify {
     }
 
     private transferLive(stmt: TYPE.Statement, liveOut: Set<string>, ctx: FunctionContext): Set<string> {
+        // 非列表位置(else-if 链的 if、直接作为循环体的语句等)也要登记 liveAfter,
+        // 否则 isNameDeadAfterTest / matchConditionPattern 拿到 undefined 会放弃折叠。
+        // analyzeList 对列表语句写入的值与此处相同,重复写入无副作用。
+        ctx.liveAfter.set(stmt, new Set(liveOut));
         switch (stmt.type) {
             case "ExpressionStatement":
             case "VariableDeclaration": {
@@ -2675,9 +2752,13 @@ export class TempVariableSimplify implements ISimplify {
         if (!isTempName(name)) return null;
         const info = ctx.infos.get(name);
         if (!info || info.captured) return null;
-        // 返回表达式里直接使用该变量时,保守保留调用结果赋值,避免活跃性误判丢失返回值
-        // (已经被复制传播搬进 return 的调用不受此限,否则会同时留下调用语句和 return 调用)
-        if (ctx.returned.has(name) && TYPE.isCallExpression(assign.right) && !ctx.moved.has(assign.right)) return null;
+        // 返回表达式里直接使用该变量时,保守保留有副作用的调用结果赋值,避免活跃性误判丢失返回值
+        // (已经被复制传播搬进 return 的调用不受此限,否则会同时留下调用语句和 return 调用)。
+        // 纯调用(p0.trim() 等)没有副作用,删除死存储不可能丢失任何值,不适用该守卫:
+        // 否则 `acc = E; X = acc; ... return acc(新版本)` 会留下 `acc = E` 死赋值,
+        // 并让 X 复制出第二份调用(`acc = p0.trim(); v2 = p0.trim();`)。
+        if (ctx.returned.has(name) && TYPE.isCallExpression(assign.right)
+            && !isPureExpression(assign.right) && !ctx.moved.has(assign.right)) return null;
         // v = v 恒等于无操作,无论 v 之后是否活跃都可以删除
         if (TYPE.isIdentifier(assign.right) && assign.right.name === name) {
             this.removeRefs(assign.right, ctx);

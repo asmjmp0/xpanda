@@ -20,153 +20,125 @@ decodeAppDestination = function (p0, p1) {
     } else if (local_0_0(v0, "name") !== p0) {
       return undefined;
     } else if (p0 === AppDestinationName.HOME) {
-      v0 = local_0_1(v0) ? {
+      return local_0_1(v0) ? {
         "name": AppDestinationName.HOME
       } : undefined;
-      return v0;
     } else if (p0 === AppDestinationName.FOLLOWING) {
-      v0 = local_0_1(v0) ? {
+      return local_0_1(v0) ? {
         "name": AppDestinationName.FOLLOWING
       } : undefined;
-      return v0;
     } else if (p0 === AppDestinationName.HOT) {
-      v0 = local_0_1(v0) ? {
+      return local_0_1(v0) ? {
         "name": AppDestinationName.HOT
       } : undefined;
-      return v0;
     } else if (p0 === AppDestinationName.DAILY) {
-      v0 = local_0_1(v0) ? {
+      return local_0_1(v0) ? {
         "name": AppDestinationName.DAILY
       } : undefined;
-      return v0;
     } else if (p0 === AppDestinationName.DAILY_STORY) {
       return local_0_2(v0, AppDestinationName.DAILY_STORY);
     } else if (p0 === AppDestinationName.NOTIFICATION) {
-      v0 = local_0_1(v0) ? {
+      return local_0_1(v0) ? {
         "name": AppDestinationName.NOTIFICATION
       } : undefined;
-      return v0;
     } else if (p0 === AppDestinationName.NOTIFICATION_ENTRY) {
       return local_0_3(v0);
     } else if (p0 === AppDestinationName.PRIVATE_MESSAGE) {
       return local_0_4(v0);
     } else if (p0 === AppDestinationName.NOTIFICATION_SETTINGS) {
-      v0 = local_0_1(v0) ? {
+      return local_0_1(v0) ? {
         "name": AppDestinationName.NOTIFICATION_SETTINGS
       } : undefined;
-      return v0;
     } else if (p0 === AppDestinationName.APPEARANCE_SETTINGS) {
-      v0 = local_0_1(v0) ? {
+      return local_0_1(v0) ? {
         "name": AppDestinationName.APPEARANCE_SETTINGS
       } : undefined;
-      return v0;
     } else if (p0 === AppDestinationName.THEME_COLOR_SETTINGS) {
-      v0 = local_0_1(v0) ? {
+      return local_0_1(v0) ? {
         "name": AppDestinationName.THEME_COLOR_SETTINGS
       } : undefined;
-      return v0;
     } else if (p0 === AppDestinationName.IDENTITY_MANAGEMENT) {
-      v0 = local_0_1(v0) ? {
+      return local_0_1(v0) ? {
         "name": AppDestinationName.IDENTITY_MANAGEMENT
       } : undefined;
-      return v0;
     } else if (p0 === AppDestinationName.READING_SETTINGS) {
-      v0 = local_0_1(v0) ? {
+      return local_0_1(v0) ? {
         "name": AppDestinationName.READING_SETTINGS
       } : undefined;
-      return v0;
     } else if (p0 === AppDestinationName.SYSTEM_UPDATE_SETTINGS) {
-      v0 = local_0_1(v0) ? {
+      return local_0_1(v0) ? {
         "name": AppDestinationName.SYSTEM_UPDATE_SETTINGS
       } : undefined;
-      return v0;
     } else if (p0 === AppDestinationName.WHATS_NEW) {
       return local_0_5(v0);
     } else if (p0 === AppDestinationName.RECOMMENDATION_FILTER_SETTINGS) {
-      v0 = local_0_1(v0) ? {
+      return local_0_1(v0) ? {
         "name": AppDestinationName.RECOMMENDATION_FILTER_SETTINGS
       } : undefined;
-      return v0;
     } else if (p0 === AppDestinationName.LOGIN) {
-      v0 = local_0_1(v0) ? {
+      return local_0_1(v0) ? {
         "name": AppDestinationName.LOGIN
       } : undefined;
-      return v0;
     } else if (p0 === AppDestinationName.SETTINGS) {
-      v0 = local_0_1(v0) ? {
+      return local_0_1(v0) ? {
         "name": AppDestinationName.SETTINGS
       } : undefined;
-      return v0;
     } else if (p0 === AppDestinationName.BLOCKING_RULES) {
-      v0 = local_0_1(v0) ? {
+      return local_0_1(v0) ? {
         "name": AppDestinationName.BLOCKING_RULES
       } : undefined;
-      return v0;
     } else if (p0 === AppDestinationName.BLOCKED_FEED_HISTORY) {
-      v0 = local_0_1(v0) ? {
+      return local_0_1(v0) ? {
         "name": AppDestinationName.BLOCKED_FEED_HISTORY
       } : undefined;
-      return v0;
     } else if (p0 === AppDestinationName.READ_HISTORY) {
-      v0 = local_0_1(v0) ? {
+      return local_0_1(v0) ? {
         "name": AppDestinationName.READ_HISTORY
       } : undefined;
-      return v0;
     } else if (p0 === AppDestinationName.LOCAL_HISTORY) {
-      v0 = local_0_1(v0) ? {
+      return local_0_1(v0) ? {
         "name": AppDestinationName.LOCAL_HISTORY
       } : undefined;
-      return v0;
     } else if (p0 === AppDestinationName.TECHNICAL_LAB) {
-      v0 = local_0_1(v0) ? {
+      return local_0_1(v0) ? {
         "name": AppDestinationName.TECHNICAL_LAB
       } : undefined;
-      return v0;
     } else if (p0 === AppDestinationName.READER_PROBE) {
-      v0 = local_0_1(v0) ? {
+      return local_0_1(v0) ? {
         "name": AppDestinationName.READER_PROBE
       } : undefined;
-      return v0;
     } else if (p0 === AppDestinationName.IMAGE_PROBE) {
-      v0 = local_0_1(v0) ? {
+      return local_0_1(v0) ? {
         "name": AppDestinationName.IMAGE_PROBE
       } : undefined;
-      return v0;
     } else if (p0 === AppDestinationName.DATABASE_PROBE) {
-      v0 = local_0_1(v0) ? {
+      return local_0_1(v0) ? {
         "name": AppDestinationName.DATABASE_PROBE
       } : undefined;
-      return v0;
     } else if (p0 === AppDestinationName.DEEP_LINK_PROBE) {
-      v0 = local_0_1(v0) ? {
+      return local_0_1(v0) ? {
         "name": AppDestinationName.DEEP_LINK_PROBE
       } : undefined;
-      return v0;
     } else if (p0 === AppDestinationName.QR_SCAN_PROBE) {
-      v0 = local_0_1(v0) ? {
+      return local_0_1(v0) ? {
         "name": AppDestinationName.QR_SCAN_PROBE
       } : undefined;
-      return v0;
     } else if (p0 === AppDestinationName.QR_DESKTOP_LOGIN_SCAN) {
-      v0 = local_0_1(v0) ? {
+      return local_0_1(v0) ? {
         "name": AppDestinationName.QR_DESKTOP_LOGIN_SCAN
       } : undefined;
-      return v0;
     } else if (p0 === AppDestinationName.BACKGROUND_TASK_PROBE) {
-      v0 = local_0_1(v0) ? {
+      return local_0_1(v0) ? {
         "name": AppDestinationName.BACKGROUND_TASK_PROBE
       } : undefined;
-      return v0;
     } else if (p0 === AppDestinationName.DOMAIN_FIXTURE_PROBE) {
-      v0 = local_0_1(v0) ? {
+      return local_0_1(v0) ? {
         "name": AppDestinationName.DOMAIN_FIXTURE_PROBE
       } : undefined;
-      return v0;
     } else if (p0 === AppDestinationName.PIN_DRAFTS) {
-      v0 = local_0_1(v0) ? {
+      return local_0_1(v0) ? {
         "name": AppDestinationName.PIN_DRAFTS
       } : undefined;
-      return v0;
     } else if (p0 === AppDestinationName.QUESTION) {
       return local_0_2(v0, AppDestinationName.QUESTION);
     } else if (p0 === AppDestinationName.ANSWER) {
@@ -240,37 +212,32 @@ decodeAppDestination = function (p0, p1) {
           v10 = v4 !== undefined || v5 !== undefined || v6 !== undefined || v7 !== undefined || v8 !== undefined;
         }
       }
-      if (!v10) {
-        acc = !local_0_11(v0, ["name", "contentType", "contentId", "commentId", "segmentId", "segmentContent", "segmentParagraphId", "segmentStartOffset", "segmentEndOffset"]);
-        if (acc) {
-          return undefined;
-        } else if (v4 !== undefined || v5 !== undefined || v6 !== undefined || v7 !== undefined || v8 !== undefined) {
-          acc = {
-            "name": AppDestinationName.COMMENT,
-            "contentType": v1,
-            "contentId": v2,
-            "segmentId": v4,
-            "segmentContent": v5,
-            "segmentParagraphId": v6,
-            "segmentStartOffset": v7,
-            "segmentEndOffset": v8
-          };
-          return acc;
-        } else {
-          v0 = v3 === undefined ? {
-            "name": AppDestinationName.COMMENT,
-            "contentType": v1,
-            "contentId": v2
-          } : {
-            "name": AppDestinationName.COMMENT,
-            "contentType": v1,
-            "contentId": v2,
-            "commentId": v3
-          };
-          return v0;
-        }
-      } else {
+      if (v10) {
         return undefined;
+      } else if (!local_0_11(v0, ["name", "contentType", "contentId", "commentId", "segmentId", "segmentContent", "segmentParagraphId", "segmentStartOffset", "segmentEndOffset"])) {
+        return undefined;
+      } else if (v4 !== undefined || v5 !== undefined || v6 !== undefined || v7 !== undefined || v8 !== undefined) {
+        return {
+          "name": AppDestinationName.COMMENT,
+          "contentType": v1,
+          "contentId": v2,
+          "segmentId": v4,
+          "segmentContent": v5,
+          "segmentParagraphId": v6,
+          "segmentStartOffset": v7,
+          "segmentEndOffset": v8
+        };
+      } else {
+        return v3 === undefined ? {
+          "name": AppDestinationName.COMMENT,
+          "contentType": v1,
+          "contentId": v2
+        } : {
+          "name": AppDestinationName.COMMENT,
+          "contentType": v1,
+          "contentId": v2,
+          "commentId": v3
+        };
       }
     } else if (p0 === AppDestinationName.SEARCH) {
       v1 = local_0_0(v0, "query");
@@ -339,11 +306,10 @@ local_0_2 = function (p0, p1) {
         v1 = isSafeDecimalContentId(v0);
         break;
     }
-    v0 = v1 ? {
+    return v1 ? {
       "name": p1,
       "id": v0
     } : undefined;
-    return v0;
   }
 };
 local_0_3 = function (p0) {
@@ -386,20 +352,19 @@ local_0_4 = function (p0) {
   }
 };
 local_0_5 = function (p0) {
-  let v0, v1, v2;
+  let v0, v2;
   v0 = local_0_0(p0, "version");
   if (v0 === undefined || isSafeWhatsNewVersion(v0)) {
     v2 = v0 === undefined ? ["name"] : ["name", "version"];
     if (!local_0_11(p0, v2)) {
       return undefined;
     } else {
-      v1 = v0 === undefined ? {
+      return v0 === undefined ? {
         "name": AppDestinationName.WHATS_NEW
       } : {
         "name": AppDestinationName.WHATS_NEW,
         "version": v0
       };
-      return v1;
     }
   } else {
     return undefined;
@@ -421,7 +386,7 @@ local_0_6 = function (p0) {
   } else if (!local_0_11(p0, ["name", "questionId", "answerId"])) {
     return undefined;
   } else {
-    v2 = v1 === undefined ? {
+    return v1 === undefined ? {
       "name": AppDestinationName.WRITE_ANSWER,
       "questionId": v0
     } : {
@@ -429,7 +394,6 @@ local_0_6 = function (p0) {
       "questionId": v0,
       "answerId": v1
     };
-    return v2;
   }
 };
 local_0_7 = function (p0) {
