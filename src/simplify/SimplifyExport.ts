@@ -7,6 +7,8 @@ import { ConditionSimplify } from "./ConditionSimplify";
 import { SyntaxRewriteSimplify } from "./SyntaxRewriteSimplify";
 import { HighLevelGrammarSimplify } from "./HighLevelGrammarSimplify";
 import { ClassSyntaxSimplify } from "./ClassSyntaxSimplify";
+import { ObjectLiteralSimplify } from "./ObjectLiteralSimplify";
+import { NullishCoalescingSimplify } from "./NullishCoalescingSimplify";
 import { CallResultSimplify } from "./CallResultSimplify";
 import { AccCallSimplify } from "./AccCallSimplify";
 import { normalizeDeclarations } from "./NormalizeDeclarations";
@@ -27,6 +29,9 @@ export class SimplifyExport {
             new ConditionSimplify(),
             new SyntaxRewriteSimplify(),
             new ClassSyntaxSimplify(),
+            // 依赖 TempVariableSimplify 先把模板对象的别名/赋值归一化:
+            //   acc = {k: null}; acc.k = E; return acc;
+            new ObjectLiteralSimplify(),
         ];
         let changed = false;
         for (const simplify of simplifyArr) {
@@ -43,6 +48,8 @@ export class SimplifyExport {
             if (!SimplifyExport.simplifyALL(node)) break;
         }
         new HighLevelGrammarSimplify().simplify(node);
+        // HighLevelGrammarSimplify 会把 nullish 检查合成 switch;这里还原成 ??
+        new NullishCoalescingSimplify().simplify(node);
         // HighLevelGrammarSimplify 的三目合成(`if (C) { X = A } else { X = B }` →
         // `X = C ? A : B`)发生在定点迭代之后,轮内的返回值折叠已经错过;
         // 这里补一轮 `X = E; return X` 折叠,并清理随之失去引用的声明。

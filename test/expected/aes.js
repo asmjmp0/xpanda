@@ -147,66 +147,64 @@ v0.generateKey = function generateKey() {
 globalThis.AES = v0;
 v1 = {
   "characters": "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=",
-  "encode": null,
-  "decode": null
-};
-v1.encode = function encode(p0) {
-  let v7, v8, v9, v10, v11, v12;
-  v7 = 0;
-  for (v8 = ""; v7 < p0.length; v8 += this.characters.charAt(v11)) {
-    v9 = p0.charCodeAt(v7);
-    v11 = v7 + 1 + 1;
-    v10 = p0.charCodeAt(v7 + 1);
-    v7 = v7 + 1 + 1 + 1;
-    v11 = p0.charCodeAt(v11);
-    v12 = v9 >> 2;
-    v9 &= 3;
-    v9 <<= 4;
-    v9 |= v10 >> 4;
-    if (isNaN(v10)) {
-      v10 = 64;
-      v11 = 64;
-    } else if (isNaN(v11)) {
-      v10 = (v10 & 15) << 2 | v11 >> 6;
-      v11 = 64;
-    } else {
-      v10 = (v10 & 15) << 2 | v11 >> 6;
-      v11 &= 63;
+  "encode": function encode(p0) {
+    let v7, v8, v9, v10, v11, v12;
+    v7 = 0;
+    for (v8 = ""; v7 < p0.length; v8 += this.characters.charAt(v11)) {
+      v9 = p0.charCodeAt(v7);
+      v11 = v7 + 1 + 1;
+      v10 = p0.charCodeAt(v7 + 1);
+      v7 = v7 + 1 + 1 + 1;
+      v11 = p0.charCodeAt(v11);
+      v12 = v9 >> 2;
+      v9 &= 3;
+      v9 <<= 4;
+      v9 |= v10 >> 4;
+      if (isNaN(v10)) {
+        v10 = 64;
+        v11 = 64;
+      } else if (isNaN(v11)) {
+        v10 = (v10 & 15) << 2 | v11 >> 6;
+        v11 = 64;
+      } else {
+        v10 = (v10 & 15) << 2 | v11 >> 6;
+        v11 &= 63;
+      }
+      v8 += this.characters.charAt(v12);
+      v8 += this.characters.charAt(v9);
+      v8 += this.characters.charAt(v10);
     }
-    v8 += this.characters.charAt(v12);
-    v8 += this.characters.charAt(v9);
-    v8 += this.characters.charAt(v10);
+    return v8;
+  },
+  "decode": function decode(p0) {
+    let v6, v7, v8, v9, v10, v11, v12;
+    v6 = 0;
+    v7 = "";
+    v8 = p0.replace(new RegExp("[^A-Za-z0-9\\+\\/\\=]", "g"), "");
+    while (true) {
+      if (v6 >= v8.length) break;
+      v12 = v6 + 1;
+      v6 = v8.charAt(v6);
+      v9 = this.characters.indexOf(v6);
+      v10 = this.characters.indexOf(v8.charAt(v12));
+      v11 = this.characters.indexOf(v8.charAt(v12 + 1));
+      v6 = v12 + 1 + 1 + 1;
+      v12 = this.characters.indexOf(v8.charAt(v12 + 1 + 1));
+      v9 <<= 2;
+      v9 |= v10 >> 4;
+      v10 &= 15;
+      v10 <<= 4;
+      v10 |= v11 >> 2;
+      v7 += String.fromCharCode(v9);
+      if (v11 !== 64) {
+        v7 += String.fromCharCode(v10);
+      }
+      if (v12 !== 64) {
+        v7 += String.fromCharCode((v11 & 3) << 6 | v12);
+      }
+    }
+    return v7;
   }
-  return v8;
-};
-v1.decode = function decode(p0) {
-  let v6, v7, v8, v9, v10, v11, v12;
-  v6 = 0;
-  v7 = "";
-  v8 = p0.replace(new RegExp("[^A-Za-z0-9\\+\\/\\=]", "g"), "");
-  while (true) {
-    if (v6 >= v8.length) break;
-    v12 = v6 + 1;
-    v6 = v8.charAt(v6);
-    v9 = this.characters.indexOf(v6);
-    v10 = this.characters.indexOf(v8.charAt(v12));
-    v11 = this.characters.indexOf(v8.charAt(v12 + 1));
-    v6 = v12 + 1 + 1 + 1;
-    v12 = this.characters.indexOf(v8.charAt(v12 + 1 + 1));
-    v9 <<= 2;
-    v9 |= v10 >> 4;
-    v10 &= 15;
-    v10 <<= 4;
-    v10 |= v11 >> 2;
-    v7 += String.fromCharCode(v9);
-    if (v11 !== 64) {
-      v7 += String.fromCharCode(v10);
-    }
-    if (v12 !== 64) {
-      v7 += String.fromCharCode((v11 & 3) << 6 | v12);
-    }
-  }
-  return v7;
 };
 globalThis.AES.Base64 = v1;
 globalThis.AES.Counter = function () {

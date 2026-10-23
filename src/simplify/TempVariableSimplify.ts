@@ -261,6 +261,8 @@ export class TempVariableSimplify implements ISimplify {
         this.analyzeList(body, new Set(), ctx);
         if (!this.conditionsOnly) {
             this.processStatements(body, new EnvState(), ctx);
+            // do { ...; X = E; } while (!X) -> do { ... } while (!E)
+            this.foldDoWhileTestAssignments(body, ctx);
             // 复制传播结束后做基于活跃性的死存储消除;最多 3 轮处理级联死代码
             for (let i = 0; i < 3; i++) {
                 const version = this.cleanupVersion;
@@ -555,6 +557,104 @@ export class TempVariableSimplify implements ISimplify {
             if (kept.length === 0) stmts.splice(i, 1);
             else stmt.declarations = kept;
         }
+    }
+
+    /**
+     * `do { ...; X = E; } while (!X)` -> `do { ... } while (!E)`。
+     *
+     * 编译器把循环条件物化成 `X = !CALL` 放在 body 末尾、再用 `!X` 跳转。
+     * 赋值是 body 最后一条语句,把 E 搬进 test 的求值点完全相同;前提是:
+     *   - X 是未被闭包捕获的临时变量,且 E 不写 X;
+     *   - body 内没有 continue(continue 会跳过末尾赋值直接进入 test);
+     *   - 循环结束后 X 的旧值已死(ctx.liveAfter 不再包含 X)。
+     */
+    private foldDoWhileTestAssignments(stmts: TYPE.Statement[], ctx: FunctionContext): void {
+        for (const stmt of stmts) {
+            if (TYPE.isDoWhileStatement(stmt)) this.foldSingleDoWhileTest(stmt, ctx);
+            this.foldDoWhileTestChildren(stmt, ctx);
+        }
+    }
+
+    private foldDoWhileTestChildren(stmt: TYPE.Statement, ctx: FunctionContext): void {
+        switch (stmt.type) {
+            case "BlockStatement":
+                this.foldDoWhileTestAssignments(stmt.body, ctx);
+                break;
+            case "IfStatement":
+                this.foldDoWhileTestChildren(stmt.consequent, ctx);
+                if (stmt.alternate) this.foldDoWhileTestChildren(stmt.alternate, ctx);
+                break;
+            case "WhileStatement":
+            case "DoWhileStatement":
+            case "ForStatement":
+            case "ForInStatement":
+            case "ForOfStatement":
+            case "LabeledStatement":
+                this.foldDoWhileTestChildren(stmt.body, ctx);
+                break;
+            case "TryStatement":
+                this.foldDoWhileTestAssignments(stmt.block.body, ctx);
+                if (stmt.handler) this.foldDoWhileTestAssignments(stmt.handler.body.body, ctx);
+                if (stmt.finalizer) this.foldDoWhileTestAssignments(stmt.finalizer.body, ctx);
+                break;
+            case "SwitchStatement":
+                for (const c of stmt.cases) this.foldDoWhileTestAssignments(c.consequent, ctx);
+                break;
+            default:
+                break;
+        }
+    }
+
+    private foldSingleDoWhileTest(stmt: TYPE.DoWhileStatement, ctx: FunctionContext): boolean {
+        const body = stmt.body;
+        if (!TYPE.isBlockStatement(body) || body.body.length < 2) return false;
+        const last = body.body[body.body.length - 1];
+        if (!TYPE.isExpressionStatement(last) || !TYPE.isAssignmentExpression(last.expression)) return false;
+        const assign = last.expression;
+        if (assign.operator !== "=" || !TYPE.isIdentifier(assign.left)) return false;
+        const name = assign.left.name;
+        if (!isTempName(name)) return false;
+        const info = ctx.infos.get(name);
+        if (!info || info.captured) return false;
+        if (collectAssignedNames(assign.right).has(name)) return false;
+
+        const test = stmt.test;
+        let testNegated: boolean;
+        if (TYPE.isIdentifier(test) && test.name === name) {
+            testNegated = false;
+        } else if (TYPE.isUnaryExpression(test) && test.operator === "!"
+            && TYPE.isIdentifier(test.argument) && test.argument.name === name) {
+            testNegated = true;
+        } else {
+            return false;
+        }
+
+        // continue 会跳过末尾赋值直接求值 test,此时 test 读到的是旧值
+        let hasContinue = false;
+        walkNode(body, (node) => {
+            if (TYPE.isContinueStatement(node)) {
+                hasContinue = true;
+                return false;
+            }
+            return true;
+        });
+        if (hasContinue) return false;
+
+        // 循环之后 X 的旧值必须已死,否则删掉末尾赋值会改变后续读取
+        const liveAfter = ctx.liveAfter.get(stmt);
+        if (!liveAfter || liveAfter.has(name)) return false;
+
+        body.body.pop();
+        let newTest: TYPE.Expression = testNegated ? TYPE.unaryExpression("!", assign.right) : assign.right;
+        // !(!E) -> E
+        if (TYPE.isUnaryExpression(newTest) && newTest.operator === "!"
+            && TYPE.isUnaryExpression(newTest.argument) && newTest.argument.operator === "!") {
+            newTest = newTest.argument.argument;
+        }
+        this.removeRefs(test, ctx);
+        stmt.test = newTest;
+        this.changed = true;
+        return true;
     }
 
     /** X = E; (X = !X;)? if (!X / X) -> if (E / !E) */
@@ -881,7 +981,7 @@ export class TempVariableSimplify implements ISimplify {
         }
     }
 
-    private foldBooleanExpr(expr: TYPE.Expression, stmt: TYPE.Statement, ctx: FunctionContext): TYPE.Expression {
+    private foldBooleanExpr(expr: TYPE.Expression, stmt: TYPE.IfStatement, ctx: FunctionContext): TYPE.Expression {
         if (TYPE.isLogicalExpression(expr)) {
             expr.left = this.foldBooleanExpr(expr.left, stmt, ctx);
             expr.right = this.foldBooleanExpr(expr.right, stmt, ctx);
@@ -903,7 +1003,7 @@ export class TempVariableSimplify implements ISimplify {
 
     private foldTestSequence(
         seq: TYPE.SequenceExpression,
-        stmt: TYPE.Statement,
+        stmt: TYPE.IfStatement,
         ctx: FunctionContext,
     ): TYPE.Expression | null {
         const exprs = seq.expressions;
@@ -939,7 +1039,7 @@ export class TempVariableSimplify implements ISimplify {
                 && TYPE.isIdentifier(base.left) && base.left.name === name
                 && !this.headReadsNameBeforeWrite(exprs, j, name)
                 && this.isNameDeadAfterTest(stmt, name, ctx)
-                && this.countReadsInNode(stmt, name) === this.countReadsInNode(seq, name)) {
+                && this.isTailExpression(stmt.test, seq)) {
                 const parity = (neg + (lastBang ? 1 : 0)) % 2;
                 const replacement = parity === 0 ? base.right : TYPE.unaryExpression("!", base.right);
                 const kept = exprs.slice(0, j) as TYPE.Expression[];
@@ -955,7 +1055,7 @@ export class TempVariableSimplify implements ISimplify {
             && !this.headReadsNameBeforeWrite(exprs, exprs.length - 2, base.left.name)
             && this.countReadsInNode(last, base.left.name) === 0
             && this.isNameDeadAfterTest(stmt, base.left.name, ctx)
-            && this.countReadsInNode(stmt, base.left.name) === this.countReadsInNode(seq, base.left.name)) {
+            && this.isTailExpression(stmt.test, seq)) {
             const kept = exprs.slice(0, exprs.length - 2) as TYPE.Expression[];
             kept.push(last);
             return kept.length === 1 ? kept[0] : TYPE.sequenceExpression(kept);
@@ -975,6 +1075,33 @@ export class TempVariableSimplify implements ISimplify {
                 continue;
             }
             if (!killed && this.countReadsInNode(e, name) > 0) return true;
+        }
+        return false;
+    }
+
+    /**
+     * target 是否是 root 中最后求值的子表达式(之后没有会读取变量的兄弟表达式)。
+     * 用于判断序列里的死赋能否删除:只关心“赋值之后是否还有读取”,之前(短路左侧)
+     * 的读取不受影响。
+     */
+    private isTailExpression(root: TYPE.Expression, target: TYPE.Expression): boolean {
+        if (root === target) return true;
+        if (TYPE.isParenthesizedExpression(root)) return this.isTailExpression(root.expression as TYPE.Expression, target);
+        if (TYPE.isLogicalExpression(root)) {
+            return this.containsNode(root.right, target) && this.isTailExpression(root.right as TYPE.Expression, target);
+        }
+        if (TYPE.isSequenceExpression(root)) {
+            const last = root.expressions[root.expressions.length - 1];
+            return !!last && this.containsNode(last, target) && this.isTailExpression(last as TYPE.Expression, target);
+        }
+        if (TYPE.isUnaryExpression(root)) {
+            return this.containsNode(root.argument, target) && this.isTailExpression(root.argument as TYPE.Expression, target);
+        }
+        if (TYPE.isBinaryExpression(root)) {
+            return this.containsNode(root.right, target) && this.isTailExpression(root.right as TYPE.Expression, target);
+        }
+        if (TYPE.isConditionalExpression(root)) {
+            return this.containsNode(root.alternate, target) && this.isTailExpression(root.alternate as TYPE.Expression, target);
         }
         return false;
     }
@@ -1933,12 +2060,32 @@ export class TempVariableSimplify implements ISimplify {
                 && this.definitelyWritesBeforeRead(stmt.consequent, name)
                 && this.definitelyWritesBeforeRead(stmt.alternate, name);
         }
+        // do-while 先执行 body 再求值 test:body 一定先写 name 时,test 读到的是新值
+        if (TYPE.isDoWhileStatement(stmt)) {
+            return this.doWhileKillsTestReads(stmt, name);
+        }
         if (TYPE.isExpressionStatement(stmt) && TYPE.isAssignmentExpression(stmt.expression)) {
             const assign = stmt.expression;
             return assign.operator === "=" && TYPE.isIdentifier(assign.left) && assign.left.name === name
                 && !collectReadNames(assign.right).has(name);
         }
         return false;
+    }
+
+    /**
+     * do-while 的 test 在 body 之后执行。只有 body 是“所有路径都会先写 name 再读”
+     * 且没有 continue(continue 会跳过后续写入直接进入 test)时,test 读取的才是新值。
+     */
+    private doWhileKillsTestReads(stmt: TYPE.DoWhileStatement, name: string): boolean {
+        let hasContinue = false;
+        walkNode(stmt.body, (node) => {
+            if (TYPE.isContinueStatement(node)) {
+                hasContinue = true;
+                return false;
+            }
+            return true;
+        });
+        return !hasContinue && this.definitelyWritesBeforeRead(stmt.body, name);
     }
 
     /**
@@ -2131,7 +2278,12 @@ export class TempVariableSimplify implements ISimplify {
                     bodyOut = next;
                     bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx);
                 }
-                return TempVariableSimplify.union(bodyIn, testReads, liveOut);
+                // test 在 body 之后执行:body 一定先写 name 时,test 读到的是新值,
+                // 不应把这次读取算作循环入口处旧值的活跃使用。
+                const result = new Set(bodyIn);
+                for (const name of testReads) if (!this.doWhileKillsTestReads(stmt, name)) result.add(name);
+                for (const name of liveOut) result.add(name);
+                return result;
             }
             case "ForStatement": {
                 const testReads = stmt.test ? this.tempReads(stmt.test, ctx) : new Set<string>();
@@ -2308,7 +2460,10 @@ export class TempVariableSimplify implements ISimplify {
                     bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx);
                 }
                 const cleaned = this.cleanupNested(stmt.body, ctx, bodyOut);
-                return TempVariableSimplify.union(cleaned, testReads, liveOut);
+                const result = new Set(cleaned);
+                for (const name of testReads) if (!this.doWhileKillsTestReads(stmt, name)) result.add(name);
+                for (const name of liveOut) result.add(name);
+                return result;
             }
             case "ForStatement": {
                 const testReads = stmt.test ? this.tempReads(stmt.test, ctx) : new Set<string>();

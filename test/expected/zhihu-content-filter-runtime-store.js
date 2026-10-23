@@ -15,7 +15,7 @@ ContentFilterRuntimeStore = class panda_jmp0_reserved_anonymous_0 {
     this.history = p1;
   }
   async loadSnapshot(p0) {
-    let v0, v3, v4, v5, v6, v7, v8, v11, v20, v46, acc;
+    let v0, v4, v5, v6, v7, v8, v11, v20, v46;
     await this.mutationQueue;
     v4 = await this.database.open();
     v5 = {};
@@ -44,13 +44,11 @@ ContentFilterRuntimeStore = class panda_jmp0_reserved_anonymous_0 {
         });
         v0 = await v4.querySql("SELECT content_key, view_count FROM content_filter_views" + v20, local_1_0);
         try {
-          acc = !v0.goToFirstRow();
-          if (!acc) {
+          if (v0.goToFirstRow()) {
             do {
               v46 = v0.getString(0);
               v5[v46] = v0.getLong(1);
-              acc = !v0.goToNextRow();
-            } while (!acc);
+            } while (v0.goToNextRow());
           }
         } finally {
           v0.close();
@@ -58,94 +56,56 @@ ContentFilterRuntimeStore = class panda_jmp0_reserved_anonymous_0 {
         v20 = "SELECT content_key FROM opened_content" + v20;
         v11 = await v4.querySql(v20, local_1_0);
         try {
-          acc = !v11.goToFirstRow();
-          if (!acc) {
+          if (v11.goToFirstRow()) {
             do {
               v6.push(v11.getString(0));
-              acc = !v11.goToNextRow();
-            } while (!acc);
+            } while (v11.goToNextRow());
           }
         } finally {
           v11.close();
         }
       }
     }
-    v3 = {
-      "viewCounts": null,
-      "openedKeys": null
+    return {
+      "viewCounts": v5,
+      "openedKeys": v6
     };
-    v3.viewCounts = v5;
-    v3.openedKeys = v6;
-    return v3;
   }
   recordOutcomes(p0) {
     let local_1_0, local_1_1;
     local_1_1 = this;
     local_1_0 = p0;
     return local_1_1.enqueue(async function () {
-      let v0, v3, v5, v6, v7, v8 /*VIEW_TABLE*/, v9, v10 /*relationalStore*/, v11;
+      let v3, v5, v6, v7, v8 /*VIEW_TABLE*/, v10 /*relationalStore*/, v11;
       v3 = await local_1_1.database.open();
       v5 = Date.now();
       for (v6 = 0; v6 < local_1_0.length; v6 += 1) {
         v8 = contentIdentityKey(local_1_0[v6].content);
-        if (local_1_0[v6].match === undefined && (v9 = v8.length, v8.length > 0)) {
-          v0 = await local_1_1.readViewCount(v3, v8);
-          v9 = {
-            "content_key": null,
-            "view_count": null,
-            "last_viewed_at": null
-          };
-          v9.content_key = v8;
-          v9.view_count = v0 + 1;
-          v9.last_viewed_at = v5;
-          await v3.insert(local_0_0, v9, relationalStore.ConflictResolution.ON_CONFLICT_REPLACE);
+        if (local_1_0[v6].match === undefined && v8.length > 0) {
+          await v3.insert(local_0_0, {
+            "content_key": v8,
+            "view_count": (await local_1_1.readViewCount(v3, v8)) + 1,
+            "last_viewed_at": v5
+          }, relationalStore.ConflictResolution.ON_CONFLICT_REPLACE);
         } else if (local_1_0[v6].match !== undefined) {
-          v8 = local_1_0[v6].content.contentId;
-          switch (local_1_0[v6].content.contentId) {
-            case null:
-            case undefined:
-              v8 = "";
-              break;
-          }
+          v8 = local_1_0[v6].content.contentId ?? "";
           v8 = v8.length;
           if (v8 > 0) {
-            v8 = local_1_0[v6].content.contentKind;
-            switch (local_1_0[v6].content.contentKind) {
-              case null:
-              case undefined:
-                v8 = "";
-                break;
-            }
+            v8 = local_1_0[v6].content.contentKind ?? "";
             v8 = v8.length;
             if (v8 > 0) {
               v10 = {
-                "kind": null,
-                "ruleId": null,
-                "ruleName": null,
-                "contentTitle": null,
+                "kind": local_1_0[v6].match.kind,
+                "ruleId": local_1_0[v6].match.ruleId,
+                "ruleName": local_1_0[v6].match.reason,
+                "contentTitle": local_1_0[v6].content.title,
                 "contentKind": null,
                 "contentId": null,
                 "blockedAt": null
               };
-              v10.kind = local_1_0[v6].match.kind;
-              v10.ruleId = local_1_0[v6].match.ruleId;
-              v10.ruleName = local_1_0[v6].match.reason;
-              v10.contentTitle = local_1_0[v6].content.title;
-              v11 = local_1_0[v6].content.contentKind;
-              switch (local_1_0[v6].content.contentKind) {
-                case null:
-                case undefined:
-                  v11 = "content";
-                  break;
-              }
+              v11 = local_1_0[v6].content.contentKind ?? "content";
               v10.contentKind = v11;
-              v7 = local_1_0[v6].content.contentId;
-              switch (local_1_0[v6].content.contentId) {
-                case null:
-                case undefined:
-                  v7 = "unknown";
-                  break;
-              }
+              v7 = local_1_0[v6].content.contentId ?? "unknown";
               v10.contentId = v7;
               v10.blockedAt = v5;
               await local_1_1.history.insert(v10);
@@ -208,13 +168,11 @@ ContentFilterRuntimeStore = class panda_jmp0_reserved_anonymous_0 {
     v0 = await this.history.queryRecent();
     v8 += v0.length;
     v10 = {
-      "totalSeen": null,
-      "totalFiltered": null,
+      "totalSeen": v8,
+      "totalFiltered": v0.length,
       "filterRate": null,
       "lastFilteredAt": null
     };
-    v10.totalSeen = v8;
-    v10.totalFiltered = v0.length;
     v2 = v8 > 0 ? v0.length / v8 : 0;
     v10.filterRate = v2;
     if (v0.length !== 0) {

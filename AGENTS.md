@@ -21,7 +21,7 @@
 | `src/decompiler/` | `StructureAnalysis.ts`(Region 归约核心)、`Region.ts` / `RegionGraphBuilder.ts`(区域、条件/逻辑标志、不可归约 Tail 复制)、`statements.ts`、`MethodHandler.ts`(HANDLES 分发)、`TryFinally.ts`(ArkTS 13 try/finally 还原)、`SimpleAnalysis.ts`、`ValueGraph.ts`、`DominatorGraph.ts` |
 | `src/codegen/CodeGenerator.ts` | AST 生成入口(包装 `src/ast/`) |
 | `src/ast/` | `NodeFactory` / `NodeUtils`(Babel AST 工具) |
-| `src/simplify/` | 优化器流水线(`SimplifyExport`、`TempVariableSimplify`、`ConditionSimplify`、`SyntaxRewriteSimplify`、`ClassSyntaxSimplify`、`HighLevelGrammarSimplify`、`AstUtils`、`NormalizeDeclarations`);末尾含 `foldConditionAssignments`(条件取反链二次折叠)与 `hoistTestPrefixes`(常量前缀提升) |
+| `src/simplify/` | 优化器流水线(`SimplifyExport`、`TempVariableSimplify`、`ConditionSimplify`、`SyntaxRewriteSimplify`、`ClassSyntaxSimplify`、`ObjectLiteralSimplify`、`NullishCoalescingSimplify`、`HighLevelGrammarSimplify`、`AstUtils`、`NormalizeDeclarations`);末尾含 `foldConditionAssignments`(条件取反链二次折叠)与 `hoistTestPrefixes`(常量前缀提升) |
 | `src/parallel/` | 按类并行的 simplify worker 池(`ParallelDecompiler.ts` 调度、`simplify-worker.ts` worker 入口) |
 | `src/hap/` | HAP 应用包适配:`ZipFile.ts`(只读 ZIP 解析,store/deflate)、`HapFile.ts`(.abc 条目/module.json/resources.index) |
 | `src/mcp/` | MCP Server(`server.ts` stdio 入口、`registry.ts` abc/hap 会话注册表、`tools/` 十个工具),文档见 [docs/MCP.md](docs/MCP.md) |
@@ -108,7 +108,10 @@ npm run test:mcp
 - **非纯表达式(`call` / `new` / 函数/类)只能在真正最后一次读取时搬移**;`if` 的 test 和分支体都读同一临时变量时不能搬,否则会把调用复制成两次;
 - `acc = !acc` 既可能来自 `callruntime.isfalse`,也可能来自条件物化(`istrue + jnez + ldtrue/ldfalse`);折叠时按取反次数的奇偶性处理,不能只删一层;
 - test 序列里的自取反链(`if (A || (X = E, X = !X, !X))`)只有在 `X` 在 test 后已死、test 外无其它读取、分支/前缀不会先读后写时才折叠;循环 test 暂不处理;
+- **do-while 的 test 在 body 之后求值**:liveness 需要把"body 一定先写 `X` 再读"的 test 读取从循环入口的活跃集里剔除,否则 `X = !E; if (!X)` 会因 `X` 在循环里仍活跃而不折叠(或折叠后重复求值)。`foldDoWhileTestAssignments` 再把 `do { ...; X = E } while (!X)` 折成 `while (!E)`,要求 `X` 在循环后已死且 body 内没有 `continue`;
 - `if (A || (v1 = 0, v2 = 2, B))` 这类常量前缀提升(`hoistTestPrefixes`)要求:前缀只是临时变量赋常量、短路分支直接 return/throw 且不读取这些临时变量、不在带 `finally` 的 `try` 中;
+- `ObjectLiteralSimplify` 合并 `createobjectwithbuffer` 的模板对象与紧邻的 `obj.key = value`:要求字段初值是字面量、赋值顺序与模板字段一致、对象未被闭包捕获;`obj = {...}; return obj` 在模式外无读取时内联成 `return {...}`。对象字面量里的函数属性会按原求值顺序创建,不会被提前提升;
+- `HighLevelGrammarSimplify` 会把 `if (x === null || x === undefined) x = default` 合成为 switch;`NullishCoalescingSimplify` 在流水线末尾把 `v = obj.k; switch (obj.k) { case null: case undefined: v = default; }` 还原成 `v = obj.k ?? default`。判别式是纯成员表达式时才允许合并两次求值;
 - 修改输出后,更新 `test/expected/*.js` 快照并在提交说明中解释变化。
 
 ### 修改 Region 归约 / 条件极性

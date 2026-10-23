@@ -17,7 +17,10 @@ import { ResourceIndexFile } from "../src/res/ResourceIndexFile";
  *   3. 校验输出可被 Babel 再次解析;
  *   4. 执行样本,确认输出行为符合预期;
  *   5. 校验 HAP 应用包(ZIP 容器)适配与 callruntime.supercallforwardallargs 还原;
- *   6. 校验 ArkTS 13 的 try/finally 还原与空 lexenv 块清理。
+ *   6. 校验 ArkTS 13 的 try/finally 还原与空 lexenv 块清理;
+ *   7. 校验 test 序列里的死赋值清理(Constant/Accumulator 物化);
+ *   8. 校验 createobjectwithbuffer 模板对象到对象字面量的还原;
+ *   9. 校验 nullish coalescing 的 switch lowering 还原。
  */
 
 interface Sample {
@@ -440,6 +443,13 @@ function verifyZhihuTryFinally(): void {
     if (!code.includes("} finally {") || code.split("} finally {").length - 1 !== 2) {
         throw new Error("try/finally 还原: finally 数量不符合预期");
     }
+    if (!code.includes('content.contentId ?? ""') || !code.includes('contentKind ?? "content"')
+        || !code.includes('contentId ?? "unknown"')) {
+        throw new Error(`nullish 还原: recordOutcomes 的 ?? 未恢复\n${code}`);
+    }
+    if (code.includes("switch (local_1_0[v6].content")) {
+        throw new Error(`nullish 还原: 仍残留 content 字段 switch\n${code}`);
+    }
 
     const expectedPath = path.join(__dirname, "expected", "zhihu-content-filter-runtime-store.js");
     const expected = fs.readFileSync(expectedPath, "utf-8");
@@ -459,6 +469,153 @@ function verifyZhihuTryFinally(): void {
     }
     if (qrCode.includes("acc = new Uint8Array(v6)")) {
         throw new Error(`QrScanFixture: try 体内失效的 acc 赋值未清理\n${qrCode}`);
+    }
+}
+
+/**
+ * 回归:循环里的布尔物化。
+ *   `X = !E; if (!X) {...}` 和 `do { ...; X = !E2; } while (!X)`
+ * 在 X 的旧值已死时应折成 `if (E)` / `while (E2)`,不能留下
+ * `X = !E; if (!X)`(会把同一个调用求值两次)或 `while (!X)` 噪声。
+ * liveness 需要识别 do-while 的 test 在 body 写入之后读取。
+ */
+function verifyLoopConditionFold(): void {
+    const program = NodeFactory.parse(`
+function f(v0, v5) {
+  let acc;
+  while (true) {
+    acc = !v0.goToFirstRow();
+    if (!acc) {
+      do {
+        v5[v0.getString(0)] = v0.getLong(1);
+        acc = !v0.goToNextRow();
+      } while (!acc);
+    }
+  }
+}
+`);
+    SimplifyExport.simplify(program);
+    const code = NodeFactory.generate(program);
+    if (!code.includes("if (v0.goToFirstRow())") || !code.includes("} while (v0.goToNextRow());")) {
+        throw new Error(`simplify: 循环条件物化未折叠\n${code}`);
+    }
+    if (code.includes("acc = !")) {
+        throw new Error(`simplify: 仍残留 acc = !... 物化赋值\n${code}`);
+    }
+}
+
+/**
+ * 回归:`if (A || (v1 = 0, v2 = 2, X = !(cond), cond))` 里的死赋值。
+ * `X = !(cond)` 的值没有被序列最后一条使用,X 在 test 后也死了;它只是
+ * 第二个条件的布尔物化,应删除,让 `hoistTestPrefixes` 能继续把 `v1/v2`
+ * 的常量赋值提到 if 前。短路左侧对 X 的读取发生在赋值之前,不应阻止删除。
+ */
+function verifyTestSequenceScratchRemoval(): void {
+    const program = NodeFactory.parse(`
+function f(acc, v0) {
+  let v1, v2;
+  v0 = acc;
+  if (acc === null || (v1 = 0, v2 = 2, acc = !(acc[2].length === 0), v0[2].length === 0)) {
+    return undefined;
+  }
+}
+`);
+    SimplifyExport.simplify(program);
+    const code = NodeFactory.generate(program);
+    if (!code.includes("if (acc === null || acc[2].length === 0)")) {
+        throw new Error(`simplify: test 序列里的布尔物化未清理\n${code}`);
+    }
+    if (code.includes("acc = !(") || code.includes("v1 = 0, v2 = 2")) {
+        throw new Error(`simplify: 仍残留 test 序列死赋值\n${code}`);
+    }
+}
+
+/**
+ * 回归:AbsoluteUrlParser 的第二个条件。
+ * 源码是 `if (match === null || match[2].length === 0) return undefined;`,
+ * 旧输出会把 `v1 = 0, v2 = 2, acc = !(match[2].length === 0)` 留在 test 里。
+ * `v1/v2` 是后续代码复用的常量,应提到 if 前;布尔物化 acc 应删除。
+ */
+function verifyZhihuAbsoluteUrlParser(): void {
+    const hapPath = path.join(__dirname, "resources", "zhihupp0.59.hap");
+    const hap = new HapFile(new Uint8Array(fs.readFileSync(hapPath)));
+    const pandaFile = new PandaFile(hap.readEntry("ets/modules.abc")!);
+    const clazz = pandaFile.getAllClasses().find((c) => c.name.content.includes("AbsoluteUrlParser"));
+    if (!clazz) throw new Error("hap: 未找到 AbsoluteUrlParser");
+
+    const code = new PandaDecompiler().decompileClass(clazz);
+    NodeFactory.parse(code);
+    if (!code.includes("if (v0 === null || v0[2].length === 0)")) {
+        throw new Error(`AbsoluteUrlParser: 条件未化简\n${code}`);
+    }
+    if (!code.includes('v0[4] ?? ""')) {
+        throw new Error(`AbsoluteUrlParser: nullish 参数未还原\n${code}`);
+    }
+    if (code.includes("v1 = 0, v2 = 2") || code.includes("acc = !(")) {
+        throw new Error(`AbsoluteUrlParser: test 序列仍残留死赋值\n${code}`);
+    }
+
+    const expectedPath = path.join(__dirname, "expected", "zhihu-absolute-url-parser.js");
+    const expected = fs.readFileSync(expectedPath, "utf-8");
+    if (code !== expected) {
+        throw new Error(`AbsoluteUrlParser: 输出与快照不一致\n${firstDifference(expected, code)}`);
+    }
+}
+
+/**
+ * 回归:`createobjectwithbuffer` 的“模板对象 + 逐属性赋值”。
+ *   acc = { protocol: null, hostname: null };
+ *   acc.protocol = P; acc.hostname = H; return acc;
+ * 应还原成 `return { protocol: P, hostname: H }`,属性求值顺序保持不变。
+ */
+function verifyObjectLiteralMaterialization(): void {
+    const program = NodeFactory.parse(`
+function f(v0, v2) {
+  let acc;
+  acc = {
+    "protocol": null,
+    "hostname": null
+  };
+  acc.protocol = "" + v0[1].toLowerCase() + ":";
+  acc.hostname = v2.toLowerCase();
+  return acc;
+}
+`);
+    SimplifyExport.simplify(program);
+    const code = NodeFactory.generate(program);
+    if (!code.includes("return {") || !code.includes('"protocol": "" + v0[1].toLowerCase() + ":"')
+        || !code.includes('"hostname": v2.toLowerCase()')) {
+        throw new Error(`simplify: 模板对象未还原为对象字面量\n${code}`);
+    }
+    if (code.includes("acc.protocol =") || code.includes('"protocol": null')) {
+        throw new Error(`simplify: 仍残留模板对象/逐属性赋值\n${code}`);
+    }
+}
+
+/**
+ * 回归:nullish coalescing 的 switch lowering。
+ *   v8 = item.content.contentId;
+ *   switch (item.content.contentId) { case null: case undefined: v8 = ""; }
+ * 应还原成 `item.content.contentId ?? ""`;判别式是纯成员表达式，只求值一次。
+ */
+function verifyNullishSwitchFold(): void {
+    const program = NodeFactory.parse(`
+function f(item) {
+  let v8;
+  v8 = item.content.contentId;
+  if (item.content.contentId === null || item.content.contentId === undefined) {
+    v8 = "";
+  }
+  return v8;
+}
+`);
+    SimplifyExport.simplify(program);
+    const code = NodeFactory.generate(program);
+    if (!code.includes('return item.content.contentId ?? "";')) {
+        throw new Error(`simplify: nullish switch 未还原成 ??\n${code}`);
+    }
+    if (code.includes("switch (")) {
+        throw new Error(`simplify: 仍残留 nullish switch\n${code}`);
     }
 }
 
@@ -487,6 +644,22 @@ async function main(): Promise<void> {
     verifyBooleanConditionalFolding();
     console.log("    ok");
 
+    console.log("[test] simplify loop condition fold");
+    verifyLoopConditionFold();
+    console.log("    ok");
+
+    console.log("[test] simplify test sequence scratch removal");
+    verifyTestSequenceScratchRemoval();
+    console.log("    ok");
+
+    console.log("[test] simplify object literal materialization");
+    verifyObjectLiteralMaterialization();
+    console.log("    ok");
+
+    console.log("[test] simplify nullish switch fold");
+    verifyNullishSwitchFold();
+    console.log("    ok");
+
     console.log("[test] parallel determinism (worker_threads)");
     await verifyParallelDeterminism();
     console.log("    ok");
@@ -497,6 +670,10 @@ async function main(): Promise<void> {
 
     console.log("[test] hap try/finally (zhihupp0.59.hap)");
     verifyZhihuTryFinally();
+    console.log("    ok");
+
+    console.log("[test] hap AbsoluteUrlParser (zhihupp0.59.hap)");
+    verifyZhihuAbsoluteUrlParser();
     console.log("    ok");
 
     const samples: Sample[] = [
