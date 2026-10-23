@@ -53,6 +53,7 @@ export class StructureAnalysis {
         this.regionGraph = built.regionGraph;
         this.entryRegion = built.entryRegion;
         this.removeSingleJumpRegion();
+        this.normalizeSingleSuccessorConditions();
         this.simplifyConditionalSequence();
         this.doms = new DominatorGraph(this.regionGraph, this.entryRegion);
         this.pandaIRCFG = pandaIRCFG;
@@ -76,6 +77,20 @@ export class StructureAnalysis {
                 }
             }
             if (!result) break;
+        }
+    }
+
+    /**
+     * removeSingleJumpRegion 可能把 Condition 的一个分支折到另一个分支的目标上,
+     * 使区域只剩一条出边。Condition 区域必须保持两条出边,否则 getDestNextPair
+     * 返回 null:simplifyConditionalSequence 旧实现直接解引用会让整个方法降级
+     * SimpleAnalysis。与 RegionGraphBuilder 构建后的清理保持一致,退化为 Linear。
+     */
+    private normalizeSingleSuccessorConditions(): void {
+        for (const region of this.regionGraph.nodes()) {
+            if (region.getType() === "Condition" && this.regionGraph.outDegree(region) === 1) {
+                region.setType("Linear");
+            }
         }
     }
 
@@ -119,7 +134,8 @@ export class StructureAnalysis {
                     if (!pair) continue;
                     const [destRegion, nextRegion] = pair;
                     if (nextRegion.getType() === "Condition" && this.regionGraph.inDegree(nextRegion) === 1) {
-                        const nextPair = this.getDestNextPair(nextRegion)!;
+                        const nextPair = this.getDestNextPair(nextRegion);
+                        if (!nextPair) continue;
                         const nextDestRegion = nextPair[0];
                         const nextNextRegion = nextPair[1];
                         if (nextNextRegion === destRegion) {

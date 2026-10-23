@@ -377,10 +377,15 @@ SabrPartProcessor = class panda_jmp0_reserved_anonymous_3 {
         if (p0.type === PART_MEDIA_END) {
           v7 = p0.data;
           v6 = p0.data.length;
-          if (p0.data.length > 0 && (v7 = p0.data[0], this.decoded.mediaEndHeaderIds.push(p0.data[0]), v6 = this.open.get(p0.data[0]), p0.data.length > 0)) {
-            v8 = local_0_1(v6.chunks);
-            this.open.delete(v7);
-            this.deliverSegment(new SabrMediaSegment(v6.header, v8));
+          if (p0.data.length > 0) {
+            v7 = p0.data[0];
+            this.decoded.mediaEndHeaderIds.push(p0.data[0]);
+            v6 = this.open.get(p0.data[0]);
+            if (p0.data.length > 0) {
+              v8 = local_0_1(v6.chunks);
+              this.open.delete(v7);
+              this.deliverSegment(new SabrMediaSegment(v6.header, v8));
+            }
           }
         } else if (p0.type === PART_NEXT_REQUEST_POLICY) {
           v6 = local_0_2(p0.data);

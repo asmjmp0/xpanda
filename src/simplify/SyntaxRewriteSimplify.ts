@@ -518,6 +518,63 @@ export class SyntaxRewriteSimplify implements ISimplify {
         return binaryExpression(isOr ? "==" : "!=", target, nullLiteral());
     }
 
+    /**
+     * if 条件尾部的表达式序列物化前缀还原成嵌套 if:
+     *
+     *   if (A && B && (this.videoW = W, this.videoH = H, this.sized = true, sec !== -1)) {
+     *     clearInterval(...);
+     *   }
+     * →
+     *   if (A && B) {
+     *     this.videoW = W;
+     *     this.videoH = H;
+     *     this.sized = true;
+     *     if (sec !== -1) {
+     *       clearInterval(...);
+     *     }
+     *   }
+     *
+     * 序列只在 && 左侧全部为真时求值,搬进嵌套 if 的分支体后求值条件相同。
+     * 只处理 && 链最右端的序列(且 if 没有 else):`||` 的短路语义不同;
+     * 有 else 时外层条件为假也必须执行 else,不能只挂到内层 if 上。
+     */
+    public static foldSequencedTestPrefixes(node: Program): boolean {
+        let changed = false;
+        traverse(file(node), {
+            noScope: true,
+            IfStatement: (path) => {
+                // 有 else 时外层条件为假也要走 else,不能只把 else 挂到内层 if 上。
+                if (path.node.alternate != null) return;
+                const test = path.node.test;
+                if (!isLogicalExpression(test) || test.operator !== "&&") return;
+                const operands: TYPE.Expression[] = [];
+                let right = test as TYPE.Expression;
+                while (isLogicalExpression(right) && right.operator === "&&") {
+                    operands.push(right.left as TYPE.Expression);
+                    right = right.right as TYPE.Expression;
+                }
+                while (isParenthesizedExpression(right)) right = right.expression;
+                // 单条前缀赋值(如 `if (X && (X = f(), X.length > 0))`)是既有输出里
+                // 紧凑且可读的形态;只有多条赋值堆在 test 里才值得拆成嵌套 if。
+                if (!isSequenceExpression(right) || right.expressions.length < 3) return;
+
+                const last = right.expressions[right.expressions.length - 1] as TYPE.Expression;
+                let outer = operands[0];
+                for (let i = 1; i < operands.length; i++) {
+                    outer = logicalExpression("&&", outer, operands[i]);
+                }
+                const inner = TYPE.ifStatement(last, path.node.consequent, null);
+                const body: TYPE.Statement[] = right.expressions.slice(0, -1).map((expr) =>
+                    expressionStatement(expr as TYPE.Expression));
+                body.push(inner);
+                path.node.test = outer;
+                path.node.consequent = TYPE.blockStatement(body);
+                changed = true;
+            },
+        });
+        return changed;
+    }
+
     /** 供流水线末尾调用:HighLevelGrammarSimplify 可能新生成 if/三元,需要再归一化一次 test。 */
     public static normalizeConditionTests(node: Program): void {
         const pass = new SyntaxRewriteSimplify();

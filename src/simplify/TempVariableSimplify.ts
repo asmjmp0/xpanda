@@ -1193,8 +1193,122 @@ export class TempVariableSimplify implements ISimplify {
         }
     }
 
+    /**
+     * 折叠 HighLevelGrammarSimplify 之后才暴露的自取反物化链:
+     *
+     *   X = E; X = !X; X = !X && B ? C : D  ->  X = E && B ? C : D
+     *   Y = X; X = !X; Z = X ? A : B        ->  Z = !Y ? A : B
+     *
+     * 编译器为 `callruntime.isfalse` 生成的取反既可能留在 if test 里,也会在
+     * 短路条件被合成为独立赋值后留在语句序列里。前一条赋值给出 X 的旧值 E,
+     * 把紧随赋值/return 里唯一一次 X 读取替换成 E(取反位置直接消掉一层),
+     * 再删除自取反语句;旧值已死时连同 `X = E` 一起删除。
+     */
+    private foldNegatedSelfAssignments(stmts: TYPE.Statement[], ctx: FunctionContext): void {
+        for (let i = 1; i + 1 < stmts.length; i++) {
+            const negStmt = stmts[i];
+            if (!isExpressionStatement(negStmt) || !isAssignmentExpression(negStmt.expression)) continue;
+            const neg = negStmt.expression;
+            if (neg.operator !== "=" || !isIdentifier(neg.left)
+                || !isUnaryExpression(neg.right) || neg.right.operator !== "!"
+                || !isIdentifier(neg.right.argument) || neg.right.argument.name !== neg.left.name) continue;
+            const name = neg.left.name;
+            if (!isTempName(name)) continue;
+            const info = ctx.infos.get(name);
+            if (!info || info.captured) continue;
+
+            // 旧值来源:紧邻的 `X = E`,或 `Y = X` 之后的别名值 Y。
+            const prev = stmts[i - 1];
+            let sourceValue: TYPE.Expression | null = null;
+            let sourceStatement: TYPE.Statement | null = null;
+            if (isExpressionStatement(prev) && isAssignmentExpression(prev.expression)) {
+                const prevAssign = prev.expression;
+                if (prevAssign.operator === "=" && isIdentifier(prevAssign.left)) {
+                    if (prevAssign.left.name === name) {
+                        if (isDeclarationValue(prevAssign.right)) continue;
+                        sourceValue = prevAssign.right;
+                        sourceStatement = prev;
+                    } else if (isIdentifier(prevAssign.right) && prevAssign.right.name === name) {
+                        sourceValue = identifierBuilder(prevAssign.left.name);
+                    }
+                }
+            }
+            if (!sourceValue) continue;
+            if (collectReadNames(sourceValue).has(name)) continue;
+
+            // 下一条语句消费 X:只允许一次读取,且必须是该表达式最先求值的位置,
+            // 这样把旧值搬进来不会越过任何写入/副作用。
+            const next = stmts[i + 1];
+            let nextRoot: TYPE.Expression | null = null;
+            if (isExpressionStatement(next)) {
+                const nextExpr = next.expression;
+                // 简单赋值语句先求值右值再写左值,左值不是读取;把 X 的读取定位在右值里,
+                // 否则 isFirstEvaluatedOccurrence 会把赋值目标当成第一个求值节点。
+                nextRoot = isAssignmentExpression(nextExpr) && nextExpr.operator === "=" && isIdentifier(nextExpr.left)
+                    ? nextExpr.right
+                    : nextExpr;
+            } else if (isReturnStatement(next) && next.argument) {
+                nextRoot = next.argument;
+            }
+            if (!nextRoot || this.countReadsInNode(nextRoot, name) !== 1) continue;
+
+            let ref: TYPE.Identifier | null = null;
+            let refParent: TYPE.Node | null = null;
+            walkNode(nextRoot, (node, parent) => {
+                if (isFunctionLike(node) || isClassLike(node)) return false;
+                if (isIdentifier(node) && node.name === name && parent && isReferenced(node, parent)) {
+                    ref = node;
+                    refParent = parent;
+                    return false;
+                }
+                return true;
+            });
+            if (!ref || !this.isFirstEvaluatedOccurrence(nextRoot, ref)) continue;
+
+            const nextWritesName = isExpressionStatement(next) && isAssignmentExpression(next.expression)
+                && next.expression.operator === "=" && isIdentifier(next.expression.left)
+                && next.expression.left.name === name;
+            if (!nextWritesName) {
+                const liveAfter = ctx.liveAfter.get(next);
+                if (!liveAfter || liveAfter.has(name)) continue;
+            }
+
+            // `!X` 位置直接用旧值 E;裸 X 位置用 !E(negateExpression 会消掉 E 自带的 !)。
+            const target: TYPE.Node = refParent && isUnaryExpression(refParent)
+                && refParent.operator === "!" && refParent.argument === ref ? refParent : ref;
+            const replacement = target === ref ? this.negateExpression(sourceValue) : sourceValue;
+            if (nextRoot === target) {
+                if (isExpressionStatement(next)) {
+                    if (isAssignmentExpression(next.expression) && next.expression.right === nextRoot) {
+                        next.expression.right = replacement;
+                    } else {
+                        next.expression = replacement;
+                    }
+                } else {
+                    (next as TYPE.ReturnStatement).argument = replacement;
+                }
+            } else if (!replaceNodeInTree(nextRoot, target, replacement)) {
+                continue;
+            }
+            this.removeRefs(ref, ctx);
+            this.removeRefs(neg.right, ctx);
+
+            // 旧值在 next 之后已死,且 E 已经搬进 next,可以连同旧赋值一起删除。
+            const removeSource = sourceStatement !== null
+                && (nextWritesName || !ctx.liveAfter.get(next)?.has(name));
+            stmts.splice(i, 1);
+            if (removeSource) {
+                stmts.splice(i - 1, 1);
+                i--;
+            }
+            this.changed = true;
+        }
+    }
+
     /** X = E; (X = !X;)? if (!X / X / 含 X 的复合条件) -> if (E / !E / ...) */
     private cleanupConditionAssignments(stmts: TYPE.Statement[], ctx: FunctionContext): void {
+        // 自取反物化链可能位于任意嵌套块里,和下面的 if test 清理一起递归处理。
+        if (this.conditionsOnly) this.foldNegatedSelfAssignments(stmts, ctx);
         for (let i = 0; i < stmts.length; i++) {
             const stmt = stmts[i];
             if (isIfStatement(stmt)) {

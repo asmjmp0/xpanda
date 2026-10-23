@@ -7,6 +7,7 @@ import { PandaDecompiler } from "../src/PandaDecompiler";
 import { decompileClassesParallel } from "../src/parallel/ParallelDecompiler";
 import { NodeFactory } from "../src/ast/NodeFactory";
 import { SimplifyExport } from "../src/simplify/SimplifyExport";
+import { SyntaxRewriteSimplify } from "../src/simplify/SyntaxRewriteSimplify";
 import { HapFile } from "../src/hap/HapFile";
 import { ResourceIndexFile } from "../src/res/ResourceIndexFile";
 import { formatLongLogicalChains } from "../src/ast/FormatCode";
@@ -1552,6 +1553,85 @@ function verifyYourpipeSabrResponseDecoder(): void {
 }
 
 /**
+ * 回归:单跳转区域把 Condition 的一个分支折到同一目标后,区域只剩一条出边。
+ * `fitScale` 的 `if (videoFit === Contain) goto 252; else goto 220; 220: goto 252`
+ * 经 removeSingleJumpRegion 合并后,label_205 仍是 Condition 但 outDegree=1,
+ * getDestNextPair 返回 null;simplifyConditionalSequence 旧实现直接解引用抛 NPE,
+ * 整个方法降级 SimpleAnalysis(输出 decompiler_goto)。
+ */
+function verifyYourpipeMpvPlayerView(): void {
+    const abcPath = path.join(__dirname, "resources", "yourpipe0.7.0.abc");
+    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
+    const clazz = pandaFile.getAllClasses().find((c) =>
+        c.name.content.includes("components/MpvPlayerView"));
+    if (!clazz) throw new Error("yourpipe: 未找到 MpvPlayerView");
+
+    const code = new PandaDecompiler().decompileClass(clazz);
+    NodeFactory.parse(code);
+    if (code.includes("created by SimpleAnalysis") || code.includes("decompiler_")) {
+        throw new Error(`MpvPlayerView: 反编译降级或残留伪语句\n${code}`);
+    }
+    const start = code.indexOf("fitScale()");
+    const end = code.indexOf("fitScaleX()", start);
+    if (start < 0 || end < 0) throw new Error(`MpvPlayerView: 未找到 fitScale\n${code}`);
+    const body = code.slice(start, end);
+    if (!body.includes("return 1;") || !body.includes("Math.max(") || !body.includes("Math.min(")) {
+        throw new Error(`MpvPlayerView.fitScale: 返回值/分支未还原\n${body}`);
+    }
+    if (!body.includes("this.videoW") || !body.includes("this.videoH")
+        || !body.includes("this.areaW") || !body.includes("this.areaH")) {
+        throw new Error(`MpvPlayerView.fitScale: 尺寸条件丢失\n${body}`);
+    }
+
+    // tryFixVideoSize 的连续 isfalse 物化链不应残留 `acc = !acc`,条件里的多步赋值
+    // 也应还原成嵌套 if,而不是逗号表达式。
+    const tryFixStart = code.indexOf("tryFixVideoSize()");
+    const tryFixEnd = code.indexOf("startSizePolling()", tryFixStart);
+    if (tryFixStart < 0 || tryFixEnd < 0) throw new Error(`MpvPlayerView: 未找到 tryFixVideoSize\n${code}`);
+    const tryFix = code.slice(tryFixStart, tryFixEnd);
+    if (tryFix.includes("acc = !acc")) {
+        throw new Error(`MpvPlayerView.tryFixVideoSize: 仍残留自取反赋值\n${tryFix}`);
+    }
+    if (!tryFix.includes("if (v6 > 0 && v3 > 0) {")
+        || !tryFix.includes("if (this.sizeTimer !== -1) {")) {
+        throw new Error(`MpvPlayerView.tryFixVideoSize: 嵌套 if 未还原\n${tryFix}`);
+    }
+
+    const expectedPath = path.join(__dirname, "expected", "yourpipe-mpv-player-view.js");
+    const expected = fs.readFileSync(expectedPath, "utf-8");
+    if (code !== expected) {
+        throw new Error(`MpvPlayerView: 输出与快照不一致\n${firstDifference(expected, code)}`);
+    }
+}
+
+/**
+ * 回归:if 条件尾部多条赋值序列还原成嵌套 if。
+ * `if (A && B && (x = 1, y = 2, C))` 中序列只在 A/B 为真时求值,可安全搬进分支体;
+ * 有 else 时外层条件为假也必须执行 else,因此不能用同一变换(否则 else 丢失)。
+ */
+function verifySequencedTestPrefixFold(): void {
+    const program = NodeFactory.parse(`
+function f(A, B, sec) {
+  if (A && B && (x = 1, y = 2, sec !== -1)) { clear(); }
+  if (A && B && (x = 1, y = 2, sec !== -1)) { clear(); } else { other(); }
+}
+`);
+    SyntaxRewriteSimplify.foldSequencedTestPrefixes(program);
+    const code = NodeFactory.generate(program);
+    NodeFactory.parse(code);
+    if (code.split("if (A && B) {").length - 1 !== 1) {
+        throw new Error(`条件序列前缀未拆成嵌套 if\n${code}`);
+    }
+    if (!code.includes("x = 1;\n    y = 2;\n    if (sec !== -1) {")) {
+        throw new Error(`条件序列前缀没有按顺序进入分支体\n${code}`);
+    }
+    if (!code.includes("if (A && B && (x = 1, y = 2, sec !== -1)) {")
+        || !code.includes("} else {\n    other();\n  }")) {
+        throw new Error(`带 else 的条件未被保留\n${code}`);
+    }
+}
+
+/**
  * 回归:`createobjectwithbuffer` 的“模板对象 + 逐属性赋值”。
  *   acc = { protocol: null, hostname: null };
  *   acc.protocol = P; acc.hostname = H; return acc;
@@ -1888,6 +1968,14 @@ async function main(): Promise<void> {
 
     console.log("[test] yourpipe SabrResponseDecoder (yourpipe0.7.0.abc)");
     verifyYourpipeSabrResponseDecoder();
+    console.log("    ok");
+
+    console.log("[test] yourpipe MpvPlayerView (yourpipe0.7.0.abc)");
+    verifyYourpipeMpvPlayerView();
+    console.log("    ok");
+
+    console.log("[test] simplify sequenced test prefix fold");
+    verifySequencedTestPrefixFold();
     console.log("    ok");
 
     console.log("[test] simplify switch transform completeness");

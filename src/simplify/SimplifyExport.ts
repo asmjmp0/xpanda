@@ -71,6 +71,9 @@ export class SimplifyExport {
         // 连续自取反链,因此在末尾只针对条件赋值再做一轮折叠(不做复制传播,
         // 避免影响已稳定的输出)。
         TempVariableSimplify.foldConditionAssignments(node);
+        // 条件里的赋值序列(`A && B && (obj.x = 1, C)`)还原成嵌套 if,
+        // 让赋值落到分支体里,避免输出成逗号表达式。
+        SyntaxRewriteSimplify.foldSequencedTestPrefixes(node);
         // HighLevelGrammarSimplify 可能新生成 if/三元,再归一化一次 test,
         // 并把 `!T ? A : B` / `T ? false : B` 这类布尔三元折成逻辑运算
         SyntaxRewriteSimplify.normalizeConditionTests(node);
