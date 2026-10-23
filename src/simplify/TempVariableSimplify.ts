@@ -158,6 +158,49 @@ export class TempVariableSimplify implements ISimplify {
     }
 
     /**
+     * 删除完全未使用的块级词法变量声明(local_X_Y / sendable_X_Y)以及随之为空的块。
+     *
+     * newLexEnv 会为编译器预留的每个槽生成 `let local_X_Y`,但循环变量未被闭包捕获时
+     * 槽可能从未被读写;块级声明又不在 TempVariableSimplify 的函数级 ctx.infos 里,
+     * 旧的清理逻辑不会删除它们。这里按 Babel binding 精确判断(读写都为 0)。
+     */
+    public static removeUnusedLexicalDeclarations(node: Program): boolean {
+        let changed = false;
+        traverse(TYPE.file(node), {
+            VariableDeclaration(path) {
+                const parent = path.parentPath;
+                if (!parent || !(TYPE.isBlockStatement(parent.node) || TYPE.isProgram(parent.node))) return;
+                const kept = path.node.declarations.filter((declarator) => {
+                    if (!TYPE.isIdentifier(declarator.id) || declarator.init) return true;
+                    if (!/^(local|sendable)_\d+_\d+$/.test(declarator.id.name)) return true;
+                    const binding = path.scope.getBinding(declarator.id.name);
+                    if (!binding || binding.identifier !== declarator.id) return true;
+                    return binding.referencePaths.length !== 0 || binding.constantViolations.length !== 0;
+                });
+                if (kept.length === path.node.declarations.length) return;
+                changed = true;
+                if (kept.length === 0) {
+                    path.remove();
+                } else {
+                    path.node.declarations = kept;
+                }
+            },
+        });
+        // 声明删除后再扫一遍,把刚变空的块去掉
+        traverse(TYPE.file(node), {
+            BlockStatement(path) {
+                if (path.node.body.length !== 0) return;
+                const parent = path.parentPath;
+                if (!parent || !(TYPE.isBlockStatement(parent.node) || TYPE.isProgram(parent.node))) return;
+                if (!Array.isArray(parent.node.body) || !parent.node.body.includes(path.node)) return;
+                path.remove();
+                changed = true;
+            },
+        });
+        return changed;
+    }
+
+    /**
      * 只折叠 `X = E; return X`(不做复制传播/条件改写),并清理随之失去引用的声明。
      * HighLevelGrammarSimplify 在定点迭代结束后把 `if (C) { X = A } else { X = B }`
      * 合成为 `X = C ? A : B`,轮内的返回值折叠此时已经跑完,需要在尾部补一轮。
@@ -1217,12 +1260,20 @@ export class TempVariableSimplify implements ISimplify {
                 this.processNestedStatement(stmt.body, env, ctx);
                 return;
             case "TryStatement": {
-                const writes = collectAssignedNames(stmt.block);
-                if (stmt.handler) for (const name of collectAssignedNames(stmt.handler.body)) writes.add(name);
+                const tryWrites = collectAssignedNames(stmt.block);
+                if (stmt.handler) for (const name of collectAssignedNames(stmt.handler.body)) tryWrites.add(name);
+                const writes = new Set(tryWrites);
                 if (stmt.finalizer) for (const name of collectAssignedNames(stmt.finalizer)) writes.add(name);
                 this.processNestedStatement(stmt.block, env.copy(), ctx);
                 if (stmt.handler) this.processNestedStatement(stmt.handler.body, env.copy(), ctx);
-                if (stmt.finalizer) this.processNestedStatement(stmt.finalizer, env.copy(), ctx);
+                if (stmt.finalizer) {
+                    // finally 可能在 try 的任意位置(含异常路径)执行,不能沿用 try 之前
+                    // 的别名关系:try 里写过的名字在 finally 入口必须视为未知,
+                    // 否则 `v2 = acc` 会在 acc 已被改写后仍被折叠成 acc。
+                    const finalEnv = env.copy();
+                    for (const name of tryWrites) finalEnv.invalidate(name);
+                    this.processNestedStatement(stmt.finalizer, finalEnv, ctx);
+                }
                 for (const name of writes) env.invalidate(name);
                 return;
             }

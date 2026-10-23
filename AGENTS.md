@@ -18,7 +18,7 @@
 | `src/file/` | `.abc` 文件格式解析(PandaFile / Header / PandaClass / PandaMethod / 字面量 / 模块元数据) |
 | `src/codec/` | Leb128 / MUTF8 / Adler32 |
 | `src/disasm/` | 反汇编:`opcodes.ts`(生成)、`PandaInstruction.ts`(统一指令模型 + KIND_MAP)、`PandaIRCFG`、`passes.ts`、`PandaLexical.ts` |
-| `src/decompiler/` | `StructureAnalysis.ts`(Region 归约核心)、`Region.ts` / `RegionGraphBuilder.ts`(区域、条件/逻辑标志、不可归约 Tail 复制)、`statements.ts`、`MethodHandler.ts`(HANDLES 分发)、`SimpleAnalysis.ts`、`ValueGraph.ts`、`DominatorGraph.ts` |
+| `src/decompiler/` | `StructureAnalysis.ts`(Region 归约核心)、`Region.ts` / `RegionGraphBuilder.ts`(区域、条件/逻辑标志、不可归约 Tail 复制)、`statements.ts`、`MethodHandler.ts`(HANDLES 分发)、`TryFinally.ts`(ArkTS 13 try/finally 还原)、`SimpleAnalysis.ts`、`ValueGraph.ts`、`DominatorGraph.ts` |
 | `src/codegen/CodeGenerator.ts` | AST 生成入口(包装 `src/ast/`) |
 | `src/ast/` | `NodeFactory` / `NodeUtils`(Babel AST 工具) |
 | `src/simplify/` | 优化器流水线(`SimplifyExport`、`TempVariableSimplify`、`ConditionSimplify`、`SyntaxRewriteSimplify`、`ClassSyntaxSimplify`、`HighLevelGrammarSimplify`、`AstUtils`、`NormalizeDeclarations`);末尾含 `foldConditionAssignments`(条件取反链二次折叠)与 `hoistTestPrefixes`(常量前缀提升) |
@@ -144,4 +144,5 @@ npm run test:mcp
 - `acc` 是 Panda 累加器,不是源码变量:`acc = !acc` 可能来自 `callruntime.isfalse`,也可能来自编译器对条件的布尔物化;二者叠加时看起来是两条取反,实际源码可能只有一个 `!`。
 - `HighLevelGrammarSimplify` 会把 `if (!X) { X = true } else { X = false }` 合成为 `X = !X`,可能和已有的 `X = !X` 形成新的连续取反链;因此流水线末尾必须再跑一次 `TempVariableSimplify.foldConditionAssignments`,不要删掉这一步。
 - 优化器尾部顺序固定为:HighLevelGrammarSimplify → foldReturnAssignments(补折 `X = E; return X`,三目合成发生在定点迭代之后) → foldConditionAssignments → normalizeConditionTests → hoistTestPrefixes → foldCompoundAssignments。调整顺序前先确认条件极性、复合赋值和 `test` 序列折叠不会互相覆盖。
+- **ArkTS 13(字节码 13.0.1.0)的 catch 块 codeSize 恒为 0**,`RegionGraphBuilder` 会跳过这些 try 块;`TryFinally.ts` 在结构化成功后按 try 表把 `X = hole; cleanup; if (X != hole) throw X` 重新包成 `try/finally`。它要求 try 起点与 cleanup 落在同一层语句列表——finally 嵌在 `if` 分支里的方法仍会残留 `hole`,不要把它当成全局修复。
 - 测试 test 序列取反链和条件赋值折叠时,优先用 `zhihupp0.59.hap` 的 `AbsoluteUrlParser`(`if (host.length === 0 || host.startsWith("["))`)与 `aes.abc` 的 `Counter.increment`(`if (arr[i] !== 255)`)做回归。

@@ -18,6 +18,136 @@ import { collectIdentifierNames, isDeclarationValue, isNodeEqual, isPureExpressi
  * @Email: jmp0@qq.com
  */
 export class SyntaxRewriteSimplify implements ISimplify {
+    /**
+     * 折叠静态可判定的 if 条件。
+     * 典型来源:ArkTS 13 的 try/finally 收尾 `if (resumeValue == undefined)` 在
+     * resumeValue 被常量传播成 undefined 后留下 `if (undefined == undefined)`。
+     * 只处理字面量/undefined/null 之间的比较,避免误改普通变量条件。
+     */
+    public static foldConstantConditions(node: Program): boolean {
+        let changed = false;
+        traverse(TYPE.file(node), {
+            IfStatement(path) {
+                // undefined 被局部变量遮蔽时不折叠
+                if (path.scope.getBinding("undefined")) return;
+                path.node.test = SyntaxRewriteSimplify.foldBooleanExpression(path.node.test);
+                const value = SyntaxRewriteSimplify.constantTruthiness(path.node.test);
+                if (value === null) return;
+                const branch = value ? path.node.consequent : path.node.alternate;
+                changed = true;
+                if (!branch) {
+                    // 循环体/if 分支等必须保留一条语句的位置
+                    if (path.parentPath && (TYPE.isBlockStatement(path.parentPath.node) || TYPE.isProgram(path.parentPath.node))) {
+                        path.remove();
+                    } else {
+                        path.replaceWith(TYPE.emptyStatement());
+                    }
+                    return;
+                }
+                // 保留原分支的块作用域(let/const 声明)
+                if (TYPE.isBlockStatement(branch)) {
+                    const hasBlockScoped = branch.body.some((statement) =>
+                        (TYPE.isVariableDeclaration(statement) && statement.kind !== "var")
+                        || TYPE.isClassDeclaration(statement)
+                        || TYPE.isFunctionDeclaration(statement));
+                    if (!hasBlockScoped && branch.body.length === 1) {
+                        path.replaceWith(branch.body[0]);
+                        return;
+                    }
+                }
+                path.replaceWith(branch);
+            },
+        });
+        return changed;
+    }
+
+    /** 在布尔上下文里折叠逻辑表达式;无法判定时原样返回 */
+    private static foldBooleanExpression(node: TYPE.Expression): TYPE.Expression {
+        if (TYPE.isLogicalExpression(node)) {
+            node.left = SyntaxRewriteSimplify.foldBooleanExpression(node.left);
+            const left = SyntaxRewriteSimplify.constantTruthiness(node.left);
+            if (node.operator === "&&") {
+                if (left === false) return TYPE.booleanLiteral(false);
+                if (left === true) return SyntaxRewriteSimplify.foldBooleanExpression(node.right);
+            } else {
+                if (left === true) return TYPE.booleanLiteral(true);
+                if (left === false) return SyntaxRewriteSimplify.foldBooleanExpression(node.right);
+            }
+            return node;
+        }
+        if (TYPE.isUnaryExpression(node) && node.operator === "!") {
+            node.argument = SyntaxRewriteSimplify.foldBooleanExpression(node.argument as TYPE.Expression);
+            const value = SyntaxRewriteSimplify.constantTruthiness(node.argument);
+            return value === null ? node : TYPE.booleanLiteral(!value);
+        }
+        if (TYPE.isBinaryExpression(node)) {
+            const value = SyntaxRewriteSimplify.constantEquality(node);
+            return value === null ? node : TYPE.booleanLiteral(value);
+        }
+        return node;
+    }
+
+    /** 返回静态真值;无法静态判定时返回 null */
+    private static constantTruthiness(node: TYPE.Node | null | undefined): boolean | null {
+        if (!node) return null;
+        if (TYPE.isBooleanLiteral(node)) return node.value;
+        if (TYPE.isNullLiteral(node)) return false;
+        if (TYPE.isNumericLiteral(node)) return node.value !== 0;
+        if (TYPE.isStringLiteral(node)) return node.value.length > 0;
+        if (TYPE.isIdentifier(node)) {
+            if (node.name === "undefined") return false;
+            return null;
+        }
+        if (TYPE.isUnaryExpression(node) && node.operator === "!") {
+            const inner = SyntaxRewriteSimplify.constantTruthiness(node.argument);
+            return inner === null ? null : !inner;
+        }
+        if (TYPE.isBinaryExpression(node)) {
+            return SyntaxRewriteSimplify.constantEquality(node);
+        }
+        return null;
+    }
+
+    private static isSimpleConstant(node: TYPE.Node | null | undefined): node is TYPE.Expression {
+        return !!node && (
+            TYPE.isBooleanLiteral(node)
+            || TYPE.isNullLiteral(node)
+            || TYPE.isNumericLiteral(node)
+            || TYPE.isStringLiteral(node)
+            || (TYPE.isIdentifier(node, { name: "undefined" }))
+        );
+    }
+
+    private static simpleValue(node: TYPE.Node): string | number | boolean | null | undefined {
+        if (TYPE.isBooleanLiteral(node)) return node.value;
+        if (TYPE.isNullLiteral(node)) return null;
+        if (TYPE.isNumericLiteral(node)) return node.value;
+        if (TYPE.isStringLiteral(node)) return node.value;
+        return undefined;
+    }
+
+    private static constantEquality(node: TYPE.BinaryExpression): boolean | null {
+        const { left, right, operator } = node;
+        if (operator !== "==" && operator !== "===" && operator !== "!=" && operator !== "!==") return null;
+        if (!SyntaxRewriteSimplify.isSimpleConstant(left) || !SyntaxRewriteSimplify.isSimpleConstant(right)) return null;
+        const l = SyntaxRewriteSimplify.simpleValue(left);
+        const r = SyntaxRewriteSimplify.simpleValue(right);
+        let equal: boolean;
+        if (operator === "===" || operator === "!==") {
+            equal = l === r;
+        } else {
+            // 只处理同类型或 null/undefined 之间的宽松比较,避免实现完整的 ToPrimitive
+            if (l === null || l === undefined || r === null || r === undefined) {
+                equal = (l === null || l === undefined) && (r === null || r === undefined);
+            } else if (typeof l === typeof r) {
+                equal = l === r;
+            } else {
+                return null;
+            }
+        }
+        return operator === "!=" || operator === "!==" ? !equal : equal;
+    }
+
     public static binaryInvert(node: TYPE.BinaryExpression): TYPE.BinaryExpression["operator"] | null {
         switch (node.operator) {
             case "!=": return "==";

@@ -4,6 +4,15 @@ import type { PandaLexical } from "../disasm/PandaLexical";
 import { PandaInstruction, PandaInstructionID, PandaInstructionIMM, PandaInstructionVReg } from "../disasm/PandaInstruction";
 import { StructureAnalysis } from "./StructureAnalysis";
 import { SimpleAnalysis } from "./SimpleAnalysis";
+import {
+    applyFinallyPlans,
+    buildFinallyPlans,
+    buildFinallyRoles,
+    createFinallyMarker,
+    FinallyPlan,
+    FinallyRoleInfo,
+    stripFinallyMarkers,
+} from "./TryFinally";
 import { PandaDecompileException } from "../PandaParseException";
 import { ENTRY_FUNCTION_MAIN } from "../file/PandaFile";
 import type { PandaMethod } from "../file/method/PandaMethod";
@@ -19,6 +28,8 @@ import { LiteralTag } from "../file/desc/enums";
 export class PandaDecompilerMethodHandler {
     private incNum = 0;
     readonly codeGenerator: CodeGenerator;
+    /** 当前正在反编译的方法的 finally 标记角色;嵌套方法会临时切换 */
+    private finallyRoles: Map<number, FinallyRoleInfo> | null = null;
 
     constructor(codeGenerator: CodeGenerator) {
         this.codeGenerator = codeGenerator;
@@ -42,6 +53,19 @@ export class PandaDecompilerMethodHandler {
     }
 
     handleBlock(block: PandaIRBasicBlock, pandaLexical: PandaLexical, node: any): void {
+        const roleInfo = this.finallyRoles?.get(block.getStartPC());
+        if (roleInfo) {
+            // try 正常完成块只有寄存器恢复和 hole 哨兵赋值,整体丢弃
+            if (roleInfo.role === "suppress") return;
+            if (node.type === "BlockStatement") {
+                const marker = createFinallyMarker(roleInfo.plan, roleInfo.role);
+                if (roleInfo.role === "start") roleInfo.plan.startMarker = marker;
+                else if (roleInfo.role === "cleanup") roleInfo.plan.cleanupMarker = marker;
+                else if (roleInfo.role === "guard") roleInfo.plan.guardMarker = marker;
+                else if (roleInfo.role === "end") roleInfo.plan.endMarker = marker;
+                this.codeGenerator.getNodeUtils().insertNodeToBody(marker as any, node);
+            }
+        }
         for (const instruction of block.pandaInstructions) {
             const handle = HANDLES[instruction.kind];
             if (!handle || instruction.kind === "unknown") {
@@ -97,11 +121,23 @@ export class PandaDecompilerMethodHandler {
         } else {
             const pandaIRCFG = pandaLexical.getPandaIRCFG(inner);
             this.insertFunctionPreamble(inner, pandaLexical, block);
+            // ArkTS 13 的 finally 落点不在区域图里:结构化成功后在 AST 上补 try/finally
+            const savedRoles = this.finallyRoles;
+            const plans: FinallyPlan[] = buildFinallyPlans(pandaIRCFG);
+            this.finallyRoles = buildFinallyRoles(plans);
+            let structured = false;
             try {
                 new StructureAnalysis(pandaIRCFG, pandaIRCFG.getEntryBlock(), pandaIRCFG.getLastBlock()).analysis(this, pandaLexical, block);
+                structured = true;
             } catch (e) {
+                // 降级路径不再插 finally 标记,保持 SimpleAnalysis 原有输出
+                this.finallyRoles = null;
                 new SimpleAnalysis(pandaIRCFG).analysis(this, pandaLexical, block);
+            } finally {
+                this.finallyRoles = savedRoles;
             }
+            if (structured) applyFinallyPlans(block, plans);
+            else stripFinallyMarkers(block);
         }
         const name = inner.name.content;
         if (name.startsWith("#") || this.isNumeric(name)) return factory.functionExpressionNode(null, params as any, block);

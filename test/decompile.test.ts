@@ -16,7 +16,8 @@ import { ResourceIndexFile } from "../src/res/ResourceIndexFile";
  *   2. 与 test/expected/*.js 快照逐字比较;
  *   3. 校验输出可被 Babel 再次解析;
  *   4. 执行样本,确认输出行为符合预期;
- *   5. 校验 HAP 应用包(ZIP 容器)适配与 callruntime.supercallforwardallargs 还原。
+ *   5. 校验 HAP 应用包(ZIP 容器)适配与 callruntime.supercallforwardallargs 还原;
+ *   6. 校验 ArkTS 13 的 try/finally 还原与空 lexenv 块清理。
  */
 
 interface Sample {
@@ -403,6 +404,64 @@ function verifyHapPackage(): void {
     }
 }
 
+/**
+ * 回归:ArkTS 13(字节码 13.0.1.0)的 try/finally 还原。
+ *
+ * 该版本 catch 的 codeSize 恒为 0,区域图会跳过 handler,finally 收尾退化成
+ * `X = hole; if (...) cleanup(); if (X != hole) throw X;`。这里验证:
+ *   1. ContentFilterRuntimeStore.loadSnapshot 还原成两段 try/finally,
+ *      不再出现 `hole` / `undefined == undefined` / 空的 lexenv 块;
+ *   2. QrScanFixture 的 finally 里 `fileIo.closeSync(acc)` 使用 try 之前的
+ *      文件句柄,不能被 try 体里已失效的 acc 版本污染。
+ */
+function verifyZhihuTryFinally(): void {
+    const hapPath = path.join(__dirname, "resources", "zhihupp0.59.hap");
+    const hap = new HapFile(new Uint8Array(fs.readFileSync(hapPath)));
+    const pandaFile = new PandaFile(hap.readEntry("ets/modules.abc")!);
+    const decompiler = new PandaDecompiler();
+
+    const contentFilter = pandaFile.getAllClasses().find((clazz) => clazz.name.content.includes("ContentFilterRuntimeStore"));
+    if (!contentFilter) throw new Error("hap: 未找到 ContentFilterRuntimeStore");
+
+    const code = decompiler.decompileClass(contentFilter);
+    NodeFactory.parse(code);
+    if (/\bhole\b/.test(code)) {
+        throw new Error(`try/finally 还原: 仍残留 hole 哨兵\n${code}`);
+    }
+    if (/undefined\s*[!=]==\s*undefined/.test(code)) {
+        throw new Error(`try/finally 还原: 仍残留 undefined 常量条件\n${code}`);
+    }
+    if (/\{\s*let local_\d+_\d+;\s*\}/.test(code)) {
+        throw new Error(`lexenv 清理: 仍残留空的词法块\n${code}`);
+    }
+    if (!/finally \{\s*v0\.close\(\);\s*\}/.test(code) || !/finally \{\s*v11\.close\(\);\s*\}/.test(code)) {
+        throw new Error(`try/finally 还原: 两个 query 结果没有放进 finally\n${code}`);
+    }
+    if (!code.includes("} finally {") || code.split("} finally {").length - 1 !== 2) {
+        throw new Error("try/finally 还原: finally 数量不符合预期");
+    }
+
+    const expectedPath = path.join(__dirname, "expected", "zhihu-content-filter-runtime-store.js");
+    const expected = fs.readFileSync(expectedPath, "utf-8");
+    if (code !== expected) {
+        throw new Error(`ContentFilterRuntimeStore: 输出与快照不一致\n${firstDifference(expected, code)}`);
+    }
+
+    const qrScan = pandaFile.getAllClasses().find((clazz) => clazz.name.content.includes("QrScanFixture"));
+    if (!qrScan) throw new Error("hap: 未找到 QrScanFixture");
+    const qrCode = decompiler.decompileClass(qrScan);
+    NodeFactory.parse(qrCode);
+    if (/\bhole\b/.test(qrCode)) {
+        throw new Error(`QrScanFixture: 仍残留 hole 哨兵\n${qrCode}`);
+    }
+    if (!qrCode.includes("} finally {") || !qrCode.includes("fileIo.closeSync(acc);")) {
+        throw new Error(`QrScanFixture: try/finally 未还原\n${qrCode}`);
+    }
+    if (qrCode.includes("acc = new Uint8Array(v6)")) {
+        throw new Error(`QrScanFixture: try 体内失效的 acc 赋值未清理\n${qrCode}`);
+    }
+}
+
 async function main(): Promise<void> {
     console.log("[test] simplify return liveness");
     verifyReturnValueLiveness();
@@ -434,6 +493,10 @@ async function main(): Promise<void> {
 
     console.log("[test] hap package (zhihupp0.59.hap)");
     verifyHapPackage();
+    console.log("    ok");
+
+    console.log("[test] hap try/finally (zhihupp0.59.hap)");
+    verifyZhihuTryFinally();
     console.log("    ok");
 
     const samples: Sample[] = [

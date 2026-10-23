@@ -60,5 +60,9 @@ export class SimplifyExport {
         SyntaxRewriteSimplify.hoistTestPrefixes(node);
         // 复合赋值放到最后一轮之后,避免提前改写成 += 后影响活跃性/复制传播
         SyntaxRewriteSimplify.foldCompoundAssignments(node);
+        // 静态可判定的 if 条件(如 finally 收尾被常量传播后的 `undefined == undefined`)
+        SyntaxRewriteSimplify.foldConstantConditions(node);
+        // newLexEnv 预留但从未读写的块级槽,以及随之变空的块
+        TempVariableSimplify.removeUnusedLexicalDeclarations(node);
     }
 }
