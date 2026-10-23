@@ -124,6 +124,48 @@ export class HighLevelGrammarSimplify implements ISimplify {
         return isNodeEqual(path1.node, path2.node)
     }
 
+    /**
+     * 把 `x.a.b` 链的最内层成员改成可选访问 `x?.a.b`;x 必须是受保护标识符。
+     * 外层链也必须是 OptionalMemberExpression(optional=false),否则 Babel 会
+     * 输出 `(x?.a).b`,遇到 x 为空时会继续读 `.b` 而抛异常。
+     */
+    private makeOptionalChain(node: TYPE.Expression, target: string): TYPE.Expression | null {
+        if (!TYPE.isMemberExpression(node) || node.optional) return null;
+        if (TYPE.isIdentifier(node.object) && node.object.name === target) {
+            return TYPE.optionalMemberExpression(node.object, node.property as TYPE.Expression, node.computed, true);
+        }
+        const inner = this.makeOptionalChain(node.object as TYPE.Expression, target);
+        if (!inner) return null;
+        return TYPE.optionalMemberExpression(inner, node.property as TYPE.Expression, node.computed, false);
+    }
+
+    /**
+     * test 是否等价于 `x == null`:接受合并后的 `x == null` 与未合并的
+     * `x === null || x === undefined` 两种形态。只接受标识符,避免把
+     * `p0.value.author` 这类成员访问重复求值(可能触发 getter)。
+     */
+    private nullishGuardTarget(test: TYPE.Expression): TYPE.Identifier | null {
+        if (TYPE.isBinaryExpression(test) && test.operator === "==") {
+            if (TYPE.isNullLiteral(test.left) && TYPE.isIdentifier(test.right)) return test.right;
+            if (TYPE.isNullLiteral(test.right) && TYPE.isIdentifier(test.left)) return test.left;
+            return null;
+        }
+        if (!TYPE.isLogicalExpression(test) || test.operator !== "||") return null;
+        const strict = (node: TYPE.Node): TYPE.BinaryExpression | null =>
+            TYPE.isBinaryExpression(node) && node.operator === "===" ? node : null;
+        const left = strict(test.left);
+        const right = strict(test.right);
+        if (!left || !right) return null;
+        for (const [a, b] of [[left, right], [right, left]] as Array<[TYPE.BinaryExpression, TYPE.BinaryExpression]>) {
+            if (TYPE.isIdentifier(a.left) && TYPE.isNullLiteral(a.right)
+                && TYPE.isIdentifier(b.left) && TYPE.isIdentifier(b.right, { name: "undefined" })
+                && a.left.name === b.left.name) {
+                return a.left;
+            }
+        }
+        return null;
+    }
+
     private isAccUndefinedBreak(node:TYPE.Node):boolean {
         return TYPE.isIfStatement(node)
             && TYPE.isBinaryExpression(node.test) && node.test.operator === "=="
@@ -372,33 +414,16 @@ export class HighLevelGrammarSimplify implements ISimplify {
                 }
             },
             ConditionalExpression:(value)=>{
-                // can transform optionalMemberExpression
+                // 把 `x == null ? undefined : x.prop` / `x === null || x === undefined ? undefined : x.prop`
+                // 还原成 `x?.prop`。test 可能已被 SyntaxRewriteSimplify 合并成 `== null`。
                 const conditionalNode = value.node;
-                const test = conditionalNode.test;
+                const target = this.nullishGuardTarget(conditionalNode.test);
+                if (!target) return;
                 const consequent = conditionalNode.consequent;
-                const alternate = conditionalNode.alternate;
-                if (!TYPE.isLogicalExpression(test)) return;
-                if (!TYPE.isBinaryExpression(test.left)) return;
-                if (test.left.operator != '===' ) return;
-                if (!TYPE.isNullLiteral(test.left.right)) return;
-                if (!TYPE.isIdentifier(test.left.left)) return;
-                const leftName = test.left.left.name;
-
-                if (!TYPE.isBinaryExpression(test.right)) return;
-                if (test.right.operator != '===' ) return;
-                if (!TYPE.isIdentifier(test.right.right)) return;
-                if (test.right.right.name != "undefined") return;
-                if (!TYPE.isIdentifier(test.right.left)) return;
-                const rightName = test.right.left.name;
-                if (leftName !== rightName) return;
-
-                if (!TYPE.isIdentifier(consequent)) return;
-                if (consequent.name !== 'undefined') return;
-                if (!TYPE.isMemberExpression(alternate)) return;
-                if (!TYPE.isIdentifier(alternate.object)) return;
-                if (alternate.object.name != rightName) return;
-                const optionalMemberExpression = TYPE.optionalMemberExpression(alternate.object,alternate.property as TYPE.Expression ,true,true);
-                value.replaceWith(optionalMemberExpression);
+                if (!TYPE.isIdentifier(consequent) || consequent.name !== 'undefined') return;
+                const optionalChain = this.makeOptionalChain(conditionalNode.alternate, target.name);
+                if (!optionalChain) return;
+                value.replaceWith(optionalChain);
                 changed = true;
             }
         })

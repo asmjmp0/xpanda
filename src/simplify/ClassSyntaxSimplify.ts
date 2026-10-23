@@ -49,9 +49,16 @@ export class ClassSyntaxSimplify implements ISimplify {
         return kind === "__defineGetter__" ? "getter" : "setter";
     }
 
-    private classWritesThisProperty(clazz: TYPE.ClassExpression, name: string): boolean {
+    /**
+     * 构造器里是否写 `this.x = ...`。只有构造器里的这种赋值可能被当成 class field
+     * 初始化;方法体里的 `this.x = ...` 本来就应该走原型 setter,不能因此放弃访问器转换。
+     */
+    private constructorWritesThisProperty(clazz: TYPE.ClassExpression, name: string): boolean {
+        const constructor = clazz.body.body.find((member): member is TYPE.ClassMethod =>
+            TYPE.isClassMethod(member) && member.kind === "constructor");
+        if (!constructor) return false;
         let found = false;
-        walkNode(clazz.body, (node) => {
+        walkNode(constructor.body, (node) => {
             if (found) return false;
             if (TYPE.isAssignmentExpression(node) && TYPE.isMemberExpression(node.left)
                 && TYPE.isThisExpression(node.left.object)) {
@@ -217,8 +224,8 @@ export class ClassSyntaxSimplify implements ISimplify {
                 this.findClass(value, gsd);
                 if (!gsd.clazz) return;
                 // 构造器里 this.x = ... 与 class getter 冲突时,能安全改写为 class field 就改写;
-                // 否则保守跳过访问器转换。
-                if (this.classWritesThisProperty(gsd.clazz, gsd.name)
+                // 否则保守跳过访问器转换。方法体里的 this.x = ... 会走 setter,不构成冲突。
+                if (this.constructorWritesThisProperty(gsd.clazz, gsd.name)
                     && !this.moveConstructorAssignmentToField(gsd.clazz, gsd.name)) return;
 
                 const functionStatement = gsd.funcName ? this.findFunctionStatement(value, gsd.funcName) : null;

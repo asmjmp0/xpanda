@@ -9,6 +9,7 @@ import {
     buildFinallyPlans,
     buildFinallyRoles,
     createFinallyMarker,
+    createFinallyMarkerExpression,
     FinallyPlan,
     FinallyRoleInfo,
     stripFinallyMarkers,
@@ -57,13 +58,23 @@ export class PandaDecompilerMethodHandler {
         if (roleInfo) {
             // try 正常完成块只有寄存器恢复和 hole 哨兵赋值,整体丢弃
             if (roleInfo.role === "suppress") return;
-            if (node.type === "BlockStatement") {
+            if (node.type === "BlockStatement" || node.type === "Program") {
                 const marker = createFinallyMarker(roleInfo.plan, roleInfo.role);
                 if (roleInfo.role === "start") roleInfo.plan.startMarker = marker;
                 else if (roleInfo.role === "cleanup") roleInfo.plan.cleanupMarker = marker;
                 else if (roleInfo.role === "guard") roleInfo.plan.guardMarker = marker;
                 else if (roleInfo.role === "end") roleInfo.plan.endMarker = marker;
                 this.codeGenerator.getNodeUtils().insertNodeToBody(marker as any, node);
+            } else if (node.type === "SequenceExpression") {
+                // 该角色的块被结构化进条件 test 的求值区(例如 try 首块正好是可选链比较,
+                // cleanup 首块正好是 `sentinel === undefined` 比较):test 序列里放不了语句,
+                // 这里放表达式标记,由 applyFinallyPlans 提升到“包含它的语句”。
+                const marker = createFinallyMarkerExpression(roleInfo.plan, roleInfo.role);
+                if (roleInfo.role === "start") roleInfo.plan.startExpr = marker;
+                else if (roleInfo.role === "cleanup") roleInfo.plan.cleanupExpr = marker;
+                else if (roleInfo.role === "guard") roleInfo.plan.guardExpr = marker;
+                else if (roleInfo.role === "end") roleInfo.plan.endExpr = marker;
+                this.codeGenerator.getNodeUtils().insertToSequenceExpression(marker, node);
             }
         }
         for (const instruction of block.pandaInstructions) {

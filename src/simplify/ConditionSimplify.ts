@@ -42,6 +42,20 @@ import { SyntaxRewriteSimplify } from "./SyntaxRewriteSimplify";
  *
  * @Author: jmp0
  */
+
+/**
+ * 布尔 test 的折叠上下文。if 与 `return C ? A : B` 的三元 test 语义相同,
+ * 末端清理需要同时处理:HighLevelGrammarSimplify 会把 if/else return 先合成三元,
+ * 若只认 IfStatement,三元 test 里的物化链就会漏掉。
+ */
+interface TestFoldContext {
+    path: NodePath<TYPE.Statement>;
+    test: TYPE.Expression;
+    consequent: TYPE.Statement[];
+    alternate: TYPE.Statement[];
+    scope: TYPE.Node;
+}
+
 export class ConditionSimplify implements ISimplify {
     simplify(node: Program): boolean {
         let changed = false;
@@ -84,11 +98,49 @@ export class ConditionSimplify implements ISimplify {
             IfStatement: (path) => {
                 const parent = path.parentPath;
                 if (!parent || (!parent.isBlockStatement() && !parent.isProgram())) return;
-                if (pass.foldTestSequenceChains(path)) changed = true;
-                if (pass.removeDeadConditionStatement(path)) changed = true;
+                const ctx = pass.contextForIf(path);
+                if (pass.foldTestSequenceChains(ctx)) changed = true;
+                // 连续多条 `X = 纯表达式; Y = 纯表达式; if (...)` 需要逐条删除
+                for (let i = 0; i < 8; i++) {
+                    if (!pass.removeDeadConditionStatement(ctx)) break;
+                    changed = true;
+                }
+            },
+            ReturnStatement: (path) => {
+                const argument = path.node.argument;
+                if (!TYPE.isConditionalExpression(argument)) return;
+                const ctx = pass.contextForConditional(path, argument);
+                if (pass.foldTestSequenceChains(ctx)) changed = true;
+                for (let i = 0; i < 8; i++) {
+                    if (!pass.removeDeadConditionStatement(ctx)) break;
+                    changed = true;
+                }
             },
         });
         return changed;
+    }
+
+    private contextForIf(path: NodePath<TYPE.IfStatement>): TestFoldContext {
+        return {
+            path,
+            test: path.node.test,
+            consequent: this.branchStatements(path.node.consequent),
+            alternate: path.node.alternate ? this.branchStatements(path.node.alternate) : [],
+            scope: (path.getFunctionParent() ? path.getFunctionParent()!.node : path.scope.path.node) as TYPE.Node,
+        };
+    }
+
+    private contextForConditional(
+        path: NodePath<TYPE.ReturnStatement>,
+        node: TYPE.ConditionalExpression,
+    ): TestFoldContext {
+        return {
+            path,
+            test: node.test,
+            consequent: [TYPE.expressionStatement(node.consequent)],
+            alternate: [TYPE.expressionStatement(node.alternate)],
+            scope: (path.getFunctionParent() ? path.getFunctionParent()!.node : path.scope.path.node) as TYPE.Node,
+        };
     }
 
     /**
@@ -296,7 +348,8 @@ export class ConditionSimplify implements ISimplify {
      * 按求值顺序对 name 的每次读取之前都存在 test 内部的写入;name 未被闭包
      * 捕获;语句之后(含循环回边)先写后读。
      */
-    private removeDeadConditionStatement(path: NodePath<TYPE.IfStatement>): boolean {
+    private removeDeadConditionStatement(ctx: TestFoldContext): boolean {
+        const path = ctx.path;
         const parent = path.parentPath;
         if (!parent || (!parent.isBlockStatement() && !parent.isProgram())) return false;
         const list = parent.node.body;
@@ -313,7 +366,7 @@ export class ConditionSimplify implements ISimplify {
 
         // test 含条件表达式时求值顺序分支化,保守放弃
         let sawConditional = false;
-        walkNode(path.node.test, (n) => {
+        walkNode(ctx.test, (n) => {
             if (sawConditional) return false;
             if (isFunctionLike(n) || isClassLike(n)) return false;
             if (TYPE.isConditionalExpression(n)) sawConditional = true;
@@ -321,15 +374,15 @@ export class ConditionSimplify implements ISimplify {
         });
         if (sawConditional) return false;
 
-        const order = this.evaluationOrder(path.node.test);
-        let written = false;
-        for (const node of order) {
-            if (collectReadNames(node).has(name) && !written) return false;
-            if (TYPE.isAssignmentExpression(node) && node.operator === "="
-                && TYPE.isIdentifier(node.left) && node.left.name === name) {
-                written = true;
-            }
+        // test 在读取 name 之前一定重写过它,语句里的旧值才不可观察
+        if (this.readsNameBeforeWriteAfterAnchor(ctx.test, ctx.path.node, name, ctx.path.node, true, false).readBefore) {
+            return false;
         }
+        // 分支在 test 之后执行:若 test 在该路径上没有重写 name,分支读到的是语句里的旧值
+        if (this.branchReadsBeforeWrite(ctx.consequent, name)
+            && !this.testWritesOnTakenPath(ctx.test, name, true)) return false;
+        if (ctx.alternate.length > 0 && this.branchReadsBeforeWrite(ctx.alternate, name)
+            && !this.testWritesOnTakenPath(ctx.test, name, false)) return false;
 
         const fnParent = path.getFunctionParent();
         const scope: TYPE.Node = fnParent ? fnParent.node : path.scope.path.node;
@@ -346,30 +399,30 @@ export class ConditionSimplify implements ISimplify {
      *   1: (X = 纯表达式, ...) 且 X 之后不可观察 → 直接删除该元素
      * 每步只应用一处,靠外层循环收敛;上限防止意外不收敛。
      */
-    private foldTestSequenceChains(path: NodePath<TYPE.IfStatement>): boolean {
+    private foldTestSequenceChains(ctx: TestFoldContext): boolean {
         let changed = false;
         for (let round = 0; round < 24; round++) {
-            if (!this.applyOneSequenceFold(path)) break;
+            if (!this.applyOneSequenceFold(ctx)) break;
             changed = true;
         }
         return changed;
     }
 
-    private applyOneSequenceFold(path: NodePath<TYPE.IfStatement>): boolean {
+    private applyOneSequenceFold(ctx: TestFoldContext): boolean {
         const sequences: TYPE.SequenceExpression[] = [];
-        walkNode(path.node.test, (n) => {
+        walkNode(ctx.test, (n) => {
             if (isFunctionLike(n) || isClassLike(n)) return false;
             if (TYPE.isSequenceExpression(n)) sequences.push(n);
             return true;
         });
         for (const seq of sequences) {
-            if (this.foldAliasChainInSequence(seq, path)) return true;
+            if (this.foldAliasChainInSequence(seq, ctx)) return true;
         }
         for (const seq of sequences) {
-            if (this.foldDeadAssignCompare(seq, path)) return true;
+            if (this.foldDeadAssignCompare(seq, ctx)) return true;
         }
         for (const seq of sequences) {
-            if (this.dropDeadSaveElement(seq, path)) return true;
+            if (this.dropDeadSaveElement(seq, ctx)) return true;
         }
         return false;
     }
@@ -382,10 +435,9 @@ export class ConditionSimplify implements ISimplify {
      * E 不读 X(删除 X 的赋值后 E 里的 X 会变成更旧的值);X/Y 未被闭包捕获;
      * X 的值在本语句之后不可观察(尾部 + 回边前缀都先写后读)。
      */
-    private foldAliasChainInSequence(seq: TYPE.SequenceExpression, path: NodePath<TYPE.IfStatement>): boolean {
+    private foldAliasChainInSequence(seq: TYPE.SequenceExpression, ctx: TestFoldContext): boolean {
         const elements = seq.expressions;
-        const fnParent = path.getFunctionParent();
-        const scope: TYPE.Node = fnParent ? fnParent.node : path.scope.path.node;
+        const scope = ctx.scope;
         for (let j = 1; j < elements.length; j++) {
             const copy = elements[j];
             if (!TYPE.isAssignmentExpression(copy) || copy.operator !== "=") continue;
@@ -424,8 +476,9 @@ export class ConditionSimplify implements ISimplify {
             if (blocked) continue;
             if (scanCapturedRead(scope, null, new Set([xName]), new Set(), false)) continue;
             const last = elements[elements.length - 1];
-            if (this.testReadsNameAfter(path.node.test, last, xName)) continue;
-            if (!this.nameDeadAfterStatement(path, xName)) continue;
+            if (this.testReadsNameAfter(ctx.test, last, xName)) continue;
+            if (!this.nameDeadAfterStatement(ctx.path, xName)) continue;
+            if (this.branchDependsOnValue(ctx, xName, elements[i])) continue;
 
             for (let k = j + 1; k < elements.length; k++) {
                 this.replaceIdentifierReads(elements[k], xName, TYPE.identifier(yName));
@@ -443,10 +496,9 @@ export class ConditionSimplify implements ISimplify {
      * E 允许不纯(调用只求值一次,位置不变),也允许读取 Y(替换点读到的
      * 本来就是 E 的值,而 E 里的 Y 仍是旧值,求值顺序一致)。
      */
-    private foldDeadAssignCompare(seq: TYPE.SequenceExpression, path: NodePath<TYPE.IfStatement>): boolean {
+    private foldDeadAssignCompare(seq: TYPE.SequenceExpression, ctx: TestFoldContext): boolean {
         const elements = seq.expressions;
-        const fnParent = path.getFunctionParent();
-        const scope: TYPE.Node = fnParent ? fnParent.node : path.scope.path.node;
+        const scope = ctx.scope;
         for (let i = 0; i < elements.length - 1; i++) {
             const assign = elements[i];
             if (!TYPE.isAssignmentExpression(assign) || assign.operator !== "=") continue;
@@ -464,8 +516,11 @@ export class ConditionSimplify implements ISimplify {
             }
             if (blocked) continue;
             if (scanCapturedRead(scope, null, new Set([yName]), new Set(), false)) continue;
-            if (this.testReadsNameAfter(path.node.test, next, yName)) continue;
-            if (!this.nameDeadAfterStatement(path, yName)) continue;
+            if (this.testReadsNameAfter(ctx.test, next, yName)) continue;
+            if (!this.nameDeadAfterStatement(ctx.path, yName)) continue;
+            // 分支里的读取发生在整条 test 之后:若 test 在该路径上一定重写了
+            // yName,分支读到的是新值,删除这里的赋值不会影响它。
+            if (this.branchDependsOnValue(ctx, yName, assign)) continue;
             const site = this.findIdentifierRead(next, yName);
             if (!site) continue;
             if (site.index >= 0) {
@@ -484,10 +539,9 @@ export class ConditionSimplify implements ISimplify {
      * 最后一个元素的值就是条件)。典型残留:`A || !(acc = p0.name !== T, p0.name !== T)`
      * 里的 `acc = ...`,删除后 `!` 下的比较可被 test 归一化反转为 `===`。
      */
-    private dropDeadSaveElement(seq: TYPE.SequenceExpression, path: NodePath<TYPE.IfStatement>): boolean {
+    private dropDeadSaveElement(seq: TYPE.SequenceExpression, ctx: TestFoldContext): boolean {
         const elements = seq.expressions;
-        const fnParent = path.getFunctionParent();
-        const scope: TYPE.Node = fnParent ? fnParent.node : path.scope.path.node;
+        const scope = ctx.scope;
         for (let i = 0; i < elements.length - 1; i++) {
             const assign = elements[i];
             if (!TYPE.isAssignmentExpression(assign) || assign.operator !== "=") continue;
@@ -496,14 +550,12 @@ export class ConditionSimplify implements ISimplify {
             if (!isTempName(xName)) continue;
             // 函数/类表达式的值经 callee 调用消费时 isReferenced 不可见,无法证明已死
             if (!isPureExpression(assign.right) || isDeclarationValue(assign.right)) continue;
-            const next = elements[i + 1];
-            if (this.testReadsNameAfter(path.node.test, next, xName)) continue;
+            if (this.readsNameBeforeWriteAfterAnchor(ctx.test, assign, xName, assign, false, false).readBefore) continue;
             if (scanCapturedRead(scope, null, new Set([xName]), new Set(), false)) continue;
-            if (!this.nameDeadAfterStatement(path, xName)) continue;
-            // 消费分支在尾部之前执行:分支里“确定写入前读取 X”则保留该元素
-            const ifNode = path.node;
-            if (this.branchReadsBeforeWrite(this.branchStatements(ifNode.consequent), xName)) continue;
-            if (ifNode.alternate && this.branchReadsBeforeWrite(this.branchStatements(ifNode.alternate), xName)) continue;
+            if (!this.nameDeadAfterStatement(ctx.path, xName)) continue;
+            // 消费分支在尾部之前执行:分支里“确定写入前读取 X”则保留该元素,
+            // 除非 test 在该分支路径上一定会重写 X(此时分支读到的是新值)。
+            if (this.branchDependsOnValue(ctx, xName, assign)) continue;
             elements.splice(i, 1);
             return true;
         }
@@ -533,6 +585,254 @@ export class ConditionSimplify implements ISimplify {
         return TYPE.isBlockStatement(stmt) ? stmt.body : [stmt];
     }
 
+    /**
+     * 分支是否依赖被删除的旧值。skip 是即将删除/搬移的赋值节点,
+     * 它自己的写入不能算作“test 在分支前重写了 name”。
+     */
+    private branchDependsOnValue(ctx: TestFoldContext, name: string, skip: TYPE.Node): boolean {
+        if (this.branchReadsBeforeWrite(ctx.consequent, name)
+            && !this.testWritesAfterAnchor(ctx.test, skip, name, true, skip)) return true;
+        if (ctx.alternate.length > 0
+            && this.branchReadsBeforeWrite(ctx.alternate, name)
+            && !this.testWritesAfterAnchor(ctx.test, skip, name, false, skip)) return true;
+        return false;
+    }
+
+    /**
+     * 从 anchor(通常是序列里的 `X = E` 元素)之后开始,判断是否在再次写入 name
+     * 之前读取了它。短路/条件表达式按可能执行路径合并;写入出现在可能被跳过的
+     * 分支里时不算“之后一定写过”,因此不会误删仍被读取的保存。
+     */
+    private readsNameBeforeWriteAfterAnchor(
+        node: TYPE.Expression,
+        anchor: TYPE.Node,
+        name: string,
+        skip: TYPE.Node,
+        started: boolean,
+        written: boolean,
+    ): { readBefore: boolean; started: boolean; written: boolean } {
+        if (node === skip) return { readBefore: false, started, written };
+        if (node === anchor) return { readBefore: false, started: true, written: false };
+        const value = node as unknown as { expression?: TYPE.Expression };
+        if (TYPE.isParenthesizedExpression(node)) {
+            return this.readsNameBeforeWriteAfterAnchor(value.expression as TYPE.Expression, anchor, name, skip, started, written);
+        }
+        if (TYPE.isSequenceExpression(node)) {
+            let readBefore = false;
+            let st = started;
+            let wr = written;
+            for (const expression of node.expressions as TYPE.Expression[]) {
+                const result = this.readsNameBeforeWriteAfterAnchor(expression, anchor, name, skip, st, wr);
+                readBefore = readBefore || result.readBefore;
+                st = result.started;
+                wr = result.written;
+            }
+            return { readBefore, started: st, written: wr };
+        }
+        if (TYPE.isLogicalExpression(node)) {
+            const left = this.readsNameBeforeWriteAfterAnchor(node.left as TYPE.Expression, anchor, name, skip, started, written);
+            const right = this.readsNameBeforeWriteAfterAnchor(node.right as TYPE.Expression, anchor, name, skip, left.started, left.written);
+            // 右侧可能短路不执行,节点之后只有左侧的写入是确定的
+            return { readBefore: left.readBefore || right.readBefore, started: left.started || right.started, written: left.written };
+        }
+        if (TYPE.isConditionalExpression(node)) {
+            const test = this.readsNameBeforeWriteAfterAnchor(node.test, anchor, name, skip, started, written);
+            const consequent = this.readsNameBeforeWriteAfterAnchor(node.consequent, anchor, name, skip, test.started, test.written);
+            const alternate = this.readsNameBeforeWriteAfterAnchor(node.alternate, anchor, name, skip, test.started, test.written);
+            return {
+                readBefore: test.readBefore || consequent.readBefore || alternate.readBefore,
+                started: test.started || consequent.started || alternate.started,
+                written: test.written,
+            };
+        }
+        if (TYPE.isUnaryExpression(node)) {
+            return this.readsNameBeforeWriteAfterAnchor(node.argument as TYPE.Expression, anchor, name, skip, started, written);
+        }
+        if (TYPE.isBinaryExpression(node)) {
+            const left = this.readsNameBeforeWriteAfterAnchor(node.left as unknown as TYPE.Expression, anchor, name, skip, started, written);
+            const right = this.readsNameBeforeWriteAfterAnchor(node.right as unknown as TYPE.Expression, anchor, name, skip, left.started, left.written);
+            return { readBefore: left.readBefore || right.readBefore, started: right.started, written: right.written };
+        }
+        if (TYPE.isAssignmentExpression(node)) {
+            const readsLeft = TYPE.isIdentifier(node.left)
+                ? (node.operator !== "=" && node.left.name === name)
+                : collectReadNames(node.left).has(name);
+            const right = this.readsNameBeforeWriteAfterAnchor(node.right, anchor, name, skip, started, written);
+            const writes = right.started && TYPE.isIdentifier(node.left) && node.left.name === name;
+            return {
+                readBefore: (right.started && readsLeft && !right.written) || right.readBefore,
+                started: right.started,
+                written: right.written || writes,
+            };
+        }
+        if (this.containsNode(node, anchor)) {
+            // 未展开的结构里含 anchor:保守认为可能先读后写
+            return { readBefore: true, started: true, written };
+        }
+        // 未展开的结构(对象/模板/数组等)里可能有条件写入,保守不把它当成
+        // “之后一定写过”;读取仍按出现处理,宁可少删也不误删。
+        const readBefore = started && !written && collectReadNames(node).has(name);
+        return { readBefore, started, written };
+    }
+
+    /** root 子树中是否包含 target(不进入函数/类体)。 */
+    private containsNode(root: TYPE.Node | null | undefined, target: TYPE.Node): boolean {
+        let found = false;
+        walkNode(root, (n) => {
+            if (found) return false;
+            if (isFunctionLike(n) || isClassLike(n)) return false;
+            if (n === target) {
+                found = true;
+                return false;
+            }
+            return true;
+        });
+        return found;
+    }
+
+    /**
+     * 在 anchor 之后、按 truthy/falsy 路径求值时,name 是否一定会被写入。
+     * 只能统计 anchor 之后的位置:同一 test 里 anchor 之前的写入会被 anchor 自己覆盖,
+     * 不能用来证明“分支读到的是新值”。
+     */
+    private testWritesAfterAnchor(
+        node: TYPE.Expression,
+        anchor: TYPE.Node,
+        name: string,
+        truthy: boolean,
+        skip: TYPE.Node,
+    ): boolean {
+        if (node === anchor || node === skip) return false;
+        if (TYPE.isSequenceExpression(node)) {
+            const expressions = node.expressions as TYPE.Expression[];
+            const index = expressions.findIndex((e) => this.containsNode(e, anchor));
+            if (index < 0) return false;
+            if (this.testWritesAfterAnchor(expressions[index], anchor, name, truthy, skip)) return true;
+            for (let k = index + 1; k < expressions.length; k++) {
+                if (this.testWritesOnTakenPath(expressions[k], name, true, skip)) return true;
+            }
+            return false;
+        }
+        if (TYPE.isLogicalExpression(node)) {
+            const left = node.left as TYPE.Expression;
+            const right = node.right as TYPE.Expression;
+            if (this.containsNode(left, anchor)) {
+                if (this.testWritesAfterAnchor(left, anchor, name, truthy, skip)) return true;
+                // 右侧只在特定路径上求值:必须确保该路径一定执行
+                if (node.operator === "&&" && truthy) return this.testWritesOnTakenPath(right, name, true, skip);
+                if (node.operator === "||" && !truthy) return this.testWritesOnTakenPath(right, name, false, skip);
+                return false;
+            }
+            if (this.containsNode(right, anchor)) {
+                return this.testWritesAfterAnchor(right, anchor, name, truthy, skip);
+            }
+            return false;
+        }
+        if (TYPE.isUnaryExpression(node) && node.operator === "!") {
+            return this.testWritesAfterAnchor(node.argument as TYPE.Expression, anchor, name, !truthy, skip);
+        }
+        if (TYPE.isConditionalExpression(node)) {
+            if (this.containsNode(node.test, anchor)) {
+                if (this.testWritesAfterAnchor(node.test, anchor, name, true, skip)) return true;
+                return this.testWritesOnTakenPath(node.consequent, name, truthy, skip)
+                    && this.testWritesOnTakenPath(node.alternate, name, truthy, skip);
+            }
+            if (truthy && this.containsNode(node.consequent, anchor)) {
+                return this.testWritesAfterAnchor(node.consequent, anchor, name, true, skip);
+            }
+            if (!truthy && this.containsNode(node.alternate, anchor)) {
+                return this.testWritesAfterAnchor(node.alternate, anchor, name, false, skip);
+            }
+            return false;
+        }
+        if (TYPE.isAssignmentExpression(node)) {
+            return this.containsNode(node.right, anchor)
+                ? this.testWritesAfterAnchor(node.right, anchor, name, truthy, skip)
+                : false;
+        }
+        if (TYPE.isBinaryExpression(node)) {
+            const left = node.left as unknown as TYPE.Expression;
+            const right = node.right as unknown as TYPE.Expression;
+            if (this.containsNode(left, anchor)) {
+                return this.testWritesAfterAnchor(left, anchor, name, truthy, skip)
+                    || this.testWritesOnTakenPath(right, name, true, skip);
+            }
+            if (this.containsNode(right, anchor)) {
+                return this.testWritesAfterAnchor(right, anchor, name, truthy, skip);
+            }
+            return false;
+        }
+        if (TYPE.isMemberExpression(node)) {
+            if (this.containsNode(node.object, anchor)) {
+                return this.testWritesAfterAnchor(node.object as TYPE.Expression, anchor, name, truthy, skip)
+                    || (node.computed && this.testWritesOnTakenPath(node.property as unknown as TYPE.Expression, name, true, skip));
+            }
+            return node.computed
+                ? this.testWritesAfterAnchor(node.property as unknown as TYPE.Expression, anchor, name, truthy, skip)
+                : false;
+        }
+        if (TYPE.isCallExpression(node) || TYPE.isNewExpression(node)) {
+            const parts: TYPE.Expression[] = [node.callee as TYPE.Expression];
+            for (const arg of node.arguments) parts.push(arg as TYPE.Expression);
+            const index = parts.findIndex((part) => this.containsNode(part, anchor));
+            if (index < 0) return false;
+            if (this.testWritesAfterAnchor(parts[index], anchor, name, truthy, skip)) return true;
+            for (let k = index + 1; k < parts.length; k++) {
+                if (this.testWritesOnTakenPath(parts[k], name, true, skip)) return true;
+            }
+            return false;
+        }
+        if (TYPE.isUnaryExpression(node)) {
+            return this.testWritesAfterAnchor(node.argument as TYPE.Expression, anchor, name, truthy, skip);
+        }
+        return false;
+    }
+
+    /**
+     * test 按 truthy(或 falsy)路径求值时,name 是否一定会被写入(skip 节点除外)。
+     * 路径分析只覆盖短路/条件表达式;其它节点保守返回 false。
+     */
+    private testWritesOnTakenPath(
+        test: TYPE.Expression,
+        name: string,
+        truthy: boolean,
+        skip?: TYPE.Node,
+    ): boolean {
+        if (skip && test === skip) return false;
+        if (TYPE.isSequenceExpression(test)) {
+            return test.expressions.some((e) => this.testWritesOnTakenPath(e as TYPE.Expression, name, true, skip));
+        }
+        if (TYPE.isAssignmentExpression(test)) {
+            const writesLeft = TYPE.isIdentifier(test.left) && test.left.name === name;
+            return writesLeft || this.testWritesOnTakenPath(test.right, name, true, skip);
+        }
+        if (TYPE.isUpdateExpression(test)) {
+            return TYPE.isIdentifier(test.argument) && test.argument.name === name;
+        }
+        if (TYPE.isUnaryExpression(test) && test.operator === "!") {
+            return this.testWritesOnTakenPath(test.argument as TYPE.Expression, name, !truthy, skip);
+        }
+        if (TYPE.isLogicalExpression(test)) {
+            const left = test.left as TYPE.Expression;
+            const right = test.right as TYPE.Expression;
+            if (test.operator === "&&") {
+                // truthy:两边都执行;falsy:左侧为假时右侧短路
+                return truthy
+                    ? this.testWritesOnTakenPath(left, name, true, skip) || this.testWritesOnTakenPath(right, name, true, skip)
+                    : this.testWritesOnTakenPath(left, name, false, skip);
+            }
+            // truthy:左侧为真时右侧短路;falsy:两边都执行
+            return truthy
+                ? this.testWritesOnTakenPath(left, name, true, skip)
+                : this.testWritesOnTakenPath(left, name, false, skip) || this.testWritesOnTakenPath(right, name, false, skip);
+        }
+        if (TYPE.isConditionalExpression(test)) {
+            return this.testWritesOnTakenPath(test.consequent, name, truthy, skip)
+                && this.testWritesOnTakenPath(test.alternate, name, truthy, skip);
+        }
+        return false;
+    }
+
     /** 求值顺序上 fromNode 之后是否读取了 name;拿不到位置时保守按读取处理。 */
     private testReadsNameAfter(test: TYPE.Expression, fromNode: TYPE.Node, name: string): boolean {
         const order = this.evaluationOrder(test);
@@ -555,7 +855,7 @@ export class ConditionSimplify implements ISimplify {
     }
 
     /** 语句之后(含循环回边前缀)name 是否在确定写入前被读取;是则值仍可观察。 */
-    private nameDeadAfterStatement(path: NodePath<TYPE.IfStatement>, name: string): boolean {
+    private nameDeadAfterStatement(path: NodePath<TYPE.Statement>, name: string): boolean {
         for (const segment of this.collectTailSegments(path)) {
             if (tempReadBeforeWrite(segment, 0, name)) return false;
         }
@@ -567,7 +867,7 @@ export class ConditionSimplify implements ISimplify {
      * 内层循环的回边用“循环体开头到当前语句之前”的前缀表示(下轮迭代该前缀
      * 先于任何后续读取执行);循环 test/update 作为尾段;外层循环保守整环纳入。
      */
-    private collectTailSegments(stmtPath: NodePath<TYPE.IfStatement>): TYPE.Statement[][] {
+    private collectTailSegments(stmtPath: NodePath<TYPE.Statement>): TYPE.Statement[][] {
         const segments: TYPE.Statement[][] = [];
         const self = stmtPath.node;
         let child: NodePath = stmtPath;

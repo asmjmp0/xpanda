@@ -24,7 +24,8 @@ import * as TYPE from "@babel/types";
  *   8. 校验 createobjectwithbuffer 模板对象到对象字面量的还原;
  *   9. 校验 nullish coalescing 的 switch lowering 还原;
  *  10. 校验 DeepLinkResolver 的累加器/重复调用/布尔物化清理与解析语义(沙箱执行);
- *  11. 校验 ShareContracts 的自引用成员链、嵌套布尔物化与临时分享文件校验语义(沙箱执行)。
+ *  11. 校验 ShareContracts 的自引用成员链、嵌套布尔物化与临时分享文件校验语义(沙箱执行);
+ *  12. 校验 ContentDetailPages 的 try/finally 还原与整体输出快照。
  */
 
 interface Sample {
@@ -646,6 +647,90 @@ function verifyZhihuTryFinally(): void {
     if (qrCode.includes("acc = new Uint8Array(v6)")) {
         throw new Error(`QrScanFixture: try 体内失效的 acc 赋值未清理\n${qrCode}`);
     }
+
+    // 3. try 起点 / cleanup 落在条件 test 求值区,或 finally 被结构化折叠进
+    //    最后一个分支尾部(NotificationState.fetchPage / loadMore、AppDatabase.close)。
+    const notificationState = pandaFile.getAllClasses().find((clazz) => clazz.name.content.includes("NotificationState"));
+    if (!notificationState) throw new Error("hap: 未找到 NotificationState");
+    const notificationCode = decompiler.decompileClass(notificationState);
+    NodeFactory.parse(notificationCode);
+    if (notificationCode.includes("xpanda: try/finally not restored")) {
+        throw new Error(`NotificationState: try/finally 未还原\n${notificationCode}`);
+    }
+    // fetchPage: try 起点在条件 test 序列里,finally 收尾落在尾部 else 分支
+    if (!/async fetchPage\(p0, p1\) \{\s*let v0;\s*try \{/.test(notificationCode)) {
+        throw new Error(`NotificationState.fetchPage: try 未覆盖整个方法体\n${notificationCode}`);
+    }
+    if (!/try \{[\s\S]*?\n    \} finally \{\n      if \(this\.isCurrent\(p0\)\) \{\n        this\.emit\(\);\n      \}\n    \}/.test(notificationCode)) {
+        throw new Error(`NotificationState.fetchPage: finally 未还原为 isCurrent(p0) 收尾\n${notificationCode}`);
+    }
+    // loadMore: cleanup 首块是条件比较
+    if (!/try \{\s*await this\.fetchPage\(this\.generation, this\.nextCursor\);\s*\} finally \{\s*if \(this\.isCurrent\(this\.generation\)\) \{\s*this\.loadingMore = false;\s*this\.emit\(\);/.test(notificationCode)) {
+        throw new Error(`NotificationState.loadMore: finally 未还原\n${notificationCode}`);
+    }
+
+    const appDatabase = pandaFile.getAllClasses().find((clazz) => clazz.name.content.includes("AppDatabase"));
+    if (!appDatabase) throw new Error("hap: 未找到 AppDatabase");
+    const databaseCode = decompiler.decompileClass(appDatabase);
+    NodeFactory.parse(databaseCode);
+    if (!/try \{\s*await acc;\s*\} finally \{\s*if \(this\.closing === acc\) \{\s*this\.closing = undefined;/.test(databaseCode)) {
+        throw new Error(`AppDatabase.close: finally 未还原\n${databaseCode}`);
+    }
+}
+
+/**
+ * 回归:ContentDetailPages(大型页面类)的 try/finally 还原与整体输出快照。
+ *
+ * `moveAnswer` 是“try 起点落在可选链条件 test 求值区 + finally 被折叠进尾部
+ * else 分支”的原始样本:finally 必须重新包住整个方法体,异常路径也要复位
+ * `navigatorBusy`;`refreshQuestion` 则是常规布局。
+ */
+function verifyZhihuContentDetailPages(): void {
+    const hapPath = path.join(__dirname, "resources", "zhihupp0.59.hap");
+    const hap = new HapFile(new Uint8Array(fs.readFileSync(hapPath)));
+    const pandaFile = new PandaFile(hap.readEntry("ets/modules.abc")!);
+    const clazz = pandaFile.getAllClasses().find((c) => c.name.content.includes("ContentDetailPages"));
+    if (!clazz) throw new Error("hap: 未找到 ContentDetailPages");
+
+    const code = new PandaDecompiler().decompileClass(clazz);
+    NodeFactory.parse(code);
+    if (/\bhole\b/.test(code)) {
+        throw new Error(`ContentDetailPages: 仍残留 hole 哨兵\n${code}`);
+    }
+    if (code.includes("xpanda: try/finally not restored")) {
+        throw new Error(`ContentDetailPages: try/finally 未还原\n${code}`);
+    }
+    // 原型上的 __defineGetter__/__defineSetter__ 应全部并入类;方法体里写 this.x
+    // 不应阻止访问器转换(只有构造器里的 this.x = ... 需要保守处理)。
+    if (code.includes("__defineGetter__") || code.includes("__defineSetter__")) {
+        throw new Error(`ContentDetailPages: 访问器未并入类\n${code}`);
+    }
+    if (!code.includes("get activeContentId() {") || !code.includes("set activeContentId(p0) {")) {
+        throw new Error(`ContentDetailPages: 缺少 activeContentId 访问器\n${code}`);
+    }
+
+    const moveStart = code.indexOf("async moveAnswer(p0) {");
+    if (moveStart < 0) throw new Error(`ContentDetailPages: 未找到 moveAnswer\n${code}`);
+    const moveBody = code.slice(moveStart, code.indexOf("\n  }\n", moveStart));
+    if (!moveBody.includes("try {\n        v6 = this.answerNavigator === null")) {
+        throw new Error(`moveAnswer: try 未包住可选链求值\n${moveBody}`);
+    }
+    if (!moveBody.includes("} finally {\n        this.navigatorBusy = false;\n      }")) {
+        throw new Error(`moveAnswer: finally 未还原 navigatorBusy 复位\n${moveBody}`);
+    }
+
+    const refreshStart = code.indexOf("async refreshQuestion() {");
+    if (refreshStart < 0) throw new Error(`ContentDetailPages: 未找到 refreshQuestion\n${code}`);
+    const refreshBody = code.slice(refreshStart, code.indexOf("\n  }\n", refreshStart));
+    if (!refreshBody.includes("} finally {\n      this.refreshingAnswers = false;\n    }")) {
+        throw new Error(`refreshQuestion: finally 未还原 refreshingAnswers 复位\n${refreshBody}`);
+    }
+
+    const expectedPath = path.join(__dirname, "expected", "zhihu-content-detail-pages.js");
+    const expected = fs.readFileSync(expectedPath, "utf-8");
+    if (code !== expected) {
+        throw new Error(`ContentDetailPages: 输出与快照不一致\n${firstDifference(expected, code)}`);
+    }
 }
 
 /**
@@ -703,6 +788,45 @@ function f(acc, v0) {
     }
     if (code.includes("acc = !(") || code.includes("v1 = 0, v2 = 2")) {
         throw new Error(`simplify: 仍残留 test 序列死赋值\n${code}`);
+    }
+}
+
+/**
+ * 回归:三元 test 里的临时保存必须有“版本”意识。
+ *   - test 里先保存旧值、随后同一路径上又覆盖的保存可以删:
+ *       (v0 = p0.kind, ...) && (v0 = p0.text.trim(), v0.length > 0)
+ *     → 只保留真正的 trim 赋值;
+ *   - 分支会读取的保存不能被折进比较,否则 `return v0` 拿到的是被删除前的旧值
+ *     (ContentDetailPages.contentSpeechText 曾因此 push 布尔值而不是正文)。
+ */
+function verifyBranchValueKeptInTestFolds(): void {
+    const program = NodeFactory.parse(`
+function f(p0) {
+  let v0;
+  if (p0.kind !== "answer" && (v0 = p0.kind, p0.kind !== "article") && (v0 = p0.text.trim(), v0.length > 0)) {
+    return v0;
+  } else {
+    return "fallback";
+  }
+}
+function g(p0) {
+  let v0;
+  if ((v0 = p0.text.trim()) && v0.length > 0) {
+    return v0;
+  }
+  return "";
+}
+`);
+    SimplifyExport.simplify(program);
+    const code = NodeFactory.generate(program);
+    if (!code.includes('return p0.kind !== "answer" && p0.kind !== "article" && (v0 = p0.text.trim(), v0.length > 0) ? v0 : "fallback";')) {
+        throw new Error(`simplify: 三元 test 的临时保存未按版本清理\n${code}`);
+    }
+    if (code.includes("v0 = p0.kind")) {
+        throw new Error(`simplify: 被后续赋值覆盖的 test 保存未删除\n${code}`);
+    }
+    if (!code.includes("if ((v0 = p0.text.trim()) && v0.length > 0)") || !code.includes("return v0;")) {
+        throw new Error(`simplify: 分支读取的 test 保存被错误折进比较\n${code}`);
     }
 }
 
@@ -1273,6 +1397,30 @@ function f(item) {
     if (code.includes("switch (")) {
         throw new Error(`simplify: 仍残留 nullish switch\n${code}`);
     }
+
+    // 两个 case 各写同一个默认值的形态(编译器把 `??` 展开成 if/else if):
+    //   v0 = v0 == null ? undefined : v0.count;
+    //   switch (v0) { case null: v0 = 0; case undefined: v0 = 0; }
+    // -> return v0?.count ?? 0;
+    const twoCase = NodeFactory.parse(`
+function g(v0) {
+  v0 = v0 == null ? undefined : v0.count;
+  switch (v0) {
+    case null:
+      v0 = 0;
+      break;
+    case undefined:
+      v0 = 0;
+      break;
+  }
+  return v0;
+}
+`);
+    SimplifyExport.simplify(twoCase);
+    const twoCaseCode = NodeFactory.generate(twoCase);
+    if (!twoCaseCode.includes("return v0?.count ?? 0;")) {
+        throw new Error(`simplify: 双 case nullish switch 未还原成 ??\n${twoCaseCode}`);
+    }
 }
 
 /**
@@ -1465,6 +1613,10 @@ async function main(): Promise<void> {
     verifyTestSequenceScratchRemoval();
     console.log("    ok");
 
+    console.log("[test] simplify branch value kept in test folds");
+    verifyBranchValueKeptInTestFolds();
+    console.log("    ok");
+
     console.log("[test] simplify object literal materialization");
     verifyObjectLiteralMaterialization();
     console.log("    ok");
@@ -1483,6 +1635,10 @@ async function main(): Promise<void> {
 
     console.log("[test] hap try/finally (zhihupp0.59.hap)");
     verifyZhihuTryFinally();
+    console.log("    ok");
+
+    console.log("[test] hap ContentDetailPages (zhihupp0.59.hap)");
+    verifyZhihuContentDetailPages();
     console.log("    ok");
 
     console.log("[test] hap AbsoluteUrlParser (zhihupp0.59.hap)");

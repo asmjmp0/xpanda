@@ -34,10 +34,16 @@ export interface FinallyPlan {
     cleanupStartPC: number;
     guardStartPC: number;
     guardEndPC: number;
+    /** 语句级 try 起点标记 */
     startMarker?: TYPE.Statement;
+    /** 对应角色落在条件 test 序列里时的表达式标记(applyFinallyPlans 会提升到包含它的语句) */
+    startExpr?: TYPE.Expression;
     cleanupMarker?: TYPE.Statement;
+    cleanupExpr?: TYPE.Expression;
     guardMarker?: TYPE.Statement;
+    guardExpr?: TYPE.Expression;
     endMarker?: TYPE.Statement;
+    endExpr?: TYPE.Expression;
 }
 
 export interface FinallyRoleInfo {
@@ -124,10 +130,18 @@ export function createFinallyMarker(plan: FinallyPlan, role: FinallyRole): TYPE.
     return TYPE.expressionStatement(TYPE.stringLiteral(MARKER_PREFIX + plan.id + "_" + role));
 }
 
+export function createFinallyMarkerExpression(plan: FinallyPlan, role: FinallyRole): TYPE.Expression {
+    return TYPE.stringLiteral(MARKER_PREFIX + plan.id + "_" + role);
+}
+
 export function isFinallyMarker(node: any): boolean {
     return TYPE.isExpressionStatement(node)
         && TYPE.isStringLiteral(node.expression)
         && node.expression.value.startsWith(MARKER_PREFIX);
+}
+
+export function isFinallyMarkerExpression(node: any): boolean {
+    return TYPE.isStringLiteral(node) && node.value.startsWith(MARKER_PREFIX);
 }
 
 /** 在 statements 数组里查找 target 所在的语句列表 */
@@ -149,12 +163,58 @@ function findStatementList(node: any, target: any): TYPE.Statement[] | null {
     return null;
 }
 
+/** target 是否在 node 的子树里(含自身) */
+function containsNode(node: any, target: any): boolean {
+    if (!node || typeof node !== "object") return false;
+    if (node === target) return true;
+    if (!node.type) return false;
+    for (const key of TYPE.VISITOR_KEYS[node.type] ?? []) {
+        const value = node[key];
+        if (Array.isArray(value)) {
+            for (const item of value) {
+                if (containsNode(item, target)) return true;
+            }
+        } else if (value && typeof value === "object") {
+            if (containsNode(value, target)) return true;
+        }
+    }
+    return false;
+}
+
+/** 包含 target 的最近一层语句节点(把 test 序列里的标记提升成语句级边界) */
+function findEnclosingStatement(root: any, target: any): TYPE.Statement | null {
+    let found: TYPE.Statement | null = null;
+    const visit = (node: any, lastStatement: TYPE.Statement | null): boolean => {
+        if (!node || typeof node !== "object" || !node.type) return false;
+        if (node === target) {
+            found = lastStatement;
+            return true;
+        }
+        const next = TYPE.isStatement(node) ? node : lastStatement;
+        for (const key of TYPE.VISITOR_KEYS[node.type] ?? []) {
+            const value = node[key];
+            if (Array.isArray(value)) {
+                for (const item of value) {
+                    if (visit(item, next)) return true;
+                }
+            } else if (value && typeof value === "object") {
+                if (visit(value, next)) return true;
+            }
+        }
+        return false;
+    };
+    visit(root, null);
+    return found;
+}
+
 function stripMarkers(node: any): void {
     if (!node || typeof node !== "object" || !node.type) return;
     for (const key of TYPE.VISITOR_KEYS[node.type] ?? []) {
         const value = node[key];
         if (Array.isArray(value)) {
-            node[key] = value.filter((item) => !isFinallyMarker(item));
+            node[key] = key === "expressions"
+                ? value.filter((item) => !isFinallyMarkerExpression(item))
+                : value.filter((item) => !isFinallyMarker(item));
             for (const item of node[key]) stripMarkers(item);
         } else if (value && typeof value === "object") {
             stripMarkers(value);
@@ -162,41 +222,130 @@ function stripMarkers(node: any): void {
     }
 }
 
-/** 在函数体 AST 上把标记区间替换成 try/finally;失败时至少清掉标记 */
+/**
+ * 把一个角色标记解析成语句列表位置:
+ *  - 语句标记:标记自身所在列表的下标;
+ *  - 表达式标记(条件 test 序列):包含它的语句及其所在列表的下标。
+ */
+interface MarkerPosition {
+    list: TYPE.Statement[];
+    index: number;
+    /** true 表示标记在 test 序列里,index 指向包含它的整条语句 */
+    inExpression: boolean;
+}
+
+function locateMarker(
+    astNode: any,
+    statementMarker: TYPE.Statement | undefined,
+    expressionMarker: TYPE.Expression | undefined,
+): MarkerPosition | null {
+    if (statementMarker) {
+        const list = findStatementList(astNode, statementMarker);
+        if (!list) return null;
+        const index = list.indexOf(statementMarker);
+        return index < 0 ? null : { list, index, inExpression: false };
+    }
+    if (expressionMarker) {
+        const owner = findEnclosingStatement(astNode, expressionMarker);
+        if (!owner) return null;
+        const list = findStatementList(astNode, owner);
+        if (!list) return null;
+        const index = list.indexOf(owner);
+        return index < 0 ? null : { list, index, inExpression: true };
+    }
+    return null;
+}
+
+/**
+ * 在函数体 AST 上把标记区间替换成 try/finally;失败时清掉标记并留下注释。
+ *
+ * 两种布局:
+ *  1. try 起点 / cleanup / guard 在同一层语句列表(常规);
+ *  2. try 起点落在某个条件 test 的求值区(第一个块就是可选链比较),
+ *     cleanup/guard 也可能被结构化进 test 或最后一个分支的尾部:
+ *     此时用表达式标记定位到包含它的语句,并在尾部分支情形把 finally 上提。
+ */
 export function applyFinallyPlans(astNode: any, plans: FinallyPlan[]): void {
+    let failed = 0;
     for (const plan of plans) {
+        let applied = false;
         left: {
-            const { startMarker, cleanupMarker, guardMarker, endMarker } = plan;
-            if (!startMarker || !cleanupMarker || !guardMarker) break left;
-            const list = findStatementList(astNode, startMarker);
-            if (!list) break left;
-            const start = list.indexOf(startMarker);
-            const cleanup = list.indexOf(cleanupMarker);
-            const guard = list.indexOf(guardMarker);
-            if (!(start >= 0 && cleanup > start && guard > cleanup)) break left;
+            // ---- try 体起点 ----
+            const start = locateMarker(astNode, plan.startMarker, plan.startExpr);
+            if (!start) break left;
+            const startList = start.list;
+            const tryStart = start.inExpression ? start.index : start.index + 1;
+
+            // ---- cleanup / guard ----
+            const cleanupPos = locateMarker(astNode, plan.cleanupMarker, plan.cleanupExpr);
+            if (!cleanupPos) break left;
+            const cleanupList = cleanupPos.list;
+            const cleanup = cleanupPos.index;
+            // cleanup 落在 test 序列里时,包含它的整条语句(通常是 `if (sentinel === undefined) { cleanup }`)
+            // 都属于 finally 体,不能只从它的下一条开始。
+            const finallyStart = cleanupPos.inExpression ? cleanup : cleanup + 1;
+
+            const guardPos = locateMarker(astNode, plan.guardMarker, plan.guardExpr);
+            if (!guardPos || guardPos.list !== cleanupList) break left;
+            const guard = guardPos.index;
+            if (cleanup < 0 || guard <= cleanup) break left;
+
             // 守卫语句(if (sentinel != hole) throw sentinel)可能把“之后”的块收进
             // else 分支,此时 endMarker 不在同一层。以守卫本身(第一个 IfStatement)
             // 为删除边界,同时删掉它前面的哨兵比较语句。
-            let guardEnd = guard + 1;
-            while (guardEnd < list.length && !TYPE.isIfStatement(list[guardEnd])) guardEnd++;
-            if (guardEnd < list.length && TYPE.isIfStatement(list[guardEnd])) {
-                guardEnd++;
-            } else if (endMarker) {
-                const end = list.indexOf(endMarker);
-                if (end <= guard) break left;
-                guardEnd = end;
+            let guardEnd: number;
+            if (guardPos.inExpression) {
+                // 表达式标记所在的语句就是守卫检查本身
+                guardEnd = guard + 1;
             } else {
-                break left;
+                guardEnd = guard + 1;
+                while (guardEnd < cleanupList.length && !TYPE.isIfStatement(cleanupList[guardEnd])) guardEnd++;
+                if (guardEnd < cleanupList.length && TYPE.isIfStatement(cleanupList[guardEnd])) {
+                    guardEnd++;
+                } else {
+                    const end = locateMarker(astNode, plan.endMarker, plan.endExpr);
+                    if (!end || end.list !== cleanupList || end.index <= guard) break left;
+                    guardEnd = end.index;
+                }
             }
-            const tryStatements = list.slice(start + 1, cleanup);
-            const finallyStatements = list.slice(cleanup + 1, guard);
-            const tryNode = TYPE.tryStatement(
-                TYPE.blockStatement(tryStatements),
-                null,
-                TYPE.blockStatement(finallyStatements),
-            );
-            list.splice(start, guardEnd - start, tryNode);
+
+            const finallyStatements = cleanupList.slice(finallyStart, guard);
+            if (cleanupList === startList) {
+                // 常规布局:try 体 = [tryStart, cleanup),守卫之后是 try/finally 之后的语句
+                if (!(cleanup > tryStart)) break left;
+                const tryStatements = startList.slice(tryStart, cleanup);
+                const tryNode = TYPE.tryStatement(
+                    TYPE.blockStatement(tryStatements),
+                    null,
+                    TYPE.blockStatement(finallyStatements),
+                );
+                startList.splice(tryStart, guardEnd - tryStart, tryNode);
+                applied = true;
+            } else {
+                // 折叠布局:只有整段 finally 都在嵌套列表尾部、且该嵌套列表的顶层语句
+                // 是 startList 的最后一条时,才能把 finally 整体上提。
+                if (guardEnd !== cleanupList.length) break left;
+                const owner = startList[startList.length - 1];
+                const cleanupAnchor = plan.cleanupMarker ?? plan.cleanupExpr;
+                if (!owner || !cleanupAnchor || !containsNode(owner, cleanupAnchor)) break left;
+                const tryStatements = startList.slice(tryStart);
+                cleanupList.splice(cleanup, guardEnd - cleanup);
+                const tryNode = TYPE.tryStatement(
+                    TYPE.blockStatement(tryStatements),
+                    null,
+                    TYPE.blockStatement(finallyStatements),
+                );
+                startList.splice(tryStart, startList.length - tryStart, tryNode);
+                applied = true;
+            }
         }
+        if (!applied) failed++;
+    }
+    if (failed > 0) {
+        // 兜底:无法还原时留一条注释,避免 finally 静默消失
+        const statement = TYPE.emptyStatement();
+        TYPE.addComment(statement, "leading", " xpanda: try/finally not restored ", false);
+        if (Array.isArray(astNode.body)) astNode.body.push(statement);
     }
     stripMarkers(astNode);
 }

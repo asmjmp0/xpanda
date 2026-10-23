@@ -358,6 +358,14 @@ export class SyntaxRewriteSimplify implements ISimplify {
             arg = this.unwrapParens(arg.expressions[0] as TYPE.Expression);
         }
         if (arg !== node.argument) node.argument = arg;
+        if (TYPE.isSequenceExpression(arg) && arg.expressions.length > 1) {
+            // !(a, b, c) === (a, b, !c):把取反推进最后一个元素,
+            // 这样 `!(v = X, acc = !C, !!C)` 能继续化简成 `(v = X, acc = !C, C !== Y)`。
+            const expressions = arg.expressions as TYPE.Expression[];
+            const last = expressions[expressions.length - 1];
+            expressions[expressions.length - 1] = TYPE.unaryExpression("!", last);
+            return this.simplifyTestNode(arg);
+        }
         if (TYPE.isUnaryExpression(arg) && arg.operator === "!") {
             return this.simplifyTestNode(arg.argument);
         }
