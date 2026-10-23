@@ -102,6 +102,7 @@ npm run test:mcp
 
 - 复制传播必须限制表达式大小/克隆预算,避免 `v2 = v1 + v1; v3 = v2 + v2; ...` 指数膨胀;
 - 不活跃变量、SequenceExpression、return 语句、catch 参数的清理要经过 liveness / 作用域检查;
+- **捕获判定必须同时看 `binding.referencePaths` 和 `binding.constantViolations`**。闭包里"只写不读"的外层变量只在 constantViolations 里;只看读取会把外层初始化(如 `local_1_1 = undefined`)当成唯一值传播到闭包之后的读取,并删掉声明;
 - **非纯表达式(`call` / `new` / 函数/类)只能在真正最后一次读取时搬移**;`if` 的 test 和分支体都读同一临时变量时不能搬,否则会把调用复制成两次;
 - `acc = !acc` 既可能来自 `callruntime.isfalse`,也可能来自条件物化(`istrue + jnez + ldtrue/ldfalse`);折叠时按取反次数的奇偶性处理,不能只删一层;
 - test 序列里的自取反链(`if (A || (X = E, X = !X, !X))`)只有在 `X` 在 test 后已死、test 外无其它读取、分支/前缀不会先读后写时才折叠;循环 test 暂不处理;

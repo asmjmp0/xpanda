@@ -138,6 +138,38 @@ function stringToUint8Array(p0) {
 }
 
 /**
+ * 回归:闭包只写不读的外层变量必须视为被捕获。
+ * 旧实现只从 binding.referencePaths 判断捕获,而赋值写在 constantViolations 里;
+ * 一旦闭包里对该变量的读取被优化掉,外层 `local_1_1 = undefined` 就会被当作唯一值
+ * 传播到闭包之后的 `return local_1_1`,并连带删掉声明。
+ */
+function verifyClosureWrittenVariable(): void {
+    const program = NodeFactory.parse(`
+function selectHighest(p0) {
+  let acc;
+  let local_1_0, local_1_1;
+  acc = undefined;
+  local_1_1 = acc;
+  acc = -1;
+  local_1_0 = acc;
+  p0.forEach(function (p1) {
+    if (p1 > local_1_0) {
+      local_1_0 = p1;
+      local_1_1 = p1;
+    }
+  });
+  acc = local_1_1;
+  return acc;
+}
+`);
+    SimplifyExport.simplify(program);
+    const code = NodeFactory.generate(program);
+    if (!/let\s+local_1_0,\s*local_1_1/.test(code) || !code.includes("return local_1_1")) {
+        throw new Error(`simplify: 闭包写入的外层变量被错误传播/删除\n${code}`);
+    }
+}
+
+/**
  * 回归:ArkCompiler 经 acc 装载方法再 `call` 的形态应还原成普通成员调用,
  * 同时 `X = E; return X;` 可直接折叠成 `return E;`(包括 E 直接读取旧 X)。
  */
@@ -326,6 +358,10 @@ function verifyHapPackage(): void {
 async function main(): Promise<void> {
     console.log("[test] simplify return liveness");
     verifyReturnValueLiveness();
+    console.log("    ok");
+
+    console.log("[test] simplify closure written variable");
+    verifyClosureWrittenVariable();
     console.log("    ok");
 
     console.log("[test] simplify acc call");

@@ -170,16 +170,7 @@ export class TempVariableSimplify implements ISimplify {
             for (const reference of binding.referencePaths) {
                 if (reference.node) refs.add(reference.node);
             }
-            let captured = false;
-            for (const reference of binding.referencePaths) {
-                const functionParent = reference.getFunctionParent();
-                if (TYPE.isProgram(path.node)) {
-                    captured = functionParent != null;
-                } else {
-                    captured = !functionParent || functionParent.node !== path.node;
-                }
-                if (captured) break;
-            }
+            const captured = this.isCapturedBinding(binding, path.node);
             infos.set(name, { name, refs, captured });
         }
         if (infos.size === 0) return;
@@ -300,16 +291,30 @@ export class TempVariableSimplify implements ISimplify {
             for (const reference of binding.referencePaths) {
                 if (reference.node) refs.add(reference.node);
             }
-            let captured = false;
-            for (const reference of binding.referencePaths) {
-                const functionParent = reference.getFunctionParent();
-                captured = TYPE.isProgram(currentFunction)
-                    ? functionParent != null
-                    : (!functionParent || functionParent.node !== currentFunction);
-                if (captured) break;
-            }
+            let captured = this.isCapturedBinding(binding, currentFunction);
             ctx.infos.set(name, { name, refs, captured });
         }
+    }
+
+    /**
+     * 变量是否被嵌套函数读写。
+     * 读取记录在 binding.referencePaths,赋值/自增记录在 binding.constantViolations;
+     * 只看读取会漏掉“闭包只写不读”的变量(如 `local_x = undefined` 初始化后仅由回调赋值),
+     * 导致把外层初始化当成唯一值传播进闭包后的读取,并连带删掉声明。
+     */
+    private isCapturedBinding(binding: any, functionNode: TYPE.Node): boolean {
+        const isProgram = TYPE.isProgram(functionNode);
+        const paths: NodePath[] = [
+            ...(binding.referencePaths ?? []),
+            ...(binding.constantViolations ?? []),
+        ];
+        for (const path of paths) {
+            const functionParent = path.getFunctionParent();
+            if (isProgram ? functionParent != null : (!functionParent || functionParent.node !== functionNode)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private hoistNamedFunctionExpressions(stmts: TYPE.Statement[], ctx: FunctionContext, scope: any): void {
