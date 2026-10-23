@@ -48,6 +48,10 @@ export class SimplifyExport {
             if (!SimplifyExport.simplifyALL(node)) break;
         }
         new HighLevelGrammarSimplify().simplify(node);
+        // HighLevelGrammarSimplify 会把 `if (!T) { X = true } else { X = false }`
+        // 合成 `X = !T`,这时才出现 `X = E; if (E) { X = !T }`;
+        // 轮内的 foldShortCircuitChains 已经跑完,需要补折一次短路链。
+        TempVariableSimplify.foldShortCircuitAssignments(node);
         // HighLevelGrammarSimplify 会把 nullish 检查合成 switch;这里还原成 ??
         new NullishCoalescingSimplify().simplify(node);
         // HighLevelGrammarSimplify 的三目合成(`if (C) { X = A } else { X = B }` →

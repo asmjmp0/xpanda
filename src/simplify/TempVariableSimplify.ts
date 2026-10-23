@@ -129,6 +129,8 @@ export class TempVariableSimplify implements ISimplify {
     private conditionsOnly = false;
     /** true:只折叠 `X = E; return X` 并清理失去引用的声明,其余一律不动 */
     private returnsOnly = false;
+    /** true:只折叠 `X = E; if (X/!X/E/!E) { X = B }` 短路链,其余一律不动 */
+    private shortCircuitOnly = false;
 
     simplify(node: Program): boolean {
         this.changed = false;
@@ -201,6 +203,23 @@ export class TempVariableSimplify implements ISimplify {
     }
 
     /**
+     * 只折叠 `X = E; if (X/!X/E/!E) { X = B }` 短路链,并清理失去引用的声明。
+     * HighLevelGrammarSimplify 会把 `if (!T) { X = true } else { X = false }` 合成
+     * `X = !T`,此时才出现 `X = E; if (E) { X = !T }`;轮内的 foldShortCircuitChains
+     * 已经跑完,需要在流水线尾部补一轮(见 SimplifyExport)。
+     */
+    static foldShortCircuitAssignments(node: Program): boolean {
+        const pass = new TempVariableSimplify();
+        pass.changed = false;
+        pass.shortCircuitOnly = true;
+        traverse(TYPE.file(node), {
+            Program: (path) => pass.processScope(path),
+            Function: (path) => pass.processScope(path),
+        });
+        return pass.changed;
+    }
+
+    /**
      * 只折叠 `X = E; return X`(不做复制传播/条件改写),并清理随之失去引用的声明。
      * HighLevelGrammarSimplify 在定点迭代结束后把 `if (C) { X = A } else { X = B }`
      * 合成为 `X = C ? A : B`,轮内的返回值折叠此时已经跑完,需要在尾部补一轮。
@@ -254,6 +273,11 @@ export class TempVariableSimplify implements ISimplify {
         });
         if (this.returnsOnly) {
             this.foldReturnAssignments(body, ctx);
+            this.removeUnusedDeclarations(body, ctx);
+            return;
+        }
+        if (this.shortCircuitOnly) {
+            this.foldShortCircuitChains(body, ctx);
             this.removeUnusedDeclarations(body, ctx);
             return;
         }
@@ -2142,10 +2166,22 @@ export class TempVariableSimplify implements ISimplify {
         // (如 acc = acc.length)。binarySelf(二元自累加)保持原有任意位置搬移的行为。
         const assignSelf = !binarySelf && this.statementOverwritesSelfAssign(list[index], id.name, id);
         const overwrittenHere = binarySelf || assignSelf;
+        // if 的 test 读取:两个分支都一定会在读取前覆盖 name 时,test 里的这次读取
+        // 就是旧值的最后用法(之后任何读取拿到的都是分支写入的新值)。
+        // 典型形态:
+        //   v0 = new RegExp(...);
+        //   if (!v0.test(p0)) { v0 = true } else { v0 = false }
+        // 把 new RegExp 搬进 test 后,v0 = new RegExp 成为死存储,
+        // 整个结构才能折成 `v0 = A && !new RegExp(...).test(p0)`。
+        const ifStmt = list[index];
+        const testLastUse = TYPE.isIfStatement(ifStmt) && ifStmt.alternate != null
+            && this.containsNode(ifStmt.test, id)
+            && this.definitelyWritesBeforeRead(ifStmt.consequent, id.name)
+            && this.definitelyWritesBeforeRead(ifStmt.alternate, id.name);
         // 同一个语句里可能还有别的读取(典型是 if 的 test 和分支体都读同一个
         // 临时变量)。只有分支在读取前会先覆盖该变量时,测试里的这次读取才算
         // 最后一次读取;否则搬移调用会复制一份调用。
-        const lastUse = (overwrittenHere || deadAfter) && this.isLastReadInStatement(list[index], id);
+        const lastUse = (overwrittenHere || deadAfter || testLastUse) && this.isLastReadInStatement(list[index], id);
         if (lastUse && entry.unsubstitutedReads === 0) {
             if (isPureExpression(entry.expr) && !isDeclarationValue(entry.expr)) {
                 // 数组/对象字面量:只在唯一使用处求值一次,原赋值稍后会被作为死存储删除

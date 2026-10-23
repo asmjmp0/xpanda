@@ -241,17 +241,40 @@ export abstract class LogicalExpressionStatement extends JumpStatement {
         const codeGenerator = methodHandler.getCodeGenerator();
         const factory = codeGenerator.getNodeFactory();
         const utils = codeGenerator.getNodeUtils();
+        const type = this.getType();
         const sequenceFirst = factory.sequenceExpressionNode([]);
         this.first.decompile(methodHandler, pandaLexical, sequenceFirst);
-        if (this.getType() === "||") {
+        if (this.first instanceof LogicalExpressionStatement) {
+            this.insertLogicalOperand(factory, sequenceFirst, this.first);
+        } else if (type === "||") {
             utils.insertToSequenceExpression(this.generateTestExpressionByExp(methodHandler, !this.firstExp) as any, sequenceFirst as any);
         } else {
             utils.insertToSequenceExpression(this.generateTestExpressionByExp(methodHandler, this.firstExp) as any, sequenceFirst as any);
         }
         const sequenceSecond = factory.sequenceExpressionNode([]);
         this.second.decompile(methodHandler, pandaLexical, sequenceSecond);
-        utils.insertToSequenceExpression(this.generateTestExpressionByExp(methodHandler, this.secondExp) as any, sequenceSecond as any);
-        return factory.logicalExpressionNode(this.getType(), sequenceFirst as any, sequenceSecond as any);
+        if (this.second instanceof LogicalExpressionStatement) {
+            this.insertLogicalOperand(factory, sequenceSecond, this.second);
+        } else {
+            utils.insertToSequenceExpression(this.generateTestExpressionByExp(methodHandler, this.secondExp) as any, sequenceSecond as any);
+        }
+        return factory.logicalExpressionNode(type, sequenceFirst as any, sequenceSecond as any);
+    }
+
+    /**
+     * 合并后的子逻辑区域(已经是 `A || B` / `A && B` 表达式)不能再追加 `acc`/`!acc`:
+     * 子逻辑语句的值本身就是条件表达式,而 acc 里留的是最后一个比较结果,追加会覆盖它。
+     * `||` 的操作数是“跳转条件”,`&&` 的操作数是“fallthrough 条件”,因此父子类型不同时取反。
+     */
+    private insertLogicalOperand(
+        factory: any,
+        sequence: any,
+        child: LogicalExpressionStatement,
+    ): void {
+        if (child.getType() === this.getType()) return;
+        const last = sequence.expressions[sequence.expressions.length - 1];
+        if (!last) return;
+        sequence.expressions[sequence.expressions.length - 1] = factory.unaryExpressionNode("!", last);
     }
 
     decompile(methodHandler: PandaDecompilerMethodHandler, pandaLexical: PandaLexical, astNode: any): void {

@@ -20,7 +20,7 @@
 | `src/disasm/` | 反汇编:`opcodes.ts`(生成)、`PandaInstruction.ts`(统一指令模型 + KIND_MAP)、`PandaIRCFG`、`passes.ts`、`PandaLexical.ts` |
 | `src/decompiler/` | `StructureAnalysis.ts`(Region 归约核心)、`Region.ts` / `RegionGraphBuilder.ts`(区域、条件/逻辑标志、不可归约 Tail 复制)、`statements.ts`、`MethodHandler.ts`(HANDLES 分发)、`TryFinally.ts`(ArkTS 13 try/finally 还原)、`SimpleAnalysis.ts`、`ValueGraph.ts`、`DominatorGraph.ts` |
 | `src/codegen/CodeGenerator.ts` | AST 生成入口(包装 `src/ast/`) |
-| `src/ast/` | `NodeFactory` / `NodeUtils`(Babel AST 工具) |
+| `src/ast/` | `NodeFactory` / `NodeUtils`(Babel AST 工具);`FormatCode.ts` 对超长逻辑链输出折行 |
 | `src/simplify/` | 优化器流水线(`SimplifyExport`、`TempVariableSimplify`、`ConditionSimplify`、`SyntaxRewriteSimplify`、`ClassSyntaxSimplify`、`ObjectLiteralSimplify`、`NullishCoalescingSimplify`、`HighLevelGrammarSimplify`、`AstUtils`、`NormalizeDeclarations`);末尾含 `foldConditionAssignments`(条件取反链二次折叠)与 `hoistTestPrefixes`(常量前缀提升) |
 | `src/parallel/` | 按类并行的 simplify worker 池(`ParallelDecompiler.ts` 调度、`simplify-worker.ts` worker 入口) |
 | `src/hap/` | HAP 应用包适配:`ZipFile.ts`(只读 ZIP 解析,store/deflate)、`HapFile.ts`(.abc 条目/module.json/resources.index) |
@@ -105,13 +105,14 @@ npm run test:mcp
 - **捕获判定必须同时看 `binding.referencePaths` 和 `binding.constantViolations`**。闭包里"只写不读"的外层变量只在 constantViolations 里;只看读取会把外层初始化(如 `local_1_1 = undefined`)当成唯一值传播到闭包之后的读取,并删掉声明;
 - **名字级活跃性分不清临时变量的新旧版本**:`X = RHS` 且 RHS 只读一次 X 时,这次读取是旧值的最后一次使用(`acc = p0.trim(); acc = acc.length` → `acc = p0.trim().length`)。此时若变量名在语句后仍活跃(后续读到的是新值),不可复制的右值只允许搬进调用接收者位置(`v0 = !v0.test(p0)`);裸成员装载 `acc = acc.test` 是 AccCallSimplify 依赖的中间形态,提前内联会让 `acc.call(recv, ...)` 无法还原;
 - **`foldShortCircuitChains` 把 `X = E; if (X/!X) { X = B; }` 物化链折成 `X = E &&/|| B`**(test 被结构化归约重新物化成原表达式时要求 E 纯)。以 `X = !X` 自取反开头的链必须跳过:整条取反链的奇偶性归尾部 `foldConditionAssignments`,提前吃掉链头会让 `X = has(); X = !X; if (!X) { X = set() }` 无法折回 `if (!has())`;
-- **非纯表达式(`call` / `new` / 函数/类)只能在真正最后一次读取时搬移**;`if` 的 test 和分支体都读同一临时变量时不能搬,否则会把调用复制成两次;
+- **非纯表达式(`call` / `new` / 函数/类)只能在真正最后一次读取时搬移**;`if` 的 test 和分支体都读同一临时变量时不能搬,否则会把调用复制成两次;**例外**:if 的 test 读取、且两个分支都一定在读取前覆盖该变量(`definitelyWritesBeforeRead`)时,旧值在 test 后已死,可以搬进 test(`v0 = new RegExp(...); if (!v0.test(p0)) {...} else {...}` → `if (!new RegExp(...).test(p0))`);
 - `acc = !acc` 既可能来自 `callruntime.isfalse`,也可能来自条件物化(`istrue + jnez + ldtrue/ldfalse`);折叠时按取反次数的奇偶性处理,不能只删一层;
 - test 序列里的自取反链(`if (A || (X = E, X = !X, !X))`)只有在 `X` 在 test 后已死、test 外无其它读取、分支/前缀不会先读后写时才折叠;循环 test 暂不处理;
 - **do-while 的 test 在 body 之后求值**:liveness 需要把"body 一定先写 `X` 再读"的 test 读取从循环入口的活跃集里剔除,否则 `X = !E; if (!X)` 会因 `X` 在循环里仍活跃而不折叠(或折叠后重复求值)。`foldDoWhileTestAssignments` 再把 `do { ...; X = E } while (!X)` 折成 `while (!E)`,要求 `X` 在循环后已死且 body 内没有 `continue`;
 - `if (A || (v1 = 0, v2 = 2, B))` 这类常量前缀提升(`hoistTestPrefixes`)要求:前缀只是临时变量赋常量、短路分支直接 return/throw 且不读取这些临时变量、不在带 `finally` 的 `try` 中;
 - `ObjectLiteralSimplify` 合并 `createobjectwithbuffer` 的模板对象与紧邻的 `obj.key = value`:要求字段初值是字面量、赋值顺序与模板字段一致、对象未被闭包捕获;`obj = {...}; return obj` 在模式外无读取时内联成 `return {...}`。对象字面量里的函数属性会按原求值顺序创建,不会被提前提升;
 - `HighLevelGrammarSimplify` 会把 `if (x === null || x === undefined) x = default` 合成为 switch;`NullishCoalescingSimplify` 在流水线末尾把 `v = obj.k; switch (obj.k) { case null: case undefined: v = default; }` 还原成 `v = obj.k ?? default`。判别式是纯成员表达式时才允许合并两次求值;
+- **switch 合成必须完整拆出 `||` test 的每一项**:无法识别的项(如 `!(a !== b)`、带 sequence 的条件)不能静默丢弃,否则会生成漏掉条件的 switch。链尾拆不出时只能把当前 if 及其 else 链整体放进 `default`(`partial`),第一个条件就拆不出则不合成;
 - 修改输出后,更新 `test/expected/*.js` 快照并在提交说明中解释变化。
 
 ### 修改 Region 归约 / 条件极性
@@ -122,7 +123,8 @@ npm run test:mcp
 2. `conditionalExp` 描述的是 fallthrough(false 边)分支的条件:jnez 时 false 边为 `!acc`,jeqz 时 false 边为 `acc`;折叠 true 边(`coalesceTailRegion`)时才需要 `expInvert()`。
 3. `simplifyConditionalSequence` 会把 `if (A) ... if (B) ...` 合并成 `OrLogicalExpressionStatement` 并设置 `logicalRegion`;`reduceSequence` 合并这种 Region 时必须传播 `logicalRegion`,否则后续只能用 `acc` 生成 test,会丢掉 `A || B` 的计算。
 4. `Region.copy()`(不可归约 Tail 复制)必须保留 `conditionalExp` / `logicalRegion` / `exceptionLandingPad` / `tryCatchHelperRegion` 标志。
-5. 改完用 `zhihupp0.59.hap` 的 `AbsoluteUrlParser` / `ZhihuHttpClient`、`aes.abc` 的 `Counter.increment`(必须是 `!== 255`)和大样本 `bilibili_open.abc` 验证。
+5. 合并后的子区域如果已经是 `LogicalExpressionStatement`(`(A || B)` / `(A && B)`),**不要再追加 `acc`/`!acc`**:它的表达式本身就是条件值,追加会把 `acc` 里最后一个比较结果覆盖到条件上(`name === A || ((name === B, acc) || ...)` 既是语义错误,又会留下 `(acc = E, !E)` 死赋值)。`||` 的操作数是跳转条件、`&&` 的操作数是 fallthrough 条件,父子类型不同时要取反。
+6. 改完用 `zhihupp0.59.hap` 的 `AbsoluteUrlParser` / `ZhihuHttpClient`、`AppDestination.shouldReloadAfterAuthentication`(17 项 `===` 的 `||` 链)、`aes.abc` 的 `Counter.increment`(必须是 `!== 255`)和大样本 `bilibili_open.abc` 验证。
 
 ## 测试
 
@@ -146,6 +148,7 @@ npm run test:mcp
 - `--no-simplify` 不执行优化器,适合验证解析/反汇编;大文件完整优化耗时主要来自逐类按函数分析和定点迭代。
 - `acc` 是 Panda 累加器,不是源码变量:`acc = !acc` 可能来自 `callruntime.isfalse`,也可能来自编译器对条件的布尔物化;二者叠加时看起来是两条取反,实际源码可能只有一个 `!`。
 - `HighLevelGrammarSimplify` 会把 `if (!X) { X = true } else { X = false }` 合成为 `X = !X`,可能和已有的 `X = !X` 形成新的连续取反链;因此流水线末尾必须再跑一次 `TempVariableSimplify.foldConditionAssignments`,不要删掉这一步。
-- 优化器尾部顺序固定为:HighLevelGrammarSimplify → foldReturnAssignments(补折 `X = E; return X`,三目合成发生在定点迭代之后) → foldConditionAssignments → normalizeConditionTests → hoistTestPrefixes → foldCompoundAssignments。调整顺序前先确认条件极性、复合赋值和 `test` 序列折叠不会互相覆盖。
+- 优化器尾部顺序固定为:HighLevelGrammarSimplify → foldShortCircuitAssignments(补折 HighLevel 新暴露的 `X = E; if (E) { X = B }`) → NullishCoalescing → foldReturnAssignments(补折 `X = E; return X`,三目合成发生在定点迭代之后) → foldConditionAssignments → normalizeConditionTests → hoistTestPrefixes → foldCompoundAssignments。调整顺序前先确认条件极性、复合赋值和 `test` 序列折叠不会互相覆盖。
 - **ArkTS 13(字节码 13.0.1.0)的 catch 块 codeSize 恒为 0**,`RegionGraphBuilder` 会跳过这些 try 块;`TryFinally.ts` 在结构化成功后按 try 表把 `X = hole; cleanup; if (X != hole) throw X` 重新包成 `try/finally`。它要求 try 起点与 cleanup 落在同一层语句列表——finally 嵌在 `if` 分支里的方法仍会残留 `hole`,不要把它当成全局修复。
 - 测试 test 序列取反链和条件赋值折叠时,优先用 `zhihupp0.59.hap` 的 `AbsoluteUrlParser`(`if (host.length === 0 || host.startsWith("["))`)与 `aes.abc` 的 `Counter.increment`(`if (arr[i] !== 255)`)做回归。
+- `NodeFactory.generate()` 末尾会把超过 120 字符的行在顶层 `||` / `&&` / `??` 前折行(`src/ast/FormatCode.ts`),新行以操作符开头;字符串/模板/注释/正则内部与含顶层三目的行不折行。它只影响输出文本,不改 AST 语义;新增快照时保持这份格式。

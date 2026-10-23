@@ -1,27 +1,27 @@
 # xpanda
 
-**简体中文** | [English](README.en.md)
+**English** | [简体中文](README.zh.md)
 
-> 卧槽，然后他看了以后啊，就怔住了说，说这么好的**鸿蒙反编译器**，你咋不，你怎么不早点告诉我。
+> "Holy crap — when he read it, he froze and said: with a **HarmonyOS decompiler** this good, why on earth didn't you tell me sooner?"
 
-鸿蒙 HarmonyOS `.abc`(Panda / ArkCompiler 字节码)反编译器,**纯 TypeScript** 实现,Node.js ≥ 18,零原生依赖。
+A decompiler for HarmonyOS `.abc` files (Panda / ArkCompiler bytecode), written in **pure TypeScript**. Node.js ≥ 18, zero native dependencies.
 
-把 `.abc` 文件反编译成可读的 JavaScript 源码:还原类、方法、函数、控制流、模块 import/export,并通过优化器清理编译器生成的寄存器临时变量。
+It turns `.abc` files back into readable JavaScript: classes, methods, functions, control flow and module `import`/`export` are restored, and an optimizer pipeline cleans up the register temporaries emitted by the compiler.
 
-支持字节码版本:`24.0.0.0`(向后兼容 `13.0.1.0`)。
+Supported bytecode versions: `24.0.0.0` (backward compatible with `13.0.1.0`).
 
-## 特性
+## Features
 
-- **纯 TypeScript、零原生依赖**:解析 `.abc` 并输出可直接阅读、可直接运行的 JavaScript;
-- **类与函数还原**:类字段、访问器、原型方法、闭包、词法环境(`local` / `sendable` env);
-- **控制流还原**:`if/else`、`while/do-while`、`for`、`try/catch` 等;结构化失败时自动降级为带标签的线性输出;
-- **模块还原**:ES Module 的 `import` / `export`;
-- **Babel AST 优化器**:寄存器临时变量复制传播、死存储消除、函数/类语法还原、调用形式重写、复合赋值折叠;
-- **MCP Server**:可接入 Claude Code、OpenCode、Cursor 等 AI 客户端按需分析 `.abc`。
+- **Pure TypeScript, zero native dependencies**: parses `.abc` files and emits readable JavaScript that can run as-is;
+- **Classes and functions**: class fields, accessors, prototype methods, closures and lexical environments (`local` / `sendable` env);
+- **Control flow**: `if/else`, `while/do-while`, `for`, `try/catch`, and more; falls back to labeled linear output when structural analysis fails;
+- **Modules**: ES Module `import` / `export`;
+- **Babel AST optimizer**: register-temp copy propagation, dead-store elimination, function/class syntax recovery, call rewriting and compound-assignment folding;
+- **MCP Server**: lets AI clients such as Claude Code, OpenCode and Cursor analyze `.abc` files on demand.
 
-## 反编译结果
+## Decompilation results
 
-以下内容直接来自项目测试快照,没有手工改写。
+Everything below comes straight from the project's test snapshots — nothing was hand-edited.
 
 ### `test/expected/class.js`
 
@@ -45,10 +45,10 @@ new Test().test();
 
 ### `test/expected/md5.js`
 
-完整结果见 [`test/expected/md5.js`](test/expected/md5.js)。
+The full result is in [`test/expected/md5.js`](test/expected/md5.js).
 
 <details>
-<summary>展开查看实际反编译输出</summary>
+<summary>Expand to view the actual decompiled output</summary>
 
 ```js
 /*
@@ -212,7 +212,7 @@ new Test().test();
 
 ### `test/expected/aes.js`
 
-完整结果见 [`test/expected/aes.js`](test/expected/aes.js)。优化器会把 `acc` 累加链还原成复合赋值:
+The full result is in [`test/expected/aes.js`](test/expected/aes.js). The optimizer folds the `acc` accumulation chain into compound assignments:
 
 ```js
 v9 <<= 2;
@@ -226,12 +226,12 @@ if (v11 !== 64) {
 }
 ```
 
-## 环境要求
+## Requirements
 
 - Node.js ≥ 18
-- 开发依赖:`typescript`、`tsx`、`@babel/*`、`js-yaml`
+- Development dependencies: `typescript`, `tsx`, `@babel/*`, `js-yaml`
 
-## 安装与使用
+## Install and use
 
 ```bash
 npm install
@@ -243,47 +243,48 @@ CLI:
 npx tsx src/cli.ts decompile <file.abc|file.hap> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N]
 ```
 
-| 参数 | 说明 |
+| Option | Description |
 |---|---|
-| `-o outDir` | 输出目录,默认 `out` |
-| `--no-simplify` | 跳过优化器,输出原始反编译结果,速度更快 |
-| `--stdout` | 把结果输出到标准输出,不落盘 |
-| `--quiet` | 关闭过程日志 |
-| `-j, --jobs N` | 按类并行 simplify 的 worker 数;`0` 表示自动(CPU-1,上限 4) |
+| `-o outDir` | Output directory, defaults to `out` |
+| `--no-simplify` | Skip the optimizer and emit raw decompiler output; faster |
+| `--stdout` | Print the result to stdout instead of writing files |
+| `--quiet` | Suppress progress logs |
+| `-j, --jobs N` | Number of workers that run simplify per class; `0` = auto (CPU-1, max 4) |
 
-hap 支持说明:
+HAP support:
 
-- 输入 `.hap`(鸿蒙应用包,ZIP 容器)时自动解出包内全部 `.abc` 条目逐个反编译,
-  类文件输出到 `outDir/<abc 条目路径>/`(如 `ets/modules.abc` → `out/ets/modules/`),
-  并把 `resources.index` 解包为 `outDir/resources.json`;
-- `unpack-index` 子命令也可单独解包 `resources.index`。
+- Given a `.hap` input (HarmonyOS ability package, a ZIP container), every `.abc` entry
+  inside is extracted and decompiled; class files go to `outDir/<abc entry path>/`
+  (e.g. `ets/modules.abc` → `out/ets/modules/`), and `resources.index` is unpacked
+  to `outDir/resources.json`;
+- The `unpack-index` subcommand can also unpack a standalone `resources.index`.
 
-示例:
+Examples:
 
 ```bash
-# 完整反编译(含优化器)
+# Full decompilation (with optimizer)
 npx tsx src/cli.ts decompile app.abc -o out --quiet
 
-# 大文件按类并行(worker_threads)
+# Per-class parallelism for large files (worker_threads)
 npx tsx src/cli.ts decompile app.abc -o out -j 4 --quiet
 
-# 只看反编译结果,不优化
+# Inspect raw output without optimization
 npx tsx src/cli.ts decompile app.abc -o out --no-simplify --quiet
 
-# 输出到终端
+# Print to the terminal
 npx tsx src/cli.ts decompile app.abc --stdout --quiet
 ```
 
-大文件建议加堆并开启按类并行:
+For large files, raise the heap limit and enable per-class parallelism:
 
 ```bash
 NODE_OPTIONS=--max-old-space-size=4096 \
   npx tsx src/cli.ts decompile app.abc -o out -j 4 --quiet
 ```
 
-`-j` 只并行 simplify(单类耗时占比 >99%);解析与反汇编仍在主线程。单个超大类的 simplify 峰值约 1.4GB,worker 默认堆上限 3GB,可用 `XPANDA_WORKER_HEAP_MB` 调整。
+`-j` only parallelizes simplify (>99% of per-class time); parsing and disassembly stay on the main thread. A single huge class peaks at ~1.4GB during simplify; workers default to a 3GB heap limit, configurable via `XPANDA_WORKER_HEAP_MB`.
 
-## 编程 API
+## Programmatic API
 
 ```ts
 import * as fs from "fs";
@@ -293,34 +294,34 @@ const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync("app.abc")));
 const decompiler = new PandaDecompiler();
 
 for (const cls of pandaFile.getAllClasses()) {
-    const js = decompiler.decompileClass(cls);       // 含 simplify
-    // const js = decompiler.decompileClassRaw(cls); // 不含 simplify
+    const js = decompiler.decompileClass(cls);       // with simplify
+    // const js = decompiler.decompileClassRaw(cls); // without simplify
 }
 ```
 
 ## MCP Server
 
-xpanda 内置 [Model Context Protocol](https://modelcontextprotocol.io) Server,可把反编译能力接入 Claude Code、OpenCode、Cursor 等 AI 客户端,让 agent 按需、增量地分析 `.abc` 与 `.hap`(应用包,内含字节码与资源表):加载 → 浏览类 → 查看元数据 → 反编译单类 → 反汇编对照 → 搜索字符串 → 查询资源。
+xpanda ships a built-in [Model Context Protocol](https://modelcontextprotocol.io) server, so AI clients such as Claude Code, OpenCode and Cursor can drive the decompiler — letting an agent analyze `.abc` and `.hap` files (HarmonyOS app packages containing bytecode and resources) on demand: load → browse classes → inspect metadata → decompile a single class → cross-check disassembly → search strings → query resources.
 
 ```bash
-npm run mcp          # 启动(stdio transport)
-npm run test:mcp     # 端到端测试
+npm run mcp          # start it (stdio transport)
+npm run test:mcp     # end-to-end test
 ```
 
-| 工具 | 作用 |
+| Tool | Purpose |
 |---|---|
-| `abc_load` | 解析 `.abc` 或 `.hap` 文件,返回 `fileId`;hap 返回包摘要与 `.abc` 条目清单 |
-| `hap_read_abc` | 把 hap 内 `.abc` 条目解出为 abc 会话,返回的 `abcFileId` 可用于全部 `abc_*` 工具 |
-| `hap_resources` | 解析 hap 内 `resources.index`,按名字/类型/限定词/ID 查询资源项 |
-| `abc_list_classes` | 分页列出类(名称/方法数/字段数),支持子串过滤 |
-| `abc_get_class` | 类元数据:父类、字段表、方法表(shorty 原型)、import/export |
-| `abc_decompile_class` | 单类反编译为 JavaScript 源码,带降级标志 |
-| `abc_disassemble_method` | 方法级反汇编(基本块 + 跳转目标 + try-catch 归属) |
-| `abc_search_strings` | 字符串池搜索(子串或正则),定位 URL/密钥等线索 |
-| `abc_export` | 全量反编译落盘(等价 CLI decompile) |
-| `abc_close` | 释放会话内存(abc 或 hap) |
+| `abc_load` | Parse an `.abc` or `.hap` file and return a `fileId`; for haps, a package summary plus the list of `.abc` entries |
+| `hap_read_abc` | Extract an `.abc` entry from a hap into an abc session; the returned `abcFileId` works with every `abc_*` tool |
+| `hap_resources` | Parse the hap's `resources.index` and query resources by name / type / limit key / id |
+| `abc_list_classes` | Page through classes (name / method count / field count) with substring filtering |
+| `abc_get_class` | Class metadata: superclass, fields, methods (shorty prototypes), import/export |
+| `abc_decompile_class` | Decompile a single class to JavaScript, with a degradation flag |
+| `abc_disassemble_method` | Method-level disassembly (basic blocks + jump targets + try-catch membership) |
+| `abc_search_strings` | Search the string pool (substring or regex) to locate URLs, keys and other leads |
+| `abc_export` | Decompile everything to disk (equivalent to the CLI decompile) |
+| `abc_close` | Release the session's memory (abc or hap) |
 
-客户端接入:
+Client integration:
 
 ```bash
 # Claude Code
@@ -330,7 +331,7 @@ claude mcp add xpanda -- npx tsx /absolute/path/to/xpanda/src/mcp/server.ts
 opencode mcp add xpanda -- npx tsx /absolute/path/to/xpanda/src/mcp/server.ts
 ```
 
-通用 JSON 配置(Claude Desktop / Cursor 等):
+Generic JSON config (Claude Desktop / Cursor, etc.):
 
 ```json
 {
@@ -343,64 +344,64 @@ opencode mcp add xpanda -- npx tsx /absolute/path/to/xpanda/src/mcp/server.ts
 }
 ```
 
-完整工具说明与设计细节(会话注册表、大输出保护、降级标志)见 [docs/MCP.md](docs/MCP.md)。
+See [docs/MCP.md](docs/MCP.md) for the full tool reference and design notes (session registry, output truncation, degradation flag).
 
-## 目录结构
+## Directory layout
 
 ```text
 src/
-  codec/        Leb128 / MUTF8 / Adler32 编解码
-  file/         .abc 文件格式解析(Header / 索引 / 类 / 方法 / 字面量 / 模块元数据)
-  disasm/       反汇编:opcodes.ts(生成)、统一指令模型、CFG、词法分析
-  decompiler/   Region 归约结构化分析、语句树、指令 handle、支配树、降级方案
-  codegen/      CodeGenerator(包装 ast/ 的 NodeFactory/NodeUtils)
-  ast/          Babel AST 构建与工具
-  simplify/     优化器流水线(AST 清理与语法还原)
-  mcp/          MCP Server(stdio,供 AI 客户端接入)
-  PandaDecompiler.ts  对外总入口
-  cli.ts        命令行
-resources/isa.yaml      ArkCompiler 指令集描述(v24.0.0.0,兼容 v13.0.1.0)
+  codec/        Leb128 / MUTF8 / Adler32 codecs
+  file/         .abc format parsing (header / indexes / classes / methods / literals / module metadata)
+  disasm/       disassembly: generated opcodes.ts, unified instruction model, CFG, lexical analysis
+  decompiler/   Region-based structural analysis, statement tree, instruction handles, dominator tree, fallback
+  codegen/      CodeGenerator (wraps ast/ NodeFactory & NodeUtils)
+  ast/          Babel AST construction and utilities
+  simplify/     optimizer pipeline (AST cleanup and syntax recovery)
+  mcp/          MCP server (stdio, for AI client integration)
+  PandaDecompiler.ts  public entry point
+  cli.ts        command line interface
+resources/isa.yaml      ArkCompiler instruction set description (v24.0.0.0, compatible with v13.0.1.0)
 scripts/gen-opcodes.ts  isa.yaml → src/disasm/opcodes.ts
-test/                   集成测试、样本与快照
-docs/                   架构文档、MCP 文档
+test/                   integration tests, sample files and snapshots
+docs/                   architecture documentation, MCP documentation
 ```
 
-## 反编译流水线
+## Decompilation pipeline
 
 ```text
-.abc 文件
-  → PandaFile(解析 Header / 索引 / 类 / 方法 / 字面量,Adler32 校验)
-  → PandaDisAssembler(字节码 → 指令对象)
-  → PandaIRCFG(基本块 CFG + SplitJump / SplitTryCatch)
-  → PandaLexical(词法环境 / 寄存器类型推断)
-  → MethodHandler(指令 → Babel AST 节点)
-  → StructureAnalysis(Region 归约 → if/while/try 语句树;失败降级 SimpleAnalysis)
-  → NodeFactory.generate(Babel AST → JavaScript)
-  → SimplifyExport(优化器流水线)
-  → JavaScript 输出
+.abc file
+  → PandaFile (parse header / indexes / classes / methods / literals, verify Adler32)
+  → PandaDisAssembler (bytecode → instruction objects)
+  → PandaIRCFG (basic-block CFG + SplitJump / SplitTryCatch)
+  → PandaLexical (lexical environment / register type inference)
+  → MethodHandler (instructions → Babel AST nodes)
+  → StructureAnalysis (Region reduction → if/while/try statement tree; falls back to SimpleAnalysis)
+  → NodeFactory.generate (Babel AST → JavaScript)
+  → SimplifyExport (optimizer pipeline)
+  → JavaScript output
 ```
 
-## 优化器
+## Optimizer
 
-`SimplifyExport` 以定点迭代方式运行,直到 AST 不再变化(最多 5 轮),主要做三件事:
+`SimplifyExport` runs to a fixed point until the AST stops changing (at most 5 rounds). It mainly:
 
-- 清理 `panda_jmp0_reserved_*` 占位符、累加器临时变量和死代码;
-- 还原函数/类、if/switch、循环、模块等高层语法;
-- 重写调用形式,折叠复合赋值、逻辑条件和常见表达式。
+- removes `panda_jmp0_reserved_*` placeholders, accumulator temps and dead code;
+- recovers functions/classes, if/switch, loops and module syntax;
+- rewrites call forms and folds compound assignments, logical conditions and common expressions.
 
-优化器的 pass 顺序、条件极性规则和回归样本见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the pass order, condition-polarity rules and regression samples.
 
-`PandaLexical` 先解析每个方法的词法环境:闭包从定义处的层级开始,`newlexenv` / `stlexvar` / `ldlexvar` 统一换算为绝对层级,再据此还原 `local_L_i` / `sendable_L_i` 变量。
+`PandaLexical` first resolves each method's lexical environments: a closure starts at the depth of its definition site, and `newlexenv` / `stlexvar` / `ldlexvar` are normalized to absolute depths. The optimizer then uses those depths to recover `local_L_i` / `sendable_L_i` variables.
 
-## 测试
+## Tests
 
 ```bash
-npm test           # 反编译 md5.abc / class.abc / aes.abc,快照比较 + Babel 再解析 + 执行校验
-npm run test:mcp   # MCP Server 端到端测试(子进程 + JSON-RPC)
+npm test           # decompile md5.abc / class.abc / aes.abc: snapshot diff, Babel re-parse, runtime checks
+npm run test:mcp   # MCP server end-to-end test (child process + JSON-RPC)
 npm run typecheck  # tsc --noEmit
 ```
 
-测试快照位于:
+Snapshots live in:
 
 ```text
 test/expected/md5.js
@@ -408,24 +409,25 @@ test/expected/class.js
 test/expected/aes.js
 ```
 
-`md5.abc` 的输出会实际执行,并校验 `md5("admin")` 与 Node `crypto` 的结果一致;`aes.abc` 的输出也会执行加解密自检。
+The output for `md5.abc` is executed, and `md5("admin")` is checked against Node's `crypto`. The `aes.abc` output also runs an encrypt/decrypt self-check.
 
-## 已知限制
+## Known limitations
 
-- 以下情况会降级为 `SimpleAnalysis` 线性输出(带 `decompiler_goto` 模拟):
-  - 单方法超过 500 个基本块;
-  - `jeq/jne/jstricteq/jnstricteq` 指令;
-  - 指令 kind 未注册 handle。
-- 降级输出会把词法环境声明提升到函数顶部,以支持跨 `label` 访问;但仍可能包含裸 `break` 作用域问题,或使用 `export ... from` 语法,需要对应的 parser 插件才能解析。
-- 优化器以语义等价和可读性为目标。
+- The following cases degrade to the `SimpleAnalysis` linear output (emulated with `decompiler_goto`):
+  - a single method with more than 500 basic blocks;
+  - the `jeq/jne/jstricteq/jnstricteq` instructions;
+  - an instruction kind with no registered handle.
+- Degraded output hoists lexical-environment declarations to the function top so later labels can access them; it may still contain bare-`break` scoping issues or use `export ... from` syntax that requires the matching parser plugin.
+- The optimizer targets semantic equivalence and readability.
 
-## 参考实现
+## References
 
-字节码格式与指令执行语义参考 OpenHarmony ArkCompiler 官方仓库:
+Bytecode format, instruction semantics, and the `resources.index` layout follow the official OpenHarmony repositories:
 
-- [arkcompiler_runtime_core](https://gitee.com/openharmony/arkcompiler_runtime_core) — ISA 指令集定义(`isa/isa.yaml`)、字节码文件格式与验证器;
-- [arkcompiler_ets_runtime](https://gitee.com/openharmony/arkcompiler_ets_runtime) — 动态语言解释器实现(各指令的执行语义,如 `callthis*withname` 系列)。
+- [arkcompiler_runtime_core](https://gitcode.com/openharmony/arkcompiler_runtime_core) — ISA definitions (`isa/isa.yaml`), bytecode file format, and verifier;
+- [arkcompiler_ets_runtime](https://gitcode.com/openharmony/arkcompiler_ets_runtime) — the dynamic-language interpreter implementation (execution semantics of each instruction, e.g. the `callthis*withname` family);
+- [developtools_global_resource_tool](https://gitcode.com/openharmony/developtools_global_resource_tool) — the `restool` implementation (`ResourceTable::LoadResTable`), used to parse `resources.index`.
 
 ## License
 
-见 [LICENSE](LICENSE)。
+See [LICENSE](LICENSE).

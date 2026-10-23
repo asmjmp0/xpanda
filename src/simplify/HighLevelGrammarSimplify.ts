@@ -84,15 +84,19 @@ export class HighLevelGrammarSimplify implements ISimplify {
         return false;
     }
 
-    private checkEqualAngGetLeftRight(path:NodePath<TYPE.Expression>,arr:Array<[NodePath<TYPE.Expression>,NodePath<TYPE.Expression>]>):void{
+    private checkEqualAngGetLeftRight(path:NodePath<TYPE.Expression>,arr:Array<[NodePath<TYPE.Expression>,NodePath<TYPE.Expression>]>):boolean{
         if (path.isBinaryExpression() && (path.node.operator === '===' || path.node.operator === '==')){
             const result = this.checkEqualAngGetLeftRightBinaryExpression(path);
-            if (result != null) arr.push(result)
-            else return;
+            if (result == null) return false;
+            arr.push(result);
+            return true;
         } else if (TYPE.isLogicalExpression(path.node) && path.node.operator === '||'){
-            this.checkEqualAngGetLeftRight(path.get('left') as NodePath<TYPE.Expression>,arr);
-            this.checkEqualAngGetLeftRight(path.get('right') as NodePath<TYPE.Expression>,arr);
+            // 必须整棵 || 都能拆成比较,否则 switch 会漏掉未识别的分支(例如 `!(a !== b)`
+            // 或带 sequence 的条件),把剩余条件直接丢掉导致语义错误。
+            if (!this.checkEqualAngGetLeftRight(path.get('left') as NodePath<TYPE.Expression>,arr)) return false;
+            return this.checkEqualAngGetLeftRight(path.get('right') as NodePath<TYPE.Expression>,arr);
         }
+        return false;
     }
 
     private checkEqualAngGetLeftRightBinaryExpression(path:NodePath<TYPE.Expression>):[NodePath<TYPE.Expression>,NodePath<TYPE.Expression>]|null{
@@ -149,11 +153,20 @@ export class HighLevelGrammarSimplify implements ISimplify {
         if (value.getStatementParent() !== value) return false;
         const rawSwitchCase:Array<SwitchCaseDesc> = []
         let temp = value;
-        let defaultCase:SwitchCaseDesc = null;
+        let defaultBody:TYPE.Statement[] = null;
+        let partial = false;
         while (true){
             const tempTest = temp.get('test');
             const testResult:Array<[NodePath<TYPE.Expression>,NodePath<TYPE.Expression>]> = [];
-            this.checkEqualAngGetLeftRight(tempTest,testResult);
+            if (!this.checkEqualAngGetLeftRight(tempTest,testResult)) {
+                // 链尾条件拆不出比较(如 `else if (a && b) ...`):把当前 if 及其 else
+                // 链整体放进 default,前面已经识别出的 case 仍可合成 switch。
+                // 第一个条件就拆不出时不能合成(没有任何 case)。
+                if (rawSwitchCase.length === 0) return false;
+                defaultBody = [temp.node];
+                partial = true;
+                break;
+            }
             if (testResult.length === 0) return false;
             const body = temp.get('consequent');
             if (!body.isBlockStatement()) return false;
@@ -169,10 +182,7 @@ export class HighLevelGrammarSimplify implements ISimplify {
             if (tt.isIfStatement()){
                 temp = tt;
             }else if(tt.isBlockStatement()){
-                const oneCase= new SwitchCaseDesc();
-                oneCase.type = "DEFAULT";
-                oneCase.body = tt;
-                defaultCase = oneCase;
+                defaultBody = tt.node.body;
                 break;
             }else if (tt.node === null){
                 break;
@@ -185,7 +195,8 @@ export class HighLevelGrammarSimplify implements ISimplify {
                 return false;
         }
         //build switch statement
-        const questionMarkStatement = this.canTransform2questionMarkStatement(rawSwitchCase);
+        // 尾部还有无法拆成 case 的 else-if 时不能折成 ??(会丢掉后续分支)
+        const questionMarkStatement = partial ? null : this.canTransform2questionMarkStatement(rawSwitchCase);
         if (questionMarkStatement != null){
             value.replaceWith(questionMarkStatement);
             return true;
@@ -202,8 +213,8 @@ export class HighLevelGrammarSimplify implements ISimplify {
             switchCases.push(TYPE.switchCase(desc.right.node,desc.body.node.body))
         }
         const switchStatement = TYPE.switchStatement(rawSwitchCase[0].left.node,switchCases)
-        if (defaultCase != null){
-            switchCases.push(TYPE.switchCase(null,defaultCase.body.node.body))
+        if (defaultBody != null){
+            switchCases.push(TYPE.switchCase(null,defaultBody))
         }
         value.replaceWith(switchStatement);
         return true;

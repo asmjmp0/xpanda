@@ -2,6 +2,7 @@
 import * as generator from '@babel/generator';
 import * as TYPE from '@babel/types';
 import * as parser from '@babel/parser'
+import { formatLongLogicalChains } from './FormatCode';
 
 export class NodeFactory {
     public static parse(code:string):TYPE.Program{
@@ -9,11 +10,12 @@ export class NodeFactory {
     }
 
     public static generate(node:TYPE.Node):string{
-        return generator.default(node,{
+        const code = generator.default(node,{
             jsescOption:{
                 minimal:true,
             },
         }).code;
+        return formatLongLogicalChains(code);
     }
     public static thisExpressionNode():TYPE.ThisExpression{
         return TYPE.thisExpression();

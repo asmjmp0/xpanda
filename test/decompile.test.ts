@@ -9,6 +9,7 @@ import { NodeFactory } from "../src/ast/NodeFactory";
 import { SimplifyExport } from "../src/simplify/SimplifyExport";
 import { HapFile } from "../src/hap/HapFile";
 import { ResourceIndexFile } from "../src/res/ResourceIndexFile";
+import { formatLongLogicalChains } from "../src/ast/FormatCode";
 
 /**
  * 集成测试:
@@ -531,6 +532,102 @@ function f(acc, v0) {
 }
 
 /**
+ * 回归:合并后的子逻辑区域不能再追加 `acc`/`!acc` 后缀。
+ *
+ * 源码 `return name === A || name === B || ...` 被 lower 成多个 `jeqz` 跳转,
+ * `simplifyConditionalSequence` 从尾向前合并成 `||`。旧实现把子逻辑区域当成
+ * 普通 region,在它的表达式后再追加一个 `acc` 读取:
+ *   name === QUESTION || ((name === ANSWER, acc) || ...)
+ * 这一方面把 `acc` 里最后一个比较结果覆盖到条件值上(语义错误),另一方面
+ * 留下 `(acc = E, !(E))` 这类死赋值,最终输出不可读。
+ * 修复后子逻辑区域直接作为操作数,整体应折成一条 `===` 的 `||` 链。
+ */
+function verifyZhihuAppDestination(): void {
+    const hapPath = path.join(__dirname, "resources", "zhihupp0.59.hap");
+    const hap = new HapFile(new Uint8Array(fs.readFileSync(hapPath)));
+    const pandaFile = new PandaFile(hap.readEntry("ets/modules.abc")!);
+    const clazz = pandaFile.getAllClasses().find((c) => c.name.content.includes("navigation/AppDestination"));
+    if (!clazz) throw new Error("hap: 未找到 AppDestination");
+
+    const code = new PandaDecompiler().decompileClass(clazz);
+    NodeFactory.parse(code);
+    const start = code.indexOf("shouldReloadAfterAuthentication = function");
+    if (start < 0) throw new Error(`逻辑条件链: 未找到 shouldReloadAfterAuthentication\n${code}`);
+    const body = code.slice(start, code.indexOf("\n};", start));
+    if (!body.includes("return p0.name === AppDestinationName.QUESTION\n    || p0.name === AppDestinationName.ANSWER")) {
+        throw new Error(`逻辑条件链: 未折成可读的多行 || 链\n${body}`);
+    }
+    if (!body.includes("p0.name === AppDestinationName.PIN_DRAFTS;")) {
+        throw new Error(`逻辑条件链: 链尾条件丢失\n${body}`);
+    }
+    if (/\bacc\b|!\(/.test(body)) {
+        throw new Error(`逻辑条件链: 仍残留 acc 物化/取反\n${body}`);
+    }
+
+    // if 的 test 读取是旧值最后用法 + HighLevel 合成的 `v0 = !X` 都要能继续折成短路表达式
+    const queryStart = code.indexOf("isSafeSearchDestinationQuery = function");
+    const queryBody = queryStart < 0 ? "" : code.slice(queryStart, code.indexOf("\n};", queryStart));
+    if (!queryBody.includes('return typeof p0 === "string" && p0.length <= 200 && !new RegExp(')) {
+        throw new Error(`逻辑条件链: isSafeSearchDestinationQuery 未折成短路表达式\n${queryBody}`);
+    }
+    if (queryBody.includes("if (")) {
+        throw new Error(`逻辑条件链: isSafeSearchDestinationQuery 仍残留条件物化\n${queryBody}`);
+    }
+
+    const expectedPath = path.join(__dirname, "expected", "zhihu-app-destination.js");
+    const expected = fs.readFileSync(expectedPath, "utf-8");
+    if (code !== expected) {
+        throw new Error(`AppDestination: 输出与快照不一致\n${firstDifference(expected, code)}`);
+    }
+}
+
+/**
+ * 回归:switch 合成必须保证整个 `||` test 都能拆成 case。
+ * 旧实现只收集能识别的比较项,把 `x === "a" || flag` 里的 `flag` 直接丢掉,
+ * 生成只比较 `x` 的 switch,改变语义。无法完整拆分时应保持 if 链。
+ */
+function verifySwitchTransformRequiresAllCases(): void {
+    const partial = NodeFactory.parse(`
+function f(x, flag) {
+  if (x === "a" || flag === true) {
+    return 1;
+  } else if (x === "b") {
+    return 2;
+  } else {
+    return 3;
+  }
+}
+`);
+    SimplifyExport.simplify(partial);
+    const partialCode = NodeFactory.generate(partial);
+    if (partialCode.includes("switch (")) {
+        throw new Error(`switch 合成: 无法完整拆分的 || 条件不应合成 switch\n${partialCode}`);
+    }
+    if (!partialCode.includes("flag === true")) {
+        throw new Error(`switch 合成: 未识别的条件被丢弃\n${partialCode}`);
+    }
+
+    const complete = NodeFactory.parse(`
+function f(x) {
+  if (x === "a" || x === "b") {
+    return 1;
+  } else if (x === "c") {
+    return 2;
+  } else {
+    return 3;
+  }
+}
+`);
+    SimplifyExport.simplify(complete);
+    const completeCode = NodeFactory.generate(complete);
+    for (const expected of ['case "a":', 'case "b":', 'case "c":', "default:"]) {
+        if (!completeCode.includes(expected)) {
+            throw new Error(`switch 合成: 缺少 ${expected}\n${completeCode}`);
+        }
+    }
+}
+
+/**
  * 回归:AbsoluteUrlParser 的第二个条件。
  * 源码是 `if (match === null || match[2].length === 0) return undefined;`,
  * 旧输出会把 `v1 = 0, v2 = 2, acc = !(match[2].length === 0)` 留在 test 里。
@@ -619,6 +716,33 @@ function f(item) {
     }
 }
 
+/**
+ * 回归:超长逻辑链的输出折行。
+ *   - 超过 120 字符的行在顶层 `||` / `&&` / `??` 前折行,新行以操作符开头;
+ *   - 字符串里的 `||`、顶层三目都不参与折行。
+ */
+function verifyLogicalChainFormatting(): void {
+    const operands = Array.from({ length: 30 }, (_, i) => `value === AppDestinationName.N${i}`);
+    const formatted = formatLongLogicalChains(`  return ${operands.join(" || ")};`);
+    const lines = formatted.split("\n");
+    if (lines.length !== operands.length || !lines[1].startsWith("    || value === AppDestinationName.N1")) {
+        throw new Error(`格式化: 逻辑链未按操作符折行\n${formatted}`);
+    }
+    if (!lines[lines.length - 1].endsWith(";")) {
+        throw new Error(`格式化: 语句结尾丢失\n${formatted}`);
+    }
+
+    const stringLine = `  return "${"x || ".repeat(40)}";`;
+    if (formatLongLogicalChains(stringLine) !== stringLine) {
+        throw new Error(`格式化: 字符串内部的 || 不应折行\n${formatLongLogicalChains(stringLine)}`);
+    }
+
+    const ternaryLine = `  return ${operands.join(" || ")} ? 1 : 2;`;
+    if (formatLongLogicalChains(ternaryLine) !== ternaryLine) {
+        throw new Error(`格式化: 顶层三目条件不应折行\n${formatLongLogicalChains(ternaryLine)}`);
+    }
+}
+
 async function main(): Promise<void> {
     console.log("[test] simplify return liveness");
     verifyReturnValueLiveness();
@@ -674,6 +798,18 @@ async function main(): Promise<void> {
 
     console.log("[test] hap AbsoluteUrlParser (zhihupp0.59.hap)");
     verifyZhihuAbsoluteUrlParser();
+    console.log("    ok");
+
+    console.log("[test] hap AppDestination (zhihupp0.59.hap)");
+    verifyZhihuAppDestination();
+    console.log("    ok");
+
+    console.log("[test] simplify switch transform completeness");
+    verifySwitchTransformRequiresAllCases();
+    console.log("    ok");
+
+    console.log("[test] output logical chain formatting");
+    verifyLogicalChainFormatting();
     console.log("    ok");
 
     const samples: Sample[] = [
