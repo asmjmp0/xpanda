@@ -2,7 +2,18 @@ import { Program } from "@babel/types";
 import { ISimplify } from "./ISimplify";
 import traverse, { NodePath } from "@babel/traverse";
 import * as TYPE from "@babel/types";
-import { collectAssignedNames, collectReadNames, isPureExpression, isTempName, scanCapturedRead, tempReadBeforeWrite } from "./AstUtils";
+import {
+    collectAssignedNames,
+    collectReadNames,
+    isClassLike,
+    isDeclarationValue,
+    isFunctionLike,
+    isPureExpression,
+    isTempName,
+    scanCapturedRead,
+    tempReadBeforeWrite,
+    walkNode,
+} from "./AstUtils";
 import { SyntaxRewriteSimplify } from "./SyntaxRewriteSimplify";
 
 /**
@@ -12,9 +23,16 @@ import { SyntaxRewriteSimplify } from "./SyntaxRewriteSimplify";
  *
  *   if ((acc = JSON.stringify(p0), v6 = acc, v13 = acc, v13 !== null) && ...) { ... }
  *
- * 这里做两件安全的事:
- *   1. 删除 `acc = !(...)` 这类只作为临时计算、且两个分支都会重新赋值 acc 的中间赋值;
- *   2. 把 test 中无条件求值的 SequenceExpression 前缀提升到 if 之前,
+ * 这里做几件安全的事(1/2 由末端的 foldMaterializedTestArtifacts 驱动,见下):
+ *   1. 折叠 test 序列里的“调用结果物化链”:
+ *        (acc = call(...), v3 = acc, acc === v2)
+ *      → (v3 = call(...), v3 === v2)     [v3 之后不再读取时进一步折叠]
+ *      → (call(...) === v2)
+ *      并删除序列里只写不读的 `acc = 纯表达式` 残留(如 `A || !(acc = X !== Y, X !== Y)`);
+ *   2. 删除 if 前一条对 test 的物化死赋值:`acc = !(v3 !== undefined); if (v3 !== undefined && ...)`,
+ *      要求 test 对 acc 的每次读取之前都在 test 内部重新赋值过 acc;
+ *   3. 删除 test 里只用于计算条件、且两个分支都会重新赋值 acc 的中间赋值;
+ *   4. 把 test 中无条件求值的 SequenceExpression 前缀提升到 if 之前,
  *      让 TempVariableSimplify 在后续轮次里继续做复制传播/死存储消除。
  *
  * 只处理 if 的 test(以及其中 `&&`/`||` 的左侧),不处理循环:
@@ -43,6 +61,31 @@ export class ConditionSimplify implements ISimplify {
                 const argument = path.node.argument;
                 if (!argument || !TYPE.isConditionalExpression(argument)) return;
                 if (this.foldNegationChain(path)) changed = true;
+            },
+        });
+        return changed;
+    }
+
+    /**
+     * 供流水线末端调用(NullishCoalescingSimplify 之后):折叠条件物化残留。
+     *
+     *   acc = !(v3 !== undefined);
+     *   if (v3 !== undefined && (acc = call(...), v3 = acc, acc === v2)) ...
+     * → if (v3 !== undefined && call(...) === v2) ...
+     *
+     * 必须放在定点迭代之后:`acc = 比较表达式` 这类只写不读的元素可能是
+     * nullish 物化链等后续 pass 的模式输入(ContentFilterRuntimeStore 回归),
+     * 只有在所有消费它的 pass 跑完之后,真正无消费的残留才可以删除。
+     */
+    static foldMaterializedTestArtifacts(node: Program): boolean {
+        const pass = new ConditionSimplify();
+        let changed = false;
+        traverse(TYPE.file(node), {
+            IfStatement: (path) => {
+                const parent = path.parentPath;
+                if (!parent || (!parent.isBlockStatement() && !parent.isProgram())) return;
+                if (pass.foldTestSequenceChains(path)) changed = true;
+                if (pass.removeDeadConditionStatement(path)) changed = true;
             },
         });
         return changed;
@@ -241,6 +284,404 @@ export class ConditionSimplify implements ISimplify {
             }
         }
         return changed;
+    }
+
+    // ---------------------------------------------------------- test 序列物化链折叠
+
+    /**
+     * 规则A:删除 if 前一条对 test 的物化死赋值:
+     *   acc = !(v3 !== undefined);
+     *   if (v3 !== undefined && (acc = ..., ...)) ...
+     * callruntime.isfalse 物化的取反值只喂给 jnez,从不被真正消费。要求:test
+     * 按求值顺序对 name 的每次读取之前都存在 test 内部的写入;name 未被闭包
+     * 捕获;语句之后(含循环回边)先写后读。
+     */
+    private removeDeadConditionStatement(path: NodePath<TYPE.IfStatement>): boolean {
+        const parent = path.parentPath;
+        if (!parent || (!parent.isBlockStatement() && !parent.isProgram())) return false;
+        const list = parent.node.body;
+        const index = list.indexOf(path.node);
+        if (index <= 0) return false;
+        const prev = list[index - 1];
+        if (!TYPE.isExpressionStatement(prev) || !TYPE.isAssignmentExpression(prev.expression)) return false;
+        const assign = prev.expression;
+        if (assign.operator !== "=" || !TYPE.isIdentifier(assign.left)) return false;
+        const name = assign.left.name;
+        // 函数/类表达式的值经 callee 调用消费时 isReferenced 不可见(v4(...)),
+        // 无法证明值已死,一律不删
+        if (!isTempName(name) || !isPureExpression(assign.right) || isDeclarationValue(assign.right)) return false;
+
+        // test 含条件表达式时求值顺序分支化,保守放弃
+        let sawConditional = false;
+        walkNode(path.node.test, (n) => {
+            if (sawConditional) return false;
+            if (isFunctionLike(n) || isClassLike(n)) return false;
+            if (TYPE.isConditionalExpression(n)) sawConditional = true;
+            return !sawConditional;
+        });
+        if (sawConditional) return false;
+
+        const order = this.evaluationOrder(path.node.test);
+        let written = false;
+        for (const node of order) {
+            if (collectReadNames(node).has(name) && !written) return false;
+            if (TYPE.isAssignmentExpression(node) && node.operator === "="
+                && TYPE.isIdentifier(node.left) && node.left.name === name) {
+                written = true;
+            }
+        }
+
+        const fnParent = path.getFunctionParent();
+        const scope: TYPE.Node = fnParent ? fnParent.node : path.scope.path.node;
+        if (scanCapturedRead(scope, null, new Set([name]), new Set(), false)) return false;
+        if (!this.nameDeadAfterStatement(path, name)) return false;
+        (parent.get("body") as NodePath[])[index - 1].remove();
+        return true;
+    }
+
+    /**
+     * 对 if 的 test 反复应用序列折叠规则,直到不动点:
+     *   B: (X = E, ..., Y = X, ...读X...) → (..., Y = E, ...读X改读Y...),删除 X = E
+     *   C: (Y = E, E'读Y一次) 且 Y 之后不可观察 → (E'中Y替换为E),删除 Y = E
+     *   1: (X = 纯表达式, ...) 且 X 之后不可观察 → 直接删除该元素
+     * 每步只应用一处,靠外层循环收敛;上限防止意外不收敛。
+     */
+    private foldTestSequenceChains(path: NodePath<TYPE.IfStatement>): boolean {
+        let changed = false;
+        for (let round = 0; round < 24; round++) {
+            if (!this.applyOneSequenceFold(path)) break;
+            changed = true;
+        }
+        return changed;
+    }
+
+    private applyOneSequenceFold(path: NodePath<TYPE.IfStatement>): boolean {
+        const sequences: TYPE.SequenceExpression[] = [];
+        walkNode(path.node.test, (n) => {
+            if (isFunctionLike(n) || isClassLike(n)) return false;
+            if (TYPE.isSequenceExpression(n)) sequences.push(n);
+            return true;
+        });
+        for (const seq of sequences) {
+            if (this.foldAliasChainInSequence(seq, path)) return true;
+        }
+        for (const seq of sequences) {
+            if (this.foldDeadAssignCompare(seq, path)) return true;
+        }
+        for (const seq of sequences) {
+            if (this.dropDeadSaveElement(seq, path)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * 规则B:调用结果经 acc 中转再存入临时变量的物化链。
+     *   (acc = call(...), v3 = acc, acc === v2)
+     * → (v3 = call(...), v3 === v2)
+     * 前提:X 的赋值元素与 `Y = X` 之间没有对 X 的读写;之后只读不写 X(读取全部改写为 Y);
+     * E 不读 X(删除 X 的赋值后 E 里的 X 会变成更旧的值);X/Y 未被闭包捕获;
+     * X 的值在本语句之后不可观察(尾部 + 回边前缀都先写后读)。
+     */
+    private foldAliasChainInSequence(seq: TYPE.SequenceExpression, path: NodePath<TYPE.IfStatement>): boolean {
+        const elements = seq.expressions;
+        const fnParent = path.getFunctionParent();
+        const scope: TYPE.Node = fnParent ? fnParent.node : path.scope.path.node;
+        for (let j = 1; j < elements.length; j++) {
+            const copy = elements[j];
+            if (!TYPE.isAssignmentExpression(copy) || copy.operator !== "=") continue;
+            if (!TYPE.isIdentifier(copy.left) || !TYPE.isIdentifier(copy.right)) continue;
+            const yName = copy.left.name;
+            const xName = copy.right.name;
+            if (!isTempName(xName) || !isTempName(yName) || xName === yName) continue;
+
+            // 向前找 X 的赋值元素;途中出现对 X 的其他读写即放弃
+            let i = -1;
+            let yWrittenBetween = false;
+            for (let k = j - 1; k >= 0; k--) {
+                const e = elements[k];
+                if (TYPE.isAssignmentExpression(e) && e.operator === "="
+                    && TYPE.isIdentifier(e.left) && e.left.name === xName) {
+                    if (collectReadNames(e).has(xName)) break; // X = ...X... 自引用,不能搬
+                    i = k;
+                    break;
+                }
+                if (collectReadNames(e).has(xName) || collectAssignedNames(e).has(xName)) break;
+                if (collectAssignedNames(e).has(yName)) yWrittenBetween = true;
+            }
+            if (i < 0) continue;
+            // i 与 j 之间写 Y 会让搬移后的 E 读到新 Y,语义改变
+            if (yWrittenBetween) continue;
+            const value = (elements[i] as TYPE.AssignmentExpression).right;
+            if (collectReadNames(value).has(xName)) continue;
+            // X 的 callee 调用读取对 isReferenced 不可见,函数/类值无法证明已死,不搬
+            if (isDeclarationValue(value)) continue;
+
+            // j 之后:X 只读不写(读取即将改写为 Y)
+            let blocked = false;
+            for (let k = j + 1; k < elements.length; k++) {
+                if (collectAssignedNames(elements[k]).has(xName)) { blocked = true; break; }
+            }
+            if (blocked) continue;
+            if (scanCapturedRead(scope, null, new Set([xName]), new Set(), false)) continue;
+            const last = elements[elements.length - 1];
+            if (this.testReadsNameAfter(path.node.test, last, xName)) continue;
+            if (!this.nameDeadAfterStatement(path, xName)) continue;
+
+            for (let k = j + 1; k < elements.length; k++) {
+                this.replaceIdentifierReads(elements[k], xName, TYPE.identifier(yName));
+            }
+            copy.right = value;
+            elements.splice(i, 1);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * 规则C:`(Y = E, E'读Y恰好一次, ...)` 且 Y 在本语句之后不可观察
+     * → 把 E' 里的那次读取替换为 E 节点本身(搬移,不复制),删除 `Y = E`。
+     * E 允许不纯(调用只求值一次,位置不变),也允许读取 Y(替换点读到的
+     * 本来就是 E 的值,而 E 里的 Y 仍是旧值,求值顺序一致)。
+     */
+    private foldDeadAssignCompare(seq: TYPE.SequenceExpression, path: NodePath<TYPE.IfStatement>): boolean {
+        const elements = seq.expressions;
+        const fnParent = path.getFunctionParent();
+        const scope: TYPE.Node = fnParent ? fnParent.node : path.scope.path.node;
+        for (let i = 0; i < elements.length - 1; i++) {
+            const assign = elements[i];
+            if (!TYPE.isAssignmentExpression(assign) || assign.operator !== "=") continue;
+            if (!TYPE.isIdentifier(assign.left)) continue;
+            const yName = assign.left.name;
+            if (!isTempName(yName)) continue;
+            const next = elements[i + 1];
+            if (this.countIdentifierReads(next, yName) !== 1) continue;
+            let blocked = false;
+            for (let k = i + 2; k < elements.length; k++) {
+                if (collectReadNames(elements[k]).has(yName) || collectAssignedNames(elements[k]).has(yName)) {
+                    blocked = true;
+                    break;
+                }
+            }
+            if (blocked) continue;
+            if (scanCapturedRead(scope, null, new Set([yName]), new Set(), false)) continue;
+            if (this.testReadsNameAfter(path.node.test, next, yName)) continue;
+            if (!this.nameDeadAfterStatement(path, yName)) continue;
+            const site = this.findIdentifierRead(next, yName);
+            if (!site) continue;
+            if (site.index >= 0) {
+                (site.container[site.key] as TYPE.Expression[])[site.index] = assign.right;
+            } else {
+                site.container[site.key] = assign.right;
+            }
+            elements.splice(i, 1);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * 规则1:删除 test 序列里只写不读的 `X = 纯表达式` 元素(不能是最后一个元素,
+     * 最后一个元素的值就是条件)。典型残留:`A || !(acc = p0.name !== T, p0.name !== T)`
+     * 里的 `acc = ...`,删除后 `!` 下的比较可被 test 归一化反转为 `===`。
+     */
+    private dropDeadSaveElement(seq: TYPE.SequenceExpression, path: NodePath<TYPE.IfStatement>): boolean {
+        const elements = seq.expressions;
+        const fnParent = path.getFunctionParent();
+        const scope: TYPE.Node = fnParent ? fnParent.node : path.scope.path.node;
+        for (let i = 0; i < elements.length - 1; i++) {
+            const assign = elements[i];
+            if (!TYPE.isAssignmentExpression(assign) || assign.operator !== "=") continue;
+            if (!TYPE.isIdentifier(assign.left)) continue;
+            const xName = assign.left.name;
+            if (!isTempName(xName)) continue;
+            // 函数/类表达式的值经 callee 调用消费时 isReferenced 不可见,无法证明已死
+            if (!isPureExpression(assign.right) || isDeclarationValue(assign.right)) continue;
+            const next = elements[i + 1];
+            if (this.testReadsNameAfter(path.node.test, next, xName)) continue;
+            if (scanCapturedRead(scope, null, new Set([xName]), new Set(), false)) continue;
+            if (!this.nameDeadAfterStatement(path, xName)) continue;
+            // 消费分支在尾部之前执行:分支里“确定写入前读取 X”则保留该元素
+            const ifNode = path.node;
+            if (this.branchReadsBeforeWrite(this.branchStatements(ifNode.consequent), xName)) continue;
+            if (ifNode.alternate && this.branchReadsBeforeWrite(this.branchStatements(ifNode.alternate), xName)) continue;
+            elements.splice(i, 1);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * 语句序列路径上,name 是否在“确定写入”之前被读取。
+     * if 的两个分支互斥,写入只覆盖本分支,需要按路径递归检查
+     * (如 else-if 链里某分支 `acc = ...; return acc` 属于先写后读,是安全的)。
+     */
+    private branchReadsBeforeWrite(stmts: TYPE.Statement[], name: string): boolean {
+        for (const stmt of stmts) {
+            if (this.definitelyWrites(stmt, name)) return false;
+            if (TYPE.isIfStatement(stmt)) {
+                if (collectReadNames(stmt.test).has(name)) return true;
+                if (this.branchReadsBeforeWrite(this.branchStatements(stmt.consequent), name)) return true;
+                if (stmt.alternate && this.branchReadsBeforeWrite(this.branchStatements(stmt.alternate), name)) return true;
+                continue;
+            }
+            if (collectReadNames(stmt).has(name)) return true;
+        }
+        return false;
+    }
+
+    private branchStatements(stmt: TYPE.Statement): TYPE.Statement[] {
+        return TYPE.isBlockStatement(stmt) ? stmt.body : [stmt];
+    }
+
+    /** 求值顺序上 fromNode 之后是否读取了 name;拿不到位置时保守按读取处理。 */
+    private testReadsNameAfter(test: TYPE.Expression, fromNode: TYPE.Node, name: string): boolean {
+        const order = this.evaluationOrder(test);
+        // flatten 只压叶子节点,复合元素(二元/调用等)本身不在 order 里,
+        // 用元素子树在求值序中的最大位置作为锚点
+        const inner = new Set<TYPE.Node>();
+        walkNode(fromNode, (n) => {
+            inner.add(n);
+            return !isFunctionLike(n) && !isClassLike(n);
+        });
+        let pos = -1;
+        for (let i = 0; i < order.length; i++) {
+            if (inner.has(order[i])) pos = i;
+        }
+        if (pos < 0) return true;
+        for (let i = pos + 1; i < order.length; i++) {
+            if (collectReadNames(order[i]).has(name)) return true;
+        }
+        return false;
+    }
+
+    /** 语句之后(含循环回边前缀)name 是否在确定写入前被读取;是则值仍可观察。 */
+    private nameDeadAfterStatement(path: NodePath<TYPE.IfStatement>, name: string): boolean {
+        for (const segment of this.collectTailSegments(path)) {
+            if (tempReadBeforeWrite(segment, 0, name)) return false;
+        }
+        return true;
+    }
+
+    /**
+     * 语句之后按执行序可能读到的位置,分成若干线性段;每段独立做“先读后写”检查。
+     * 内层循环的回边用“循环体开头到当前语句之前”的前缀表示(下轮迭代该前缀
+     * 先于任何后续读取执行);循环 test/update 作为尾段;外层循环保守整环纳入。
+     */
+    private collectTailSegments(stmtPath: NodePath<TYPE.IfStatement>): TYPE.Statement[][] {
+        const segments: TYPE.Statement[][] = [];
+        const self = stmtPath.node;
+        let child: NodePath = stmtPath;
+        let cur: NodePath | null = stmtPath.parentPath;
+        let innermostLoopHandled = false;
+        while (cur) {
+            if (cur.isBlockStatement() || cur.isProgram()) {
+                const body = cur.node.body;
+                const idx = body.indexOf(child.node as TYPE.Statement);
+                if (idx >= 0) segments.push(body.slice(idx + 1));
+            } else if (cur.isWhileStatement() || cur.isForStatement()
+                || cur.isForInStatement() || cur.isForOfStatement()) {
+                if (!innermostLoopHandled) {
+                    innermostLoopHandled = true;
+                    const loopTestStmts: TYPE.Statement[] = [];
+                    if (cur.isForStatement()) {
+                        if (cur.node.test) loopTestStmts.push(TYPE.expressionStatement(cur.node.test));
+                        if (cur.node.update) loopTestStmts.push(TYPE.expressionStatement(cur.node.update));
+                    } else if (cur.isWhileStatement() && cur.node.test) {
+                        loopTestStmts.push(TYPE.expressionStatement(cur.node.test));
+                    }
+                    segments.push(loopTestStmts);
+                    const body = cur.node.body;
+                    if (TYPE.isBlockStatement(body)) {
+                        const idx = body.body.findIndex((s) => this.statementContains(s, self));
+                        if (idx > 0) segments.push(body.body.slice(0, idx));
+                    }
+                } else {
+                    segments.push([cur.node]);
+                }
+            } else if (cur.isDoWhileStatement()) {
+                // do-while 的 body 会重新执行,保守整环纳入
+                segments.push([cur.node]);
+                innermostLoopHandled = true;
+            } else if (cur.isSwitchStatement()) {
+                const cases = cur.node.cases;
+                const caseIndex = cases.findIndex((c) => c.consequent.includes(child.node as TYPE.Statement));
+                if (caseIndex >= 0) {
+                    for (let s = caseIndex; s < cases.length; s++) segments.push(cases[s].consequent);
+                }
+            }
+            if (cur.isFunction() || cur.isProgram()) break;
+            child = cur;
+            cur = cur.parentPath;
+        }
+        return segments;
+    }
+
+    private statementContains(stmt: TYPE.Statement, target: TYPE.Node): boolean {
+        let found = false;
+        walkNode(stmt, (n) => {
+            if (found) return false;
+            if (n === target) {
+                found = true;
+                return false;
+            }
+            return !isFunctionLike(n) && !isClassLike(n);
+        });
+        return found;
+    }
+
+    /** 统计节点内标识符 name 的读取次数(跳过嵌套函数/类)。 */
+    private countIdentifierReads(node: TYPE.Node, name: string): number {
+        let count = 0;
+        walkNode(node, (n, parent) => {
+            if (isFunctionLike(n) || isClassLike(n)) return false;
+            if (TYPE.isIdentifier(n) && n.name === name && parent && TYPE.isReferenced(n, parent)) count++;
+            return true;
+        });
+        return count;
+    }
+
+    /** 找到节点内标识符 name 的第一处读取,返回其所在容器与位置,便于原地替换。 */
+    private findIdentifierRead(
+        node: TYPE.Node,
+        name: string,
+    ): { container: { [key: string]: any }; key: string; index: number } | null {
+        let site: { container: { [key: string]: any }; key: string; index: number } | null = null;
+        const visit = (current: TYPE.Node, parent: TYPE.Node | null, key: string | null): boolean => {
+            if (site) return false;
+            if (isFunctionLike(current) || isClassLike(current)) return false;
+            if (TYPE.isIdentifier(current) && current.name === name && parent && key !== null
+                && TYPE.isReferenced(current, parent)) {
+                const holder = parent as { [key: string]: any };
+                const slot = holder[key];
+                // 键可能对应数组(expressions/arguments 等),记录元素下标
+                const index = Array.isArray(slot) ? slot.indexOf(current) : -1;
+                site = { container: holder, key, index };
+                return false;
+            }
+            return true;
+        };
+        walkNode(node, visit as any);
+        return site;
+    }
+
+    /** 原地把节点内标识符 name 的所有读取替换为 replacement(跳过嵌套函数/类)。 */
+    private replaceIdentifierReads(node: TYPE.Node, name: string, replacement: TYPE.Identifier): void {
+        const visit = (current: TYPE.Node, parent: TYPE.Node | null, key: string | null): boolean => {
+            if (isFunctionLike(current) || isClassLike(current)) return false;
+            if (TYPE.isIdentifier(current) && current.name === name && parent && key !== null
+                && TYPE.isReferenced(current, parent)) {
+                const holder = parent as { [key: string]: any };
+                const slot = holder[key];
+                if (Array.isArray(slot)) {
+                    slot[slot.indexOf(current)] = TYPE.identifier(replacement.name);
+                } else {
+                    holder[key] = TYPE.identifier(replacement.name);
+                }
+                return false;
+            }
+            return true;
+        };
+        walkNode(node, visit as any);
     }
 
     private hoistTestPrefix(path: NodePath<TYPE.IfStatement>): boolean {

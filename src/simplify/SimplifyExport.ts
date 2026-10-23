@@ -54,6 +54,10 @@ export class SimplifyExport {
         TempVariableSimplify.foldShortCircuitAssignments(node);
         // HighLevelGrammarSimplify 会把 nullish 检查合成 switch;这里还原成 ??
         new NullishCoalescingSimplify().simplify(node);
+        // 条件物化残留要在所有“消费它”的 pass(nullish 合成、短路折叠等)跑完后再清:
+        //   acc = !(v3 !== undefined); if (v3 !== undefined && (acc = call(), v3 = acc, acc === v2))
+        // → if (v3 !== undefined && call() === v2);以及 `A || !(acc = X !== Y, X !== Y)` 的死保存元素
+        ConditionSimplify.foldMaterializedTestArtifacts(node);
         // HighLevelGrammarSimplify 的三目合成(`if (C) { X = A } else { X = B }` →
         // `X = C ? A : B`)发生在定点迭代之后,轮内的返回值折叠已经错过;
         // 这里补一轮 `X = E; return X` 折叠,并清理随之失去引用的声明。

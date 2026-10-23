@@ -9,7 +9,7 @@ import { decodeAppDestination } from "@normalized:N&&&core/src/main/ets/navigati
 let LatestOperationGuard, StartupDestinationChannel, appDestinationIdentity, findAppDestinationStackIndex, shouldPushAppDestination, startupDestinationChannel, toAppDestination;
 appDestinationIdentity = function (p0) {
   let v2, acc;
-  if (p0.name === AppDestinationName.QUESTION || !(acc = p0.name !== AppDestinationName.ANSWER, p0.name !== AppDestinationName.ANSWER) || !(acc = p0.name !== AppDestinationName.ARTICLE, p0.name !== AppDestinationName.ARTICLE) || !(acc = p0.name !== AppDestinationName.VIDEO, p0.name !== AppDestinationName.VIDEO) || !(acc = p0.name !== AppDestinationName.PIN, p0.name !== AppDestinationName.PIN) || !(acc = p0.name !== AppDestinationName.PEOPLE, p0.name !== AppDestinationName.PEOPLE) || !(acc = p0.name !== AppDestinationName.COLLECTION, p0.name !== AppDestinationName.COLLECTION) || p0.name === AppDestinationName.COLLECTIONS) {
+  if (p0.name === AppDestinationName.QUESTION || p0.name === AppDestinationName.ANSWER || p0.name === AppDestinationName.ARTICLE || p0.name === AppDestinationName.VIDEO || p0.name === AppDestinationName.PIN || p0.name === AppDestinationName.PEOPLE || p0.name === AppDestinationName.COLLECTION || p0.name === AppDestinationName.COLLECTIONS) {
     return "" + p0.name + ":" + encodeURIComponent(p0.id) + "";
   } else if (p0.name === AppDestinationName.WRITE_ANSWER) {
     v2 = p0.answerId ?? "";
@@ -31,12 +31,11 @@ appDestinationIdentity = function (p0) {
   }
 };
 findAppDestinationStackIndex = function (p0, p1) {
-  let v1, v2, v3 /*decodeAppDestination*/, acc;
+  let v1, v2, v3 /*decodeAppDestination*/;
   v1 = 0;
   for (v2 = appDestinationIdentity(p1); v1 < p0.length; v1 += 1) {
     v3 = p0[v1].param === undefined ? decodeAppDestination(p0[v1].name, new Object()) : decodeAppDestination(p0[v1].name, p0[v1].param);
-    acc = !(v3 !== undefined);
-    if (v3 !== undefined && (acc = appDestinationIdentity(v3), v3 = acc, acc === v2)) {
+    if (v3 !== undefined && appDestinationIdentity(v3) === v2) {
       return v1;
     }
   }
