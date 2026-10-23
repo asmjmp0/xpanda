@@ -107,7 +107,7 @@ local_0_5 = 4000;
       local_2_1 = p1;
       local_2_0 = catalogUrlWaves(p0);
       acc = new Promise(function (p0, p1) {
-        let v0, v3;
+        let v3;
         let local_3_0, local_3_1, local_3_2, local_3_3, local_3_4, local_3_5, local_3_6, local_3_7, local_3_8, local_3_9;
         local_3_7 = p0;
         local_3_4 = p1;
@@ -153,25 +153,17 @@ local_0_5 = 4000;
             local_3_8();
           });
         };
-        v0 = local_2_0[0][Symbol.iterator]();
-        while (true) {
-          v3 = v0.next();
-          if (v3.done) break;
-          v3 = v3.value;
+        for (v3 of local_2_0[0]) {
           local_3_9(v3);
         }
         setTimeout(function () {
-          let v0 /*checkAllFailed*/, v3;
+          let v3;
           if (local_3_0) {
             return;
           } else {
             local_3_2 += local_2_0[1].length;
             local_3_3 = true;
-            v0 = local_2_0[1][Symbol.iterator]();
-            while (true) {
-              v3 = v0.next();
-              if (v3.done) break;
-              v3 = v3.value;
+            for (v3 of local_2_0[1]) {
               local_3_9(v3);
             }
             local_3_6();

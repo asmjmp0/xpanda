@@ -339,38 +339,107 @@ export class HighLevelGrammarSimplify implements ISimplify {
         }
         return false;
     }
+    /** `it = obj[Symbol.iterator]()` / `it = obj[Symbol.iterator]` 里的 obj。 */
+    private iterableOfIteratorInit(expr: TYPE.Expression): TYPE.Expression | null {
+        let callee: TYPE.Node = expr;
+        if (TYPE.isCallExpression(expr)) {
+            if (expr.arguments.length > 0) return null;
+            callee = expr.callee;
+        }
+        if (!TYPE.isMemberExpression(callee) || !callee.computed) return null;
+        const prop = callee.property;
+        if (!TYPE.isMemberExpression(prop) || prop.computed) return null;
+        if (!TYPE.isIdentifier(prop.object) || prop.object.name !== "Symbol") return null;
+        if (!TYPE.isIdentifier(prop.property) || prop.property.name !== "iterator") return null;
+        return callee.object as TYPE.Expression;
+    }
+
+    /** `it.next()` 且 it 是指定迭代器变量。 */
+    private isNextCallOf(expr: TYPE.Node | null | undefined, itName: string): boolean {
+        if (!TYPE.isCallExpression(expr) || expr.arguments.length !== 0) return false;
+        const callee = expr.callee;
+        return TYPE.isMemberExpression(callee) && !callee.computed
+            && TYPE.isIdentifier(callee.object) && callee.object.name === itName
+            && TYPE.isIdentifier(callee.property) && callee.property.name === "next";
+    }
+
+    /** `X = X.value`(for-of 循环变量的绑定赋值,转换后应删除)。 */
+    private isSelfValueAssignment(stmt: TYPE.Statement, name: string): boolean {
+        if (!TYPE.isExpressionStatement(stmt) || !TYPE.isAssignmentExpression(stmt.expression)) return false;
+        const assign = stmt.expression;
+        return assign.operator === "="
+            && TYPE.isIdentifier(assign.left) && assign.left.name === name
+            && TYPE.isMemberExpression(assign.right) && !assign.right.computed
+            && TYPE.isIdentifier(assign.right.object) && assign.right.object.name === name
+            && TYPE.isIdentifier(assign.right.property) && assign.right.property.name === "value";
+    }
+
     private checkAndTransformToForOfStatement(value:NodePath<TYPE.WhileStatement>){
         const pre = value.getPrevSibling();
         if (!TYPE.isExpressionStatement(pre.node)) return false;
+        const init = pre.node.expression;
+        if (!TYPE.isAssignmentExpression(init) || init.operator !== "=" || !TYPE.isIdentifier(init.left)) return false;
+        const iterable = this.iterableOfIteratorInit(init.right as TYPE.Expression);
+        if (!iterable) return false;
+        const iterBinding = value.scope.getBinding(init.left.name);
+        if (!iterBinding) return false;
+
         const test = value.get('test');
         if (!TYPE.isBooleanLiteral(test.node)) return false;
         const body = value.get('body')
         if (!TYPE.isBlockStatement(body.node)) return false;
         const bodyStatements = (body as NodePath<TYPE.BlockStatement>).get('body')
         if (bodyStatements.length < 3) return false;
+        // body[0] 必须是 `vv = it.next()`
+        const nextStatement = bodyStatements[0].node;
+        if (!TYPE.isExpressionStatement(nextStatement) || !TYPE.isAssignmentExpression(nextStatement.expression)) return false;
+        const nextAssign = nextStatement.expression;
+        if (nextAssign.operator !== "=" || !TYPE.isIdentifier(nextAssign.left)
+            || !this.isNextCallOf(nextAssign.right, init.left.name)) return false;
+        // 转换会删掉 `it = obj[Symbol.iterator]()`;迭代器临时量除这次 next() 外
+        // 不能再被读取。ArkTS 会在提前 return 的分支里内联 `it.return()` 收尾,
+        // 转换后 it 已不再赋值,保留这些读取会变成对 undefined 取属性。
+        const nextCall = nextAssign.right as TYPE.CallExpression;
+        const iterObjectNode = (nextCall.callee as TYPE.MemberExpression).object;
+        for (const ref of iterBinding.referencePaths) {
+            if (ref.node !== iterObjectNode) return false;
+        }
+        const vv = nextAssign.left as TYPE.Identifier;
+        if (vv.name === init.left.name) return false;
+        // for-of 对空数组不会给循环变量赋值,所以它在循环外也不能被读取。
+        const valueBinding = value.scope.getBinding(vv.name);
+        if (valueBinding) {
+            for (const ref of valueBinding.referencePaths) {
+                if (!ref.findParent((parent) => parent.node === value.node)) return false;
+            }
+        }
+
         const outStatement = bodyStatements[1];
         if (!outStatement.isIfStatement()) return false;
         const btest = outStatement.get('test');
         const consequent = outStatement.get('consequent');
         if (!TYPE.isBreakStatement(consequent.node)) return false;
         if (!isDoneMember(btest.node)) return false;
-        let it = ((((pre.node as TYPE.ExpressionStatement).expression as TYPE.AssignmentExpression).right) as TYPE.MemberExpression).object as TYPE.Identifier
-        if (it === undefined) return false;
-        let vv = (btest.node as TYPE.MemberExpression).object as TYPE.Identifier;
-        let arr:TYPE.Statement[] = [];
+        const doneObject = (btest.node as TYPE.MemberExpression).object;
+        if (!TYPE.isIdentifier(doneObject) || doneObject.name !== vv.name) return false;
+
+        const arr:TYPE.Statement[] = [];
         for (let i = 2; i < bodyStatements.length; i++) {
+            // `vv = vv.value` 由 for-of 的循环变量赋值替代。
+            if (i === 2 && this.isSelfValueAssignment(bodyStatements[i].node, vv.name)) continue;
             arr.push(bodyStatements[i].node);
         }
         const blockStatement = TYPE.blockStatement(arr);
+        // 只替换迭代器结果对象自己的 `.value`,循环体里其它对象的 `.value` 保持不变。
         traverse(blockStatement,{
-           MemberExpression:(value)=>{
-               const node = value.get('property').node;
-               if (TYPE.isIdentifier(node) && node.name === 'value'){
-                   value.replaceWith(value.node.object);
-               }
+           MemberExpression:(path)=>{
+               if (path.node.computed) return;
+               if (!TYPE.isIdentifier(path.node.object) || path.node.object.name !== vv.name) return;
+               if (!TYPE.isIdentifier(path.node.property) || path.node.property.name !== "value") return;
+               path.replaceWith(TYPE.identifier(vv.name));
            }
         },value.scope);
-        const forOfStatement = TYPE.forOfStatement(vv,it,blockStatement);
+        const forOfStatement = TYPE.forOfStatement(vv,iterable as any,blockStatement);
         value.replaceWith(forOfStatement);
         pre.remove();
         return true;

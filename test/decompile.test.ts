@@ -740,6 +740,63 @@ function verifyZhihuContentDetailPages(): void {
  * `X = !E; if (!X)`(会把同一个调用求值两次)或 `while (!X)` 噪声。
  * liveness 需要识别 do-while 的 test 在 body 写入之后读取。
  */
+/**
+ * 回归:while (true) + `x = it.next(); if (x.done) break; x = x.value` 的
+ * 迭代器循环还原成 for...of。
+ *
+ * 只有迭代器临时量除 body 第一条 `it.next()` 外没有任何读取时才转换:
+ * ArkTS 会在提前 return 的分支里内联 `it.return()`,那是 for-of 自己会做的
+ * 收尾,保留下来会访问已不再赋值的 it(见 NativeContentDocument 的模式)。
+ */
+function verifyForOfRestoration(): void {
+    const positive = NodeFactory.parse(`
+function f(local_2_0, local_3_9) {
+  let v0, v3;
+  v0 = local_2_0[0][Symbol.iterator]();
+  while (true) {
+    v3 = v0.next();
+    if (v3.done) break;
+    v3 = v3.value;
+    local_3_9(v3);
+  }
+}
+`);
+    SimplifyExport.simplify(positive);
+    const positiveCode = NodeFactory.generate(positive);
+    if (!positiveCode.includes("for (v3 of local_2_0[0])")) {
+        throw new Error(`for...of 还原: 没有生成 for-of\n${positiveCode}`);
+    }
+    if (positiveCode.includes("while (true)") || positiveCode.includes("v0.next")) {
+        throw new Error(`for...of 还原: 迭代器循环残留\n${positiveCode}`);
+    }
+
+    const negative = NodeFactory.parse(`
+function g(p0) {
+  let v0, v3;
+  v0 = p0[Symbol.iterator]();
+  while (true) {
+    v3 = v0.next();
+    if (v3.done) break;
+    v3 = v3.value;
+    if (v3 === undefined) {
+      if (v0.return != undefined) {
+        v0.return();
+      }
+      return;
+    }
+  }
+}
+`);
+    SimplifyExport.simplify(negative);
+    const negativeCode = NodeFactory.generate(negative);
+    if (negativeCode.includes("for (v3 of p0)")) {
+        throw new Error(`for...of 还原: 循环体读取 it.return 时不应转换\n${negativeCode}`);
+    }
+    if (!negativeCode.includes("while (true)") || !negativeCode.includes("v0.return")) {
+        throw new Error(`for...of 还原: 负例输出被破坏\n${negativeCode}`);
+    }
+}
+
 function verifyLoopConditionFold(): void {
     const program = NodeFactory.parse(`
 function f(v0, v5) {
@@ -1660,6 +1717,10 @@ async function main(): Promise<void> {
 
     console.log("[test] simplify loop condition fold");
     verifyLoopConditionFold();
+    console.log("    ok");
+
+    console.log("[test] simplify for...of restoration");
+    verifyForOfRestoration();
     console.log("    ok");
 
     console.log("[test] simplify test sequence scratch removal");

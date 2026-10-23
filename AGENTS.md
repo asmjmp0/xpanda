@@ -115,6 +115,7 @@ npm run test:mcp
 - `ObjectLiteralSimplify` 合并 `createobjectwithbuffer` 的模板对象与紧邻的 `obj.key = value`:要求字段初值是字面量、赋值顺序与模板字段一致、对象未被闭包捕获;`obj = {...}; return obj` 在模式外无读取时内联成 `return {...}`。对象字面量里的函数属性会按原求值顺序创建,不会被提前提升;
 - `HighLevelGrammarSimplify` 会把 `if (x === null || x === undefined) x = default` 合成为 switch;`NullishCoalescingSimplify` 在流水线末尾把 `v = obj.k; switch (obj.k) { case null: case undefined: v = default; }` 还原成 `v = obj.k ?? default`。判别式是纯成员表达式时才允许合并两次求值;
 - **switch 合成必须完整拆出 `||` test 的每一项**:无法识别的项(如 `!(a !== b)`、带 sequence 的条件)不能静默丢弃,否则会生成漏掉条件的 switch。链尾拆不出时只能把当前 if 及其 else 链整体放进 `default`(`partial`),第一个条件就拆不出则不合成;
+- **`while (true) { vv = it.next(); if (vv.done) break; vv = vv.value; ... }` 还原成 `for (vv of iterable)`**(`checkAndTransformToForOfStatement`):要求 `it = iterable[Symbol.iterator]()`,且 `it` 除循环第一条 `next()` 外没有任何读取(ArkTS 会在提前 return 分支内联 `it.return()`,转换后 `it` 已不再赋值),`vv` 在循环外也不能被读取(for-of 对空数组不赋值)。只替换 `vv.value`,循环体里其它对象的 `.value` 必须保持不变。反编译生成的 AST 节点没有 `start/end`,判断 `vv` 是否在循环内要用路径祖先关系(`ref.findParent`),不能按位置;
 - 修改输出后,更新 `test/expected/*.js` 快照并在提交说明中解释变化。
 
 ### 修改 Region 归约 / 条件极性
