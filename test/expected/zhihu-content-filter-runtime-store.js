@@ -28,11 +28,7 @@ ContentFilterRuntimeStore = class panda_jmp0_reserved_anonymous_0 {
     for (v11 = 0; v11 < v7.length; v11 += 500) {
       v8.push(v7.slice(v11, v11 + 500));
     }
-    v7 = v8[Symbol.iterator]();
-    while (true) {
-      v11 = v7.next();
-      if (v11.done) break;
-      v11 = v11.value;
+    for (v11 of v8) {
       {
         let local_1_0;
         v20 = p0 === undefined ? "" : " WHERE content_key IN (" + v11.map(function (p0) {

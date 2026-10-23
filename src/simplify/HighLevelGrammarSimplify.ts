@@ -374,6 +374,76 @@ export class HighLevelGrammarSimplify implements ISimplify {
             && TYPE.isIdentifier(assign.right.property) && assign.right.property.name === "value";
     }
 
+    /** 语句是否是无条件的 `name = ...`。 */
+    private isDirectAssignmentTo(stmt: TYPE.Node, name: string): boolean {
+        return TYPE.isExpressionStatement(stmt)
+            && TYPE.isAssignmentExpression(stmt.expression)
+            && stmt.expression.operator === "="
+            && TYPE.isIdentifier(stmt.expression.left)
+            && stmt.expression.left.name === name;
+    }
+
+    /**
+     * 删除 `it = iterable[Symbol.iterator]()` 后,循环外的这次读取是否还能看到被删掉的值。
+     *
+     * 循环之前执行、或读取前一定先有 `name = ...` 覆盖(例如同一个临时迭代器被
+     * 后续循环复用:`v13 = p1.keys()[Symbol.iterator]()` 后又读 `v13.next()`),
+     * 都说明读取的不是被删除的初始化值。只沿读取自己的祖先块向前找直接赋值,
+     * 保证“只要读到这一句,赋值就一定已经执行过”。
+     */
+    private hasNewerValueBefore(ref: NodePath, loop: NodePath<TYPE.WhileStatement>, name: string): boolean {
+        // 闭包里的读取可能在循环执行期间被调用,无法按语句顺序判断,直接放弃。
+        if (ref.getFunctionParent() !== loop.getFunctionParent()) return false;
+
+        const loopAncestors = new Set<TYPE.Node>();
+        for (let p: NodePath | null = loop; p; p = p.parentPath) loopAncestors.add(p.node);
+
+        let refChild: NodePath = ref;
+        let common: NodePath | null = null;
+        for (let p: NodePath | null = ref; p; p = p.parentPath) {
+            if (loopAncestors.has(p.node)) {
+                common = p;
+                break;
+            }
+            refChild = p;
+        }
+        if (!common || common.node === loop.node) return false;
+        if (!TYPE.isBlockStatement(common.node) && !TYPE.isProgram(common.node)) return false;
+
+        const body = common.node.body as TYPE.Node[];
+        let loopChild: NodePath = loop;
+        while (loopChild.parentPath && loopChild.parentPath.node !== common.node) {
+            loopChild = loopChild.parentPath;
+        }
+        if (!loopChild.parentPath || loopChild.parentPath.node !== common.node) return false;
+        const loopIndex = body.indexOf(loopChild.node);
+        const refIndex = body.indexOf(refChild.node);
+        if (loopIndex < 0 || refIndex < 0) return false;
+        // 循环之前的读取不受删除初始化影响。
+        if (refIndex < loopIndex) return true;
+        if (refIndex === loopIndex) return false;
+
+        // 从读取处向上逐层看同一语句块里是否有前置的直接赋值;
+        // 最外层只认循环之后的赋值(循环前的会被本轮迭代覆盖)。
+        let current: NodePath | null = ref;
+        while (current && current.node !== common.node) {
+            const parent = current.parentPath;
+            if (!parent) return false;
+            const siblings = (parent.node as { body?: TYPE.Node[] }).body;
+            if (Array.isArray(siblings)) {
+                const index = siblings.indexOf(current.node);
+                if (index >= 0) {
+                    const lower = parent.node === common.node ? loopIndex + 1 : 0;
+                    for (let i = index - 1; i >= lower; i--) {
+                        if (this.isDirectAssignmentTo(siblings[i], name)) return true;
+                    }
+                }
+            }
+            current = parent;
+        }
+        return false;
+    }
+
     private checkAndTransformToForOfStatement(value:NodePath<TYPE.WhileStatement>){
         const pre = value.getPrevSibling();
         if (!TYPE.isExpressionStatement(pre.node)) return false;
@@ -396,21 +466,33 @@ export class HighLevelGrammarSimplify implements ISimplify {
         const nextAssign = nextStatement.expression;
         if (nextAssign.operator !== "=" || !TYPE.isIdentifier(nextAssign.left)
             || !this.isNextCallOf(nextAssign.right, init.left.name)) return false;
-        // 转换会删掉 `it = obj[Symbol.iterator]()`;迭代器临时量除这次 next() 外
-        // 不能再被读取。ArkTS 会在提前 return 的分支里内联 `it.return()` 收尾,
-        // 转换后 it 已不再赋值,保留这些读取会变成对 undefined 取属性。
+        // 转换会删掉 `it = obj[Symbol.iterator]()`;循环体内不能再读取迭代器临时量。
+        // ArkTS 会在提前 return 的分支里内联 `it.return()` 收尾,转换后 it 已不再赋值,
+        // 保留这些读取会变成对 undefined 取属性。循环之后的读取只有在确定先被新的
+        // `it = ...` 覆盖时才安全(编译器会复用同一个临时迭代器连续写多个 while)。
         const nextCall = nextAssign.right as TYPE.CallExpression;
         const iterObjectNode = (nextCall.callee as TYPE.MemberExpression).object;
         for (const ref of iterBinding.referencePaths) {
-            if (ref.node !== iterObjectNode) return false;
+            if (!ref.node || ref.node === iterObjectNode) continue;
+            if (ref.findParent((parent) => parent.node === value.node)) return false;
+            if (!this.hasNewerValueBefore(ref, value, init.left.name)) return false;
+        }
+        // 循环体内改写迭代器会改变下一次 next() 的对象,for-of 无法保留这种语义。
+        for (const violation of iterBinding.constantViolations) {
+            if (!violation.node) continue;
+            if (violation.findParent((parent) => parent.node === value.node)) return false;
+            if (violation.getFunctionParent() !== value.getFunctionParent()) return false;
         }
         const vv = nextAssign.left as TYPE.Identifier;
         if (vv.name === init.left.name) return false;
-        // for-of 对空数组不会给循环变量赋值,所以它在循环外也不能被读取。
+        // for-of 循环结束后循环变量留在“最后一个元素”上,而 while 形态停在 done 结果对象;
+        // 循环外的读取必须是被后续 `vv = ...` 覆盖后的新值(同样支持临时变量复用)。
         const valueBinding = value.scope.getBinding(vv.name);
         if (valueBinding) {
             for (const ref of valueBinding.referencePaths) {
-                if (!ref.findParent((parent) => parent.node === value.node)) return false;
+                if (!ref.node) continue;
+                if (ref.findParent((parent) => parent.node === value.node)) continue;
+                if (!this.hasNewerValueBefore(ref, value, vv.name)) return false;
             }
         }
 
@@ -423,22 +505,26 @@ export class HighLevelGrammarSimplify implements ISimplify {
         const doneObject = (btest.node as TYPE.MemberExpression).object;
         if (!TYPE.isIdentifier(doneObject) || doneObject.name !== vv.name) return false;
 
-        const arr:TYPE.Statement[] = [];
-        for (let i = 2; i < bodyStatements.length; i++) {
-            // `vv = vv.value` 由 for-of 的循环变量赋值替代。
-            if (i === 2 && this.isSelfValueAssignment(bodyStatements[i].node, vv.name)) continue;
-            arr.push(bodyStatements[i].node);
-        }
-        const blockStatement = TYPE.blockStatement(arr);
+        // `vv = vv.value` 由 for-of 的循环变量赋值替代。先判定再替换,
+        // 否则 `vv.value` 已被改写后这条赋值就认不出来了。
+        const skipSelfValueAssignment = this.isSelfValueAssignment(bodyStatements[2].node, vv.name);
         // 只替换迭代器结果对象自己的 `.value`,循环体里其它对象的 `.value` 保持不变。
-        traverse(blockStatement,{
+        // 必须在仍挂在 AST 上的 body 路径上遍历:对脱离树的 blockStatement 单独调用 traverse
+        // 会因 parentPath 缺失使 scope 链断在非 Program 节点(crawl 时 programParent 为 undefined)。
+        body.traverse({
            MemberExpression:(path)=>{
                if (path.node.computed) return;
                if (!TYPE.isIdentifier(path.node.object) || path.node.object.name !== vv.name) return;
                if (!TYPE.isIdentifier(path.node.property) || path.node.property.name !== "value") return;
                path.replaceWith(TYPE.identifier(vv.name));
            }
-        },value.scope);
+        });
+        const arr:TYPE.Statement[] = [];
+        for (let i = 2; i < bodyStatements.length; i++) {
+            if (i === 2 && skipSelfValueAssignment) continue;
+            arr.push(bodyStatements[i].node);
+        }
+        const blockStatement = TYPE.blockStatement(arr);
         const forOfStatement = TYPE.forOfStatement(vv,iterable as any,blockStatement);
         value.replaceWith(forOfStatement);
         pre.remove();

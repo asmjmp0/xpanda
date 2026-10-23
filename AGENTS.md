@@ -29,7 +29,7 @@
 | `src/cli.ts` | CLI:`decompile <file.abc|file.hap> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N]`、`unpack-index <resources.index> [-o outDir] [--stdout]` |
 | `resources/isa.yaml` | ArkCompiler 指令集描述(v24.0.0.0) |
 | `scripts/gen-opcodes.ts` | 生成 `src/disasm/opcodes.ts` |
-| `test/` | 集成测试 + 样本(`md5.abc`、`class.abc`、`aes.abc`、`zhihupp0.59.hap`) |
+| `test/` | 集成测试 + 样本(`md5.abc`、`class.abc`、`aes.abc`、`zhihupp0.59.hap`、`yourpipe0.7.0.abc`) |
 | `test/expected/` | 反编译输出快照(`md5.js`、`class.js`、`aes.js`) |
 | `scripts/test-mcp.ts` | MCP Server 端到端测试(子进程 + JSON-RPC) |
 | `docs/ARCHITECTURE.md` | 架构文档 |
@@ -116,7 +116,7 @@ npm run test:mcp
 - `ObjectLiteralSimplify` 合并 `createobjectwithbuffer` 的模板对象与紧邻的 `obj.key = value`:要求字段初值是字面量、赋值顺序与模板字段一致、对象未被闭包捕获;`obj = {...}; return obj` 在模式外无读取时内联成 `return {...}`。对象字面量里的函数属性会按原求值顺序创建,不会被提前提升;
 - `HighLevelGrammarSimplify` 会把 `if (x === null || x === undefined) x = default` 合成为 switch;`NullishCoalescingSimplify` 在流水线末尾把 `v = obj.k; switch (obj.k) { case null: case undefined: v = default; }` 还原成 `v = obj.k ?? default`。判别式是纯成员表达式时才允许合并两次求值;
 - **switch 合成必须完整拆出 `||` test 的每一项**:无法识别的项(如 `!(a !== b)`、带 sequence 的条件)不能静默丢弃,否则会生成漏掉条件的 switch。链尾拆不出时只能把当前 if 及其 else 链整体放进 `default`(`partial`),第一个条件就拆不出则不合成;
-- **`while (true) { vv = it.next(); if (vv.done) break; vv = vv.value; ... }` 还原成 `for (vv of iterable)`**(`checkAndTransformToForOfStatement`):要求 `it = iterable[Symbol.iterator]()`,且 `it` 除循环第一条 `next()` 外没有任何读取(ArkTS 会在提前 return 分支内联 `it.return()`,转换后 `it` 已不再赋值),`vv` 在循环外也不能被读取(for-of 对空数组不赋值)。只替换 `vv.value`,循环体里其它对象的 `.value` 必须保持不变。反编译生成的 AST 节点没有 `start/end`,判断 `vv` 是否在循环内要用路径祖先关系(`ref.findParent`),不能按位置;
+- **`while (true) { vv = it.next(); if (vv.done) break; vv = vv.value; ... }` 还原成 `for (vv of iterable)`**(`checkAndTransformToForOfStatement`):要求 `it = iterable[Symbol.iterator]()`,且 `it` 在循环体内除第一条 `next()` 外不再读取/赋值(ArkTS 会在提前 return 分支内联 `it.return()`,转换后 `it` 已不再赋值)。编译器会复用同一个临时迭代器/循环变量连续写多个 while,所以循环外的读取不是一律禁止:只要读取前一定先有新的 `it = ...` / `vv = ...` 覆盖就是安全的(`hasNewerValueBefore` 沿读取的祖先块向前找直接赋值,闭包内的读取直接放弃)。`vv` 在 for-of 结束后停在最后一个元素,而 while 形态停在 done 结果对象,因此循环外读取必须被后续赋值覆盖,循环之前读取则不受影响。只替换 `vv.value`,循环体里其它对象的 `.value` 必须保持不变。反编译生成的 AST 节点没有 `start/end`,判断 `vv` 是否在循环内要用路径祖先关系(`ref.findParent`),不能按位置;替换必须在仍挂在 AST 上的 `body` 路径上 `.traverse`,不要先构造脱离树的 `blockStatement` 再单独 `traverse`(缺 `parentPath` 会让嵌套作用域的 scope 链断在非 `Program` 节点,`Scope.crawl` 抛 `addGlobal` 异常);
 - 修改输出后,更新 `test/expected/*.js` 快照并在提交说明中解释变化。
 
 ### 修改 Region 归约 / 条件极性
@@ -135,11 +135,12 @@ npm run test:mcp
 
 | 测试 | 用途 |
 |---|---|
-| `test/decompile.test.ts` | 反编译 `md5.abc` / `class.abc` / `aes.abc`,与 `test/expected/*.js` 比较,并做 Babel 再解析;另含并行一致性回归与 HAP 包(`zhihupp0.59.hap`)的重点类回归(AppDestination / AbsoluteUrlParser / ContentFilterRuntimeStore / StartupDestinationChannel / DeepLinkResolver / ShareContracts / AppUpdateClient 等,部分含沙箱行为校验) |
+| `test/decompile.test.ts` | 反编译 `md5.abc` / `class.abc` / `aes.abc`,与 `test/expected/*.js` 比较,并做 Babel 再解析;另含并行一致性回归、HAP 包(`zhihupp0.59.hap`)重点类回归(AppDestination / AbsoluteUrlParser / ContentFilterRuntimeStore / StartupDestinationChannel / DeepLinkResolver / ShareContracts / AppUpdateClient 等,部分含沙箱行为校验)与 `yourpipe0.7.0.abc` 的 SabrResponseDecoder 嵌套作用域 for-of 回归 |
 | `scripts/test-mcp.ts` | 以子进程启动 MCP Server,按 JSON-RPC 调用全部工具,快照比对 + 错误路径校验(含 hap 加载/解 abc/资源查询) |
 | `test/resources/md5.abc` | 小样本,测试中还会执行输出并校验 MD5 结果 |
 | `test/resources/class.abc` | 类/访问器/原型方法还原样本 |
 | `test/resources/aes.abc` | AES 加解密样本,测试中还会执行输出并校验加解密自检结果为 `true`;快照覆盖条件极性(`Counter.increment` 必须是 `!== 255`)和 test 序列死赋值清理 |
+| `test/resources/yourpipe0.7.0.abc` | 5.4MB 应用字节码样本,测试只反编译 `SabrResponseDecoder`(其 for-of 循环体含 switch/嵌套循环,用于覆盖“脱离 AST 的 blockStatement 单独 traverse 导致 scope 链断裂”的回归) |
 | `test/resources/zhihupp0.59.hap` | HAP 应用包样本(字节码版本 13.0.1.0,含 `callruntime.supercallforwardallargs`),完整反编译约 1 分钟,测试只做重点类校验;`AbsoluteUrlParser` / `ZhihuHttpClient` 是逻辑条件与取反链的重点回归类,`DeepLinkResolver` 是累加器物化、重复调用消除、test 序列死赋值与跨变量布尔物化折叠(`acc = A; v1 = A; if (acc) { v1 = B }` → `v1 = A && B`)的重点回归类 |
 
 更新快照前先确认输出变化是预期的;不要为了通过测试而直接覆盖快照。

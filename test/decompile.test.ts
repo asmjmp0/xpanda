@@ -25,7 +25,8 @@ import * as TYPE from "@babel/types";
  *   9. 校验 nullish coalescing 的 switch lowering 还原;
  *  10. 校验 DeepLinkResolver 的累加器/重复调用/布尔物化清理与解析语义(沙箱执行);
  *  11. 校验 ShareContracts 的自引用成员链、嵌套布尔物化与临时分享文件校验语义(沙箱执行);
- *  12. 校验 ContentDetailPages 的 try/finally 还原与整体输出快照。
+ *  12. 校验 ContentDetailPages 的 try/finally 还原与整体输出快照;
+ *  13. 校验 yourpipe0.7.0.abc 的 SabrResponseDecoder 在含嵌套作用域的 for-of 还原中不崩。
  */
 
 interface Sample {
@@ -1458,6 +1459,52 @@ function verifyZhihuAppUpdateClient(): void {
 }
 
 /**
+ * 回归:while 迭代器还原 for-of 时,循环体里含嵌套作用域(函数/块)不能打断 scope 链。
+ *
+ * 旧实现先构造脱离 AST 的 blockStatement,再 `traverse(blockStatement, visitor, value.scope)`。
+ * Babel 对脱离树的节点缺少 parentPath,嵌套作用域的 scope.parent 链断在非 Program 节点,
+ * Scope.crawl() 里 programParent 为 undefined,抛
+ * `Cannot read properties of undefined (reading 'addGlobal')`,整个类 simplify 失败。
+ * SabrResponseDecoder 的 `for (v11 of sabrReadFields(p0))` 体内正好有 switch/嵌套循环,
+ * 是触发该路径的样本。
+ */
+function verifyYourpipeSabrResponseDecoder(): void {
+    const abcPath = path.join(__dirname, "resources", "yourpipe0.7.0.abc");
+    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
+    const clazz = pandaFile.getAllClasses().find((c) =>
+        c.name.content.includes("extractor/sabr/SabrResponseDecoder"));
+    if (!clazz) throw new Error("yourpipe: 未找到 SabrResponseDecoder");
+
+    const code = new PandaDecompiler().decompileClass(clazz);
+    NodeFactory.parse(code);
+    if (code.includes("created by SimpleAnalysis") || code.includes("decompiler_") || /\bhole\b/.test(code)) {
+        throw new Error(`SabrResponseDecoder: 反编译降级或残留伪语句\n${code}`);
+    }
+    // 外层迭代器循环(体内含 switch + 内层 for-of)必须还原成 for...of;
+    // 旧实现会在这里崩在 addGlobal,导致整个类没有输出。
+    const forOfCount = code.match(/for \(\w+ of sabrReadFields\(p0\)\)/g)?.length ?? 0;
+    if (forOfCount < 7) {
+        throw new Error(`SabrResponseDecoder: sabrReadFields(p0) 的 for...of 还原数量不足(${forOfCount})\n${code}`);
+    }
+    if (!code.includes("of sabrReadFields(v11.getBytes())")) {
+        throw new Error(`SabrResponseDecoder: 内层 for...of 未还原\n${code}`);
+    }
+    // 编译器复用同一个临时迭代器/循环变量连续写多个 while,
+    // 后续赋值覆盖了前一轮的值,三处都应还原成 for...of。
+    for (const iterable of ["p0", "p1.keys()", "p2"]) {
+        if (!code.includes(`for (v14 of ${iterable})`)) {
+            throw new Error(`SabrResponseDecoder: 复用迭代器的 for...of 未还原(${iterable})\n${code}`);
+        }
+    }
+
+    const expectedPath = path.join(__dirname, "expected", "yourpipe-sabr-response-decoder.js");
+    const expected = fs.readFileSync(expectedPath, "utf-8");
+    if (code !== expected) {
+        throw new Error(`SabrResponseDecoder: 输出与快照不一致\n${firstDifference(expected, code)}`);
+    }
+}
+
+/**
  * 回归:`createobjectwithbuffer` 的“模板对象 + 逐属性赋值”。
  *   acc = { protocol: null, hostname: null };
  *   acc.protocol = P; acc.hostname = H; return acc;
@@ -1786,6 +1833,10 @@ async function main(): Promise<void> {
 
     console.log("[test] hap ShareContracts (zhihupp0.59.hap)");
     verifyZhihuShareContracts();
+    console.log("    ok");
+
+    console.log("[test] yourpipe SabrResponseDecoder (yourpipe0.7.0.abc)");
+    verifyYourpipeSabrResponseDecoder();
     console.log("    ok");
 
     console.log("[test] simplify switch transform completeness");
