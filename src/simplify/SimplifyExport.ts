@@ -43,6 +43,11 @@ export class SimplifyExport {
             if (!SimplifyExport.simplifyALL(node)) break;
         }
         new HighLevelGrammarSimplify().simplify(node);
+        // HighLevelGrammarSimplify 会把 `if (!X) { X = true } else { X = false }`
+        // 合成为 `X = !X`;这一步会和已有的 `X = !X`(callruntime.isfalse)形成新的
+        // 连续自取反链,因此在末尾只针对条件赋值再做一轮折叠(不做复制传播,
+        // 避免影响已稳定的输出)。
+        TempVariableSimplify.foldConditionAssignments(node);
         // HighLevelGrammarSimplify 可能新生成 if/三元,再归一化一次 test,
         // 并把 `!T ? A : B` / `T ? false : B` 这类布尔三元折成逻辑运算
         SyntaxRewriteSimplify.normalizeConditionTests(node);

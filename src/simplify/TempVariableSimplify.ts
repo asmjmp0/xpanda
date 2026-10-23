@@ -124,14 +124,34 @@ export class TempVariableSimplify implements ISimplify {
     private static readonly CLONE_BUDGET = 120000;
     private changed = false;
     private cleanupVersion = 0;
+    /** true:只做 `X = E; (X = !X)*; if (X/!X)` 折叠,不做复制传播等其他改写 */
+    private conditionsOnly = false;
 
     simplify(node: Program): boolean {
         this.changed = false;
+        this.conditionsOnly = false;
         traverse(TYPE.file(node), {
             Program: (path) => this.processScope(path),
             Function: (path) => this.processScope(path),
         });
         return this.changed;
+    }
+
+    /**
+     * 只折叠条件赋值模式。HighLevelGrammarSimplify 会把
+     * `if (!X) { X = true } else { X = false }` 合成为 `X = !X`,
+     * 与 callruntime.isfalse 生成的 `X = !X` 构成连续自取反链,
+     * 需要在流水线末尾补一轮。此时不再做复制传播,避免推翻已稳定的输出。
+     */
+    static foldConditionAssignments(node: Program): boolean {
+        const pass = new TempVariableSimplify();
+        pass.changed = false;
+        pass.conditionsOnly = true;
+        traverse(TYPE.file(node), {
+            Program: (path) => pass.processScope(path),
+            Function: (path) => pass.processScope(path),
+        });
+        return pass.changed;
     }
 
     private processScope(path: NodePath<TYPE.Program> | NodePath<TYPE.Function>): void {
@@ -181,18 +201,22 @@ export class TempVariableSimplify implements ISimplify {
         });
         // 复制传播前先算一遍活跃性,用于判断某次读取是否是当前值的最后一次使用
         this.analyzeList(body, new Set(), ctx);
-        this.processStatements(body, new EnvState(), ctx);
-        // 复制传播结束后做基于活跃性的死存储消除;最多 3 轮处理级联死代码
-        for (let i = 0; i < 3; i++) {
-            const version = this.cleanupVersion;
-            this.cleanupStatements(body, ctx, new Set());
-            if (this.cleanupVersion === version) break;
+        if (!this.conditionsOnly) {
+            this.processStatements(body, new EnvState(), ctx);
+            // 复制传播结束后做基于活跃性的死存储消除;最多 3 轮处理级联死代码
+            for (let i = 0; i < 3; i++) {
+                const version = this.cleanupVersion;
+                this.cleanupStatements(body, ctx, new Set());
+                if (this.cleanupVersion === version) break;
+            }
+            this.cleanupSequenceExpressions(body, ctx);
         }
-        this.cleanupSequenceExpressions(body, ctx);
         this.cleanupConditionAssignments(body, ctx);
-        this.foldReturnAssignments(body, ctx);
-        this.hoistNamedFunctionExpressions(body, ctx, scope);
-        this.foldSplitStringArrays(body, ctx);
+        if (!this.conditionsOnly) {
+            this.foldReturnAssignments(body, ctx);
+            this.hoistNamedFunctionExpressions(body, ctx, scope);
+            this.foldSplitStringArrays(body, ctx);
+        }
         this.removeUnusedDeclarations(body, ctx);
     }
 
@@ -473,9 +497,12 @@ export class TempVariableSimplify implements ISimplify {
                     // E 被搬到 test 中,它的引用必须保留。
                     this.removeRefs(oldTest, ctx);
                     if (i - start > 1) {
-                        const negation = stmts[i - 1];
-                        if (TYPE.isExpressionStatement(negation) && TYPE.isAssignmentExpression(negation.expression)) {
-                            this.removeRefs(negation.expression.right, ctx);
+                        // 删除整条 `X = !X` 取反链(可能有多条)里的引用
+                        for (let j = start + 1; j < i; j++) {
+                            const negation = stmts[j];
+                            if (TYPE.isExpressionStatement(negation) && TYPE.isAssignmentExpression(negation.expression)) {
+                                this.removeRefs(negation.expression.right, ctx);
+                            }
                         }
                     }
                     stmts.splice(start, i - start);
@@ -545,17 +572,20 @@ export class TempVariableSimplify implements ISimplify {
         if (!info || info.captured) return null;
 
         let start = ifIndex - 1;
-        let hasNegation = false;
-        if (start >= 0) {
+        let negations = 0;
+        // 编译器把 if 条件里的取反 lowering 成 istrue + 分支 + ldtrue/ldfalse,
+        // 反编译后会出现连续多条 `X = !X`(通常是 1~2 条)。按取反次数的奇偶性
+        // 决定最终条件,避免把 `!T` 误当成 T 或只折叠一层。
+        while (start >= 0) {
             const prev = stmts[start];
-            if (TYPE.isExpressionStatement(prev) && TYPE.isAssignmentExpression(prev.expression)
-                && prev.expression.operator === "="
-                && TYPE.isIdentifier(prev.expression.left) && prev.expression.left.name === name
-                && TYPE.isUnaryExpression(prev.expression.right) && prev.expression.right.operator === "!"
-                && TYPE.isIdentifier(prev.expression.right.argument) && prev.expression.right.argument.name === name) {
-                hasNegation = true;
-                start--;
-            }
+            if (!TYPE.isExpressionStatement(prev) || !TYPE.isAssignmentExpression(prev.expression)) break;
+            const negation = prev.expression;
+            if (negation.operator !== "="
+                || !TYPE.isIdentifier(negation.left) || negation.left.name !== name
+                || !TYPE.isUnaryExpression(negation.right) || negation.right.operator !== "!"
+                || !TYPE.isIdentifier(negation.right.argument) || negation.right.argument.name !== name) break;
+            negations++;
+            start--;
         }
         if (start < 0) return null;
         const assign = stmts[start];
@@ -566,7 +596,9 @@ export class TempVariableSimplify implements ISimplify {
         }
         if (isDeclarationValue(expression.right)) return null;
 
-        // X 只能在当前模式里被读取,不能影响模式之后/之前的代码
+        // X 只能在当前模式里被读取,不能影响模式之后/之前的代码。
+        // 但 acc 是字节码累加器,通常在整个函数里反复复用(模式之外还有大量读写),
+        // 此时退一步:只要模式之后 X 已死、且 if 分支体不读取 X,删除这几条赋值仍然安全。
         const patternRefs = new Set<TYPE.Node>();
         for (let j = start; j <= ifIndex; j++) {
             walkNode(stmts[j], (node, parent) => {
@@ -575,14 +607,21 @@ export class TempVariableSimplify implements ISimplify {
                 }
             });
         }
-        if (info.refs.size !== patternRefs.size) return null;
-        for (const ref of patternRefs) if (!info.refs.has(ref)) return null;
+        if (info.refs.size !== patternRefs.size) {
+            for (const ref of patternRefs) if (!info.refs.has(ref)) return null;
+            const liveAfterIf = ctx.liveAfter.get(ifStmt);
+            if (!liveAfterIf || liveAfterIf.has(name)) return null;
+            if (collectIdentifierNames(ifStmt.consequent).has(name)) return null;
+            if (ifStmt.alternate && collectIdentifierNames(ifStmt.alternate).has(name)) return null;
+        } else {
+            for (const ref of patternRefs) if (!info.refs.has(ref)) return null;
+        }
 
         return {
             start,
             name,
             expr: expression.right,
-            invert: testNegated !== hasNegation,
+            invert: testNegated !== (negations % 2 === 1),
         };
     }
 

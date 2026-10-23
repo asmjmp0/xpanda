@@ -227,7 +227,7 @@ globalThis.AES.Counter = function () {
   }
   this.increment = function () {
     for (local_0_0 = 15; local_0_0 >= 8; local_0_0 -= 1) {
-      if (this.arr[local_0_0] === 255) {
+      if (this.arr[local_0_0] !== 255) {
         this.arr[local_0_0] = this.arr[local_0_0] + 1;
         break;
       }

@@ -546,24 +546,20 @@ export class StructureAnalysis {
     private coalesceTailRegion(n: Region, regions: Iterable<Region>): boolean {
         const succs = this.regionGraph.successors(n);
         if (succs.length === 2 && n.getType() === "Condition" && !n.isTryCatchHelperRegion()) {
-            const el = succs[0];
-            const th = succs[1];
             const contains = (r: Region) => {
                 if (Array.isArray(regions)) return regions.includes(r);
                 return (regions as Set<Region>).has(r);
             };
-            if (contains(el) && el.getType() === "Tail" && this.singlePredecessor(el) === n) {
-                n.addStatement(new IfPandaStatement(n, el, null));
-                this.regionGraph.removeEdge(n, el);
-                this.regionGraph.removeNode(el);
-                n.setType("Linear");
-                return true;
-            }
-            if (contains(th) && th.getType() === "Tail" && this.singlePredecessor(th) === n) {
-                n.expInvert();
-                n.addStatement(new IfPandaStatement(n, th, null));
-                this.regionGraph.removeEdge(n, th);
-                this.regionGraph.removeNode(th);
+            // 不能依赖 successors 的返回顺序(ValueGraph 按插入顺序返回,与 true/false 边无关)。
+            // conditionalExp 描述的是 fallthrough(false 边)分支的条件:
+            //   jnez 时 false 边为 !acc,jeqz 时 false 边为 acc;
+            // 只有折叠 true 边(跳转目标)时才需要对条件取反。
+            for (const tail of succs) {
+                if (!contains(tail) || tail.getType() !== "Tail" || this.singlePredecessor(tail) !== n) continue;
+                if (this.regionGraph.edgeValueOrThrow(n, tail)) n.expInvert();
+                n.addStatement(new IfPandaStatement(n, tail, null));
+                this.regionGraph.removeEdge(n, tail);
+                this.regionGraph.removeNode(tail);
                 n.setType("Linear");
                 return true;
             }
