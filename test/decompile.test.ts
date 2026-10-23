@@ -1412,7 +1412,9 @@ function verifyZhihuForOfIteratorClose(): void {
  * 现在该 Tail 会复制进 done 分支,输出应满足:
  *   - fetchReleaseDetail 内没有 break / label / from goto;
  *   - 两个循环的耗尽路径都 return local_0_6(...)(共 2 处);
- *   - 两个 while test 仍包含 decodeReleaseDetail(循环体没有丢)。
+ *   - 两个 while test 仍包含 decodeReleaseDetail(循环体没有丢);
+ *   - while test 里没有 `acc = ...` / 寄存器恢复(`v7 = v0`、`v8 = false`)这类
+ *     结构化归约残留的死保存,累加器链已折成 `v8 = decodeReleaseDetail(JSON.stringify(v8))`。
  * 另用 test/expected/zhihu-app-update-client.js 锁定整个类的输出。
  */
 function verifyZhihuAppUpdateClient(): void {
@@ -1443,6 +1445,9 @@ function verifyZhihuAppUpdateClient(): void {
     const decodes = body.match(/decodeReleaseDetail\(/g)?.length ?? 0;
     if (decodes !== 2) {
         throw new Error(`AppUpdateClient: 两个循环应各保留一次 decodeReleaseDetail,实际 ${decodes} 处\n${body}`);
+    }
+    if (/while \([^\n]*(?:\bacc = |v7 = v0|v8 = false)/.test(body)) {
+        throw new Error(`AppUpdateClient: 循环 test 仍残留 acc/寄存器恢复死保存\n${body}`);
     }
 
     const expectedPath = path.join(__dirname, "expected", "zhihu-app-update-client.js");

@@ -69,6 +69,13 @@ interface FunctionContext {
      * (`v4 = parse(); if (v4.completed) break; ...` 之后 `return v4`)。
      */
     branchLive: Map<TYPE.Node, Set<string>>;
+    /**
+     * 循环体入口的活跃集(循环条件每轮求值后的“下一轮”活跃变量)。
+     * 循环 test 里的死赋值需要它:test 写入的临时变量如果下一轮 body 会先写后读,
+     * 且循环结束后不再读取,这次写入就是死的。只用 liveAfter(循环之后) 会把
+     * `v8 = false` 这类寄存器恢复误判为活跃(body 里的 `v8 = v6.call(v5)` 先写后读)。
+     */
+    loopBodyIn: Map<TYPE.Node, Set<string>>;
 }
 
 /**
@@ -326,6 +333,7 @@ export class TempVariableSimplify implements ISimplify {
             cloneBudget: TempVariableSimplify.CLONE_BUDGET,
             returned: new Set(),
             branchLive: new Map(),
+            loopBodyIn: new Map(),
         };
         this.renameCatchParameters(path, ctx);
         walkNode({ type: "BlockStatement", body } as TYPE.BlockStatement, (node) => {
@@ -365,6 +373,9 @@ export class TempVariableSimplify implements ISimplify {
                 if (this.cleanupVersion === version) break;
             }
             this.cleanupSequenceExpressions(body, ctx);
+            // 循环 test 是表达式序列,不在语句列表里,单独的活跃性/死存储逻辑覆盖不到它:
+            //   do { ... } while ((acc = f(v), v = acc, acc = !(acc !== undefined), v === undefined) || ...)
+            this.foldLoopTestTemps(body, ctx);
         }
         this.foldTestSequences(body, ctx);
         this.cleanupConditionAssignments(body, ctx);
@@ -1629,6 +1640,315 @@ export class TempVariableSimplify implements ISimplify {
         return true;
     }
 
+    /**
+     * 循环 test 里的临时变量清理。
+     *
+     * 结构化归约会把循环条件生成为一整个 SequenceExpression,例如:
+     *   do { ... } while ((acc = JSON.stringify(v), acc = decode(acc), v = acc,
+     *                      acc = !(acc !== undefined), v8 = false, v === undefined) || ...)
+     * 其中 `acc = !(...)`、寄存器恢复(`v8 = false`)都是死保存,`acc = f(v); v = acc`
+     * 也能合并。它们不在任何语句列表里,cleanupStatements/cleanupSequenceExpressions
+     * 都扫不到,所以在这里按 test 自己的求值顺序做一轮活跃性分析。
+     *
+     * 循环 test 每轮重新求值,因此“test 之后”的活跃集是 body 入口(bodyIn)∪ 循环之后
+     * (liveAfter),不能只用一个;缺失 bodyIn 时保守放弃。
+     */
+    private foldLoopTestTemps(stmts: TYPE.Statement[], ctx: FunctionContext): void {
+        for (const stmt of stmts) this.foldLoopTestTempsInStatement(stmt, ctx);
+    }
+
+    private foldLoopTestTempsInStatement(stmt: TYPE.Statement, ctx: FunctionContext): void {
+        switch (stmt.type) {
+            case "WhileStatement":
+            case "DoWhileStatement":
+            case "ForStatement": {
+                const loop = stmt as TYPE.WhileStatement | TYPE.DoWhileStatement | TYPE.ForStatement;
+                if (loop.test) {
+                    const bodyIn = ctx.loopBodyIn.get(stmt);
+                    if (bodyIn) {
+                        const liveOut = new Set<string>(ctx.liveAfter.get(stmt) || []);
+                        for (const name of bodyIn) liveOut.add(name);
+                        const next = this.simplifyTestExpression(loop.test, liveOut, ctx);
+                        if (next !== loop.test) {
+                            loop.test = next;
+                            this.changed = true;
+                        }
+                    }
+                }
+                this.foldLoopTestTempsInStatement(loop.body, ctx);
+                return;
+            }
+            case "BlockStatement":
+                this.foldLoopTestTemps(stmt.body, ctx);
+                return;
+            case "IfStatement":
+                this.foldLoopTestTempsInStatement(stmt.consequent, ctx);
+                if (stmt.alternate) this.foldLoopTestTempsInStatement(stmt.alternate, ctx);
+                return;
+            case "ForInStatement":
+            case "ForOfStatement":
+            case "LabeledStatement":
+                this.foldLoopTestTempsInStatement(stmt.body, ctx);
+                return;
+            case "TryStatement":
+                this.foldLoopTestTemps(stmt.block.body, ctx);
+                if (stmt.handler) this.foldLoopTestTemps(stmt.handler.body.body, ctx);
+                if (stmt.finalizer) this.foldLoopTestTemps(stmt.finalizer.body, ctx);
+                return;
+            case "SwitchStatement":
+                for (const c of stmt.cases) this.foldLoopTestTemps(c.consequent, ctx);
+                return;
+            default:
+                return;
+        }
+    }
+
+    /** 按表达式求值顺序清理 test;返回替换后的表达式(sequence 只剩一个元素时会解开)。 */
+    private simplifyTestExpression(
+        expr: TYPE.Expression,
+        liveOut: Set<string>,
+        ctx: FunctionContext,
+    ): TYPE.Expression {
+        if (TYPE.isSequenceExpression(expr)) {
+            this.simplifyTestSequence(expr, liveOut, ctx);
+            return expr.expressions.length === 1
+                ? expr.expressions[0] as TYPE.Expression
+                : expr;
+        }
+        if (TYPE.isLogicalExpression(expr)) {
+            expr.right = this.simplifyTestExpression(expr.right as TYPE.Expression, liveOut, ctx);
+            const rightIn = this.testLiveIn(expr.right as TYPE.Expression, liveOut, ctx);
+            expr.left = this.simplifyTestExpression(
+                expr.left as TYPE.Expression, TempVariableSimplify.union(liveOut, rightIn), ctx);
+            return expr;
+        }
+        if (TYPE.isUnaryExpression(expr) && expr.operator === "!") {
+            expr.argument = this.simplifyTestExpression(expr.argument as TYPE.Expression, liveOut, ctx);
+            return expr;
+        }
+        if (TYPE.isParenthesizedExpression(expr)) {
+            (expr as any).expression = this.simplifyTestExpression(
+                (expr as any).expression as TYPE.Expression, liveOut, ctx);
+            return expr;
+        }
+        return expr;
+    }
+
+    /**
+     * test 表达式之前的活跃集(纯分析,不改 AST)。
+     * 与 simplifyTestExpression 保持同一套规则:死赋值若会被整体删除,右值读取不再发生。
+     */
+    private testLiveIn(expr: TYPE.Expression, liveOut: Set<string>, ctx: FunctionContext): Set<string> {
+        if (TYPE.isSequenceExpression(expr)) {
+            let live = liveOut;
+            for (let i = expr.expressions.length - 1; i >= 0; i--) {
+                live = this.testLiveIn(expr.expressions[i] as TYPE.Expression, live, ctx);
+            }
+            return live;
+        }
+        if (TYPE.isLogicalExpression(expr)) {
+            const rightIn = this.testLiveIn(expr.right as TYPE.Expression, liveOut, ctx);
+            return this.testLiveIn(
+                expr.left as TYPE.Expression, TempVariableSimplify.union(liveOut, rightIn), ctx);
+        }
+        if (TYPE.isUnaryExpression(expr) && expr.operator === "!") {
+            return this.testLiveIn(expr.argument as TYPE.Expression, liveOut, ctx);
+        }
+        if (TYPE.isParenthesizedExpression(expr)) {
+            return this.testLiveIn((expr as any).expression as TYPE.Expression, liveOut, ctx);
+        }
+        if (TYPE.isAssignmentExpression(expr) && expr.operator === "=" && TYPE.isIdentifier(expr.left)
+            && isTempName(expr.left.name)) {
+            const name = expr.left.name;
+            if (liveOut.has(name)) {
+                const result = this.tempReads(expr.right, ctx);
+                for (const existing of liveOut) if (existing !== name) result.add(existing);
+                return result;
+            }
+            const info = ctx.infos.get(name);
+            if (this.isRemovableDeadTestAssignment(expr.right, name, info)) return new Set(liveOut);
+            const result = this.tempReads(expr.right, ctx);
+            for (const existing of liveOut) result.add(existing);
+            return result;
+        }
+        const result = this.tempReads(expr, ctx);
+        const writes = this.tempWrites(expr, ctx);
+        for (const existing of liveOut) if (!writes.has(existing)) result.add(existing);
+        return result;
+    }
+
+    /** 死赋值能否整体删除(右值无副作用且不是需要保留的函数/类表达式)。 */
+    private isRemovableDeadTestAssignment(rhs: TYPE.Expression, name: string, info?: BindingInfo): boolean {
+        if (!info || info.captured) return false;
+        if (TYPE.isIdentifier(rhs) && rhs.name === name) return true;
+        return !isDeclarationValue(rhs) && isPureExpression(rhs);
+    }
+
+    /** 删除 test 序列里的死赋值;返回替代表达式、null(删除)或原节点(保持)。 */
+    private cleanupDeadTestAssignment(
+        expr: TYPE.Expression,
+        live: Set<string>,
+        ctx: FunctionContext,
+    ): TYPE.Expression | null {
+        if (!TYPE.isAssignmentExpression(expr) || expr.operator !== "=" || !TYPE.isIdentifier(expr.left)) return expr;
+        const name = expr.left.name;
+        if (!isTempName(name) || live.has(name)) return expr;
+        const info = ctx.infos.get(name);
+        if (!info || info.captured) return expr;
+        const rhs = expr.right;
+        if (TYPE.isIdentifier(rhs) && rhs.name === name) {
+            this.removeRefs(rhs, ctx);
+            this.changed = true;
+            return null;
+        }
+        if (isDeclarationValue(rhs)) return rhs;
+        if (isPureExpression(rhs)) {
+            this.removeRefs(rhs, ctx);
+            this.changed = true;
+            return null;
+        }
+        // 有副作用:保留表达式本身(不保留对 name 的写入)
+        this.changed = true;
+        return rhs;
+    }
+
+    /** 清理一个循环 test 里的 SequenceExpression,并把它折叠成更短的形式。 */
+    private simplifyTestSequence(seq: TYPE.SequenceExpression, liveOut: Set<string>, ctx: FunctionContext): void {
+        if (seq.expressions.length === 0) return;
+        // 1. 从右往左删除死赋值,使用“本元素之后仍活跃”的集合。
+        let live = new Set(liveOut);
+        for (let i = seq.expressions.length - 1; i >= 0; i--) {
+            const expr = seq.expressions[i] as TYPE.Expression;
+            const replaced = this.cleanupDeadTestAssignment(expr, live, ctx);
+            if (replaced === expr) {
+                live = this.testLiveIn(expr, live, ctx);
+            } else if (replaced === null) {
+                seq.expressions.splice(i, 1);
+            } else {
+                seq.expressions[i] = replaced;
+                live = this.testLiveIn(replaced, live, ctx);
+            }
+        }
+        // 2. 折叠 `X = E; X = F(X)` / `X = E; Y = X`。每折一次重新算一遍
+        //    “本元素之后活跃”的集合,下标才对得上。
+        let guard = 0;
+        while (guard++ < 64) {
+            const after = this.testLiveAfter(seq.expressions as TYPE.Expression[], liveOut, ctx);
+            let folded = false;
+            for (let i = 0; i + 1 < seq.expressions.length; i++) {
+                const elements = seq.expressions as TYPE.Expression[];
+                if (this.tryFoldTestAccumulator(elements, i, ctx)
+                    || this.tryFoldTestAlias(elements, i, after[i + 1], ctx)) {
+                    seq.expressions.splice(i, 1);
+                    this.changed = true;
+                    folded = true;
+                    break;
+                }
+            }
+            if (!folded) break;
+        }
+    }
+
+    private testLiveAfter(
+        elements: TYPE.Expression[],
+        liveOut: Set<string>,
+        ctx: FunctionContext,
+    ): Set<string>[] {
+        const after: Set<string>[] = new Array(elements.length);
+        let live = new Set(liveOut);
+        for (let i = elements.length - 1; i >= 0; i--) {
+            after[i] = new Set(live);
+            live = this.testLiveIn(elements[i], live, ctx);
+        }
+        return after;
+    }
+
+    /** `X = E; X = F(X)` -> `X = F(E)`,要求 X 在 F 中只读一次。 */
+    private tryFoldTestAccumulator(elements: TYPE.Expression[], i: number, ctx: FunctionContext): boolean {
+        const a = elements[i];
+        const b = elements[i + 1];
+        if (!TYPE.isAssignmentExpression(a) || !TYPE.isAssignmentExpression(b)) return false;
+        if (a.operator !== "=" || b.operator !== "=") return false;
+        if (!TYPE.isIdentifier(a.left) || !TYPE.isIdentifier(b.left)) return false;
+        const name = a.left.name;
+        if (b.left.name !== name || !isTempName(name)) return false;
+        const info = ctx.infos.get(name);
+        if (!info || info.captured) return false;
+        if (this.countReadsInNode(b.right, name) !== 1) return false;
+        if (collectAssignedNames(b.right).has(name)) return false;
+        if (this.hasDeferredSelfReference(a.right, name) || this.hasDeferredSelfReference(b.right, name)) return false;
+
+        let id: TYPE.Identifier | null = null;
+        walkNode(b.right, (node, parent) => {
+            if (isFunctionLike(node) || isClassLike(node)) return false;
+            if (TYPE.isIdentifier(node) && node.name === name && parent && TYPE.isReferenced(node, parent)) {
+                id = node;
+                return false;
+            }
+            return true;
+        });
+        if (!id) return false;
+        const value = a.right;
+        if (!this.canDeferTestValue(value, b.right, id)) return false;
+        // b 里对 value 依赖名字的写入会改变 value 的读取结果
+        const assigned = collectAssignedNames(b.right);
+        for (const dep of collectIdentifierNames(value)) {
+            if (dep !== name && assigned.has(dep)) return false;
+        }
+        if (!replaceNodeInTree(b.right, id, value)) return false;
+        info.refs.delete(id);
+        return true;
+    }
+
+    /** `X = E; Y = X` -> `Y = E`(X 在第二条之后已死)。 */
+    private tryFoldTestAlias(
+        elements: TYPE.Expression[],
+        i: number,
+        liveAfterSecond: Set<string>,
+        ctx: FunctionContext,
+    ): boolean {
+        const a = elements[i];
+        const b = elements[i + 1];
+        if (!TYPE.isAssignmentExpression(a) || !TYPE.isAssignmentExpression(b)) return false;
+        if (a.operator !== "=" || b.operator !== "=") return false;
+        if (!TYPE.isIdentifier(a.left) || !TYPE.isIdentifier(b.left)) return false;
+        const name = a.left.name;
+        if (!isTempName(name) || !TYPE.isIdentifier(b.right) || b.right.name !== name) return false;
+        const info = ctx.infos.get(name);
+        if (!info || info.captured) return false;
+        // 旧值在第二条赋值之后已死,删除第一条不会改变后续读取
+        if (liveAfterSecond.has(name)) return false;
+        if (this.hasDeferredSelfReference(a.right, name)) return false;
+        info.refs.delete(b.right);
+        b.right = a.right;
+        return true;
+    }
+
+    /**
+     * 把 value 的求值推迟到 target 中 id 的位置是否安全。
+     * value 纯时只要求 target 里更早的写入不影响它的读取;有副作用时只允许
+     * 推后到“先求值的部分无副作用”的位置(典型是调用表达式的参数,callee 为标识符)。
+     */
+    private canDeferTestValue(value: TYPE.Expression, target: TYPE.Expression, id: TYPE.Identifier): boolean {
+        if (isPureExpression(value)) {
+            const assigned = collectAssignedNames(target);
+            for (const dep of collectIdentifierNames(value)) {
+                if (assigned.has(dep)) return false;
+            }
+            return true;
+        }
+        if (this.isFirstEvaluatedOccurrence(target, id)) return true;
+        if (TYPE.isCallExpression(target) && !this.containsNode(target.callee, id)
+            && isPureExpression(target.callee)) {
+            const assigned = collectAssignedNames(value);
+            for (const dep of collectIdentifierNames(target.callee)) {
+                if (assigned.has(dep)) return false;
+            }
+            return true;
+        }
+        return false;
+    }
+
     /** 清理 SequenceExpression 中的死赋值,例如 if 条件里的 (v0 = x, v1 = y, ...)。 */
     private cleanupSequenceExpressions(stmts: TYPE.Statement[], ctx: FunctionContext): void {
         for (const stmt of stmts) {
@@ -2849,6 +3169,7 @@ export class TempVariableSimplify implements ISimplify {
                     bodyOut = next;
                     bodyIn = this.analyzeNested(stmt.body, bodyOut, ctx, TempVariableSimplify.loopLive(liveOut, bodyOut));
                 }
+                ctx.loopBodyIn.set(stmt, new Set(bodyIn));
                 return TempVariableSimplify.union(testReads, bodyIn, liveOut);
             }
             case "DoWhileStatement": {
@@ -2863,6 +3184,7 @@ export class TempVariableSimplify implements ISimplify {
                 }
                 // test 在 body 之后执行:body 一定先写 name 时,test 读到的是新值,
                 // 不应把这次读取算作循环入口处旧值的活跃使用。
+                ctx.loopBodyIn.set(stmt, new Set(bodyIn));
                 const result = new Set(bodyIn);
                 for (const name of testReads) if (!this.doWhileKillsTestReads(stmt, name)) result.add(name);
                 for (const name of liveOut) result.add(name);
@@ -2883,6 +3205,7 @@ export class TempVariableSimplify implements ISimplify {
                     ? this.transferLive(stmt.update as unknown as TYPE.Statement, TempVariableSimplify.union(bodyOut, bodyIn), ctx, loop)
                     : new Set<string>();
                 const afterInit = TempVariableSimplify.union(bodyIn, testReads, updateIn, liveOut);
+                ctx.loopBodyIn.set(stmt, new Set(bodyIn));
                 const initReads = stmt.init ? this.tempReads(stmt.init, ctx) : new Set<string>();
                 const initWrites = stmt.init ? this.tempWrites(stmt.init, ctx) : new Set<string>();
                 const result = new Set(initReads);

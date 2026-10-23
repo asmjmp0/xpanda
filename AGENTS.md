@@ -109,7 +109,8 @@ npm run test:mcp
 - **`foldShortCircuitChains` 把 `X = E; if (X/!X) { X = B; }` 物化链折成 `X = E &&/|| B`**(test 被结构化归约重新物化成原表达式时要求 E 纯)。以 `X = !X` 自取反开头的链必须跳过:整条取反链的奇偶性归尾部 `foldConditionAssignments`,提前吃掉链头会让 `X = has(); X = !X; if (!X) { X = set() }` 无法折回 `if (!has())`;
 - **非纯表达式(`call` / `new` / 函数/类)只能在真正最后一次读取时搬移**;`if` 的 test 和分支体都读同一临时变量时不能搬,否则会把调用复制成两次;**例外**:if 的 test 读取、且两个分支都一定在读取前覆盖该变量(`definitelyWritesBeforeRead`)时,旧值在 test 后已死,可以搬进 test(`v0 = new RegExp(...); if (!v0.test(p0)) {...} else {...}` → `if (!new RegExp(...).test(p0))`);
 - `acc = !acc` 既可能来自 `callruntime.isfalse`,也可能来自条件物化(`istrue + jnez + ldtrue/ldfalse`);折叠时按取反次数的奇偶性处理,不能只删一层;
-- test 序列里的自取反链(`if (A || (X = E, X = !X, !X))`)只有在 `X` 在 test 后已死、test 外无其它读取、分支/前缀不会先读后写时才折叠;循环 test 暂不处理;
+- test 序列里的自取反链(`if (A || (X = E, X = !X, !X))`)只有在 `X` 在 test 后已死、test 外无其它读取、分支/前缀不会先读后写时才折叠;循环 test 里的自取反尚未处理(死保存清理与累加器链折叠由 `foldLoopTestTemps` 负责,见下条);
+- **循环 test 是表达式序列,`cleanupStatements` 扫不到**:`foldLoopTestTemps` 按 test 自己的求值顺序做活跃性分析,删除死保存(`acc = !(acc !== undefined)`、寄存器恢复 `v8 = false`)并把 `X = E; X = F(X)` 折成 `X = F(E)`、`X = E; Y = X` 折成 `Y = E`。test 之后的活跃集必须用循环体入口活跃集(`loopBodyIn`,由 liveness 定点迭代记录)∪ 循环之后活跃集(`liveAfter`):body 里先写后读的临时变量(`v8 = v6.call(v5)` 之后的 `v8.done`)不能算作 test 写入的活跃使用,只看 `liveAfter` 会把 `v8 = false` 误判为活跃;
 - **do-while 的 test 在 body 之后求值**:liveness 需要把"body 一定先写 `X` 再读"的 test 读取从循环入口的活跃集里剔除,否则 `X = !E; if (!X)` 会因 `X` 在循环里仍活跃而不折叠(或折叠后重复求值)。`foldDoWhileTestAssignments` 再把 `do { ...; X = E } while (!X)` 折成 `while (!E)`,要求 `X` 在循环后已死且 body 内没有 `continue`;
 - `if (A || (v1 = 0, v2 = 2, B))` 这类常量前缀提升(`hoistTestPrefixes`)要求:前缀只是临时变量赋常量、短路分支直接 return/throw 且不读取这些临时变量、不在带 `finally` 的 `try` 中;
 - `ObjectLiteralSimplify` 合并 `createobjectwithbuffer` 的模板对象与紧邻的 `obj.key = value`:要求字段初值是字面量、赋值顺序与模板字段一致、对象未被闭包捕获;`obj = {...}; return obj` 在模式外无读取时内联成 `return {...}`。对象字面量里的函数属性会按原求值顺序创建,不会被提前提升;

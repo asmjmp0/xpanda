@@ -218,12 +218,9 @@ local_0_5 = 4000;
       return v0 !== 200 || typeof v0.result !== "string" ? undefined : decodeLatestReleaseAtom(v0.result);
     }
     async fetchReleaseDetail(p0) {
-      let v0, v3, v5, v6, v7, v8, acc;
-      v0 = await this.releasesCatalog();
-      acc = JSON.parse(v0)[Symbol.iterator]();
-      v5 = JSON.parse(v0)[Symbol.iterator]();
+      let v3, v5, v6, v8;
+      v5 = JSON.parse(await this.releasesCatalog())[Symbol.iterator]();
       v6 = v5.next;
-      v7 = false;
       do {
         v8 = v6.call(v5);
         if (v8.done) {
@@ -236,9 +233,8 @@ local_0_5 = 4000;
             if (v6.done) {
               return local_0_6("静态更新清单中暂无 HMOSv" + p0 + " 的发布说明");
             }
-            acc = v6.value;
             v6 = v6.value;
-          } while ((acc = JSON.stringify(v6), acc = decodeReleaseDetail(acc), v6 = acc, acc = !(acc !== undefined), v7 = v0, v8 = false, v6 === undefined) || (acc = !(v6.versionName === p0), v7 = v0, v8 = false, v6.versionName !== p0));
+          } while ((v6 = decodeReleaseDetail(JSON.stringify(v6)), v6 === undefined) || v6.versionName !== p0);
           if (v3.return != undefined) {
             v3.return();
           }
@@ -248,10 +244,9 @@ local_0_5 = 4000;
             "message": ""
           };
         }
-        acc = v8.value;
         v8 = v8.value;
-      } while ((acc = JSON.stringify(v8), acc = decodeReleaseDetail(acc), v8 = acc, acc = !(acc !== undefined), v3 = p0, v8 === undefined) || (acc = !(v8.versionName === p0), v3 = p0, v8.versionName !== p0));
-      if (v7) {} else if (v5.return != undefined) {
+      } while ((v8 = decodeReleaseDetail(JSON.stringify(v8)), v8 === undefined) || v8.versionName !== p0);
+      if (v5.return != undefined) {
         v5.return();
       }
       return {
