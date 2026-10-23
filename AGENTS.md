@@ -126,13 +126,14 @@ npm run test:mcp
 3. `simplifyConditionalSequence` 会把 `if (A) ... if (B) ...` 合并成 `OrLogicalExpressionStatement` 并设置 `logicalRegion`;`reduceSequence` 合并这种 Region 时必须传播 `logicalRegion`,否则后续只能用 `acc` 生成 test,会丢掉 `A || B` 的计算。
 4. `Region.copy()`(不可归约 Tail 复制)必须保留 `conditionalExp` / `logicalRegion` / `exceptionLandingPad` / `tryCatchHelperRegion` 标志。
 5. 合并后的子区域如果已经是 `LogicalExpressionStatement`(`(A || B)` / `(A && B)`),**不要再追加 `acc`/`!acc`**:它的表达式本身就是条件值,追加会把 `acc` 里最后一个比较结果覆盖到条件上(`name === A || ((name === B, acc) || ...)` 既是语义错误,又会留下 `(acc = E, !E)` 死赋值)。`||` 的操作数是跳转条件、`&&` 的操作数是 fallthrough 条件,父子类型不同时要取反。
-6. 改完用 `zhihupp0.59.hap` 的 `AbsoluteUrlParser` / `ZhihuHttpClient`、`AppDestination.shouldReloadAfterAuthentication`(17 项 `===` 的 `||` 链)和 `aes.abc` 的 `Counter.increment`(必须是 `!== 255`)验证。
+6. `virtualizeIrregularExits` 遇到循环体内的不规则出口时,**同一条边只生成一个语句**:条件区域生成 `if (cond) break`,线性区域生成无条件 `break`。两者都生成会先得到 `if (cond) break`、再追加一条无条件 `break`,循环体永远只执行一次(`AppUpdateClient.fetchReleaseDetail` 的内层 for...of 曾因此直接返回迭代器结果对象)。出口目标是 `outDegree === 0` 的 Tail(只剩 `return`/`throw`)时不能靠 `break`(它只会跳到循环 follow),应把 Tail 的语句复制进该分支;目标还有其它前驱、不能合并时正是这种情形。
+7. 改完用 `zhihupp0.59.hap` 的 `AbsoluteUrlParser` / `ZhihuHttpClient`、`AppDestination.shouldReloadAfterAuthentication`(17 项 `===` 的 `||` 链)、`AppUpdateClient.fetchReleaseDetail`(for...of 内提前 return)和 `aes.abc` 的 `Counter.increment`(必须是 `!== 255`)验证。
 
 ## 测试
 
 | 测试 | 用途 |
 |---|---|
-| `test/decompile.test.ts` | 反编译 `md5.abc` / `class.abc` / `aes.abc`,与 `test/expected/*.js` 比较,并做 Babel 再解析;另含并行一致性回归与 HAP 包(`zhihupp0.59.hap`)的 6 个重点类回归(AppDestination / AbsoluteUrlParser / ContentFilterRuntimeStore / StartupDestinationChannel / DeepLinkResolver / ShareContracts,后两者含沙箱行为校验) |
+| `test/decompile.test.ts` | 反编译 `md5.abc` / `class.abc` / `aes.abc`,与 `test/expected/*.js` 比较,并做 Babel 再解析;另含并行一致性回归与 HAP 包(`zhihupp0.59.hap`)的重点类回归(AppDestination / AbsoluteUrlParser / ContentFilterRuntimeStore / StartupDestinationChannel / DeepLinkResolver / ShareContracts / AppUpdateClient 等,部分含沙箱行为校验) |
 | `scripts/test-mcp.ts` | 以子进程启动 MCP Server,按 JSON-RPC 调用全部工具,快照比对 + 错误路径校验(含 hap 加载/解 abc/资源查询) |
 | `test/resources/md5.abc` | 小样本,测试中还会执行输出并校验 MD5 结果 |
 | `test/resources/class.abc` | 类/访问器/原型方法还原样本 |

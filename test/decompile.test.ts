@@ -1343,6 +1343,59 @@ function verifyZhihuForOfIteratorClose(): void {
 }
 
 /**
+ * 回归:for...of 体内提前 return 时,头部 done 出口指向一个仍有其它前驱的 Tail。
+ *
+ * AppUpdateClient.fetchReleaseDetail 的两个 for...of 都是
+ *   for (const item of list) { const d = decode(...); if (匹配) return OK; }
+ * 编译后 done 分支跳到函数末尾的失败返回。这个 Tail 同时被 bundled 清单的
+ * `length > 0` 判定引用,不是循环的 follow;旧实现把该出口虚拟化成
+ * `break; //from goto label_2071`,后面又补了一条无条件 break,导致内层循环
+ * 第一次 next() 后就直接跳出,decode 完全不执行,最终返回迭代器结果对象。
+ *
+ * 现在该 Tail 会复制进 done 分支,输出应满足:
+ *   - fetchReleaseDetail 内没有 break / label / from goto;
+ *   - 两个循环的耗尽路径都 return local_0_6(...)(共 2 处);
+ *   - 两个 while test 仍包含 decodeReleaseDetail(循环体没有丢)。
+ * 另用 test/expected/zhihu-app-update-client.js 锁定整个类的输出。
+ */
+function verifyZhihuAppUpdateClient(): void {
+    const hapPath = path.join(__dirname, "resources", "zhihupp0.59.hap");
+    const hap = new HapFile(new Uint8Array(fs.readFileSync(hapPath)));
+    const pandaFile = new PandaFile(hap.readEntry("ets/modules.abc")!);
+    const clazz = pandaFile.getAllClasses().find((c) => c.name.content.includes("update/AppUpdateClient"));
+    if (!clazz) throw new Error("hap: 未找到 AppUpdateClient");
+
+    const code = new PandaDecompiler().decompileClass(clazz);
+    NodeFactory.parse(code);
+    if (code.includes("created by SimpleAnalysis")) {
+        throw new Error(`AppUpdateClient: 方法降级为 SimpleAnalysis\n${code}`);
+    }
+    const start = code.indexOf("async fetchReleaseDetail");
+    if (start < 0) throw new Error(`AppUpdateClient: 未找到 fetchReleaseDetail\n${code}`);
+    const body = code.slice(start, code.indexOf("\n    destroy(", start));
+    if (body.includes("from goto") || /\blabel_\d+/.test(body)) {
+        throw new Error(`AppUpdateClient: done 出口仍残留 goto/label 伪语句\n${body}`);
+    }
+    if (/\bbreak;/.test(body)) {
+        throw new Error(`AppUpdateClient: 内层循环被无条件 break 截断\n${body}`);
+    }
+    const failedReturns = body.match(/return local_0_6\(/g)?.length ?? 0;
+    if (failedReturns !== 2) {
+        throw new Error(`AppUpdateClient: 两个 for...of 的耗尽路径都应返回失败结果,实际 ${failedReturns} 处\n${body}`);
+    }
+    const decodes = body.match(/decodeReleaseDetail\(/g)?.length ?? 0;
+    if (decodes !== 2) {
+        throw new Error(`AppUpdateClient: 两个循环应各保留一次 decodeReleaseDetail,实际 ${decodes} 处\n${body}`);
+    }
+
+    const expectedPath = path.join(__dirname, "expected", "zhihu-app-update-client.js");
+    const expected = fs.readFileSync(expectedPath, "utf-8");
+    if (code !== expected) {
+        throw new Error(`AppUpdateClient: 输出与快照不一致\n${firstDifference(expected, code)}`);
+    }
+}
+
+/**
  * 回归:`createobjectwithbuffer` 的“模板对象 + 逐属性赋值”。
  *   acc = { protocol: null, hostname: null };
  *   acc.protocol = P; acc.hostname = H; return acc;
@@ -1647,6 +1700,10 @@ async function main(): Promise<void> {
 
     console.log("[test] hap for...of iterator close (zhihupp0.59.hap)");
     verifyZhihuForOfIteratorClose();
+    console.log("    ok");
+
+    console.log("[test] hap AppUpdateClient (zhihupp0.59.hap)");
+    verifyZhihuAppUpdateClient();
     console.log("    ok");
 
     console.log("[test] hap AppDestination (zhihupp0.59.hap)");

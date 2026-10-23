@@ -24,7 +24,7 @@ import type { PandaDecompilerMethodHandler } from "./MethodHandler";
  * @Author: jmp0
  */
 type LoopType = "DoWhile" | "While";
-type ExitType = "CONTINUE" | "BREAK" | "GOTO";
+type ExitType = "CONTINUE" | "BREAK" | "GOTO" | "INLINE";
 
 interface LoopDescription {
     from: Region;
@@ -32,7 +32,7 @@ interface LoopDescription {
     type: ExitType;
 }
 
-function conditionalStatementOf(type: ExitType, to: Region): IPandaDecompileAble {
+function conditionalStatementOf(type: "CONTINUE" | "BREAK" | "GOTO", to: Region): IPandaDecompileAble {
     switch (type) {
         case "CONTINUE": return new ContinueStatement(null);
         case "BREAK": return new BreakStatement(null);
@@ -531,9 +531,16 @@ export class StructureAnalysis {
                         if ((loopType === "DoWhile" && n !== latch) || (loopType === "While" && n !== header)) {
                             loopDescriptions.push({ from: n, to: s, type: "BREAK" });
                         }
+                    } else if (s.getType() === "Tail" && this.regionGraph.outDegree(s) === 0) {
+                        // 出口目标是不会再顺序执行的 Tail(通常只剩 return/throw):
+                        // 没有 goto 可用,break 又只会跳到循环的 follow,语义就错了。
+                        // 直接把 Tail 的语句复制到这条出口分支上。
+                        loopDescriptions.push({ from: n, to: s, type: "INLINE" });
                     } else {
-                        loopDescriptions.push({ from: n, to: s, type: "GOTO" });
-                        loopDescriptions.push({ from: n, to: s, type: "BREAK" });
+                        // 同一条边只生成一个语句:条件区域生成 if (break //goto),
+                        // 线性区域生成无条件 break。两者都生成时,条件区域会先变成
+                        // if (...) break,再被追加一条无条件 break,循环体永远只执行一次。
+                        loopDescriptions.push({ from: n, to: s, type: n.getType() === "Condition" ? "GOTO" : "BREAK" });
                     }
                 }
             }
@@ -547,11 +554,19 @@ export class StructureAnalysis {
             }
             if (from.getType() === "Condition") {
                 if (this.regionGraph.edgeValueOrThrow(from, to)) from.expInvert();
-                from.addStatement(new IfPandaStatement(from, conditionalStatementOf(desc.type, to), null));
+                // INLINE 复制一份 Tail 语句作为 if 分支,不能直接引用目标区域
+                // (它还有别的前驱,后续还会被合并/改名)。
+                const target = desc.type === "INLINE" ? to.copy() : conditionalStatementOf(desc.type, to);
+                from.addStatement(new IfPandaStatement(from, target, null));
                 from.setType("Linear");
             } else if (from.getType() === "Linear") {
-                from.addStatement(conditionalStatementOf(desc.type, to));
-                from.setType("Tail");
+                if (desc.type === "INLINE") {
+                    from.addRegion(to.copy());
+                    from.setType("Tail");
+                } else {
+                    from.addStatement(conditionalStatementOf(desc.type, to));
+                    from.setType("Tail");
+                }
             }
             if (this.regionGraph.hasNode(to)) {
                 this.regionGraph.removeEdge(from, to);
