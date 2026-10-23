@@ -26,9 +26,8 @@ local_0_7 = function (p0) {
   return Number.isFinite(p0) && p0 >= 0 && Math.floor(p0) === p0;
 };
 local_0_14 = function (p0, p1) {
-  let v0, v1;
-  v0 = p0.length === 0 || p0.length > 2048 || new RegExp("[\\r\\n\\t ]").test(p0) || p0.includes("@");
-  if (v0 || p0.includes("\\")) {
+  let v1;
+  if (p0.length === 0 || p0.length > 2048 || new RegExp("[\\r\\n\\t ]").test(p0) || p0.includes("@") || p0.includes("\\")) {
     return false;
   } else {
     v1 = new RegExp("^https:\\/\\/([^/?#:]+)(?::[0-9]+)?\\/").exec(p0);
@@ -53,9 +52,7 @@ local_0_13 = function (p0, p1) {
   }
 };
 markSharePanelOpened = function (p0, p1) {
-  let acc;
-  acc = !local_0_7(p1);
-  if (acc || p1 < p0.createdAtMillis) {
+  if (!local_0_7(p1) || p1 < p0.createdAtMillis) {
     throw new ShareFailure(ShareFailureKind.INVALID_PAYLOAD);
   } else {
     return {
@@ -67,10 +64,9 @@ markSharePanelOpened = function (p0, p1) {
   }
 };
 local_0_9 = function (p0) {
-  let v0 /*ShareFailure*/, acc;
+  let v0 /*ShareFailure*/;
   v0 = p0.replace(new RegExp("\\\\", "g"), "/").replace(new RegExp("\\/+$", "g"), "");
-  acc = !new RegExp("^\\/[A-Za-z0-9._/-]+$").test(v0);
-  if (acc || v0.includes("..")) {
+  if (!new RegExp("^\\/[A-Za-z0-9._/-]+$").test(v0) || v0.includes("..")) {
     throw new ShareFailure(ShareFailureKind.INVALID_PAYLOAD);
   } else {
     return v0;
@@ -87,8 +83,7 @@ local_0_2 = function (p0) {
 };
 local_0_8 = function (p0, p1, p2) {
   let v0 /*ShareFailure*/;
-  v0 = !local_0_7(p0.createdAtMillis) || p0.createdAtMillis > p1.nowMillis;
-  if (v0 || p1.nowMillis - p0.createdAtMillis > SHARE_TEMPORARY_MAX_AGE_MILLIS) {
+  if (!local_0_7(p0.createdAtMillis) || p0.createdAtMillis > p1.nowMillis || p1.nowMillis - p0.createdAtMillis > SHARE_TEMPORARY_MAX_AGE_MILLIS) {
     throw new ShareFailure(ShareFailureKind.FILE_UNAVAILABLE);
   } else {
     v0 = local_0_9(p1.cacheDir) + "/" + SHARE_TEMPORARY_DIRECTORY + "/";

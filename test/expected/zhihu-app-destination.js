@@ -349,22 +349,19 @@ local_0_4 = function (p0) {
   }
 };
 local_0_5 = function (p0) {
-  let v0, v2;
+  let v0;
   v0 = local_0_0(p0, "version");
-  if (v0 === undefined || isSafeWhatsNewVersion(v0)) {
-    v2 = v0 === undefined ? ["name"] : ["name", "version"];
-    if (!local_0_11(p0, v2)) {
-      return undefined;
-    } else {
-      return v0 === undefined ? {
-        "name": AppDestinationName.WHATS_NEW
-      } : {
-        "name": AppDestinationName.WHATS_NEW,
-        "version": v0
-      };
-    }
-  } else {
+  if (v0 !== undefined && !isSafeWhatsNewVersion(v0)) {
     return undefined;
+  } else if (!local_0_11(p0, v0 === undefined ? ["name"] : ["name", "version"])) {
+    return undefined;
+  } else {
+    return v0 === undefined ? {
+      "name": AppDestinationName.WHATS_NEW
+    } : {
+      "name": AppDestinationName.WHATS_NEW,
+      "version": v0
+    };
   }
 };
 local_0_6 = function (p0) {

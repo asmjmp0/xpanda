@@ -176,6 +176,48 @@ function buildBatchDelBody(p0, p1) {
 }
 
 /**
+ * 回归:条件物化 `X = !E; if (X/!X/复合条件)` 折回 test。
+ *   acc = !isAllowed(p0); if (acc) throw ... else ...
+ *   acc = !p0.isEnd; acc = !acc; if (!acc && ...)
+ * 第二例的取反链奇偶性必须作用到 X 的值上,而不是只折掉一层。
+ */
+function verifyConditionMaterializationIntoTest(): void {
+    const program = NodeFactory.parse(`
+function reject(p0) {
+  let acc;
+  acc = !isAllowed(p0);
+  if (acc) {
+    throw new Error("bad");
+  } else {
+    return p0;
+  }
+}
+function hasMore(p0) {
+  let acc;
+  acc = !p0.isEnd;
+  acc = !acc;
+  if (!acc && p0.items.length > 0) {
+    return 1;
+  } else {
+    return 0;
+  }
+}
+`);
+    SimplifyExport.simplify(program);
+    const code = NodeFactory.generate(program);
+    if (!code.includes("if (!isAllowed(p0))")) {
+        throw new Error(`simplify: 条件物化未折回 test\n${code}`);
+    }
+    if (!code.includes("return !p0.isEnd && p0.items.length > 0 ? 1 : 0")) {
+        throw new Error(`simplify: 取反链奇偶性未折回复合 test\n${code}`);
+    }
+    if (/\bacc\b/.test(code)) {
+        throw new Error(`simplify: 条件物化后仍残留 acc\n${code}`);
+    }
+}
+
+
+/**
  * 回归:闭包只写不读的外层变量必须视为被捕获。
  * 旧实现只从 binding.referencePaths 判断捕获,而赋值写在 constantViolations 里;
  * 一旦闭包里对该变量的读取被优化掉,外层 `local_1_1 = undefined` 就会被当作唯一值
@@ -1335,6 +1377,10 @@ async function main(): Promise<void> {
 
     console.log("[test] simplify accumulator chain fold");
     verifyAccumulatorChainFold();
+    console.log("    ok");
+
+    console.log("[test] simplify condition materialization into test");
+    verifyConditionMaterializationIntoTest();
     console.log("    ok");
 
     console.log("[test] simplify closure written variable");

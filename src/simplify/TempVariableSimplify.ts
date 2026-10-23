@@ -927,19 +927,18 @@ export class TempVariableSimplify implements ISimplify {
         return true;
     }
 
-    /** X = E; (X = !X;)? if (!X / X) -> if (E / !E) */
+    /** X = E; (X = !X;)? if (!X / X / 含 X 的复合条件) -> if (E / !E / ...) */
     private cleanupConditionAssignments(stmts: TYPE.Statement[], ctx: FunctionContext): void {
         for (let i = 0; i < stmts.length; i++) {
             const stmt = stmts[i];
             if (TYPE.isIfStatement(stmt)) {
                 const pattern = this.matchConditionPattern(stmts, i, ctx);
                 if (pattern) {
-                    const { start, expr, invert } = pattern;
+                    const { start, name, expr, testId } = pattern;
                     const oldTest = stmt.test;
-                    stmt.test = invert ? TYPE.unaryExpression("!", expr) : expr;
-                    // 只删除消失的引用:旧 test 和 X = !X 里的 X。
-                    // E 被搬到 test 中,它的引用必须保留。
-                    this.removeRefs(oldTest, ctx);
+                    // 只移除旧 test 里对 X 的那一次读取;test 中其它标识符(E 替换后仍在)
+                    // 的引用必须保留,否则后续声明清理会误删它们。
+                    this.removeRefs(testId, ctx);
                     if (i - start > 1) {
                         // 删除整条 `X = !X` 取反链(可能有多条)里的引用
                         for (let j = start + 1; j < i; j++) {
@@ -949,6 +948,17 @@ export class TempVariableSimplify implements ISimplify {
                             }
                         }
                     }
+                    let newTest: TYPE.Expression;
+                    if (oldTest === testId) {
+                        newTest = expr;
+                    } else {
+                        newTest = oldTest;
+                        if (!replaceNodeInTree(newTest, testId, expr)) {
+                            this.cleanupConditionChildren(stmt, ctx);
+                            continue;
+                        }
+                    }
+                    stmt.test = newTest;
                     stmts.splice(start, i - start);
                     i = start - 1;
                     this.changed = true;
@@ -999,20 +1009,39 @@ export class TempVariableSimplify implements ISimplify {
         stmts: TYPE.Statement[],
         ifIndex: number,
         ctx: FunctionContext,
-    ): { start: number; name: string; expr: TYPE.Expression; invert: boolean } | null {
+    ): { start: number; name: string; expr: TYPE.Expression; testId: TYPE.Identifier } | null {
         const ifStmt = stmts[ifIndex];
         if (!TYPE.isIfStatement(ifStmt)) return null;
         const test = ifStmt.test;
         let name: string;
-        let testNegated = false;
+        let testId: TYPE.Identifier | null = null;
         if (TYPE.isIdentifier(test)) {
             name = test.name;
+            testId = test;
         } else if (TYPE.isUnaryExpression(test) && test.operator === "!"
             && TYPE.isIdentifier(test.argument)) {
             name = test.argument.name;
-            testNegated = true;
+            testId = test.argument;
         } else {
-            return null;
+            // 复合 test(`!X && B` / `X || B`):变量名从前一条赋值获取,
+            // 并要求 test 里只直接读取一次 X,这样把 X 的值搬进 test 不会复制求值。
+            const prev = stmts[ifIndex - 1];
+            if (!TYPE.isExpressionStatement(prev) || !TYPE.isAssignmentExpression(prev.expression)
+                || prev.expression.operator !== "=" || !TYPE.isIdentifier(prev.expression.left)) {
+                return null;
+            }
+            name = prev.expression.left.name;
+            if (this.hasDeferredSelfReference(test, name)) return null;
+            if (this.countReadsInNode(test, name) !== 1) return null;
+            walkNode(test, (node, parent) => {
+                if (isFunctionLike(node) || isClassLike(node)) return false;
+                if (TYPE.isIdentifier(node) && node.name === name && parent && TYPE.isReferenced(node, parent)) {
+                    testId = node;
+                    return false;
+                }
+                return true;
+            });
+            if (!testId) return null;
         }
         if (!isTempName(name)) return null;
         const info = ctx.infos.get(name);
@@ -1045,31 +1074,52 @@ export class TempVariableSimplify implements ISimplify {
 
         // X 只能在当前模式里被读取,不能影响模式之后/之前的代码。
         // 但 acc 是字节码累加器,通常在整个函数里反复复用(模式之外还有大量读写),
-        // 此时退一步:只要模式之后 X 已死、且 if 分支体不读取 X,删除这几条赋值仍然安全。
+        // 此时退一步:只要模式之后 X 已死、且 if 分支在写入 X 之前不读取 X,
+        // 删除这几条赋值仍然安全。
         const patternRefs = new Set<TYPE.Node>();
-        for (let j = start; j <= ifIndex; j++) {
+        for (let j = start; j < ifIndex; j++) {
             walkNode(stmts[j], (node, parent) => {
                 if (TYPE.isIdentifier(node) && node.name === name && parent && TYPE.isReferenced(node, parent)) {
                     patternRefs.add(node);
                 }
             });
         }
-        if (info.refs.size !== patternRefs.size) {
-            for (const ref of patternRefs) if (!info.refs.has(ref)) return null;
-            const liveAfterIf = ctx.liveAfter.get(ifStmt);
-            if (!liveAfterIf || liveAfterIf.has(name)) return null;
-            if (collectIdentifierNames(ifStmt.consequent).has(name)) return null;
-            if (ifStmt.alternate && collectIdentifierNames(ifStmt.alternate).has(name)) return null;
+        patternRefs.add(testId);
+        for (const ref of patternRefs) if (!info.refs.has(ref)) return null;
+        // 复制传播会克隆节点,ctx.infos 里的 referencePaths 可能已经过期,
+        // 不能因为“引用数恰好等于模式内的引用数”就跳过下面的安全检查。
+        const liveAfterIf = ctx.liveAfter.get(ifStmt);
+        if (!liveAfterIf || liveAfterIf.has(name)) return null;
+        // break/continue 可能跳过 if 之后的写入,继续读取 X(例如
+        // `v4 = g(); if (v4.completed) break; ... v4 = h();` 循环外的 return v4)。
+        // branchLive 已把 break/continue 目标处的活跃变量算进来。
+        const branchLive = ctx.branchLive.get(ifStmt);
+        if (branchLive && branchLive.has(name)) return null;
+        if (this.branchReadsNameBeforeWrite(ifStmt.consequent, name)) return null;
+        if (ifStmt.alternate && this.branchReadsNameBeforeWrite(ifStmt.alternate, name)) return null;
+
+        // 取反链的奇偶性直接作用在赋给 X 的值上,test 里的 X 按原位置替换即可。
+        let expr = expression.right;
+        if (negations % 2 === 1) expr = this.negateExpression(expr);
+        // 求值时序:把赋值右值搬进 test 会把它的求值推迟到 test 中 X 的位置。
+        // 有副作用的右值只有位于 test 最先求值的位置时才安全(如 test 就是 X/!X);
+        // 纯右值也要避免越过 test 里先求值的写入(如 `X = Y; if ((Y = 1, X))`)。
+        if (!isPureExpression(expr)) {
+            if (!this.isFirstEvaluatedOccurrence(test, testId)) return null;
         } else {
-            for (const ref of patternRefs) if (!info.refs.has(ref)) return null;
+            const assigned = collectAssignedNames(test);
+            for (const dep of collectIdentifierNames(expr)) {
+                if (dep !== name && assigned.has(dep)) return null;
+            }
         }
 
-        return {
-            start,
-            name,
-            expr: expression.right,
-            invert: testNegated !== (negations % 2 === 1),
-        };
+        return { start, name, expr, testId };
+    }
+
+    /** 构造 `!expr`,`!!E` 直接还原成 E。 */
+    private negateExpression(expr: TYPE.Expression): TYPE.Expression {
+        if (TYPE.isUnaryExpression(expr) && expr.operator === "!") return expr.argument;
+        return TYPE.unaryExpression("!", expr);
     }
 
     /**

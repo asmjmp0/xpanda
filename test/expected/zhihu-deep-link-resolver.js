@@ -125,88 +125,92 @@ local_0_0 = function (p0, p1) {
       } else if (v5 === "link.zhihu.com") {
         v0 = v2.params.get("target");
         return v0 === undefined ? undefined : local_0_0(v0, p1 + 1);
-      } else if (v5 === "zhuanlan.zhihu.com") {
-        return v6.length === v1 && v6[0] === "p" && isSafeDecimalContentId(v6[1]) ? {
-          "type": DeepLinkType.ARTICLE,
-          "id": v6[1],
-          "query": ""
-        } : undefined;
-      } else if (v5 !== "zhihu.com" && v5 !== "www.zhihu.com") {
-        return undefined;
-      } else if (v6.length === 4 && v6[0] === "question" && isSafeDecimalContentId(v6[1]) && v6[v1] === "answer" && isSafeDecimalContentId(v6[3])) {
-        return {
-          "type": DeepLinkType.ANSWER,
-          "id": v6[3],
-          "query": ""
-        };
-      } else if (v6.length === v1 && v6[0] === "answer" && isSafeDecimalContentId(v6[1])) {
-        return {
-          "type": DeepLinkType.ANSWER,
-          "id": v6[1],
-          "query": ""
-        };
-      } else if (v6.length === v1 && v6[0] === "question" && isSafeDecimalContentId(v6[1])) {
-        return {
-          "type": DeepLinkType.QUESTION,
-          "id": v6[1],
-          "query": ""
-        };
-      } else if (v6.length === 3 && v6[0] === "oia" && v6[1] === "articles" && isSafeDecimalContentId(v6[v1])) {
-        return {
-          "type": DeepLinkType.ARTICLE,
-          "id": v6[v1],
-          "query": ""
-        };
-      } else if (v6.length === v1 && v6[0] === "people" && v6[1].length > 0) {
-        return {
-          "type": DeepLinkType.PERSON,
-          "id": v6[1],
-          "query": ""
-        };
-      } else if (v6.length === v1 && v6[0] === "video" && isSafeDecimalContentId(v6[1])) {
-        return {
-          "type": DeepLinkType.VIDEO,
-          "id": v6[1],
-          "query": ""
-        };
-      } else if (v6.length === v1 && v6[0] === "pin" && isSafeDecimalContentId(v6[1])) {
-        return {
-          "type": DeepLinkType.PIN,
-          "id": v6[1],
-          "query": ""
-        };
-      } else if (v6.length === 3 && v6[0] === "appview" && isSafeDecimalContentId(v6[v1])) {
-        if (v6[1] === "pin") {
-          return {
-            "type": DeepLinkType.PIN,
-            "id": v6[v1],
-            "query": ""
-          };
-        } else if (v6[1] === "answer") {
+      } else if (v5 !== "zhuanlan.zhihu.com") {
+        if (v5 !== "zhihu.com" && v5 !== "www.zhihu.com") {
+          return undefined;
+        } else if (v6.length === 4 && v6[0] === "question" && isSafeDecimalContentId(v6[1]) && v6[v1] === "answer" && isSafeDecimalContentId(v6[3])) {
           return {
             "type": DeepLinkType.ANSWER,
-            "id": v6[v1],
+            "id": v6[3],
             "query": ""
           };
-        } else if (v6[1] === "p") {
+        } else if (v6.length === v1 && v6[0] === "answer" && isSafeDecimalContentId(v6[1])) {
+          return {
+            "type": DeepLinkType.ANSWER,
+            "id": v6[1],
+            "query": ""
+          };
+        } else if (v6.length === v1 && v6[0] === "question" && isSafeDecimalContentId(v6[1])) {
+          return {
+            "type": DeepLinkType.QUESTION,
+            "id": v6[1],
+            "query": ""
+          };
+        } else if (v6.length === 3 && v6[0] === "oia" && v6[1] === "articles" && isSafeDecimalContentId(v6[v1])) {
           return {
             "type": DeepLinkType.ARTICLE,
             "id": v6[v1],
             "query": ""
           };
+        } else if (v6.length === v1 && v6[0] === "people" && v6[1].length > 0) {
+          return {
+            "type": DeepLinkType.PERSON,
+            "id": v6[1],
+            "query": ""
+          };
+        } else if (v6.length === v1 && v6[0] === "video" && isSafeDecimalContentId(v6[1])) {
+          return {
+            "type": DeepLinkType.VIDEO,
+            "id": v6[1],
+            "query": ""
+          };
+        } else if (v6.length === v1 && v6[0] === "pin" && isSafeDecimalContentId(v6[1])) {
+          return {
+            "type": DeepLinkType.PIN,
+            "id": v6[1],
+            "query": ""
+          };
+        } else if (v6.length === 3 && v6[0] === "appview" && isSafeDecimalContentId(v6[v1])) {
+          if (v6[1] === "pin") {
+            return {
+              "type": DeepLinkType.PIN,
+              "id": v6[v1],
+              "query": ""
+            };
+          } else if (v6[1] === "answer") {
+            return {
+              "type": DeepLinkType.ANSWER,
+              "id": v6[v1],
+              "query": ""
+            };
+          } else if (v6[1] === "p") {
+            return {
+              "type": DeepLinkType.ARTICLE,
+              "id": v6[v1],
+              "query": ""
+            };
+          } else {
+            return undefined;
+          }
+        } else if (v6.length === 1 && v6[0] === "search") {
+          v0 = v2.params.get("q");
+          if (v0 == null) {
+            v0 = "";
+          }
+          return isSafeSearchDestinationQuery(v0) ? {
+            "type": DeepLinkType.SEARCH,
+            "id": "",
+            "query": v0
+          } : undefined;
         } else {
           return undefined;
         }
-      } else if (v6.length === 1 && v6[0] === "search") {
-        v0 = v2.params.get("q");
-        if (v0 == null) {
-          v0 = "";
-        }
-        return isSafeSearchDestinationQuery(v0) ? {
-          "type": DeepLinkType.SEARCH,
-          "id": "",
-          "query": v0
-        } : undefined;
+      } else if (v6.length === v1 && v6[0] === "p" && isSafeDecimalContentId(v6[1])) {
+        return {
+          "type": DeepLinkType.ARTICLE,
+          "id": v6[1],
+          "query": ""
+        };
       } else {
         return undefined;
       }

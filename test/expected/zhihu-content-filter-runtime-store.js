@@ -88,12 +88,8 @@ ContentFilterRuntimeStore = class panda_jmp0_reserved_anonymous_0 {
             "last_viewed_at": v5
           }, relationalStore.ConflictResolution.ON_CONFLICT_REPLACE);
         } else if (local_1_0[v6].match !== undefined) {
-          v8 = local_1_0[v6].content.contentId ?? "";
-          v8 = v8.length;
-          if (v8 > 0) {
-            v8 = local_1_0[v6].content.contentKind ?? "";
-            v8 = v8.length;
-            if (v8 > 0) {
+          if ((local_1_0[v6].content.contentId ?? "").length > 0) {
+            if ((local_1_0[v6].content.contentKind ?? "").length > 0) {
               v10 = {
                 "kind": local_1_0[v6].match.kind,
                 "ruleId": local_1_0[v6].match.ruleId,
