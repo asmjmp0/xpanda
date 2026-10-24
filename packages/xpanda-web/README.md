@@ -15,7 +15,10 @@ app package and decompile it **entirely in the browser** (pure frontend, nothing
   Classes without a `func_main_0` entry (compiler metadata such as `L_ES*Annotation;`
   and `@ohos.*` / `@system.*` stubs) are hidden — they have no decompilable code,
   matching the CLI which never writes them.
-- "Decompile all" runs every class with a live progress bar (main thread yields between classes, cancellable)
+- "Decompile all" runs every class with a live progress bar (cancellable). In optimized mode the
+  expensive `simplify` pass runs in a pool of Web Workers (1–8 threads, default 4, same split as
+  the CLI `-j`: main thread builds the AST, workers optimize); the thread count is selectable in
+  the toolbar and remembered in `localStorage`; raw mode stays single-threaded
 - Copy / download a single class as `.js`, or pack every decompiled class into a `.zip`
 - The code pane shows how long the selected class took to decompile (first run, per output mode)
 - Output mode toggle: **Optimized** (full simplify pipeline) or **Raw AST** output

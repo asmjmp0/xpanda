@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { strToU8, zipSync, type Zippable } from "fflate";
 import {
+    DEFAULT_DECOMPILE_JOBS,
     DecompileService,
+    MAX_DECOMPILE_JOBS,
     buildClassRefs,
     loadImage,
     yieldToUI,
@@ -19,6 +21,28 @@ import { Sidebar } from "./components/Sidebar";
 import { CodePane } from "./components/CodePane";
 
 type Phase = "idle" | "parsing" | "decompiling";
+
+const JOBS_STORAGE_KEY = "xpanda-web.worker-jobs";
+
+/** 读取上次选择的 worker 数;无记录 / 非法值 / localStorage 不可用时回退默认 4 */
+function loadWorkerJobs(): number {
+    try {
+        const raw = window.localStorage.getItem(JOBS_STORAGE_KEY);
+        const value = raw === null ? NaN : Number(raw);
+        if (Number.isInteger(value) && value >= 1 && value <= MAX_DECOMPILE_JOBS) return value;
+    } catch {
+        // 隐私模式等场景下 localStorage 可能抛异常
+    }
+    return DEFAULT_DECOMPILE_JOBS;
+}
+
+function saveWorkerJobs(jobs: number): void {
+    try {
+        window.localStorage.setItem(JOBS_STORAGE_KEY, String(jobs));
+    } catch {
+        // 忽略写入失败:本次会话内仍然生效
+    }
+}
 
 /**
  * xpanda web 主界面:
@@ -40,6 +64,8 @@ export function App() {
     const [error, setError] = useState<string | null>(null);
     const [bulk, setBulk] = useState<BulkState | null>(null);
     const [dragging, setDragging] = useState(false);
+    /** Decompile all 使用的 worker 数(默认 4,可在工具栏切换并记住) */
+    const [workerJobs, setWorkerJobs] = useState<number>(loadWorkerJobs);
 
     const bulkCancel = useRef(false);
     const dragDepth = useRef(0);
@@ -161,29 +187,42 @@ export function App() {
         if (files.length > 0) void handleFiles(files);
     };
 
-    /** 全量反编译:逐类执行并在类间让出主线程,进度条实时刷新,可取消 */
+    /**
+     * 全量反编译:optimize 模式的 simplify 交给 Web Worker 池(默认 4 线程),
+     * 主线程只在类间构建 AST 并刷新进度;raw 模式无 simplify 阶段,保持串行。
+     */
     const runBulk = async (): Promise<void> => {
         if ((bulk !== null && bulk.running) || refs.length === 0) return;
         bulkCancel.current = false;
-        setBulk({ running: true, done: 0, total: refs.length, failed: 0, cancelled: false });
-        await yieldToUI();
-        let done = 0;
+        const pendingCount = refs.filter((ref) => service.peek(ref, mode) === undefined).length;
+        const runJobs = mode === "simplify" ? Math.min(workerJobs, Math.max(1, pendingCount)) : 1;
+        let done = refs.length - pendingCount;
         let failed = 0;
-        for (const ref of refs) {
-            if (bulkCancel.current) break;
-            if (service.peek(ref, mode) === undefined) {
-                try {
-                    service.decompile(ref, mode);
-                } catch {
+        const publish = (running: boolean, cancelled: boolean): void => {
+            setBulk({ running, done, total: refs.length, failed, cancelled, jobs: runJobs });
+        };
+        publish(true, false);
+        await yieldToUI();
+        try {
+            await service.decompileMany(refs, mode, {
+                jobs: runJobs,
+                shouldStop: () => bulkCancel.current,
+                onClassDone: () => {
+                    done++;
+                    publish(true, false);
+                },
+                onClassFailed: (ref, e) => {
+                    done++;
                     failed++;
-                }
-            }
-            done++;
-            setBulk({ running: true, done, total: refs.length, failed, cancelled: false });
-            await yieldToUI();
+                    console.error("decompile failed: " + ref.displayPath, e);
+                    publish(true, false);
+                },
+                onWarning: (message) => console.warn(message),
+            });
+        } finally {
+            publish(false, bulkCancel.current);
+            setCacheVersion((v) => v + 1);
         }
-        setBulk({ running: false, done, total: refs.length, failed, cancelled: bulkCancel.current });
-        setCacheVersion((v) => v + 1);
     };
 
     /** 打包全部已反编译类下载;多来源时按来源目录分段(与 cli 落盘结构一致) */
@@ -229,6 +268,11 @@ export function App() {
                     bulk={bulk}
                     total={refs.length}
                     cachedCount={cachedCount}
+                    jobs={workerJobs}
+                    onJobsChange={(jobs) => {
+                        setWorkerJobs(jobs);
+                        saveWorkerJobs(jobs);
+                    }}
                     onRun={() => void runBulk()}
                     onCancel={() => {
                         bulkCancel.current = true;

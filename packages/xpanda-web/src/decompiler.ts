@@ -1,15 +1,22 @@
 /**
  * xpanda-web 反编译服务:文件加载(.abc / .hap)、类索引、单类 / 全量反编译与结果缓存。
- * 纯前端实现:直接复用浏览器安全的 xpanda-core 单入口(无 Node 依赖、无磁盘 IO),
- * 反编译在主线程同步执行,调用方通过 yieldToUI() 在类与类之间让出主线程刷新进度。
+ * 纯前端实现:直接复用浏览器安全的 xpanda-core 单入口(无 Node 依赖、无磁盘 IO)。
+ * 单类在主线程同步反编译;全量反编译的 simplify 交给 Web Worker 池(默认 4 线程),
+ * 调用方通过 yieldToUI() 在类与类之间让出主线程刷新进度。
  * @Author: jmp0
  */
 import { ENTRY_FUNCTION_MAIN, HapFile, PandaDecompiler, PandaFile, ZipFile } from "xpanda-core";
 import type { PandaClass } from "xpanda-core";
-import { sanitizeFileName, splitClassName, stripExt } from "./format";
+import { readError, sanitizeFileName, splitClassName, stripExt } from "./format";
+import { SimplifyWorker } from "./parallel/SimplifyWorker";
 
 /** 反编译模式:走优化器 / 仅生成原始 AST 输出 */
 export type DecompileMode = "simplify" | "raw";
+
+/** 全量反编译的默认 worker 数(与 cli 的默认上限一致) */
+export const DEFAULT_DECOMPILE_JOBS = 4;
+/** 界面允许选择的最大 worker 数 */
+export const MAX_DECOMPILE_JOBS = 8;
 
 let nextId = 1;
 
@@ -66,6 +73,8 @@ export interface BulkState {
     total: number;
     failed: number;
     cancelled: boolean;
+    /** 本次全量反编译使用的 worker 数(raw 模式为 1) */
+    jobs: number;
 }
 
 /**
@@ -159,6 +168,15 @@ export function zipPathFor(ref: ClassRef, multiSource: boolean): string {
     return dir + "/" + ref.outPath;
 }
 
+/** 单类预估代价:指令字节数。仅用于派发顺序(大先派,减少尾部等待,与 cli 一致) */
+function estimateWeight(clazz: PandaClass): number {
+    let bytes = 0;
+    for (const method of clazz.pandaMethods.values()) {
+        bytes += method.methodCode?.codeSize ?? 0;
+    }
+    return bytes;
+}
+
 /**
  * 反编译服务:缓存键 = sourceId::类名|mode,单类与全量共用同一份缓存。
  * 反编译失败向上抛异常,由调用方决定展示方式(单类不中断全量)。
@@ -169,9 +187,23 @@ interface CacheEntry {
     elapsedMs: number;
 }
 
+/** 全量反编译回调 */
+export interface BulkDecompileOptions {
+    /** worker 数,默认 DEFAULT_DECOMPILE_JOBS;raw 模式或只有 1 个待处理类时退回主线程 */
+    jobs?: number;
+    /** 返回 true 时不再派发新任务(已在运行的任务会等待完成) */
+    shouldStop?: () => boolean;
+    onClassDone?: (ref: ClassRef) => void;
+    onClassFailed?: (ref: ClassRef, error: unknown) => void;
+    /** 非致命告警(worker 崩溃降级等) */
+    onWarning?: (message: string) => void;
+}
+
 export class DecompileService {
     private readonly decompiler = new PandaDecompiler();
     private readonly cache = new Map<string, CacheEntry>();
+    /** 惰性创建的 simplify worker 池,跨多次全量反编译复用 */
+    private workers: SimplifyWorker[] = [];
 
     /** 已缓存则返回代码,否则返回 undefined(空输出缓存为 "") */
     peek(ref: ClassRef, mode: DecompileMode): string | undefined {
@@ -195,8 +227,132 @@ export class DecompileService {
         const out = mode === "raw"
             ? this.decompiler.decompileClassRaw(ref.clazz)
             : this.decompiler.decompileClass(ref.clazz);
-        this.cache.set(cacheKey, { code: out, elapsedMs: performance.now() - started });
+        this.store(ref, mode, out, performance.now() - started);
         return out;
+    }
+
+    /**
+     * 批量反编译所有尚未缓存的类。
+     *
+     * 与 cli 的 `-j` 分工一致:主线程负责解析/反汇编/AST 构建(占比很低),
+     * worker 只跑 simplify。raw 模式没有 simplify 阶段,保持串行。
+     * 完成顺序与缓存/结果无关,输出仍按 refs 顺序使用。
+     */
+    async decompileMany(refs: ClassRef[], mode: DecompileMode, options: BulkDecompileOptions = {}): Promise<void> {
+        const todo = refs.filter((ref) => this.peek(ref, mode) === undefined);
+        if (todo.length === 0) return;
+        const jobs = Math.max(1, Math.floor(options.jobs ?? DEFAULT_DECOMPILE_JOBS));
+        if (mode === "raw" || jobs <= 1 || todo.length <= 1) {
+            for (const ref of todo) {
+                if (options.shouldStop?.()) break;
+                try {
+                    this.decompile(ref, mode);
+                    options.onClassDone?.(ref);
+                } catch (e) {
+                    options.onClassFailed?.(ref, e);
+                }
+                await yieldToUI();
+            }
+            return;
+        }
+        await this.decompileParallel(todo, mode, Math.min(jobs, todo.length), options);
+    }
+
+    private async decompileParallel(
+        todo: ClassRef[],
+        mode: DecompileMode,
+        jobs: number,
+        options: BulkDecompileOptions,
+    ): Promise<void> {
+        if (options.shouldStop?.()) return;
+        const warn = options.onWarning ?? ((message: string) => console.warn(message));
+        const idle = [...this.ensureWorkers(jobs)];
+        const running = new Set<Promise<void>>();
+        // 大先派,减少最后一个大类的尾部等待
+        const pending = [...todo].sort((a, b) => estimateWeight(b.clazz) - estimateWeight(a.clazz));
+        let workerFailures = 0;
+        let workersEnabled = true;
+
+        const runJob = async (worker: SimplifyWorker | null, ref: ClassRef): Promise<void> => {
+            // 可能有并发的主线程单类反编译刚好把它缓存了
+            if (this.peek(ref, mode) !== undefined) {
+                options.onClassDone?.(ref);
+                return;
+            }
+            const started = performance.now();
+            try {
+                const ast = this.decompiler.decompileClassAst(ref.clazz);
+                if (ast.length === 0) {
+                    this.store(ref, mode, "", performance.now() - started);
+                    options.onClassDone?.(ref);
+                    return;
+                }
+                let content: string;
+                if (worker !== null && workersEnabled) {
+                    try {
+                        content = await worker.run(ast);
+                    } catch (e) {
+                        workerFailures++;
+                        warn("simplify worker failed, falling back to main thread: " + ref.displayPath + " (" + readError(e) + ")");
+                        if (workerFailures >= 2 && workersEnabled) {
+                            workersEnabled = false;
+                            idle.length = 0;
+                            warn("simplify workers failed repeatedly, remaining classes run on the main thread");
+                            void this.disposeWorkers();
+                        }
+                        content = this.decompiler.simplifyInProcess(ast);
+                    }
+                } else {
+                    content = this.decompiler.simplifyInProcess(ast);
+                }
+                this.store(ref, mode, content, performance.now() - started);
+                options.onClassDone?.(ref);
+            } catch (e) {
+                options.onClassFailed?.(ref, e);
+            }
+        };
+
+        const dispatch = (worker: SimplifyWorker | null, ref: ClassRef): void => {
+            let task: Promise<void>;
+            task = runJob(worker, ref).finally(() => {
+                running.delete(task);
+                if (worker !== null && workersEnabled) idle.push(worker);
+            });
+            running.add(task);
+        };
+
+        while (true) {
+            if (options.shouldStop?.()) break;
+            if (workersEnabled && idle.length > 0 && pending.length > 0) {
+                dispatch(idle.pop()!, pending.shift()!);
+                continue;
+            }
+            if (!workersEnabled && pending.length > 0) {
+                // worker 池全部失败:剩余类回到主线程,逐个让出 UI
+                await runJob(null, pending.shift()!);
+                await yieldToUI();
+                continue;
+            }
+            if (running.size === 0) break;
+            await Promise.race(running);
+        }
+        // 取消时等待已经在跑的任务结束,避免结果/计时丢失
+        await Promise.all([...running]);
+    }
+
+    private ensureWorkers(size: number): SimplifyWorker[] {
+        while (this.workers.length < size) this.workers.push(new SimplifyWorker());
+        return this.workers.slice(0, size);
+    }
+
+    private async disposeWorkers(): Promise<void> {
+        const workers = this.workers;
+        this.workers = [];
+        await Promise.all(workers.map((worker) => worker.terminate()));
+    }
+
+    private store(ref: ClassRef, mode: DecompileMode, code: string, elapsedMs: number): void {
+        this.cache.set(ref.key + "|" + mode, { code, elapsedMs });
     }
 }
 

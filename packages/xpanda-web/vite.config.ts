@@ -9,6 +9,11 @@ import react from "@vitejs/plugin-react";
  */
 export default defineConfig({
     plugins: [react()],
+    // simplify worker 使用 ES module:与主 bundle 相同的模块语义,
+    // 避免 IIFE worker 在打包 @babel/* 的 CJS 互操作时出问题
+    worker: {
+        format: "es",
+    },
     build: {
         // babel 全家桶 + core 体积可观,放宽 chunk 警告
         chunkSizeWarningLimit: 4096,

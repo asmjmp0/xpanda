@@ -293,6 +293,34 @@ button:disabled {
     color: var(--warn);
 }
 
+.bulk-jobs {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--text-dim);
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.bulk-jobs select {
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 2px 6px;
+    font: inherit;
+    cursor: pointer;
+}
+
+.bulk-jobs select:hover:not(:disabled) {
+    border-color: var(--accent);
+}
+
+.bulk-jobs select:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
 .bulk-spacer {
     flex: 1;
 }
