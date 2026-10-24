@@ -1,16 +1,16 @@
 # xpanda MCP Server
 
-> 把 xpanda 反编译器通过 [Model Context Protocol](https://modelcontextprotocol.io) 暴露给 AI agent,支持按需、增量地分析鸿蒙 `.abc` 字节码文件与 `.hap` 应用包(字节码 + 资源表)。
+> Exposes the xpanda decompiler to AI agents via the [Model Context Protocol](https://modelcontextprotocol.io), supporting on-demand, incremental analysis of HarmonyOS `.abc` bytecode files and `.hap` app packages (bytecode + resource tables).
 
-## 快速开始
+## Quick Start
 
 ```bash
-npm install                       # 安装依赖(含 @modelcontextprotocol/sdk)
-npm run mcp                       # 直接启动(stdio transport)
-npm run test:mcp                  # 端到端测试(子进程模拟 MCP 客户端)
+npm install                       # install dependencies (including @modelcontextprotocol/sdk)
+npm run mcp                       # start directly (stdio transport)
+npm run test:mcp                  # end-to-end test (subprocess simulating an MCP client)
 ```
 
-### 客户端接入
+### Client Integration
 
 Claude Code:
 
@@ -18,15 +18,15 @@ Claude Code:
 claude mcp add xpanda -- npx tsx /absolute/path/to/xpanda/packages/xpanda-mcp/src/server.ts
 ```
 
-OpenCode(V2,本地 stdio server):
+OpenCode (V2, local stdio server):
 
 ```bash
-# 仅当前项目(写入项目 opencode.json);加 --global 全局可用
+# current project only (writes to the project opencode.json); add --global to make it available globally
 opencode mcp add xpanda -- npx tsx /absolute/path/to/xpanda/packages/xpanda-mcp/src/server.ts
-opencode mcp list   # 验证:✓ xpanda connected
+opencode mcp list   # verify: ✓ xpanda connected
 ```
 
-或手写 `opencode.jsonc`(V2 形状为 `mcp.servers.<name>`,`type` 必须为 `"local"`):
+Or hand-write `opencode.jsonc` (V2 shape is `mcp.servers.<name>`, `type` must be `"local"`):
 
 ```jsonc
 {
@@ -42,9 +42,9 @@ opencode mcp list   # 验证:✓ xpanda connected
 }
 ```
 
-OpenCode 默认以 Code Mode 暴露工具(`tools.xpanda.abc_load(...)`);需要原生工具列表时在 server 配置加 `"codemode": false`。
+OpenCode exposes the tools through Code Mode by default (`tools.xpanda.abc_load(...)`); add `"codemode": false` to the server config if you need a native tool list.
 
-通用 JSON 配置(Claude Desktop / Cursor 等):
+Generic JSON config (Claude Desktop / Cursor etc.):
 
 ```json
 {
@@ -57,107 +57,105 @@ OpenCode 默认以 Code Mode 暴露工具(`tools.xpanda.abc_load(...)`);需要�
 }
 ```
 
-## 工具一览
+## Tool Overview
 
-| 工具 | 作用 | 关键参数 |
+| Tool | Purpose | Key Parameters |
 |---|---|---|
-| `abc_load` | 解析 `.abc` 或 `.hap`;hap 返回包摘要与 `.abc` 条目清单 | `path` |
-| `hap_read_abc` | 把 hap 内 `.abc` 条目解出为 abc 会话 | `fileId, entry?` |
-| `hap_resources` | 解析 hap 内 `resources.index`(名字/类型/限定词/ID 过滤 + 分页) | `fileId, name?, type?, limitKey?, id?, offset?, limit?` |
-| `abc_list_classes` | 分页列出类(名称/方法数/字段数/external),支持子串过滤 | `fileId, filter?, offset?, limit?` |
-| `abc_get_class` | 类元数据:父类、字段表、方法表(shorty 原型)、import/export | `fileId, className` |
-| `abc_decompile_class` | 单类反编译为 JavaScript 源码,带 `degraded` 降级标志 | `fileId, className, simplify?=true` |
-| `abc_disassemble_method` | 方法级反汇编(基本块 + pc/操作数/跳转目标/try-catch) | `fileId, className, methodName?=func_main_0` |
-| `abc_search_strings` | 字符串池搜索(子串或正则),返回内容与文件偏移 | `fileId, pattern, regex?=` |
-| `abc_export` | 全量反编译落盘(等价 CLI decompile) | `fileId, outDir, simplify?=` |
-| `abc_close` | 释放会话内存(abc 或 hap) | `fileId` |
+| `abc_load` | Parse `.abc` or `.hap`; for hap returns the package summary and the `.abc` entry list | `path` |
+| `hap_read_abc` | Extract an `.abc` entry inside a hap into an abc session | `fileId, entry?` |
+| `hap_resources` | Parse `resources.index` inside a hap (name/type/qualifier/ID filtering + pagination) | `fileId, name?, type?, limitKey?, id?, offset?, limit?` |
+| `abc_list_classes` | List classes with pagination (name/method count/field count/external), supports substring filtering | `fileId, filter?, offset?, limit?` |
+| `abc_get_class` | Class metadata: superclass, field table, method table (shorty prototypes), import/export | `fileId, className` |
+| `abc_decompile_class` | Decompile a single class to JavaScript source, with the `degraded` flag | `fileId, className, simplify?=true` |
+| `abc_disassemble_method` | Method-level disassembly (basic blocks + pc/operands/jump targets/try-catch) | `fileId, className, methodName?=func_main_0` |
+| `abc_search_strings` | String pool search (substring or regex), returns content and file offsets | `fileId, pattern, regex?=` |
+| `abc_export` | Full decompile to disk (equivalent to CLI decompile) | `fileId, outDir, simplify?=` |
+| `abc_close` | Free session memory (abc or hap) | `fileId` |
 
-所有工具除 `abc_load` 外都需要先 `abc_load` 拿到 `fileId`。类名接受 `Lpkg/Name;` 与 `pkg/Name` 两种形态,查找失败时会列出候选类名。
+All tools except `abc_load` require an `abc_load` first to get a `fileId`. Class names accept both `Lpkg/Name;` and `pkg/Name`; failed lookups list candidate class names.
 
-## 推荐工作流
+## Recommended Workflow
 
 ```text
 abc_load(.abc)
-  → abc_list_classes(filter 定位目标类)
-  → abc_get_class(确认方法表 / import-export)
-  → abc_decompile_class(读源码)
-      degraded=false → 直接分析
-      degraded=true  → abc_disassemble_method 对照字节码
-  → abc_search_strings(URL / 密钥 / 类名等线索)
-  → abc_export(需要全量或输出被截断时)
-  → abc_close(释放内存)
+  → abc_list_classes(filter to locate target classes)
+  → abc_get_class (confirm method table / import-export)
+  → abc_decompile_class (read source)
+      degraded=false → analyze directly
+      degraded=true  → abc_disassemble_method to compare against bytecode
+  → abc_search_strings (URL / keys / class names and other clues)
+  → abc_export (when you need the full output or the output was truncated)
+  → abc_close (free memory)
 ```
 
-HAP 应用包工作流:
+HAP app package workflow:
 
 ```text
-abc_load(.hap)                     → kind="hap",包摘要 + .abc 条目清单 + 资源项数
-  → hap_read_abc(entry?)           → 解出 .abc 得到 abcFileId
-      → abc_list_classes / abc_decompile_class / abc_search_strings …(与 .abc 工作流相同)
-  → hap_resources(name/type/limitKey/id 过滤)  → 资源项(id ↔ name ↔ value)对账
-  → abc_close(释放 hap 会话与 abc 会话)
+abc_load(.hap)                     → kind="hap", package summary + .abc entry list + resource count
+  → hap_read_abc(entry?)           → extract the .abc to get an abcFileId
+      → abc_list_classes / abc_decompile_class / abc_search_strings … (same as the .abc workflow)
+  → hap_resources(name/type/limitKey/id filters)  → reconcile resource items (id ↔ name ↔ value)
+  → abc_close (free the hap session and the abc session)
 ```
 
-## 设计说明
+## Design Notes
 
-### 会话注册表
+### Session Registry
 
-MCP 工具调用本身无状态,但 `PandaFile` 解析大文件成本高。server 内部维护
-`fileId → 会话` 注册表(上限 8 个会话,超出按最久未使用淘汰);
-同一路径重复 `abc_load` 直接复用,返回 `cached: true`。
+MCP tool calls are themselves stateless, but `PandaFile` parsing is expensive for large files. The server keeps an internal `fileId → session` registry (8-session cap, LRU eviction beyond that); repeated `abc_load` on the same path reuses the session directly and returns `cached: true`.
 
-两类会话共用同一个 LRU 池:
+Two session kinds share one LRU pool:
 
-- `AbcSession`:`.abc`(或从 hap 内解出的 `.abc`)→ `PandaFile + PandaDecompiler`,
-  供全部 `abc_*` 工具使用;
-- `HapSession`:`.hap` → `HapFile`(条目读取 / module.json / resources.index),
-  供 `hap_read_abc` / `hap_resources` 使用;加载时只记资源项数,完整解析推迟到
-  `hap_resources` 调用时。
+- `AbcSession`: `.abc` (or an `.abc` extracted from inside a hap) → `PandaFile + PandaDecompiler`,
+  used by all `abc_*` tools;
+- `HapSession`: `.hap` → `HapFile` (entry reading / module.json / resources.index),
+  used by `hap_read_abc` / `hap_resources`; at load time only the resource item count is recorded, full parsing is deferred to the
+  `hap_resources` call.
 
-`abc_*` 工具拿到 hap `fileId`、`hap_*` 工具拿到 abc `fileId` 都会得到带指引的错误。
+Passing a hap `fileId` to an `abc_*` tool, or an abc `fileId` to a `hap_*` tool, yields an error with guidance.
 
-`fileId` 形如 `md5-5411df7`(文件名 + Adler32 checksum 十六进制);
-hap 会话为 `hap-<文件名>-<checksum>`,hap 内解出的 abc 会话为
-`hap_<hap名>_<条目名>-<checksum>`(如 `hap_zhihupp0.59_ets_modules-7041b86`)。
+`fileId` looks like `md5-5411df7` (file name + Adler32 checksum in hex);
+hap sessions are `hap-<file name>-<checksum>`, and abc sessions extracted from inside a hap are
+`hap_<hap name>_<entry name>-<checksum>` (e.g. `hap_zhihupp0.59_ets_modules-7041b86`).
 
-### stdio 纯净性
+### stdio Purity
 
-stdio transport 下任何 stdout 输出都会破坏 JSON-RPC 流。server 入口**无条件**把
-`console.log/warn/error` 重定向到 stderr,不依赖调用方传参;反编译流水线内部的
-过程日志因此也不会泄漏到协议层。
+Under the stdio transport, any stdout output corrupts the JSON-RPC stream. The server entry **unconditionally** redirects
+`console.log/warn/error` to stderr, independent of caller arguments; procedural logs inside the
+decompile pipeline therefore never leak into the protocol layer.
 
-### 大输出保护
+### Large Output Protection
 
-`abc_decompile_class` 单类输出超过 50KB 时截断,并提示改用 `abc_export` 落盘;
-`abc_disassemble_method` 默认最多输出 1500 条指令,可通过 `maxInstructions`(上限 5000)调整。
+`abc_decompile_class` truncates output over 50KB per class and suggests `abc_export` to write to disk instead;
+`abc_disassemble_method` outputs at most 1500 instructions by default, adjustable via `maxInstructions` (cap 5000).
 
-### 降级可观测
+### Degradation Observability
 
-结构化分析失败时会降级为 `SimpleAnalysis` 线性输出,特征是源码含 `decompiler_goto`。
-`abc_decompile_class` 返回头注释中带 `degraded=true/false`,agent 据此可自动切换到
-`abc_disassemble_method` 阅读字节码。降级是设计行为(单方法 > 500 基本块、
-jeq/jne 家族指令未实现、指令 kind 未注册 handle 三种路径)。
+When structured analysis fails, it degrades to `SimpleAnalysis` linear output, recognizable by `decompiler_goto` in the source.
+`abc_decompile_class` returns `degraded=true/false` in the header comment, so agents can automatically switch to
+`abc_disassemble_method` to read the bytecode. Degradation is by design (three paths: single method > 500 basic blocks,
+unimplemented jeq/jne family instructions, unregistered instruction kind handles).
 
-### 对核心的最小改动
+### Minimal Changes to Core
 
-MCP 层只新增了 `PandaFile.getAllStrings()`(与 `dumpAllString()` 同语义的结构化版本,
-后者改为复用它),其余全部复用 xpanda-core 的 `src/index.ts` 现有公共 API;
-反汇编文本渲染直接使用 `PandaInstruction.toString()` / `PandaIRBasicBlock.toString()` 现有实现。
+The MCP layer only added `PandaFile.getAllStrings()` (a structured version with the same semantics as `dumpAllString()`,
+which was changed to reuse it); everything else reuses existing public APIs from xpanda-core's `src/index.ts`;
+disassembly text rendering directly uses the existing `PandaInstruction.toString()` / `PandaIRBasicBlock.toString()` implementations.
 
-## 目录结构
+## Directory Structure
 
 ```text
 packages/xpanda-mcp/src/
-  server.ts        入口:stdio transport + 无条件静默 console
-  registry.ts      会话注册表(fileId → abc/hap 会话,LRU 上限 8)
-  nameutil.ts      类名归一化与查找(Lpkg/Name; ↔ pkg/Name)
+  server.ts        entry: stdio transport + unconditional console silencing
+  registry.ts      session registry (fileId → abc/hap session, LRU cap 8)
+  nameutil.ts      class name normalization and lookup (Lpkg/Name; ↔ pkg/Name)
   tools/
-    util.ts        结果包装(textResult/jsonResult/errorResult/截断)
+    util.ts        result wrappers (textResult/jsonResult/errorResult/truncation)
     load.ts        abc_load / abc_close
     hap.ts         hap_read_abc / hap_resources
     browse.ts      abc_list_classes / abc_get_class
     decompile.ts   abc_decompile_class / abc_export
     disasm.ts      abc_disassemble_method
     strings.ts     abc_search_strings
-packages/xpanda-mcp/scripts/test-mcp.ts 端到端测试(真实子进程 + JSON-RPC)
+packages/xpanda-mcp/scripts/test-mcp.ts end-to-end test (real subprocess + JSON-RPC)
 ```
