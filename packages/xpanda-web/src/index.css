@@ -760,6 +760,19 @@ button:disabled {
 
 /* ---------- 移动端适配 ---------- */
 
+/* 窄屏专用的返回按钮:默认隐藏,手机断点内再显示(必须写在断点之前,否则 display: none 会覆盖回来) */
+.codepane-back {
+    display: none;
+    background: transparent;
+    border: 0;
+    color: var(--accent);
+    font-size: 20px;
+    line-height: 1;
+    padding: 2px 8px 2px 0;
+    margin-left: -4px;
+    flex: 0 0 auto;
+}
+
 /* 平板 / 窄窗口:顶栏收敛副标题与版本徽标,侧栏收窄 */
 @media (max-width: 1000px) {
     .logo-sub {
@@ -879,19 +892,6 @@ button:disabled {
         font-size: 16px;
         padding: 8px 10px;
     }
-}
-
-/* 窄屏专用的返回按钮,宽屏一律隐藏 */
-.codepane-back {
-    display: none;
-    background: transparent;
-    border: 0;
-    color: var(--accent);
-    font-size: 20px;
-    line-height: 1;
-    padding: 2px 8px 2px 0;
-    margin-left: -4px;
-    flex: 0 0 auto;
 }
 
 /* 触控设备:加大点击目标 */
