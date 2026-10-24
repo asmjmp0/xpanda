@@ -17,7 +17,8 @@ Supported bytecode versions: `24.0.0.0` (backward compatible with `13.0.1.0`).
 - **Control flow**: `if/else`, `while/do-while`, `for`, `try/catch`, and more; falls back to labeled linear output when structural analysis fails;
 - **Modules**: ES Module `import` / `export`;
 - **Babel AST optimizer**: register-temp copy propagation, dead-store elimination, function/class syntax recovery, call rewriting and compound-assignment folding;
-- **MCP Server**: lets AI clients such as Claude Code, OpenCode and Cursor analyze `.abc` files on demand.
+- **MCP Server**: lets AI clients such as Claude Code, OpenCode and Cursor analyze `.abc` files on demand;
+- **Web UI**: drag & drop a `.abc` / `.hap` file in the browser and decompile it entirely client-side — nothing is uploaded.
 
 ## Decompilation results
 
@@ -233,13 +234,14 @@ if (v11 !== 64) {
 
 ## Monorepo layout
 
-The project is split into three npm-workspace packages under `packages/`:
+The project is split into four npm-workspace packages under `packages/`:
 
 | Package | Purpose |
 |---|---|
 | `xpanda-core` | `.abc` / `.hap` parsing, disassembly, decompilation and the optimizer — the library everything else builds on |
 | `xpanda-cli` | command line interface (`decompile` / `unpack-index`) |
 | `xpanda-mcp` | MCP server (stdio) for AI client integration |
+| `xpanda-web` | browser UI (React + Vite, pure frontend) |
 
 ## Install and use
 
@@ -358,6 +360,21 @@ Generic JSON config (Claude Desktop / Cursor, etc.):
 
 See [docs/MCP.md](docs/MCP.md) for the full tool reference and design notes (session registry, output truncation, degradation flag).
 
+## Web UI
+
+xpanda also ships a browser UI that decompiles `.abc` files and `.hap` app packages **entirely in the browser** — the same browser-safe core entry powers it, so nothing is ever uploaded.
+
+```bash
+npm run web          # vite dev server → http://localhost:5173
+```
+
+- Drag & drop anywhere or pick files (`.abc` / `.hap`, multiple supported); haps are unpacked in-memory and every `.abc` entry gets its own class list;
+- Class list with search and package grouping; click a class to decompile it, or run "decompile all" with a live progress bar (cancellable);
+- Copy / download single classes, or pack every result into a `.zip`; output mode toggle **Optimized** / **Raw AST**;
+- Zero-dependency syntax highlighting with line numbers.
+
+See [packages/xpanda-web/README.md](packages/xpanda-web/README.md) and [docs/ARCHITECTURE.md §13](docs/ARCHITECTURE.md) for details.
+
 ## Directory layout
 
 ```text
@@ -388,7 +405,11 @@ packages/
     src/                  MCP server (stdio, for AI client integration)
     src/io.ts             file IO: read .abc from disk, write decompiled classes
     scripts/test-mcp.ts   end-to-end test
-docs/                   architecture documentation, MCP documentation
+  xpanda-web/
+    src/decompiler.ts     file loading (.abc/.hap), class indexing, decompile service (cache + single/bulk)
+    src/components/       Topbar / BulkBar / Sidebar / CodePane
+    src/highlight.ts      zero-dependency JavaScript syntax highlighter
+docs/                     architecture documentation, MCP documentation
 ```
 
 ## Decompilation pipeline

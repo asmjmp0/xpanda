@@ -4,7 +4,7 @@
  * 反编译在主线程同步执行,调用方通过 yieldToUI() 在类与类之间让出主线程刷新进度。
  * @Author: jmp0
  */
-import { HapFile, PandaDecompiler, PandaFile, ZipFile } from "xpanda-core";
+import { ENTRY_FUNCTION_MAIN, HapFile, PandaDecompiler, PandaFile, ZipFile } from "xpanda-core";
 import type { PandaClass } from "xpanda-core";
 import { sanitizeFileName, splitClassName, stripExt } from "./format";
 
@@ -132,6 +132,12 @@ export function loadImage(data: Uint8Array, fileName: string): LoadedImage {
 export function buildClassRefs(source: AbcSource): ClassRef[] {
     const refs: ClassRef[] = [];
     for (const clazz of source.pandaFile.getAllClasses()) {
+        // Skip classes that can never produce output, mirroring the CLI:
+        // no func_main_0 entry means compiler metadata (L_ES*Annotation;) or
+        // @ohos/@system stubs; empty names are malformed records. Decompiling
+        // them would only yield "" ("produced no output" in the UI).
+        if (clazz.pandaMethods.get(ENTRY_FUNCTION_MAIN) === undefined) continue;
+        if (clazz.name.content.length === 0) continue;
         const { pkg, simpleName, path } = splitClassName(clazz.name.content);
         refs.push({
             source,

@@ -61,7 +61,9 @@ export function CodePane({ selected, code, decompiling, mode, onRedecompile }: C
                 {decompiling && code === undefined ? (
                     <div className="codepane-loading">Decompiling {selected.displayPath} …</div>
                 ) : code === "" ? (
-                    <div className="codepane-loading">{"// xpanda produced no output for this class"}</div>
+                    <div className="codepane-loading">
+                        {"// decompile failed: func_main_0 could not be disassembled (unsupported instructions in this class)"}
+                    </div>
                 ) : (
                     <div className="code-body">
                         {lines.map((html, idx) => (

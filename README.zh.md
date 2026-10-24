@@ -17,7 +17,8 @@
 - **控制流还原**:`if/else`、`while/do-while`、`for`、`try/catch` 等;结构化失败时自动降级为带标签的线性输出;
 - **模块还原**:ES Module 的 `import` / `export`;
 - **Babel AST 优化器**:寄存器临时变量复制传播、死存储消除、函数/类语法还原、调用形式重写、复合赋值折叠;
-- **MCP Server**:可接入 Claude Code、OpenCode、Cursor 等 AI 客户端按需分析 `.abc`。
+- **MCP Server**:可接入 Claude Code、OpenCode、Cursor 等 AI 客户端按需分析 `.abc`;
+- **Web UI**:浏览器里拖入 `.abc` / `.hap` 即可反编译,全程纯前端,不上传任何数据。
 
 ## 反编译结果
 
@@ -347,15 +348,31 @@ opencode mcp add xpanda -- npx tsx /absolute/path/to/xpanda/packages/xpanda-mcp/
 
 完整工具说明与设计细节(会话注册表、大输出保护、降级标志)见 [docs/MCP.md](docs/MCP.md)。
 
+## Web UI
+
+xpanda 还带一个浏览器 UI,`.abc` 文件与 `.hap` 应用包**全程在浏览器内**反编译 —— 复用核心库的浏览器安全入口,不向服务器上传任何数据。
+
+```bash
+npm run web          # vite dev server → http://localhost:5173
+```
+
+- 任意位置拖拽或选择文件(`.abc` / `.hap`,支持多选);hap 在内存中解包,每个 `.abc` 条目有独立的类列表;
+- 类列表支持搜索与按包分组;点击单个类反编译,或"全部反编译"(实时进度条,可取消);
+- 单类复制 / 下载,全部结果打包 `.zip`;输出模式可切换 **Optimized**(含优化器)/ **Raw AST**;
+- 零依赖语法高亮,带行号。
+
+详见 [packages/xpanda-web/README.md](packages/xpanda-web/README.md) 与 [docs/ARCHITECTURE.zh-CN.md §13](docs/ARCHITECTURE.zh-CN.md)。
+
 ## 目录结构
 
-项目拆分为三个 npm workspaces 子包,位于 `packages/` 下:
+项目拆分为四个 npm workspaces 子包,位于 `packages/` 下:
 
 | 子包 | 职责 |
 |---|---|
 | `xpanda-core` | `.abc` / `.hap` 解析、反汇编、反编译与优化器——其余子包依赖的核心库 |
 | `xpanda-cli` | 命令行(`decompile` / `unpack-index`) |
 | `xpanda-mcp` | MCP Server(stdio,供 AI 客户端接入) |
+| `xpanda-web` | 浏览器 UI(React + Vite,纯前端) |
 
 ```text
 packages/
@@ -385,6 +402,10 @@ packages/
     src/                    MCP Server(stdio,供 AI 客户端接入)
     src/io.ts               文件 IO:读盘解析 .abc、按类名落盘
     scripts/test-mcp.ts     端到端测试
+  xpanda-web/
+    src/decompiler.ts       文件加载(.abc/.hap)、类索引、反编译服务(缓存 + 单类/全量)
+    src/components/         Topbar / BulkBar / Sidebar / CodePane
+    src/highlight.ts        零依赖 JavaScript 语法高亮器
 docs/                       架构文档、MCP 文档
 ```
 

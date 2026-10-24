@@ -87,6 +87,7 @@ npm run web
 5. Optimizer passes return a `boolean` indicating whether the AST was modified; `SimplifyExport` runs fixed-point iteration. Do not keep procedural logs inside passes.
 6. **Per-class output must be a pure function of that class**: do not introduce cross-class mutable state (global counters, mutable caches shared by offset, etc.), otherwise `-j` parallel output diverges from serial. Generated-name counters reset per class in `PandaDecompiler.decompileRaw()`; `packages/xpanda-cli/test/parallel-consistency.test.ts` has the serial/parallel consistency regression.
 7. **Cross-package imports always go through package names**: cli / mcp may only import the core library via `import ... from "xpanda-core"` (single entry `src/index.ts`); no deep relative paths. core must not depend back on cli / mcp. **core must stay browser-safe**: no Node built-in modules (fs / path / os / zlib / worker_threads / Buffer, etc.) inside the import closure of the single entry, no disk IO, no workers — disk IO is implemented by cli / mcp's own `src/io.ts`, and the parallel simplify worker pool lives in xpanda-cli's `src/parallel/`.
+8. **Only run `git commit` when the user explicitly asks for it.** Editing files, running tests, and reporting results never imply a commit; leave changes in the working tree.
 
 ## How To Do Common Tasks
 

@@ -48,13 +48,14 @@ The main thread always performs parsing, disassembly, lexical analysis, and AST 
 | `src/simplify/` | Optimizer pipeline |
 | `src/parallel/` *(moved to xpanda-cli)* | Per-class parallel simplify worker pool (worker_threads / os — Node-only, lives in `packages/xpanda-cli/src/parallel/`) |
 | `packages/xpanda-mcp/src/` | MCP server exposing the decompiler to AI agents (see [MCP.md](./MCP.md)) |
+| `packages/xpanda-web/src/` | Browser UI (React + Vite, pure frontend) decompiling in the browser (see §13) |
 | `src/PandaDecompiler.ts` | Public entry point (per-class orchestration) |
 | `packages/xpanda-cli/src/cli.ts` | CLI entry: `decompile` and `unpack-index` commands |
 | `scripts/gen-opcodes.ts` | Generates `src/disasm/opcodes.ts` from `resources/isa.yaml` |
 | `resources/isa.yaml` | ArkCompiler instruction set description (v24.0.0.0) |
 | `test/` | Integration tests, samples (`*.abc`, `*.hap`), snapshots (`test/expected/*.js`) |
 
-Dependency direction: `cli / PandaDecompiler → decompiler → disasm → file → codec`; `decompiler / codegen → ast`; `SimplifyExport → simplify`; `parallel → PandaDecompiler / file`; `mcp / hap → res`.
+Dependency direction: `cli / PandaDecompiler → decompiler → disasm → file → codec`; `decompiler / codegen → ast`; `SimplifyExport → simplify`; `parallel → PandaDecompiler / file`; `mcp / hap → res`; `web → PandaDecompiler / hap`.
 
 ## 3. File Format Layer — `src/file/`
 
@@ -303,7 +304,23 @@ Exposes the decompiler to AI agents over stdio (see [MCP.md](./MCP.md) for setup
 - Large-output protection: single-class decompilation truncates at 50 KB (use `abc_export` instead); disassembly defaults to 1500 instructions (`maxInstructions` up to 5000).
 - Degradation is observable: `abc_decompile_class` reports `degraded=true/false` so agents can switch to `abc_disassemble_method` automatically.
 
-## 13. Verification & Testing
+## 13. Web UI — `packages/xpanda-web/`
+
+A React + Vite single-page app that runs the decompiler **entirely in the browser** (pure frontend — nothing is uploaded). It imports the same browser-safe `xpanda-core` single entry as Node consumers; Vite bundles the workspace-linked TS source directly (`main` points at `src/index.ts`, no precompile step — see `vite.config.ts`). Design points:
+
+- **Loading** (`src/decompiler.ts`, `loadImage`): a picked/dropped file is read as `Uint8Array`; ZIP containers go through `HapFile` — every `.abc` entry becomes an `AbcSource` with its own `PandaFile`, plus a `module.json` summary — bare files are parsed as one `.abc`. Parse failures (checksum / magic) surface as per-file errors.
+- **Decompile service**: `DecompileService` caches by `sourceId::className|mode` (`simplify` and `raw` share one cache); single-class and bulk decompilation go through the same instance. Decompilation runs synchronously on the main thread — `yieldToUI()` yields between classes so React can repaint (this is the UI counterpart of the CLI's `-j` pool; the core stays worker-free).
+- **State wiring** (`src/App.tsx`): window-level drag & drop with enter/leave depth counting, a bulk loop over all class refs with live progress and cancel, and zip download via pure-JS `fflate` (`zipSync`) — multi-source paths mirror the CLI's hap output layout (`<abc entry path>/<Name>.js`).
+- **Components** (`src/components/`): `Topbar` (file open, output-mode toggle), `BulkBar` (progress / cancel / download-all), `Sidebar` (class list with search + package grouping, cached classes highlighted), `CodePane` (output view, copy / download / re-decompile).
+- **Highlighting** (`src/highlight.ts`): zero-dependency line-based JavaScript highlighter; `src/format.ts` shares the class-demangle rules with the CLI's `io.ts`.
+
+```bash
+npm run web                            # vite dev server → http://localhost:5173
+npm run build --workspace xpanda-web   # production build
+npm run preview --workspace xpanda-web # serve the build
+```
+
+## 14. Verification & Testing
 
 Entry point: `test/decompile.test.ts`.
 
@@ -320,7 +337,7 @@ npm run typecheck
 
 Before updating snapshots in `test/expected/`, confirm the output change is *expected* — never overwrite snapshots just to make tests pass, and explain the delta in the commit message.
 
-## 14. Constraints & Gotchas
+## 15. Constraints & Gotchas
 
 1. **`src/disasm/opcodes.ts` is generated** — edit `resources/isa.yaml` and run `npm run gen:opcodes`; never hand-edit.
 2. **Degradation paths are by design**, not bugs: a method with > 500 basic blocks, an unregistered instruction kind, or a `jeq`-family instruction all fall back to `SimpleAnalysis` (or a placeholder body) without aborting the class or file.
