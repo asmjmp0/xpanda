@@ -1,8 +1,4 @@
-import { PandaFile } from "../file/PandaFile";
-import { PandaDecompiler } from "../PandaDecompiler";
-import { HapFile } from "../hap/HapFile";
-import { ResourceIndexFile } from "../res/ResourceIndexFile";
-import { Adler32 } from "../codec/Adler32";
+import { Adler32, HapFile, PandaDecompiler, PandaFile, ResourceIndexFile } from "xpanda-core";
 
 /**
  * MCP 会话注册表:fileId → 已加载的 abc/hap 会话

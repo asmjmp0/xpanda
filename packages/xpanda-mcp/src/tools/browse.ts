@@ -1,7 +1,6 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { PandaClass } from "../../file/clazz/PandaClass";
-import { PandaRawType, rawTypeString } from "../../file/desc/enums";
+import { PandaClass, PandaRawType, rawTypeString } from "xpanda-core";
 import { demangleClassName, findClass } from "../nameutil";
 import type { Registry } from "../registry";
 import { errorResult, jsonResult } from "./util";

@@ -15,14 +15,14 @@ npm run test:mcp                  # 端到端测试(子进程模拟 MCP 客户�
 Claude Code:
 
 ```bash
-claude mcp add xpanda -- npx tsx /absolute/path/to/xpanda/src/mcp/server.ts
+claude mcp add xpanda -- npx tsx /absolute/path/to/xpanda/packages/xpanda-mcp/src/server.ts
 ```
 
 OpenCode(V2,本地 stdio server):
 
 ```bash
 # 仅当前项目(写入项目 opencode.json);加 --global 全局可用
-opencode mcp add xpanda -- npx tsx /absolute/path/to/xpanda/src/mcp/server.ts
+opencode mcp add xpanda -- npx tsx /absolute/path/to/xpanda/packages/xpanda-mcp/src/server.ts
 opencode mcp list   # 验证:✓ xpanda connected
 ```
 
@@ -35,7 +35,7 @@ opencode mcp list   # 验证:✓ xpanda connected
     "servers": {
       "xpanda": {
         "type": "local",
-        "command": ["npx", "tsx", "/absolute/path/to/xpanda/src/mcp/server.ts"]
+        "command": ["npx", "tsx", "/absolute/path/to/xpanda/packages/xpanda-mcp/src/server.ts"]
       }
     }
   }
@@ -51,7 +51,7 @@ OpenCode 默认以 Code Mode 暴露工具(`tools.xpanda.abc_load(...)`);需要�
   "mcpServers": {
     "xpanda": {
       "command": "npx",
-      "args": ["tsx", "/absolute/path/to/xpanda/src/mcp/server.ts"]
+      "args": ["tsx", "/absolute/path/to/xpanda/packages/xpanda-mcp/src/server.ts"]
     }
   }
 }
@@ -141,13 +141,13 @@ jeq/jne 家族指令未实现、指令 kind 未注册 handle 三种路径)。
 ### 对核心的最小改动
 
 MCP 层只新增了 `PandaFile.getAllStrings()`(与 `dumpAllString()` 同语义的结构化版本,
-后者改为复用它),其余全部复用 `src/index.ts` 现有公共 API;
+后者改为复用它),其余全部复用 xpanda-core 的 `src/index.ts` 现有公共 API;
 反汇编文本渲染直接使用 `PandaInstruction.toString()` / `PandaIRBasicBlock.toString()` 现有实现。
 
 ## 目录结构
 
 ```text
-src/mcp/
+packages/xpanda-mcp/src/
   server.ts        入口:stdio transport + 无条件静默 console
   registry.ts      会话注册表(fileId → abc/hap 会话,LRU 上限 8)
   nameutil.ts      类名归一化与查找(Lpkg/Name; ↔ pkg/Name)
@@ -159,5 +159,5 @@ src/mcp/
     decompile.ts   abc_decompile_class / abc_export
     disasm.ts      abc_disassemble_method
     strings.ts     abc_search_strings
-scripts/test-mcp.ts 端到端测试(真实子进程 + JSON-RPC)
+packages/xpanda-mcp/scripts/test-mcp.ts 端到端测试(真实子进程 + JSON-RPC)
 ```

@@ -6,6 +6,8 @@
 
 输入 `.abc` 字节码(或 `.hap` 应用包),输出可读的 JavaScript 源码。内置 AST 优化器负责清理寄存器临时变量、还原函数/类/控制流语法和模块(import/export)语法。
 
+> 路径约定:本仓库为 npm workspaces monorepo。除特别注明外,本文的 `src/`、`scripts/`、`resources/`、`test/` 均相对于 `packages/xpanda-core/`;CLI 位于 `packages/xpanda-cli/`,MCP Server 位于 `packages/xpanda-mcp/`。
+
 ## 1. 总览
 
 ```text
@@ -45,9 +47,9 @@ JavaScript 源码(落盘 / stdout / 编程 API)
 | `src/ast/` | Babel AST 构建与文本生成(`NodeFactory` / `NodeUtils` / `FormatCode`) |
 | `src/simplify/` | 优化器流水线 |
 | `src/parallel/` | 按类并行的 simplify worker 池 |
-| `src/mcp/` | 把反编译器暴露给 AI agent 的 MCP Server(见 [MCP.md](./MCP.md)) |
+| `packages/xpanda-mcp/src/` | 把反编译器暴露给 AI agent 的 MCP Server(见 [MCP.md](./MCP.md)) |
 | `src/PandaDecompiler.ts` | 对外总入口(单类编排) |
-| `src/cli.ts` | 命令行入口:`decompile` 与 `unpack-index` 命令 |
+| `packages/xpanda-cli/src/cli.ts` | 命令行入口:`decompile` 与 `unpack-index` 命令 |
 | `scripts/gen-opcodes.ts` | 从 `resources/isa.yaml` 生成 `src/disasm/opcodes.ts` |
 | `resources/isa.yaml` | ArkCompiler 指令集描述(v24.0.0.0) |
 | `test/` | 集成测试、样本(`*.abc`、`*.hap`)与快照(`test/expected/*.js`) |
@@ -273,11 +275,11 @@ normalizeDeclarations
 
 `decompileRaw` 按如下顺序组装一个类:import(来自模块元数据)→ 头注释 → 导出变量 `let` 声明 → `func_main_0` 方法体(StructureAnalysis,失败降级 SimpleAnalysis)→ export。
 
-### 11.2 CLI —— `src/cli.ts`
+### 11.2 CLI —— `packages/xpanda-cli/src/cli.ts`
 
 ```bash
-npx tsx src/cli.ts decompile <file.abc|file.hap> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N]
-npx tsx src/cli.ts unpack-index <resources.index> [-o outDir] [--stdout]
+npx tsx packages/xpanda-cli/src/cli.ts decompile <file.abc|file.hap> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N]
+npx tsx packages/xpanda-cli/src/cli.ts unpack-index <resources.index> [-o outDir] [--stdout]
 ```
 
 - 任意 ZIP 容器(以 `ZipFile.isZip` 判定,不限于 `.hap`)走 HAP 流程:打印 `module.json` 摘要,把每个 `.abc` 条目反编译到 `outDir/<条目路径>/`,写出 `resources.json`,并解出 `resources/` 资源文件(对条目名做路径穿越防护)。
@@ -290,7 +292,7 @@ npx tsx src/cli.ts unpack-index <resources.index> [-o outDir] [--stdout]
 
 约 5.5 MB 样本实测:解析 ≈ 36 ms,串行 simplify ≈ 81 s,`-j 4` ≈ 49 s(≈ 1.66×)。瓶颈是单类 simplify 的内存/GC 带宽,而非解析或反汇编。
 
-## 12. MCP Server —— `src/mcp/`
+## 12. MCP Server —— `packages/xpanda-mcp/src/`
 
 通过 stdio 把反编译器暴露给 AI agent(安装与工作流见 [MCP.md](./MCP.md))。设计要点:
 

@@ -1,0 +1,27 @@
+{
+  "name": "xpanda-core",
+  "version": "2.1.0",
+  "description": "xpanda core - HarmonyOS .abc (Panda bytecode) parser, disassembler and decompiler library, pure TypeScript",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "gen:opcodes": "tsx scripts/gen-opcodes.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx test/decompile.test.ts"
+  },
+  "dependencies": {
+    "@babel/generator": "^7.23.9",
+    "@babel/parser": "^7.23.9",
+    "@babel/traverse": "^7.23.9",
+    "@babel/types": "^7.23.9"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^20.19.43",
+    "js-yaml": "^4.1.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  }
+}

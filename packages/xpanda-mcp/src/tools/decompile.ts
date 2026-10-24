@@ -2,7 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { PandaDecompiler } from "../../PandaDecompiler";
+import { PandaDecompiler } from "xpanda-core";
 import { demangleClassName, findClass } from "../nameutil";
 import type { Registry } from "../registry";
 import { errorResult, jsonResult, MAX_DECOMPILE_OUTPUT, textResult, truncateText } from "./util";

@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { demangleClassName } from "../nameutil";
 import type { Registry } from "../registry";
-import { ResourceIndexFile } from "../../res/ResourceIndexFile";
+import { ResourceIndexFile } from "xpanda-core";
 import { errorResult, jsonResult } from "./util";
 
 /**

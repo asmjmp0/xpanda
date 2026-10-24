@@ -19,6 +19,8 @@ export { ResourceItem } from "./res/ResourceItem";
 export { ResourceUtils } from "./res/ResourceUtils";
 export { HapFile } from "./hap/HapFile";
 export { ZipFile, ZipEntry } from "./hap/ZipFile";
+export { Adler32 } from "./codec/Adler32";
+export { PandaRawType, rawTypeString } from "./file/desc/enums";
 export {
     ResourceKeyType,
     ResourceResType,

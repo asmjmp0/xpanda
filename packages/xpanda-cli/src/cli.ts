@@ -1,11 +1,14 @@
 import * as fs from "fs";
 import * as path from "path";
-import { PandaFile } from "./file/PandaFile";
-import { PandaDecompiler } from "./PandaDecompiler";
-import { decompileClassesParallel, resolveJobs } from "./parallel/ParallelDecompiler";
-import { ResourceIndexFile } from "./res/ResourceIndexFile";
-import { HapFile } from "./hap/HapFile";
-import { ZipFile } from "./hap/ZipFile";
+import {
+    decompileClassesParallel,
+    HapFile,
+    PandaDecompiler,
+    PandaFile,
+    ResourceIndexFile,
+    resolveJobs,
+    ZipFile,
+} from "xpanda-core";
 
 /**
  * CLI 入口

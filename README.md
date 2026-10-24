@@ -23,7 +23,7 @@ Supported bytecode versions: `24.0.0.0` (backward compatible with `13.0.1.0`).
 
 Everything below comes straight from the project's test snapshots — nothing was hand-edited.
 
-### `test/expected/class.js`
+### `packages/xpanda-core/test/expected/class.js`
 
 ```js
 /*
@@ -43,9 +43,9 @@ let Test = class panda_jmp0_reserved_class_0 {
 new Test().test();
 ```
 
-### `test/expected/md5.js`
+### `packages/xpanda-core/test/expected/md5.js`
 
-The full result is in [`test/expected/md5.js`](test/expected/md5.js).
+The full result is in [`test/expected/md5.js`](packages/xpanda-core/test/expected/md5.js).
 
 <details>
 <summary>Expand to view the actual decompiled output</summary>
@@ -210,9 +210,9 @@ The full result is in [`test/expected/md5.js`](test/expected/md5.js).
 
 </details>
 
-### `test/expected/aes.js`
+### `packages/xpanda-core/test/expected/aes.js`
 
-The full result is in [`test/expected/aes.js`](test/expected/aes.js). The optimizer folds the `acc` accumulation chain into compound assignments:
+The full result is in [`test/expected/aes.js`](packages/xpanda-core/test/expected/aes.js). The optimizer folds the `acc` accumulation chain into compound assignments:
 
 ```js
 v9 <<= 2;
@@ -229,7 +229,17 @@ if (v11 !== 64) {
 ## Requirements
 
 - Node.js ≥ 18
-- Development dependencies: `typescript`, `tsx`, `@babel/*`, `js-yaml`
+- Development dependencies: `typescript`, `tsx` (core additionally uses `@babel/*`; the opcode generator uses `js-yaml`)
+
+## Monorepo layout
+
+The project is split into three npm-workspace packages under `packages/`:
+
+| Package | Purpose |
+|---|---|
+| `xpanda-core` | `.abc` / `.hap` parsing, disassembly, decompilation and the optimizer — the library everything else builds on |
+| `xpanda-cli` | command line interface (`decompile` / `unpack-index`) |
+| `xpanda-mcp` | MCP server (stdio) for AI client integration |
 
 ## Install and use
 
@@ -237,10 +247,10 @@ if (v11 !== 64) {
 npm install
 ```
 
-CLI:
+CLI (run from the repository root):
 
 ```bash
-npx tsx src/cli.ts decompile <file.abc|file.hap> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N]
+npx tsx packages/xpanda-cli/src/cli.ts decompile <file.abc|file.hap> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N]
 ```
 
 | Option | Description |
@@ -263,23 +273,23 @@ Examples:
 
 ```bash
 # Full decompilation (with optimizer)
-npx tsx src/cli.ts decompile app.abc -o out --quiet
+npx tsx packages/xpanda-cli/src/cli.ts decompile app.abc -o out --quiet
 
 # Per-class parallelism for large files (worker_threads)
-npx tsx src/cli.ts decompile app.abc -o out -j 4 --quiet
+npx tsx packages/xpanda-cli/src/cli.ts decompile app.abc -o out -j 4 --quiet
 
 # Inspect raw output without optimization
-npx tsx src/cli.ts decompile app.abc -o out --no-simplify --quiet
+npx tsx packages/xpanda-cli/src/cli.ts decompile app.abc -o out --no-simplify --quiet
 
 # Print to the terminal
-npx tsx src/cli.ts decompile app.abc --stdout --quiet
+npx tsx packages/xpanda-cli/src/cli.ts decompile app.abc --stdout --quiet
 ```
 
 For large files, raise the heap limit and enable per-class parallelism:
 
 ```bash
 NODE_OPTIONS=--max-old-space-size=4096 \
-  npx tsx src/cli.ts decompile app.abc -o out -j 4 --quiet
+  npx tsx packages/xpanda-cli/src/cli.ts decompile app.abc -o out -j 4 --quiet
 ```
 
 `-j` only parallelizes simplify (>99% of per-class time); parsing and disassembly stay on the main thread. A single huge class peaks at ~1.4GB during simplify; workers default to a 3GB heap limit, configurable via `XPANDA_WORKER_HEAP_MB`.
@@ -288,7 +298,7 @@ NODE_OPTIONS=--max-old-space-size=4096 \
 
 ```ts
 import * as fs from "fs";
-import { PandaFile, PandaDecompiler } from "./src";
+import { PandaFile, PandaDecompiler } from "xpanda-core";
 
 const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync("app.abc")));
 const decompiler = new PandaDecompiler();
@@ -325,10 +335,10 @@ Client integration:
 
 ```bash
 # Claude Code
-claude mcp add xpanda -- npx tsx /absolute/path/to/xpanda/src/mcp/server.ts
+claude mcp add xpanda -- npx tsx /absolute/path/to/xpanda/packages/xpanda-mcp/src/server.ts
 
 # OpenCode
-opencode mcp add xpanda -- npx tsx /absolute/path/to/xpanda/src/mcp/server.ts
+opencode mcp add xpanda -- npx tsx /absolute/path/to/xpanda/packages/xpanda-mcp/src/server.ts
 ```
 
 Generic JSON config (Claude Desktop / Cursor, etc.):
@@ -338,7 +348,7 @@ Generic JSON config (Claude Desktop / Cursor, etc.):
   "mcpServers": {
     "xpanda": {
       "command": "npx",
-      "args": ["tsx", "/absolute/path/to/xpanda/src/mcp/server.ts"]
+      "args": ["tsx", "/absolute/path/to/xpanda/packages/xpanda-mcp/src/server.ts"]
     }
   }
 }
@@ -349,20 +359,29 @@ See [docs/MCP.md](docs/MCP.md) for the full tool reference and design notes (ses
 ## Directory layout
 
 ```text
-src/
-  codec/        Leb128 / MUTF8 / Adler32 codecs
-  file/         .abc format parsing (header / indexes / classes / methods / literals / module metadata)
-  disasm/       disassembly: generated opcodes.ts, unified instruction model, CFG, lexical analysis
-  decompiler/   Region-based structural analysis, statement tree, instruction handles, dominator tree, fallback
-  codegen/      CodeGenerator (wraps ast/ NodeFactory & NodeUtils)
-  ast/          Babel AST construction and utilities
-  simplify/     optimizer pipeline (AST cleanup and syntax recovery)
-  mcp/          MCP server (stdio, for AI client integration)
-  PandaDecompiler.ts  public entry point
-  cli.ts        command line interface
-resources/isa.yaml      ArkCompiler instruction set description (v24.0.0.0, compatible with v13.0.1.0)
-scripts/gen-opcodes.ts  isa.yaml → src/disasm/opcodes.ts
-test/                   integration tests, sample files and snapshots
+packages/
+  xpanda-core/
+    src/
+      codec/        Leb128 / MUTF8 / Adler32 codecs
+      file/         .abc format parsing (header / indexes / classes / methods / literals / module metadata)
+      disasm/       disassembly: generated opcodes.ts, unified instruction model, CFG, lexical analysis
+      decompiler/   Region-based structural analysis, statement tree, instruction handles, dominator tree, fallback
+      codegen/      CodeGenerator (wraps ast/ NodeFactory & NodeUtils)
+      ast/          Babel AST construction and utilities
+      simplify/     optimizer pipeline (AST cleanup and syntax recovery)
+      parallel/     per-class parallel simplify (worker_threads)
+      hap/          HAP app package (ZIP) adapter
+      res/          resources.index parsing
+      PandaDecompiler.ts  public entry point
+      index.ts      package exports
+    resources/isa.yaml    ArkCompiler instruction set description (v24.0.0.0, compatible with v13.0.1.0)
+    scripts/gen-opcodes.ts  isa.yaml → src/disasm/opcodes.ts
+    test/                 integration tests, sample files and snapshots
+  xpanda-cli/
+    src/cli.ts            command line interface
+  xpanda-mcp/
+    src/                  MCP server (stdio, for AI client integration)
+    scripts/test-mcp.ts   end-to-end test
 docs/                   architecture documentation, MCP documentation
 ```
 
@@ -404,9 +423,9 @@ npm run typecheck  # tsc --noEmit
 Snapshots live in:
 
 ```text
-test/expected/md5.js
-test/expected/class.js
-test/expected/aes.js
+packages/xpanda-core/test/expected/md5.js
+packages/xpanda-core/test/expected/class.js
+packages/xpanda-core/test/expected/aes.js
 ```
 
 The output for `md5.abc` is executed, and `md5("admin")` is checked against Node's `crypto`. The `aes.abc` output also runs an encrypt/decrypt self-check.

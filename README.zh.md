@@ -23,7 +23,7 @@
 
 以下内容直接来自项目测试快照,没有手工改写。
 
-### `test/expected/class.js`
+### `packages/xpanda-core/test/expected/class.js`
 
 ```js
 /*
@@ -43,9 +43,9 @@ let Test = class panda_jmp0_reserved_class_0 {
 new Test().test();
 ```
 
-### `test/expected/md5.js`
+### `packages/xpanda-core/test/expected/md5.js`
 
-完整结果见 [`test/expected/md5.js`](test/expected/md5.js)。
+完整结果见 [`test/expected/md5.js`](packages/xpanda-core/test/expected/md5.js)。
 
 <details>
 <summary>展开查看实际反编译输出</summary>
@@ -210,9 +210,9 @@ new Test().test();
 
 </details>
 
-### `test/expected/aes.js`
+### `packages/xpanda-core/test/expected/aes.js`
 
-完整结果见 [`test/expected/aes.js`](test/expected/aes.js)。优化器会把 `acc` 累加链还原成复合赋值:
+完整结果见 [`test/expected/aes.js`](packages/xpanda-core/test/expected/aes.js)。优化器会把 `acc` 累加链还原成复合赋值:
 
 ```js
 v9 <<= 2;
@@ -229,7 +229,7 @@ if (v11 !== 64) {
 ## 环境要求
 
 - Node.js ≥ 18
-- 开发依赖:`typescript`、`tsx`、`@babel/*`、`js-yaml`
+- 开发依赖:`typescript`、`tsx`(core 另用 `@babel/*`,操作码生成脚本用 `js-yaml`)
 
 ## 安装与使用
 
@@ -237,10 +237,10 @@ if (v11 !== 64) {
 npm install
 ```
 
-CLI:
+CLI(在仓库根目录执行):
 
 ```bash
-npx tsx src/cli.ts decompile <file.abc|file.hap> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N]
+npx tsx packages/xpanda-cli/src/cli.ts decompile <file.abc|file.hap> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N]
 ```
 
 | 参数 | 说明 |
@@ -262,23 +262,23 @@ hap 支持说明:
 
 ```bash
 # 完整反编译(含优化器)
-npx tsx src/cli.ts decompile app.abc -o out --quiet
+npx tsx packages/xpanda-cli/src/cli.ts decompile app.abc -o out --quiet
 
 # 大文件按类并行(worker_threads)
-npx tsx src/cli.ts decompile app.abc -o out -j 4 --quiet
+npx tsx packages/xpanda-cli/src/cli.ts decompile app.abc -o out -j 4 --quiet
 
 # 只看反编译结果,不优化
-npx tsx src/cli.ts decompile app.abc -o out --no-simplify --quiet
+npx tsx packages/xpanda-cli/src/cli.ts decompile app.abc -o out --no-simplify --quiet
 
 # 输出到终端
-npx tsx src/cli.ts decompile app.abc --stdout --quiet
+npx tsx packages/xpanda-cli/src/cli.ts decompile app.abc --stdout --quiet
 ```
 
 大文件建议加堆并开启按类并行:
 
 ```bash
 NODE_OPTIONS=--max-old-space-size=4096 \
-  npx tsx src/cli.ts decompile app.abc -o out -j 4 --quiet
+  npx tsx packages/xpanda-cli/src/cli.ts decompile app.abc -o out -j 4 --quiet
 ```
 
 `-j` 只并行 simplify(单类耗时占比 >99%);解析与反汇编仍在主线程。单个超大类的 simplify 峰值约 1.4GB,worker 默认堆上限 3GB,可用 `XPANDA_WORKER_HEAP_MB` 调整。
@@ -287,7 +287,7 @@ NODE_OPTIONS=--max-old-space-size=4096 \
 
 ```ts
 import * as fs from "fs";
-import { PandaFile, PandaDecompiler } from "./src";
+import { PandaFile, PandaDecompiler } from "xpanda-core";
 
 const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync("app.abc")));
 const decompiler = new PandaDecompiler();
@@ -324,10 +324,10 @@ npm run test:mcp     # 端到端测试
 
 ```bash
 # Claude Code
-claude mcp add xpanda -- npx tsx /absolute/path/to/xpanda/src/mcp/server.ts
+claude mcp add xpanda -- npx tsx /absolute/path/to/xpanda/packages/xpanda-mcp/src/server.ts
 
 # OpenCode
-opencode mcp add xpanda -- npx tsx /absolute/path/to/xpanda/src/mcp/server.ts
+opencode mcp add xpanda -- npx tsx /absolute/path/to/xpanda/packages/xpanda-mcp/src/server.ts
 ```
 
 通用 JSON 配置(Claude Desktop / Cursor 等):
@@ -337,7 +337,7 @@ opencode mcp add xpanda -- npx tsx /absolute/path/to/xpanda/src/mcp/server.ts
   "mcpServers": {
     "xpanda": {
       "command": "npx",
-      "args": ["tsx", "/absolute/path/to/xpanda/src/mcp/server.ts"]
+      "args": ["tsx", "/absolute/path/to/xpanda/packages/xpanda-mcp/src/server.ts"]
     }
   }
 }
@@ -347,22 +347,39 @@ opencode mcp add xpanda -- npx tsx /absolute/path/to/xpanda/src/mcp/server.ts
 
 ## 目录结构
 
+项目拆分为三个 npm workspaces 子包,位于 `packages/` 下:
+
+| 子包 | 职责 |
+|---|---|
+| `xpanda-core` | `.abc` / `.hap` 解析、反汇编、反编译与优化器——其余子包依赖的核心库 |
+| `xpanda-cli` | 命令行(`decompile` / `unpack-index`) |
+| `xpanda-mcp` | MCP Server(stdio,供 AI 客户端接入) |
+
 ```text
-src/
-  codec/        Leb128 / MUTF8 / Adler32 编解码
-  file/         .abc 文件格式解析(Header / 索引 / 类 / 方法 / 字面量 / 模块元数据)
-  disasm/       反汇编:opcodes.ts(生成)、统一指令模型、CFG、词法分析
-  decompiler/   Region 归约结构化分析、语句树、指令 handle、支配树、降级方案
-  codegen/      CodeGenerator(包装 ast/ 的 NodeFactory/NodeUtils)
-  ast/          Babel AST 构建与工具
-  simplify/     优化器流水线(AST 清理与语法还原)
-  mcp/          MCP Server(stdio,供 AI 客户端接入)
-  PandaDecompiler.ts  对外总入口
-  cli.ts        命令行
-resources/isa.yaml      ArkCompiler 指令集描述(v24.0.0.0,兼容 v13.0.1.0)
-scripts/gen-opcodes.ts  isa.yaml → src/disasm/opcodes.ts
-test/                   集成测试、样本与快照
-docs/                   架构文档、MCP 文档
+packages/
+  xpanda-core/
+    src/
+      codec/        Leb128 / MUTF8 / Adler32 编解码
+      file/         .abc 文件格式解析(Header / 索引 / 类 / 方法 / 字面量 / 模块元数据)
+      disasm/       反汇编:opcodes.ts(生成)、统一指令模型、CFG、词法分析
+      decompiler/   Region 归约结构化分析、语句树、指令 handle、支配树、降级方案
+      codegen/      CodeGenerator(包装 ast/ 的 NodeFactory/NodeUtils)
+      ast/          Babel AST 构建与工具
+      simplify/     优化器流水线(AST 清理与语法还原)
+      parallel/     按类并行 simplify(worker_threads)
+      hap/          HAP 应用包(ZIP)适配
+      res/          resources.index 解析
+      PandaDecompiler.ts  对外总入口
+      index.ts      包导出
+    resources/isa.yaml      ArkCompiler 指令集描述(v24.0.0.0,兼容 v13.0.1.0)
+    scripts/gen-opcodes.ts  isa.yaml → src/disasm/opcodes.ts
+    test/                   集成测试、样本与快照
+  xpanda-cli/
+    src/cli.ts              命令行
+  xpanda-mcp/
+    src/                    MCP Server(stdio,供 AI 客户端接入)
+    scripts/test-mcp.ts     端到端测试
+docs/                       架构文档、MCP 文档
 ```
 
 ## 反编译流水线
@@ -403,9 +420,9 @@ npm run typecheck  # tsc --noEmit
 测试快照位于:
 
 ```text
-test/expected/md5.js
-test/expected/class.js
-test/expected/aes.js
+packages/xpanda-core/test/expected/md5.js
+packages/xpanda-core/test/expected/class.js
+packages/xpanda-core/test/expected/aes.js
 ```
 
 `md5.abc` 的输出会实际执行,并校验 `md5("admin")` 与 Node `crypto` 的结果一致;`aes.abc` 的输出也会执行加解密自检。

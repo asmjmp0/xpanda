@@ -1,5 +1,4 @@
-import type { PandaClass } from "../file/clazz/PandaClass";
-import type { PandaFile } from "../file/PandaFile";
+import type { PandaClass, PandaFile } from "xpanda-core";
 
 /**
  * MCP 层类名工具:L-prefixed mangled 名(Lpkg/Name;)与 demangled 名(pkg/Name)互转

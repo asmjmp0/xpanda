@@ -13,7 +13,8 @@
     "types": ["node"],
     "declaration": false,
     "outDir": "dist",
+    "rootDir": "./src",
     "lib": ["ES2020"]
   },
-  "include": ["src/**/*", "scripts/**/*", "test/**/*"]
+  "include": ["src/**/*"]
 }

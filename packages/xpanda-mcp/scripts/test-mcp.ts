@@ -5,7 +5,7 @@ import * as path from "path";
 
 /**
  * MCP Server 端到端测试:
- *   以子进程启动 src/mcp/server.ts,按 newline-delimited JSON-RPC 通信,
+ *   以子进程启动 src/server.ts,按 newline-delimited JSON-RPC 通信,
  *   依次调用全部 7 个工具并校验结果。
  *   同时隐式校验 stdout 纯净性:任何混入 stdout 的非 JSON 行都会导致解析失败。
  *
@@ -18,9 +18,21 @@ let nextId = 1;
 const pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
 let buffer = "";
 
+// tsx 可能被 npm workspaces 提升到仓库根的 node_modules/.bin,从当前目录逐级向上找
+function findTxBin(): string {
+    let dir = __dirname;
+    for (;;) {
+        const candidate = path.join(dir, "node_modules", ".bin", "tsx");
+        if (fs.existsSync(candidate)) return candidate;
+        const parent = path.dirname(dir);
+        if (parent === dir) throw new Error("tsx not found: run npm install first");
+        dir = parent;
+    }
+}
+
 const child = spawn(
-    path.join(__dirname, "..", "node_modules", ".bin", "tsx"),
-    [path.join(__dirname, "..", "src", "mcp", "server.ts")],
+    findTxBin(),
+    [path.join(__dirname, "..", "src", "server.ts")],
     { stdio: ["pipe", "pipe", "pipe"] },
 );
 
@@ -96,7 +108,8 @@ function check(cond: boolean, message: string): void {
 }
 
 async function main(): Promise<void> {
-    const root = path.join(__dirname, "..");
+    // 测试样本与期望快照位于 xpanda-core 包的 test/ 目录
+    const coreTest = path.join(__dirname, "..", "..", "xpanda-core", "test");
 
     // 1. initialize 握手
     const init = await request("initialize", {
@@ -116,7 +129,7 @@ async function main(): Promise<void> {
     check(JSON.stringify(names) === JSON.stringify(expected), "tools/list 共 " + names.length + " 个工具且名称齐全");
 
     // 3. abc_load md5.abc
-    const md5Path = path.join(root, "test", "resources", "md5.abc");
+    const md5Path = path.join(coreTest, "resources", "md5.abc");
     const loaded = await call("abc_load", { path: md5Path });
     check(loaded.fileId && loaded.classCount > 0, "abc_load fileId=" + loaded.fileId + " classCount=" + loaded.classCount);
     check(/^\d+\.\d+\.\d+\.\d+$/.test(loaded.bytecodeVersion), "abc_load bytecodeVersion=" + loaded.bytecodeVersion);
@@ -143,7 +156,7 @@ async function main(): Promise<void> {
     // 7. abc_decompile_class:与快照逐字比较(去掉 MCP 添加的头注释行)
     const decompiled = await call("abc_decompile_class", { fileId, className });
     const source = decompiled.raw.split("\n").slice(1).join("\n");
-    const expectedJs = fs.readFileSync(path.join(root, "test", "expected", "md5.js"), "utf-8");
+    const expectedJs = fs.readFileSync(path.join(coreTest, "expected", "md5.js"), "utf-8");
     check(source === expectedJs, "abc_decompile_class 输出与 expected/md5.js 快照逐字一致");
 
     // 8. abc_search_strings
@@ -173,11 +186,11 @@ async function main(): Promise<void> {
     check(writtenFiles.length === exported.written && writtenFiles[0].endsWith(".js"), "abc_export 落盘文件数与返回一致");
 
     // 11. class.abc 全工具链 + 快照比较
-    const classLoaded = await call("abc_load", { path: path.join(root, "test", "resources", "class.abc") });
+    const classLoaded = await call("abc_load", { path: path.join(coreTest, "resources", "class.abc") });
     const classList = await call("abc_list_classes", { fileId: classLoaded.fileId, limit: 500 });
     const classMain = classList.classes.find((c: any) => c.methods > 0);
     const classDecompiled = await call("abc_decompile_class", { fileId: classLoaded.fileId, className: classMain.name });
-    const classExpected = fs.readFileSync(path.join(root, "test", "expected", "class.js"), "utf-8");
+    const classExpected = fs.readFileSync(path.join(coreTest, "expected", "class.js"), "utf-8");
     const classSource = classDecompiled.raw.split("\n").slice(1).join("\n");
     check(classSource === classExpected, "class.abc 反编译输出与快照一致");
 
@@ -192,7 +205,7 @@ async function main(): Promise<void> {
     check(closed.closed === true, "abc_close 释放会话");
 
     // 14. HAP 应用包:加载 → 解出 abc → 反编译(含 supercallforwardallargs 还原)
-    const hapPath = path.join(root, "test", "resources", "zhihupp0.59.hap");
+    const hapPath = path.join(coreTest, "resources", "zhihupp0.59.hap");
     const hapLoaded = await call("abc_load", { path: hapPath });
     check(hapLoaded.kind === "hap", "abc_load(.hap) kind=" + hapLoaded.kind);
     check(hapLoaded.bundleName === "com.github.zhuoyi233.zhplus"

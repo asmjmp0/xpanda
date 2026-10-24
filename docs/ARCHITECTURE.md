@@ -6,6 +6,8 @@ A decompiler for HarmonyOS `.abc` (Panda / ArkCompiler bytecode), implemented in
 
 It takes `.abc` bytecode (or a `.hap` application package) as input and produces readable JavaScript source. A built-in AST optimizer cleans up register temporaries, restores function/class/control-flow syntax, and rebuilds module (import/export) syntax.
 
+> Path convention: this repo is an npm-workspaces monorepo. Unless noted otherwise, `src/`, `scripts/`, `resources/` and `test/` in this document are relative to `packages/xpanda-core/`; the CLI lives in `packages/xpanda-cli/` and the MCP server in `packages/xpanda-mcp/`.
+
 ## 1. Overview
 
 ```text
@@ -45,9 +47,9 @@ The main thread always performs parsing, disassembly, lexical analysis, and AST 
 | `src/ast/` | Babel AST construction & text generation (`NodeFactory` / `NodeUtils` / `FormatCode`) |
 | `src/simplify/` | Optimizer pipeline |
 | `src/parallel/` | Per-class parallel simplify worker pool |
-| `src/mcp/` | MCP server exposing the decompiler to AI agents (see [MCP.md](./MCP.md)) |
+| `packages/xpanda-mcp/src/` | MCP server exposing the decompiler to AI agents (see [MCP.md](./MCP.md)) |
 | `src/PandaDecompiler.ts` | Public entry point (per-class orchestration) |
-| `src/cli.ts` | CLI entry: `decompile` and `unpack-index` commands |
+| `packages/xpanda-cli/src/cli.ts` | CLI entry: `decompile` and `unpack-index` commands |
 | `scripts/gen-opcodes.ts` | Generates `src/disasm/opcodes.ts` from `resources/isa.yaml` |
 | `resources/isa.yaml` | ArkCompiler instruction set description (v24.0.0.0) |
 | `test/` | Integration tests, samples (`*.abc`, `*.hap`), snapshots (`test/expected/*.js`) |
@@ -273,11 +275,11 @@ Why the tail is ordered this way:
 
 `decompileRaw` assembles a class as: imports (from module metadata) → header comment → export-name `let` declarations → `func_main_0` body (StructureAnalysis, falling back to SimpleAnalysis) → exports.
 
-### 11.2 CLI — `src/cli.ts`
+### 11.2 CLI — `packages/xpanda-cli/src/cli.ts`
 
 ```bash
-npx tsx src/cli.ts decompile <file.abc|file.hap> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N]
-npx tsx src/cli.ts unpack-index <resources.index> [-o outDir] [--stdout]
+npx tsx packages/xpanda-cli/src/cli.ts decompile <file.abc|file.hap> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N]
+npx tsx packages/xpanda-cli/src/cli.ts unpack-index <resources.index> [-o outDir] [--stdout]
 ```
 
 - Any ZIP container (detected by `ZipFile.isZip`, not just `.hap`) goes through the HAP flow: print `module.json` summary, decompile every `.abc` entry into `outDir/<entry-path>/`, write `resources.json`, and extract `resources/` files (with a path-traversal guard on entry names).
@@ -290,7 +292,7 @@ Exports `PandaFile`, `PandaClass`, `PandaMethod`, `PandaDecompiler`, `decompileC
 
 Measured on a ~5.5 MB sample: parsing ≈ 36 ms, serial simplify ≈ 81 s, `-j 4` ≈ 49 s (≈ 1.66×). The bottleneck is per-class simplify memory/GC bandwidth, not parsing or disassembly.
 
-## 12. MCP Server — `src/mcp/`
+## 12. MCP Server — `packages/xpanda-mcp/src/`
 
 Exposes the decompiler to AI agents over stdio (see [MCP.md](./MCP.md) for setup and workflows). Key design points:
 

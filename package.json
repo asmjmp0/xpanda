@@ -1,29 +1,19 @@
 {
   "name": "xpanda",
   "version": "2.1.0",
-  "description": "xpanda decompiler - pure TypeScript implementation of the HarmonyOS .abc (Panda bytecode) decompiler",
-  "main": "src/index.ts",
+  "private": true,
+  "description": "xpanda monorepo - pure TypeScript implementation of the HarmonyOS .abc (Panda bytecode) decompiler",
+  "workspaces": [
+    "packages/xpanda-core",
+    "packages/xpanda-cli",
+    "packages/xpanda-mcp"
+  ],
   "scripts": {
-    "gen:opcodes": "tsx scripts/gen-opcodes.ts",
-    "typecheck": "tsc --noEmit",
-    "test": "tsx test/decompile.test.ts",
-    "test:mcp": "tsx scripts/test-mcp.ts",
-    "mcp": "tsx src/mcp/server.ts",
-    "xpanda": "tsx src/cli.ts"
-  },
-  "dependencies": {
-    "@babel/generator": "^7.23.9",
-    "@babel/parser": "^7.23.9",
-    "@babel/traverse": "^7.23.9",
-    "@babel/types": "^7.23.9",
-    "@modelcontextprotocol/sdk": "^1.32.1",
-    "js-yaml": "^4.1.0",
-    "zod": "^4.6.7"
-  },
-  "devDependencies": {
-    "@types/js-yaml": "^4.0.9",
-    "@types/node": "^20.19.43",
-    "tsx": "^4.7.0",
-    "typescript": "^5.3.3"
+    "gen:opcodes": "npm run gen:opcodes --workspace xpanda-core",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspace xpanda-core",
+    "test:mcp": "npm run test:mcp --workspace xpanda-mcp",
+    "mcp": "npm run mcp --workspace xpanda-mcp",
+    "xpanda": "npm run xpanda --workspace xpanda-cli"
   }
 }
