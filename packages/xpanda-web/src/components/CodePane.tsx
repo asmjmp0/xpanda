@@ -16,9 +16,11 @@ interface CodePaneProps {
     decompiling: boolean;
     mode: DecompileMode;
     onRedecompile: () => void;
+    /** 窄屏返回类列表;宽屏不传(按钮不渲染) */
+    onBack?: () => void;
 }
 
-export function CodePane({ selected, code, elapsedMs, decompiling, mode, onRedecompile }: CodePaneProps) {
+export function CodePane({ selected, code, elapsedMs, decompiling, mode, onRedecompile, onBack }: CodePaneProps) {
     const [copied, setCopied] = useState(false);
     const [lines, setLines] = useState<string[]>([]);
 
@@ -59,6 +61,11 @@ export function CodePane({ selected, code, elapsedMs, decompiling, mode, onRedec
     return (
         <div className="codepane">
             <div className="codepane-toolbar">
+                {onBack !== undefined && (
+                    <button className="codepane-back" onClick={onBack} title="Back to class list" aria-label="Back to class list">
+                        ‹
+                    </button>
+                )}
                 <span className="codepane-path" title={selected.displayPath}>{selected.displayPath}</span>
                 <span className="codepane-meta" title={elapsedMs === undefined ? undefined : "Time spent decompiling this class (first run)"}>
                     {mode === "raw" ? "raw" : "optimized"}

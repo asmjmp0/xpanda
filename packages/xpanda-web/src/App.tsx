@@ -44,6 +44,21 @@ function saveWorkerJobs(jobs: number): void {
     }
 }
 
+/** 窄屏(手机)断点:主区从“侧栏 + 代码”并排切换为二选一视图 */
+const NARROW_MEDIA_QUERY = "(max-width: 760px)";
+
+/** 跟踪窄屏断点;只在手机宽度下为 true,用于启用列表/代码双视图切换 */
+function useIsNarrow(): boolean {
+    const [isNarrow, setIsNarrow] = useState(() => window.matchMedia(NARROW_MEDIA_QUERY).matches);
+    useEffect(() => {
+        const mql = window.matchMedia(NARROW_MEDIA_QUERY);
+        const onChange = (e: MediaQueryListEvent): void => setIsNarrow(e.matches);
+        mql.addEventListener("change", onChange);
+        return () => mql.removeEventListener("change", onChange);
+    }, []);
+    return isNarrow;
+}
+
 /**
  * xpanda web 主界面:
  *  - 拖拽 / 点击加载 .abc / .hap(纯前端解析);
@@ -66,6 +81,9 @@ export function App() {
     const [dragging, setDragging] = useState(false);
     /** Decompile all 使用的 worker 数(默认 4,可在工具栏切换并记住) */
     const [workerJobs, setWorkerJobs] = useState<number>(loadWorkerJobs);
+    /** 窄屏下主区显示哪个视图:类列表 / 代码(宽屏下两者并排,该状态不生效) */
+    const [mobileView, setMobileView] = useState<"list" | "code">("list");
+    const isNarrow = useIsNarrow();
 
     const bulkCancel = useRef(false);
     const dragDepth = useRef(0);
@@ -280,7 +298,7 @@ export function App() {
                     onDownloadAll={downloadAll}
                 />
             )}
-            <div className="main">
+            <div className={"main" + (isNarrow ? " mobile-view-" + mobileView : "")}>
                 {images.length === 0 ? (
                     <div className="welcome">
                         <div className="welcome-card">
@@ -304,7 +322,10 @@ export function App() {
                             refs={refs}
                             selectedKey={selected?.key ?? null}
                             cachedKeys={cachedKeys}
-                            onSelect={setSelected}
+                            onSelect={(ref) => {
+                                setSelected(ref);
+                                setMobileView("code");
+                            }}
                         />
                         <CodePane
                             selected={selected}
@@ -313,6 +334,7 @@ export function App() {
                             decompiling={phase === "decompiling"}
                             mode={mode}
                             onRedecompile={redecompileSelected}
+                            onBack={isNarrow ? () => setMobileView("list") : undefined}
                         />
                     </>
                 )}

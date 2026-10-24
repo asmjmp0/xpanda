@@ -33,6 +33,16 @@ body {
     background: var(--bg);
     color: var(--text);
     font: 13px/1.5 "Segoe UI", system-ui, -apple-system, "PingFang SC", sans-serif;
+    -webkit-text-size-adjust: 100%;
+    overscroll-behavior: none;
+}
+
+/* 移动浏览器地址栏收展时避免底栏被裁掉(dvh 不支持时回退上面的 100%) */
+@supports (height: 100dvh) {
+    body,
+    #root {
+        height: 100dvh;
+    }
 }
 
 code {
@@ -746,4 +756,175 @@ button:disabled {
 
 ::-webkit-scrollbar-corner {
     background: transparent;
+}
+
+/* ---------- 移动端适配 ---------- */
+
+/* 平板 / 窄窗口:顶栏收敛副标题与版本徽标,侧栏收窄 */
+@media (max-width: 1000px) {
+    .logo-sub {
+        display: none;
+    }
+
+    .topbar-meta .ver {
+        display: none;
+    }
+
+    .sidebar {
+        flex-basis: 240px;
+        width: 240px;
+    }
+}
+
+/* 手机:主区改为“类列表 / 代码视图”二选一(视图切换由 .mobile-view-* 驱动) */
+@media (max-width: 760px) {
+    .topbar {
+        flex-wrap: wrap;
+        row-gap: 6px;
+        gap: 10px;
+        padding: 8px 10px;
+    }
+
+    /* GitHub 链接只留图标 */
+    .repo-link span {
+        display: none;
+    }
+
+    .repo-link {
+        padding: 3px 7px;
+    }
+
+    /* 声明栏保持可见但限高滚动,不占满整屏 */
+    .noticebar {
+        max-height: 28vh;
+        overflow-y: auto;
+        padding: 6px 10px;
+    }
+
+    .errorbar {
+        padding: 8px 10px;
+    }
+
+    .bulkbar {
+        flex-wrap: wrap;
+        row-gap: 6px;
+        padding: 6px 10px;
+    }
+
+    .progress {
+        flex: 1 1 140px;
+    }
+
+    .bulk-spacer {
+        flex: 0 0 0;
+    }
+
+    .welcome-card {
+        padding: 32px 22px;
+        margin: 0 14px;
+    }
+
+    .welcome-logo {
+        font-size: 27px;
+    }
+
+    /* 主区占满剩余空间,列表与代码各独占一层 */
+    .main {
+        position: relative;
+    }
+
+    .sidebar,
+    .codepane {
+        position: absolute;
+        inset: 0;
+        flex: 1 1 auto;
+        width: auto;
+        z-index: 1;
+    }
+
+    .main.mobile-view-list .codepane,
+    .main.mobile-view-code .sidebar {
+        display: none;
+    }
+
+    .codepane-toolbar {
+        flex-wrap: wrap;
+        row-gap: 4px;
+        gap: 8px;
+        padding: 6px 10px;
+    }
+
+    .codepane-back {
+        display: inline-block;
+    }
+
+    .code-body {
+        font-size: 11px;
+    }
+
+    .code-ln {
+        flex-basis: 38px;
+        padding-right: 10px;
+    }
+
+    .drop-overlay-box {
+        padding: 26px 30px;
+        max-width: 86vw;
+        text-align: center;
+        font-size: 15px;
+    }
+
+    /* 16px 以上字号避免 iOS Safari 聚焦输入框时整页缩放 */
+    .sidebar-search input {
+        font-size: 16px;
+        padding: 8px 10px;
+    }
+}
+
+/* 窄屏专用的返回按钮,宽屏一律隐藏 */
+.codepane-back {
+    display: none;
+    background: transparent;
+    border: 0;
+    color: var(--accent);
+    font-size: 20px;
+    line-height: 1;
+    padding: 2px 8px 2px 0;
+    margin-left: -4px;
+    flex: 0 0 auto;
+}
+
+/* 触控设备:加大点击目标 */
+@media (pointer: coarse) {
+    button {
+        padding: 7px 14px;
+    }
+
+    .segmented button {
+        padding: 6px 12px;
+    }
+
+    .codepane-actions button,
+    .btn-accent {
+        padding: 7px 12px;
+    }
+
+    .codepane-back {
+        padding: 6px 10px 6px 0;
+    }
+
+    .tree-image,
+    .tree-group-head,
+    .tree-class {
+        padding-top: 8px;
+        padding-bottom: 8px;
+    }
+
+    .bulk-jobs select {
+        padding: 5px 8px;
+    }
+
+    .errorbar-close {
+        padding: 4px 10px;
+    }
 }
