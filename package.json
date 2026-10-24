@@ -11,7 +11,7 @@
   "scripts": {
     "gen:opcodes": "npm run gen:opcodes --workspace xpanda-core",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "test": "npm run test --workspace xpanda-core",
+    "test": "npm run test --workspaces --if-present",
     "test:mcp": "npm run test:mcp --workspace xpanda-mcp",
     "mcp": "npm run mcp --workspace xpanda-mcp",
     "xpanda": "npm run xpanda --workspace xpanda-cli"

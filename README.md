@@ -309,7 +309,7 @@ for (const cls of pandaFile.getAllClasses()) {
 }
 ```
 
-The core is browser-compatible and does no disk IO: a browser bundle (Vite / webpack / esbuild, browser target) automatically resolves `"xpanda-core"` to the Node-free subset (`src/browser.ts`, no worker pool) via the package's `"browser"` export condition. Reading files from disk and writing output files live in the `xpanda-cli` and `xpanda-mcp` packages.
+The core is browser-compatible and does no disk IO: `src/index.ts` is the single entry (shared by Node and browsers) whose import closure contains no Node built-ins and no workers. The `-j` parallel simplify worker pool ships with `xpanda-cli` (`src/parallel/`), and reading/writing files is implemented by the `xpanda-cli` and `xpanda-mcp` packages.
 
 ## MCP Server
 
@@ -375,14 +375,15 @@ packages/
       hap/          HAP app package (ZIP) adapter
       res/          resources.index parsing
       PandaDecompiler.ts  public entry point
-      index.ts      Node entry (re-exports browser + parallel worker pool)
-      browser.ts    browser entry (same API, no Node deps; resolved via the "browser" export condition)
+      index.ts      single entry (Node & browsers; no Node built-ins, no disk IO, no workers)
     resources/isa.yaml    ArkCompiler instruction set description (v24.0.0.0, compatible with v13.0.1.0)
     scripts/gen-opcodes.ts  isa.yaml → src/disasm/opcodes.ts
     test/                 integration tests, sample files and snapshots
   xpanda-cli/
     src/cli.ts            command line interface
     src/io.ts             file IO: write decompiled classes to disk
+    src/parallel/         per-class parallel simplify worker pool (worker_threads)
+    test/                 serial vs parallel consistency regression
   xpanda-mcp/
     src/                  MCP server (stdio, for AI client integration)
     src/io.ts             file IO: read .abc from disk, write decompiled classes

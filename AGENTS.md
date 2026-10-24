@@ -25,9 +25,8 @@
 | `packages/xpanda-core/src/ast/` | `NodeFactory` / `NodeUtils`(Babel AST 工具);`FormatCode.ts` 对超长逻辑链输出折行 |
 | `packages/xpanda-core/src/simplify/` | 优化器流水线(`SimplifyExport`、`TempVariableSimplify`、`ConditionSimplify`、`SyntaxRewriteSimplify`、`ClassSyntaxSimplify`、`ObjectLiteralSimplify`、`NullishCoalescingSimplify`、`HighLevelGrammarSimplify`、`AstUtils`、`NormalizeDeclarations`);末尾含 `foldConditionAssignments`(条件取反链二次折叠)与 `hoistTestPrefixes`(常量前缀提升) |
 | `packages/xpanda-core/src/simplify/temp/` | `TempVariableSimplify` 的拆分实现:`copy-propagation.ts`(复制传播)、`liveness.ts`(活跃性/死存储)、`assignment-folds.ts`(return/累加器/别名)、`condition-folds.ts`(布尔物化/条件)、`test-folds.ts`(短路/test 序列/循环守卫)、`queries.ts`(纯 AST 查询)、`context.ts`(ctx 工具)、`env.ts`(传播环境)、`types.ts`(共享状态与类型)、`base.ts`(状态基类) |
-| `packages/xpanda-core/src/parallel/` | 按类并行的 simplify worker 池(`ParallelDecompiler.ts` 调度、`simplify-worker.ts` worker 入口) |
 | `packages/xpanda-core/src/hap/` | HAP 应用包适配:`ZipFile.ts`(只读 ZIP 解析,store/deflate)、`HapFile.ts`(.abc 条目/module.json/resources.index) |
-| `packages/xpanda-core/src/PandaDecompiler.ts` | 对外总入口(库 API),`src/index.ts` 为 Node 入口(转发 browser 子集 + parallel),`src/browser.ts` 为浏览器入口(无 Node 依赖、不做磁盘 IO) |
+| `packages/xpanda-core/src/PandaDecompiler.ts` | 对外总入口(库 API),`src/index.ts` 为唯一入口(Node 与浏览器共用,保持无 Node 依赖、无磁盘 IO) |
 | `packages/xpanda-core/resources/isa.yaml` | ArkCompiler 指令集描述(v24.0.0.0) |
 | `packages/xpanda-core/scripts/gen-opcodes.ts` | 生成 `packages/xpanda-core/src/disasm/opcodes.ts` |
 | `packages/xpanda-core/test/` | 集成测试 + 样本(`md5.abc`、`class.abc`、`aes.abc`、`zhihupp0.59.hap`、`yourpipe0.7.0.abc`) |
@@ -38,7 +37,10 @@
 | 路径 | 职责 |
 |---|---|
 | `packages/xpanda-cli/src/cli.ts` | CLI:`decompile <file.abc|file.hap> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N]`、`unpack-index <resources.index> [-o outDir] [--stdout]` |
-| `packages/xpanda-mcp/src/` | MCP Server(`server.ts` stdio 入口、`registry.ts` abc/hap 会话注册表、`tools/` 十个工具),文档见 [docs/MCP.md](docs/MCP.md) |
+| `packages/xpanda-cli/src/io.ts` | CLI 文件 IO:按类名落盘(saveClassFile) |
+| `packages/xpanda-cli/src/parallel/` | 按类并行的 simplify worker 池(`ParallelDecompiler.ts` 调度、`simplify-worker.ts` worker 入口;worker_threads,仅 Node) |
+| `packages/xpanda-cli/test/parallel-consistency.test.ts` | 串行/并行逐字一致性回归(core 样本) |
+| `packages/xpanda-mcp/src/` | MCP Server(`server.ts` stdio 入口、`registry.ts` abc/hap 会话注册表、`tools/` 十个工具、`io.ts` 磁盘 IO),文档见 [docs/MCP.md](docs/MCP.md) |
 | `packages/xpanda-mcp/scripts/test-mcp.ts` | MCP Server 端到端测试(子进程 + JSON-RPC) |
 | `docs/ARCHITECTURE.md` | 架构文档 |
 | `docs/MCP.md` | MCP Server 文档 |
@@ -47,7 +49,7 @@
 
 ```bash
 npm install                # 安装依赖(workspaces 一次装好三个子包)
-npm test                   # 集成测试:反编译 + 快照比较 + Babel 再解析(委托 xpanda-core)
+npm test                   # core 集成测试(反编译+快照+Babel 再解析)+ cli 串行/并行一致性回归
 npm run typecheck          # 三个子包各自 tsc --noEmit
 npm run gen:opcodes        # isa.yaml → packages/xpanda-core/src/disasm/opcodes.ts
 
@@ -79,8 +81,8 @@ npm run test:mcp
 3. 注释与文档使用中文,保持现有风格(类头 `@Author: jmp0`)。
 4. 不要引入 CI 配置或改变依赖结构,除非用户要求。
 5. 优化器 pass 返回 `boolean` 表示是否修改 AST,由 `SimplifyExport` 定点迭代;不要在 pass 内保留过程日志。
-6. **单类输出必须是该类的纯函数**:不要引入跨类的可变状态(全局计数器、按偏移共享的可变缓存等),否则 `-j` 并行结果与串行不一致。生成名计数器在 `PandaDecompiler.decompileRaw()` 里按类复位;`packages/xpanda-core/test/decompile.test.ts` 有串行/并行一致性回归。
-7. **跨包引用一律走包名**:cli / mcp 引用核心库只允许 `import ... from "xpanda-core"`(Node 走 `src/index.ts`,浏览器 bundle 经 `"browser"` 条件走 `src/browser.ts`),不要深路径相对引用;core 内部不得反向依赖 cli / mcp。core 新增对外能力时在 `src/browser.ts` 补导出(Node-only 能力只加在 `src/index.ts`),`browser.ts` 的导入闭包内不得出现任何 Node 内建模块(fs / path / os / zlib / worker_threads / Buffer 等),Node 专用实现一律放 `src/parallel/`;磁盘 IO 不进 core,由 cli / mcp 各自的 `src/io.ts` 实现。
+6. **单类输出必须是该类的纯函数**:不要引入跨类的可变状态(全局计数器、按偏移共享的可变缓存等),否则 `-j` 并行结果与串行不一致。生成名计数器在 `PandaDecompiler.decompileRaw()` 里按类复位;`packages/xpanda-cli/test/parallel-consistency.test.ts` 有串行/并行一致性回归。
+7. **跨包引用一律走包名**:cli / mcp 引用核心库只允许 `import ... from "xpanda-core"`(唯一入口 `src/index.ts`),不要深路径相对引用;core 内部不得反向依赖 cli / mcp。**core 必须保持浏览器安全**:单一入口的导入闭包内不得出现任何 Node 内建模块(fs / path / os / zlib / worker_threads / Buffer 等),不得做磁盘 IO、不得启 worker——磁盘 IO 由 cli / mcp 各自的 `src/io.ts` 实现,并行 simplify worker 池在 xpanda-cli 的 `src/parallel/`。
 
 ## 常见任务怎么做
 
@@ -151,7 +153,8 @@ npm run test:mcp
 
 | 测试 | 用途 |
 |---|---|
-| `packages/xpanda-core/test/decompile.test.ts` | 反编译 `md5.abc` / `class.abc` / `aes.abc`,与 `packages/xpanda-core/test/expected/*.js` 比较,并做 Babel 再解析;另含并行一致性回归、HAP 包(`zhihupp0.59.hap`)重点类回归(AppDestination / AbsoluteUrlParser / ContentFilterRuntimeStore / StartupDestinationChannel / DeepLinkResolver / ShareContracts / AppUpdateClient 等,部分含沙箱行为校验)与 `yourpipe0.7.0.abc` 的 SabrResponseDecoder 嵌套作用域 for-of、MpvPlayerView 单跳转区域、HttpDownloader 循环体嵌套 try/catch 回归 |
+| `packages/xpanda-core/test/decompile.test.ts` | 反编译 `md5.abc` / `class.abc` / `aes.abc`,与 `packages/xpanda-core/test/expected/*.js` 比较,并做 Babel 再解析;另含 HAP 包(`zhihupp0.59.hap`)重点类回归(AppDestination / AbsoluteUrlParser / ContentFilterRuntimeStore / StartupDestinationChannel / DeepLinkResolver / ShareContracts / AppUpdateClient 等,部分含沙箱行为校验)与 `yourpipe0.7.0.abc` 的 SabrResponseDecoder 嵌套作用域 for-of、MpvPlayerView 单跳转区域、HttpDownloader 循环体嵌套 try/catch 回归 |
+| `packages/xpanda-cli/test/parallel-consistency.test.ts` | 串行 vs `-j` 逐字一致性回归(取 `zhihupp0.59.hap` 的小类,复用 core 样本) |
 | `packages/xpanda-mcp/scripts/test-mcp.ts` | 以子进程启动 MCP Server,按 JSON-RPC 调用全部工具,快照比对 + 错误路径校验(含 hap 加载/解 abc/资源查询) |
 | `packages/xpanda-core/test/resources/md5.abc` | 小样本,测试中还会执行输出并校验 MD5 结果 |
 | `packages/xpanda-core/test/resources/class.abc` | 类/访问器/原型方法还原样本 |

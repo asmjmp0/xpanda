@@ -46,7 +46,7 @@ The main thread always performs parsing, disassembly, lexical analysis, and AST 
 | `src/codegen/` | `CodeGenerator` — thin wrapper around `src/ast/` |
 | `src/ast/` | Babel AST construction & text generation (`NodeFactory` / `NodeUtils` / `FormatCode`) |
 | `src/simplify/` | Optimizer pipeline |
-| `src/parallel/` | Per-class parallel simplify worker pool |
+| `src/parallel/` *(moved to xpanda-cli)* | Per-class parallel simplify worker pool (worker_threads / os — Node-only, lives in `packages/xpanda-cli/src/parallel/`) |
 | `packages/xpanda-mcp/src/` | MCP server exposing the decompiler to AI agents (see [MCP.md](./MCP.md)) |
 | `src/PandaDecompiler.ts` | Public entry point (per-class orchestration) |
 | `packages/xpanda-cli/src/cli.ts` | CLI entry: `decompile` and `unpack-index` commands |
@@ -250,7 +250,7 @@ Why the tail is ordered this way:
 - The accumulator `acc` is not a source variable: `acc = !acc` can come from `callruntime.isfalse` *or* from condition materialization; folds handle negation chains by parity, not by deleting one layer.
 - Statements must not be deleted based on stale reference bookkeeping: cloned expressions and deleted-statement bindings require a recount over the current AST (skipping nested functions; closure captures are protected explicitly).
 
-## 10. Parallel Simplification — `src/parallel/`
+## 10. Parallel Simplification — `packages/xpanda-cli/src/parallel/`
 
 - Entry: `decompileClassesParallel(decompiler, classes, { jobs, onClassDone, onWarning })`; the CLI enables it with `-j N` (`-j 0` = auto: `max(1, min(4, cpus - 1))`, see `resolveJobs`).
 - **Split**: the main thread parses, disassembles, runs lexical analysis, and builds the AST (`decompileClassAst`); workers receive self-contained AST JSON and only run `SimplifyExport.simplify` + `NodeFactory.generate`. On a large sample this split is roughly 1% vs 99% of total time.
@@ -287,9 +287,9 @@ npx tsx packages/xpanda-cli/src/cli.ts unpack-index <resources.index> [-o outDir
 
 ### 11.3 Library API — `src/index.ts`
 
-Exports `PandaFile`, `PandaClass`, `PandaMethod`, `PandaDecompiler`, `decompileClassesParallel` / `resolveJobs`, `PandaLexical`, `PandaDisAssembler`, `PandaIRCFG` / `PandaIRBasicBlock`, the opcode tables, `NodeFactory` / `NodeUtils`, `SimplifyExport`, `ResourceIndexFile` / `ResourceItem` / `ResourceUtils`, `HapFile` / `ZipFile`, and the exception types.
+Exports `PandaFile`, `PandaClass`, `PandaMethod`, `PandaDecompiler`, `PandaLexical`, `PandaDisAssembler`, `PandaIRCFG` / `PandaIRBasicBlock`, the opcode tables, `NodeFactory` / `NodeUtils`, `SimplifyExport`, `ResourceIndexFile` / `ResourceItem` / `ResourceUtils`, `HapFile` / `ZipFile`, and the exception types.
 
-Browser bundles resolve the same `"xpanda-core"` import to `src/browser.ts` via the package's `"browser"` export condition — the same API minus the parallel worker pool. The core itself (parser / disassembler / decompiler / optimizer / hap+zip / res) is Node-free and does no disk IO: ZIP deflate uses pure-JS `fflate`, text decoding uses the standard `TextDecoder`, and file IO (reading `.abc` from disk, writing output) lives in the `xpanda-cli` and `xpanda-mcp` packages.
+The single entry `src/index.ts` is Node-free and browser-safe — browser bundles resolve the same `"xpanda-core"` import without any export conditions. The core (parser / disassembler / decompiler / optimizer / hap+zip / res) does no disk IO and spawns no workers: ZIP deflate uses pure-JS `fflate`, text decoding uses the standard `TextDecoder`. Node-only capabilities live in the consumer packages — file IO in `xpanda-cli` / `xpanda-mcp` (`src/io.ts` each), and the parallel simplify worker pool in `xpanda-cli` (`src/parallel/`).
 
 Measured on a ~5.5 MB sample: parsing ≈ 36 ms, serial simplify ≈ 81 s, `-j 4` ≈ 49 s (≈ 1.66×). The bottleneck is per-class simplify memory/GC bandwidth, not parsing or disassembly.
 
@@ -311,7 +311,7 @@ Entry point: `test/decompile.test.ts`.
 - `md5.abc` output is **executed** and `md5("admin")` is checked against Node `crypto`; `aes.abc` output runs an encrypt/decrypt self-check (and its snapshot pins conditional polarity: `Counter.increment` must be `!== 255`).
 - `yourpipe0.7.0.abc` (5.4 MB) covers whole-class snapshots for tricky control flow (nested try/catch in loop bodies, nested-scope for-of, hoisted iterator loads).
 - `zhihupp0.59.hap` (bytecode 13.0.1.0) is the regression set for logical-condition propagation, negation-chain folding, accumulator materialization, and try/finally restoration.
-- A parallel-consistency test compares serial vs `-j` output byte-for-byte on selected classes.
+- A parallel-consistency test in `packages/xpanda-cli/test/parallel-consistency.test.ts` compares serial vs `-j` output byte-for-byte on selected classes.
 
 ```bash
 npm test

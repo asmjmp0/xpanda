@@ -46,7 +46,7 @@ JavaScript 源码(落盘 / stdout / 编程 API)
 | `src/codegen/` | `CodeGenerator` —— 包装 `src/ast/` 的轻封装 |
 | `src/ast/` | Babel AST 构建与文本生成(`NodeFactory` / `NodeUtils` / `FormatCode`) |
 | `src/simplify/` | 优化器流水线 |
-| `src/parallel/` | 按类并行的 simplify worker 池 |
+| `src/parallel/` *(已移至 xpanda-cli)* | 按类并行的 simplify worker 池(worker_threads / os,仅 Node 可用,现位于 `packages/xpanda-cli/src/parallel/`) |
 | `packages/xpanda-mcp/src/` | 把反编译器暴露给 AI agent 的 MCP Server(见 [MCP.md](./MCP.md)) |
 | `src/PandaDecompiler.ts` | 对外总入口(单类编排) |
 | `packages/xpanda-cli/src/cli.ts` | 命令行入口:`decompile` 与 `unpack-index` 命令 |
@@ -250,7 +250,7 @@ normalizeDeclarations
 - 累加器 `acc` 不是源码变量:`acc = !acc` 可能来自 `callruntime.isfalse`,也可能来自条件物化;折叠按取反链奇偶性处理,不能只删一层。
 - 不能只依据过期的引用记录删语句:克隆出来的表达式与已删语句的绑定要求在当前 AST 上重数(跳过嵌套函数;闭包捕获被显式保护)。
 
-## 10. 并行 simplify —— `src/parallel/`
+## 10. 并行 simplify —— `packages/xpanda-cli/src/parallel/`
 
 - 入口:`decompileClassesParallel(decompiler, classes, { jobs, onClassDone, onWarning })`;CLI 用 `-j N` 开启(`-j 0` = 自动:`max(1, min(4, cpus - 1))`,见 `resolveJobs`)。
 - **分工**:主线程解析、反汇编、词法分析、构建 AST(`decompileClassAst`);worker 接收自包含的 AST JSON,只跑 `SimplifyExport.simplify` + `NodeFactory.generate`。大样本上该分工约占总时长的 1% vs 99%。
@@ -287,9 +287,9 @@ npx tsx packages/xpanda-cli/src/cli.ts unpack-index <resources.index> [-o outDir
 
 ### 11.3 编程 API —— `src/index.ts`
 
-导出 `PandaFile`、`PandaClass`、`PandaMethod`、`PandaDecompiler`、`decompileClassesParallel` / `resolveJobs`、`PandaLexical`、`PandaDisAssembler`、`PandaIRCFG` / `PandaIRBasicBlock`、opcode 表、`NodeFactory` / `NodeUtils`、`SimplifyExport`、`ResourceIndexFile` / `ResourceItem` / `ResourceUtils`、`HapFile` / `ZipFile` 以及异常类型。
+导出 `PandaFile`、`PandaClass`、`PandaMethod`、`PandaDecompiler`、`PandaLexical`、`PandaDisAssembler`、`PandaIRCFG` / `PandaIRBasicBlock`、opcode 表、`NodeFactory` / `NodeUtils`、`SimplifyExport`、`ResourceIndexFile` / `ResourceItem` / `ResourceUtils`、`HapFile` / `ZipFile` 以及异常类型。
 
-浏览器 bundle 对同一个 `"xpanda-core"` 导入会经包的 `"browser"` 导出条件解析到 `src/browser.ts` —— 同一套 API,但不含并行 worker 池。核心本身(解析 / 反汇编 / 反编译 / 优化器 / hap+zip / res)不依赖 Node、不做磁盘 IO:ZIP deflate 使用纯 JS 的 `fflate`,文本解码使用标准 `TextDecoder`,读写文件的 IO 由 `xpanda-cli` 与 `xpanda-mcp` 各自实现。
+唯一入口 `src/index.ts` 无 Node 依赖、浏览器安全——浏览器 bundle 解析同一个 `"xpanda-core"` 导入无需任何导出条件。核心(解析 / 反汇编 / 反编译 / 优化器 / hap+zip / res)不做磁盘 IO、不启 worker:ZIP deflate 使用纯 JS 的 `fflate`,文本解码使用标准 `TextDecoder`。Node 专属能力由使用方包实现——文件 IO 在 `xpanda-cli` / `xpanda-mcp`(各自的 `src/io.ts`),并行 simplify worker 池在 `xpanda-cli`(`src/parallel/`)。
 
 约 5.5 MB 样本实测:解析 ≈ 36 ms,串行 simplify ≈ 81 s,`-j 4` ≈ 49 s(≈ 1.66×)。瓶颈是单类 simplify 的内存/GC 带宽,而非解析或反汇编。
 

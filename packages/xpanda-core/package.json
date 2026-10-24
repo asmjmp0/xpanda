@@ -4,11 +4,7 @@
   "description": "xpanda core - HarmonyOS .abc (Panda bytecode) parser, disassembler and decompiler library, pure TypeScript",
   "main": "./src/index.ts",
   "exports": {
-    ".": {
-      "types": "./src/index.ts",
-      "browser": "./src/browser.ts",
-      "default": "./src/index.ts"
-    }
+    ".": "./src/index.ts"
   },
   "scripts": {
     "gen:opcodes": "tsx scripts/gen-opcodes.ts",

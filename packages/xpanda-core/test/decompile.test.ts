@@ -4,7 +4,6 @@ import * as vm from "vm";
 import * as crypto from "crypto";
 import { PandaFile, ENTRY_FUNCTION_MAIN } from "../src/file/PandaFile";
 import { PandaDecompiler } from "../src/PandaDecompiler";
-import { decompileClassesParallel } from "../src/parallel/ParallelDecompiler";
 import { NodeFactory } from "../src/ast/NodeFactory";
 import { SimplifyExport } from "../src/simplify/SimplifyExport";
 import { SyntaxRewriteSimplify } from "../src/simplify/SyntaxRewriteSimplify";
@@ -590,38 +589,6 @@ function trueBranch(p0) {
     }
     if (code.includes("!acc") || code.includes("? false") || code.includes("? true")) {
         throw new Error(`simplify: 仍残留取反链或布尔三元\n${code}`);
-    }
-}
-
-/**
- * 回归:按类并行反编译必须与串行逐字一致。
- * 用 zhihupp0.59.hap 里的几个小类(避开分钟级的大类)验证:
- *   1. 单类输出与处理顺序/worker 数量无关(生成名计数器按类复位);
- *   2. worker 与主线程简化器结果一致。
- */
-async function verifyParallelDeterminism(): Promise<void> {
-    const hapPath = path.join(__dirname, "resources", "zhihupp0.59.hap");
-    const hap = new HapFile(new Uint8Array(fs.readFileSync(hapPath)));
-    const pandaFile = new PandaFile(hap.readEntry("ets/modules.abc")!);
-    const small = pandaFile.getAllClasses()
-        .filter((clazz) => clazz.pandaMethods.has(ENTRY_FUNCTION_MAIN))
-        .filter((clazz) => {
-            let bytes = 0;
-            for (const method of clazz.pandaMethods.values()) bytes += method.methodCode?.codeSize ?? 0;
-            return bytes > 200 && bytes < 3000;
-        })
-        .slice(0, 4);
-    if (small.length < 2) throw new Error("zhihupp0.59.hap: 小类样本不足,无法验证并行一致性");
-
-    const serial = new PandaDecompiler();
-    const expected = small.map((clazz) => serial.decompileClass(clazz));
-    const parallel = await decompileClassesParallel(new PandaDecompiler(), small, { jobs: 2 });
-
-    for (let i = 0; i < small.length; i++) {
-        const actual = parallel[i] ?? "";
-        if (actual !== expected[i]) {
-            throw new Error(`并行/串行结果不一致: ${small[i].name.content}\n${firstDifference(expected[i], actual)}`);
-        }
     }
 }
 
@@ -2614,10 +2581,6 @@ async function main(): Promise<void> {
 
     console.log("[test] simplify if-return chain switch");
     verifyIfReturnChainSwitch();
-    console.log("    ok");
-
-    console.log("[test] parallel determinism (worker_threads)");
-    await verifyParallelDeterminism();
     console.log("    ok");
 
     console.log("[test] hap package (zhihupp0.59.hap)");

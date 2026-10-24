@@ -1,5 +1,5 @@
 import { parentPort } from "worker_threads";
-import { PandaDecompiler } from "../PandaDecompiler";
+import { PandaDecompiler } from "xpanda-core";
 
 /**
  * simplify worker:接收单类的 AST JSON,返回生成后的 JS 源码。

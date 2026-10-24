@@ -1,15 +1,14 @@
 import * as fs from "fs";
 import * as path from "path";
 import {
-    decompileClassesParallel,
     HapFile,
     PandaDecompiler,
     PandaFile,
     ResourceIndexFile,
-    resolveJobs,
     ZipFile,
 } from "xpanda-core";
 import { saveClassFile } from "./io";
+import { decompileClassesParallel, resolveJobs } from "./parallel/ParallelDecompiler";
 
 /**
  * CLI 入口

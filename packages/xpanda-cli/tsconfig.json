@@ -13,8 +13,8 @@
     "types": ["node"],
     "declaration": false,
     "outDir": "dist",
-    "rootDir": "./src",
+    "rootDir": ".",
     "lib": ["ES2020"]
   },
-  "include": ["src/**/*"]
+  "include": ["src/**/*", "test/**/*"]
 }

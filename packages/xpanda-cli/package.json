@@ -4,6 +4,7 @@
   "description": "xpanda CLI - decompile HarmonyOS .abc / .hap files from the command line",
   "scripts": {
     "xpanda": "tsx src/cli.ts",
+    "test": "tsx test/parallel-consistency.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

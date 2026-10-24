@@ -1,9 +1,9 @@
 import * as os from "os";
 import * as path from "path";
 import { Worker } from "worker_threads";
-import { ENTRY_FUNCTION_MAIN } from "../file/PandaFile";
-import type { PandaClass } from "../file/clazz/PandaClass";
-import type { PandaDecompiler } from "../PandaDecompiler";
+import { ENTRY_FUNCTION_MAIN } from "xpanda-core";
+import type { PandaClass } from "xpanda-core";
+import type { PandaDecompiler } from "xpanda-core";
 
 /**
  * 按类并行的反编译调度。

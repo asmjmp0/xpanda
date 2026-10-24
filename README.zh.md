@@ -298,7 +298,7 @@ for (const cls of pandaFile.getAllClasses()) {
 }
 ```
 
-核心库本身兼容浏览器、不做磁盘 IO:浏览器打包器(Vite / webpack / esbuild,浏览器目标)会把 `"xpanda-core"` 自动解析到无 Node 依赖的子集(经包的 `"browser"` 导出条件指向 `src/browser.ts`,不含 worker 池)。读盘与落盘由 `xpanda-cli` 与 `xpanda-mcp` 包各自实现。
+核心库浏览器兼容且不做磁盘 IO:`src/index.ts` 是唯一入口(Node 与浏览器共用),导入闭包内无任何 Node 内建模块、无 worker——`-j` 并行 simplify 的 worker 池由 `xpanda-cli` 自带(`src/parallel/`),读写文件由 `xpanda-cli` 与 `xpanda-mcp` 包各自实现。
 
 ## MCP Server
 
@@ -372,14 +372,15 @@ packages/
       hap/          HAP 应用包(ZIP)适配
       res/          resources.index 解析
       PandaDecompiler.ts  对外总入口
-      index.ts      Node 入口(转发 browser 子集 + parallel worker 池)
-      browser.ts    浏览器入口(同一套 API,无 Node 依赖;经 "browser" 导出条件解析)
+      index.ts      唯一入口(Node 与浏览器共用;无 Node 内建模块、无磁盘 IO、无 worker)
     resources/isa.yaml      ArkCompiler 指令集描述(v24.0.0.0,兼容 v13.0.1.0)
     scripts/gen-opcodes.ts  isa.yaml → src/disasm/opcodes.ts
     test/                   集成测试、样本与快照
   xpanda-cli/
     src/cli.ts              命令行
     src/io.ts               文件 IO:按类名落盘反编译结果
+    src/parallel/           按类并行 simplify worker 池(worker_threads)
+    test/                   串行 vs 并行一致性回归
   xpanda-mcp/
     src/                    MCP Server(stdio,供 AI 客户端接入)
     src/io.ts               文件 IO:读盘解析 .abc、按类名落盘
