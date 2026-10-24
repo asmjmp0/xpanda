@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import type { ClassRef, DecompileMode } from "../decompiler";
 import { highlightLines } from "../highlight";
-import { copyText, downloadBlob } from "../format";
+import { copyText, downloadBlob, formatDuration } from "../format";
 
 /**
  * 右侧代码视图:工具栏(类名 / 模式 / 复制 / 单类下载 / 重反编译)+ 行号 + 高亮代码。
@@ -11,12 +11,14 @@ interface CodePaneProps {
     selected: ClassRef | null;
     /** undefined = 尚未反编译;"" = 反编译完成但无输出 */
     code: string | undefined;
+    /** 单类反编译耗时(毫秒);未反编译时为 undefined */
+    elapsedMs: number | undefined;
     decompiling: boolean;
     mode: DecompileMode;
     onRedecompile: () => void;
 }
 
-export function CodePane({ selected, code, decompiling, mode, onRedecompile }: CodePaneProps) {
+export function CodePane({ selected, code, elapsedMs, decompiling, mode, onRedecompile }: CodePaneProps) {
     const [copied, setCopied] = useState(false);
     const lines = useMemo(() => (code !== undefined && code !== "" ? highlightLines(code) : []), [code]);
 
@@ -42,8 +44,10 @@ export function CodePane({ selected, code, decompiling, mode, onRedecompile }: C
         <div className="codepane">
             <div className="codepane-toolbar">
                 <span className="codepane-path" title={selected.displayPath}>{selected.displayPath}</span>
-                <span className="codepane-meta">
-                    {mode === "raw" ? "raw" : "optimized"} · {lines.length} lines
+                <span className="codepane-meta" title={elapsedMs === undefined ? undefined : "Time spent decompiling this class (first run)"}>
+                    {mode === "raw" ? "raw" : "optimized"}
+                    {elapsedMs !== undefined && ` · ${formatDuration(elapsedMs)}`}
+                    {` · ${lines.length} lines`}
                 </span>
                 <div className="codepane-actions">
                     <button onClick={handleCopy} disabled={code === undefined || code === ""}>
@@ -62,7 +66,7 @@ export function CodePane({ selected, code, decompiling, mode, onRedecompile }: C
                     <div className="codepane-loading">Decompiling {selected.displayPath} …</div>
                 ) : code === "" ? (
                     <div className="codepane-loading">
-                        {"// decompile failed: func_main_0 could not be disassembled (unsupported instructions in this class)"}
+                        {"// decompile failed: this class produced no output (func_main_0 is missing or could not be disassembled)"}
                     </div>
                 ) : (
                     <div className="code-body">

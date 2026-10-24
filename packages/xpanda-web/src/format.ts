@@ -34,6 +34,15 @@ export function formatBytes(n: number): string {
     return (n / 1024 / 1024).toFixed(2) + " MB";
 }
 
+/** 反编译耗时:毫秒级保留 1~2 位小数,超过 1 秒换算成秒 */
+export function formatDuration(ms: number): string {
+    if (!Number.isFinite(ms) || ms < 0) return "—";
+    if (ms < 1) return ms.toFixed(2) + " ms";
+    if (ms < 10) return ms.toFixed(1) + " ms";
+    if (ms < 1000) return Math.round(ms) + " ms";
+    return (ms / 1000).toFixed(2) + " s";
+}
+
 export function readError(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
 }

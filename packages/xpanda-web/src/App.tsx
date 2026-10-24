@@ -13,6 +13,7 @@ import {
 } from "./decompiler";
 import { downloadBlob, readError, sanitizeFileName, stripExt } from "./format";
 import { Topbar } from "./components/Topbar";
+import { NoticeBar } from "./components/NoticeBar";
 import { BulkBar } from "./components/BulkBar";
 import { Sidebar } from "./components/Sidebar";
 import { CodePane } from "./components/CodePane";
@@ -42,6 +43,8 @@ export function App() {
 
     const bulkCancel = useRef(false);
     const dragDepth = useRef(0);
+    /** 并发解析计数:多次拖入时避免先完成的一次把 phase 提前置回 idle */
+    const parsingCount = useRef(0);
     const fileInputRef = useRef<HTMLInputElement | null>(null);
 
     const refs = useMemo(
@@ -59,6 +62,7 @@ export function App() {
     }, [refs, mode, cacheVersion, service]);
     const cachedCount = cachedKeys.size;
     const currentCode = selected !== null ? service.peek(selected, mode) : undefined;
+    const currentElapsed = selected !== null ? service.elapsedMs(selected, mode) : undefined;
 
     // 当前选中的类尚未反编译(新选中或模式切换)时,后台反编译一次
     useEffect(() => {
@@ -119,25 +123,36 @@ export function App() {
         // handleFiles 仅依赖 setState,首帧闭包即可
     }, []);
 
-    /** 解析上传的文件(可多选):ZIP 按 HAP 解包,其余按裸 abc */
+    /**
+     * 解析上传的文件(可多选 / 可多次拖入):ZIP 按 HAP 解包,其余按裸 abc。
+     * 每次调用把新文件追加到已有列表,互不覆盖;多个拖入操作并发时用计数维护 parsing 状态。
+     */
     const handleFiles = async (files: File[]): Promise<void> => {
+        if (files.length === 0) return;
         setError(null);
+        parsingCount.current++;
         setPhase("parsing");
-        await yieldToUI();
-        const loaded: LoadedImage[] = [];
-        const failures: string[] = [];
-        for (const file of files) {
-            try {
-                const data = new Uint8Array(await file.arrayBuffer());
-                loaded.push(loadImage(data, file.name));
-            } catch (e) {
-                failures.push(file.name + ": " + readError(e));
+        try {
+            await yieldToUI();
+            const loaded: LoadedImage[] = [];
+            const failures: string[] = [];
+            for (const file of files) {
+                try {
+                    const data = new Uint8Array(await file.arrayBuffer());
+                    loaded.push(loadImage(data, file.name));
+                } catch (e) {
+                    failures.push(file.name + ": " + readError(e));
+                }
+                // 文件之间让出主线程,多文件/大包时进度提示不会卡住
+                await yieldToUI();
             }
+            if (loaded.length > 0) setImages((prev) => [...prev, ...loaded]);
+            setCacheVersion((v) => v + 1);
+            if (failures.length > 0) setError(failures.join("\n"));
+        } finally {
+            parsingCount.current--;
+            if (parsingCount.current === 0) setPhase("idle");
         }
-        if (loaded.length > 0) setImages((prev) => [...prev, ...loaded]);
-        setPhase("idle");
-        setCacheVersion((v) => v + 1);
-        if (failures.length > 0) setError(failures.join("\n"));
     };
 
     const onInputChange = (e: React.ChangeEvent<HTMLInputElement>): void => {
@@ -200,6 +215,7 @@ export function App() {
                 onModeChange={setMode}
                 disabled={phase === "parsing"}
             />
+            <NoticeBar />
             {error !== null && (
                 <div className="errorbar">
                     <pre className="errorbar-text">{error}</pre>
@@ -249,6 +265,7 @@ export function App() {
                         <CodePane
                             selected={selected}
                             code={currentCode}
+                            elapsedMs={currentElapsed}
                             decompiling={phase === "decompiling"}
                             mode={mode}
                             onRedecompile={redecompileSelected}

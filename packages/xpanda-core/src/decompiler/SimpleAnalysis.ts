@@ -1,6 +1,7 @@
 import type { PandaIRCFG } from "../disasm/PandaIRCFG";
 import type { PandaLexical } from "../disasm/PandaLexical";
 import { LinearPandaStatement } from "./statements";
+import { checkIsAsyncException, checkIsGeneratorException } from "./RegionGraphBuilder";
 import type { PandaDecompilerMethodHandler } from "./MethodHandler";
 import * as TYPE from "@babel/types";
 
@@ -34,7 +35,6 @@ export class SimpleAnalysis {
                 if (!tryEntryBlock || !handleEntryBlock) continue;
                 if (tryCodeLength === 0 || handleCodeLength === 0) continue;
                 this.exceptionHandleBlocks.add(handleEntryBlock);
-                const { checkIsAsyncException, checkIsGeneratorException } = require("./RegionGraphBuilder");
                 if (checkIsAsyncException(handleEntryBlock)) {
                     this.isAsyncFunction = true;
                     continue;

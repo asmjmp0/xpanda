@@ -9,6 +9,7 @@ import type { IndexHeader } from "../desc/IndexHeader";
 import { PandaProto } from "../desc/PandaProto";
 import { PandaMethodCode } from "./PandaMethodCode";
 import type { PandaIRCFG } from "../../disasm/PandaIRCFG";
+import { PandaDisAssembler } from "../../disasm/PandaDisAssembler";
 
 /**
  * 方法(移植自 Java jmp0.abc.file.method.PandaMethod)
@@ -112,8 +113,6 @@ export class PandaMethod extends Offset {
 
     disAssemble(): PandaIRCFG | null {
         if (!this.methodCode) return null;
-        // 延迟引入避免循环依赖
-        const { PandaDisAssembler } = require("../../disasm/PandaDisAssembler");
         return PandaDisAssembler.disAssembly(this);
     }
 

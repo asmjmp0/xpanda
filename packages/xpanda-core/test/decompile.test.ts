@@ -2502,6 +2502,39 @@ function verifyLogicalChainFormatting(): void {
     }
 }
 
+/**
+ * core 单入口必须保持浏览器安全:不能出现 CommonJS require(浏览器里没有 require 全局),
+ * 也不能 import Node 内置模块。xpanda-web 以源码形式直接加载 core,一旦出现 require,
+ * disAssemble() 在浏览器里会抛 ReferenceError,被 PandaLexical 吞掉后所有类都输出为空
+ * (web 端表现为 "decompile failed: ... func_main_0 ..."),而 cli / tsx 环境自带 require
+ * 反而不会暴露问题。
+ */
+function verifyCoreBrowserSafe(): void {
+    const srcDir = path.join(__dirname, "..", "src");
+    const nodeBuiltins = /from\s+["'](?:node:)?(fs|path|os|zlib|worker_threads|buffer|crypto|child_process|module|url)["']/;
+    const visit = (dir: string): void => {
+        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+            const full = path.join(dir, entry.name);
+            if (entry.isDirectory()) {
+                visit(full);
+                continue;
+            }
+            if (!entry.name.endsWith(".ts")) continue;
+            const source = fs.readFileSync(full, "utf-8");
+            // 去掉注释后再检查,避免注释里提到 require() 造成误报
+            const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+            const relative = path.relative(srcDir, full);
+            if (/\brequire\s*\(/.test(code)) {
+                throw new Error(`browser safety: ${relative} uses CommonJS require()`);
+            }
+            if (nodeBuiltins.test(code)) {
+                throw new Error(`browser safety: ${relative} imports a Node built-in module`);
+            }
+        }
+    };
+    visit(srcDir);
+}
+
 async function main(): Promise<void> {
     console.log("[test] simplify return liveness");
     verifyReturnValueLiveness();
@@ -2673,6 +2706,10 @@ async function main(): Promise<void> {
 
     console.log("[test] output logical chain formatting");
     verifyLogicalChainFormatting();
+    console.log("    ok");
+
+    console.log("[test] core entry stays browser-safe");
+    verifyCoreBrowserSafe();
     console.log("    ok");
 
     const samples: Sample[] = [

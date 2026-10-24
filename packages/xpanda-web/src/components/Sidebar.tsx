@@ -4,6 +4,7 @@ import { formatBytes } from "../format";
 
 /**
  * 左侧栏:文件(来源)列表 + 可搜索、按包分组的类列表。
+ * 每个文件(.abc / .hap)可单独折叠,多次拖入的文件依次排列;
  * 已反编译的类带绿点标记;点击类项触发选中反编译。
  * @Author: jmp0
  */
@@ -18,6 +19,8 @@ interface SidebarProps {
 export function Sidebar({ images, refs, selectedKey, cachedKeys, onSelect }: SidebarProps) {
     const [query, setQuery] = useState("");
     const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+    /** 按 image.id 折叠整个文件(不影响包分组各自的折叠状态) */
+    const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set());
 
     const filtered = useMemo(() => {
         const q = query.trim().toLowerCase();
@@ -27,6 +30,15 @@ export function Sidebar({ images, refs, selectedKey, cachedKeys, onSelect }: Sid
 
     const toggleGroup = (key: string): void => {
         setCollapsed((prev) => {
+            const next = new Set(prev);
+            if (next.has(key)) next.delete(key);
+            else next.add(key);
+            return next;
+        });
+    };
+
+    const toggleFile = (key: string): void => {
+        setCollapsedFiles((prev) => {
             const next = new Set(prev);
             if (next.has(key)) next.delete(key);
             else next.add(key);
@@ -64,51 +76,63 @@ export function Sidebar({ images, refs, selectedKey, cachedKeys, onSelect }: Sid
                         }
                         arr.push(ref);
                     }
+                    // 搜索时临时展开文件,保证匹配的类立即可见;清空搜索后恢复用户手动折叠状态
+                    const fileCollapsed = collapsedFiles.has(img.id) && query.trim().length === 0;
                     return (
-                        <div key={img.id} className="tree-image-block">
-                            <div className="tree-image">
+                        <div key={img.id} className={"tree-image-block" + (fileCollapsed ? " collapsed" : "")}>
+                            <button
+                                className="tree-image"
+                                onClick={() => toggleFile(img.id)}
+                                aria-expanded={!fileCollapsed}
+                                title={(fileCollapsed ? "Expand " : "Collapse ") + img.fileName}
+                            >
+                                <span className="tw">{fileCollapsed ? "▸" : "▾"}</span>
                                 <span className={"badge badge-" + img.kind}>{img.kind}</span>
                                 <span className="tree-image-name" title={img.fileName}>{img.fileName}</span>
                                 <span className="tree-image-meta">{formatBytes(img.sizeBytes)}</span>
-                            </div>
-                            {img.moduleInfo !== null && (
-                                <div className="tree-module">
-                                    {img.moduleInfo.bundle} · v{img.moduleInfo.version} · {img.moduleInfo.vm}
-                                </div>
+                            </button>
+                            {!fileCollapsed && (
+                                <>
+                                    {img.moduleInfo !== null && (
+                                        <div className="tree-module">
+                                            {img.moduleInfo.bundle} · v{img.moduleInfo.version} · {img.moduleInfo.vm}
+                                        </div>
+                                    )}
+                                    {[...bySource.entries()].map(([sourceId, s]) => (
+                                        <div key={sourceId}>
+                                            {s.name !== null && <div className="tree-source" title={s.name}>{s.name}</div>}
+                                            {[...s.pkgs.entries()].map(([pkg, list]) => {
+                                                const gkey = sourceId + "|" + pkg;
+                                                const isCollapsed = collapsed.has(gkey);
+                                                return (
+                                                    <div key={gkey}>
+                                                        <button className="tree-group-head" onClick={() => toggleGroup(gkey)}>
+                                                            <span className="tw">{isCollapsed ? "▸" : "▾"}</span>
+                                                            <span className="tree-group-name" title={pkg}>{pkg}</span>
+                                                            <span className="count">{list.length}</span>
+                                                        </button>
+                                                        {!isCollapsed && list.map((ref) => (
+                                                            <button
+                                                                key={ref.key}
+                                                                className={
+                                                                    "tree-class" +
+                                                                    (ref.key === selectedKey ? " active" : "") +
+                                                                    (cachedKeys.has(ref.key) ? " cached" : "")
+                                                                }
+                                                                title={ref.displayPath}
+                                                                onClick={() => onSelect(ref)}
+                                                            >
+                                                                <span className="dot" />
+                                                                {ref.simpleName}
+                                                            </button>
+                                                        ))}
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    ))}
+                                </>
                             )}
-                            {[...bySource.entries()].map(([sourceId, s]) => (
-                                <div key={sourceId}>
-                                    {s.name !== null && <div className="tree-source" title={s.name}>{s.name}</div>}
-                                    {[...s.pkgs.entries()].map(([pkg, list]) => {
-                                        const gkey = sourceId + "|" + pkg;
-                                        const isCollapsed = collapsed.has(gkey);
-                                        return (
-                                            <div key={gkey}>
-                                                <button className="tree-group-head" onClick={() => toggleGroup(gkey)}>
-                                                    <span className="tw">{isCollapsed ? "▸" : "▾"}</span>
-                                                    <span className="tree-group-name" title={pkg}>{pkg}</span>
-                                                    <span className="count">{list.length}</span>
-                                                </button>
-                                                {!isCollapsed && list.map((ref) => (
-                                                    <button
-                                                        key={ref.key}
-                                                        className={
-                                                            "tree-class" +
-                                                            (ref.key === selectedKey ? " active" : "") +
-                                                            (cachedKeys.has(ref.key) ? " cached" : "")
-                                                        }
-                                                        title={ref.displayPath}
-                                                        onClick={() => onSelect(ref)}
-                                                    >
-                                                        <span className="dot" />
-                                                        {ref.simpleName}
-                                                    </button>
-                                                ))}
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            ))}
                         </div>
                     );
                 })}

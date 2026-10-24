@@ -163,13 +163,24 @@ export function zipPathFor(ref: ClassRef, multiSource: boolean): string {
  * 反编译服务:缓存键 = sourceId::类名|mode,单类与全量共用同一份缓存。
  * 反编译失败向上抛异常,由调用方决定展示方式(单类不中断全量)。
  */
+interface CacheEntry {
+    code: string;
+    /** 首次反编译耗时(毫秒),缓存命中时保留原值 */
+    elapsedMs: number;
+}
+
 export class DecompileService {
     private readonly decompiler = new PandaDecompiler();
-    private readonly cache = new Map<string, string>();
+    private readonly cache = new Map<string, CacheEntry>();
 
     /** 已缓存则返回代码,否则返回 undefined(空输出缓存为 "") */
     peek(ref: ClassRef, mode: DecompileMode): string | undefined {
-        return this.cache.get(ref.key + "|" + mode);
+        return this.cache.get(ref.key + "|" + mode)?.code;
+    }
+
+    /** 最近一次单类反编译耗时(毫秒);尚未反编译时返回 undefined */
+    elapsedMs(ref: ClassRef, mode: DecompileMode): number | undefined {
+        return this.cache.get(ref.key + "|" + mode)?.elapsedMs;
     }
 
     invalidate(ref: ClassRef, mode: DecompileMode): void {
@@ -179,11 +190,12 @@ export class DecompileService {
     decompile(ref: ClassRef, mode: DecompileMode): string {
         const cacheKey = ref.key + "|" + mode;
         const hit = this.cache.get(cacheKey);
-        if (hit !== undefined) return hit;
+        if (hit !== undefined) return hit.code;
+        const started = performance.now();
         const out = mode === "raw"
             ? this.decompiler.decompileClassRaw(ref.clazz)
             : this.decompiler.decompileClass(ref.clazz);
-        this.cache.set(cacheKey, out);
+        this.cache.set(cacheKey, { code: out, elapsedMs: performance.now() - started });
         return out;
     }
 }
