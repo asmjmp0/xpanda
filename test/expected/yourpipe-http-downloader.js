@@ -276,8 +276,7 @@ try {
         v11 = null;
         v10 = 0;
         v12 = v8 ? local_1_2_0 /*HttpDownloader*/.MAX_RETRIES : 1;
-        while (true) {
-          if (v10 >= v12) break;
+        while (v10 < v12) {
           let local_3_0, local_3_1;
           try {
             v10 += 1;

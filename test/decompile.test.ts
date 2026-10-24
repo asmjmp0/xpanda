@@ -1820,6 +1820,94 @@ function verifyYourpipeMediaThumb(): void {
 }
 
 /**
+ * 回归:常量 test + 守卫形态的 while(true) 循环(VttSubtitleParser)。
+ *
+ * ArkTS 把 `while (COND)` 折成 `while (true) { if (!COND) break; ... }`。守卫留在
+ * body 里时,条件中的累加器物化(`acc = line.trim(), acc = acc.length`)既不在语句
+ * 列表、也不是循环 test,cleanupStatements/foldTestSequences 都扫不到;
+ * `acc = !(i < len)` 这类死保存也会因为循环回边处的名字级活跃性残留。
+ * TempVariableSimplify 现在把守卫(连同前面纯表达式死保存)提成 while test,
+ * 同时跳过 for / for-of / for-in 的 lowering 形态(for 还原依赖 `if (...) break` 开头)。
+ * findActiveSubtitleText 同时覆盖二分查找与回看循环,parseVttSubtitles 覆盖
+ * 嵌套的"行非空"循环与 `!!` 条件物化。
+ */
+function verifyYourpipeVttSubtitleParser(): void {
+    const abcPath = path.join(__dirname, "resources", "yourpipe0.7.0.abc");
+    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
+    pandaFile.parseAssembly();
+    const clazz = pandaFile.getAllClasses().find((c) =>
+        c.name.content.includes("subtitle/VttSubtitleParser"));
+    if (!clazz) throw new Error("yourpipe: 未找到 VttSubtitleParser");
+
+    const code = new PandaDecompiler().decompileClass(clazz);
+    NodeFactory.parse(code);
+
+    // 守卫全部提成循环 test:不再有 while(true) + if (...) break
+    if (code.includes("while (true)")) {
+        throw new Error(`VttSubtitleParser: 仍残留 while (true) 守卫\n${code}`);
+    }
+    if (!code.includes("while (v8 <= v5)")
+        || !code.includes("while (v7 >= 0 && p0[v7].startMs > p1 - local_0_3 /*MAX_CUE_LOOKBACK_MS*/)")
+        || !code.includes("while (v5 < v6.length)")
+        || !code.includes("while (v5 < v6.length && v6[v5].trim().length > 0)")) {
+        throw new Error(`VttSubtitleParser: 循环条件未还原\n${code}`);
+    }
+    // 条件里的累加器物化与 `!!` 物化都要折掉
+    if (code.includes("acc = acc") || code.includes("v6[v5].trim(), acc")
+        || code.includes("acc = !!") || !code.includes("if (!v11)")) {
+        throw new Error(`VttSubtitleParser: 仍残留 acc 物化\n${code}`);
+    }
+    // 守卫折叠不能破坏已经还原的 for 循环
+    if (!code.includes("for (v14 = v12.length - 1; v14 >= 0; v14 -= 1)")) {
+        throw new Error(`VttSubtitleParser: for 循环被守卫折叠破坏\n${code}`);
+    }
+
+    const expectedPath = path.join(__dirname, "expected", "yourpipe-vtt-subtitle-parser.js");
+    const expected = fs.readFileSync(expectedPath, "utf-8");
+    if (code !== expected) {
+        throw new Error(`VttSubtitleParser: 输出与快照不一致\n${firstDifference(expected, code)}`);
+    }
+
+    // 行为校验:去掉 export 后在沙箱跑真实解析(含 BOM / CRLF / 实体 / 标签 / 多行字幕)
+    const sandboxCode = code
+        .replace(/^export\s+\{[^}]*\};\s*$/gm, "")
+        + "\nglobalThis.__exports = { parseVttSubtitles, findActiveSubtitleText };";
+    const { sandbox } = runSandbox(sandboxCode);
+    const exported = sandbox.__exports as {
+        parseVttSubtitles: (text: string) => Array<{ startMs: number; endMs: number; text: string }>;
+        findActiveSubtitleText: (cues: Array<{ startMs: number; endMs: number; text: string }>, timeMs: number) => string;
+    };
+    const vtt = [
+        "\uFEFFWEBVTT",
+        "",
+        "00:00:01.000 --> 00:00:03.000",
+        "Hello <b>world</b>",
+        "",
+        "00:00:04.500 --> 00:00:06.500",
+        "Second &amp; line",
+        "wrapped line",
+        "",
+    ].join("\r\n");
+    const cues = exported.parseVttSubtitles(vtt);
+    const expectedCues = [
+        { startMs: 1000, endMs: 3000, text: "Hello world" },
+        { startMs: 4500, endMs: 6500, text: "Second & line\nwrapped line" },
+    ];
+    if (JSON.stringify(cues) !== JSON.stringify(expectedCues)) {
+        throw new Error(`VttSubtitleParser: 解析结果不正确\n${JSON.stringify(cues)}`);
+    }
+    if (exported.findActiveSubtitleText(cues, 2000) !== "Hello world") {
+        throw new Error("VttSubtitleParser: findActiveSubtitleText 未命中第一条字幕");
+    }
+    if (exported.findActiveSubtitleText(cues, 5000) !== "Second & line\nwrapped line") {
+        throw new Error("VttSubtitleParser: findActiveSubtitleText 未命中多行字幕");
+    }
+    if (exported.findActiveSubtitleText(cues, 7000) !== "") {
+        throw new Error("VttSubtitleParser: 超出字幕范围时应返回空串");
+    }
+}
+
+/**
  * 回归:鸿蒙资源对象($r)的模板缓冲里,id 字段是 LiteralTag.ACCESSOR 编译器
  * 标记(toString() 为 "accessor:0"),由紧随其后的 __defineGetter__("id", ...)
  * 配合 __getResourceId__ 在运行时解析。createObject/createArray 的兜底分支曾把
@@ -1927,10 +2015,12 @@ function verifyYourpipeHttpDownloaderRetryTryCatch(): void {
     if (retryStart < 0 || retryEnd < 0) throw new Error(`HttpDownloader: 未找到 postBinaryWithRetry\n${code}`);
     const retry = code.slice(retryStart, retryEnd);
 
-    for (const [name, body] of [["request", request], ["postBinaryWithRetry", retry]] as const) {
-        if (!body.includes("while (true)") || !body.includes("try {")) {
-            throw new Error(`HttpDownloader.${name}: 重试循环/try 未还原\n${body}`);
-        }
+    // request 的常量 test + 守卫已提成 `while (v10 < v12)`(守卫前是纯表达式,
+    // 不会挡住 for/for-of 还原);postBinaryWithRetry 的守卫前还有三元物化的 if/else,
+    // 不是纯表达式前缀,保持 while (true) + break。两者都必须保留 try。
+    if (!request.includes("while (v10 < v12)") || !retry.includes("while (true)")
+        || !request.includes("try {") || !retry.includes("try {")) {
+        throw new Error(`HttpDownloader: 重试循环/try 未还原\n${request}\n----\n${retry}`);
     }
 
     // `if (!responseCode || responseCode < 400) return response;`
@@ -2497,6 +2587,10 @@ async function main(): Promise<void> {
 
     console.log("[test] yourpipe MediaThumb accessors (yourpipe0.7.0.abc)");
     verifyYourpipeMediaThumb();
+    console.log("    ok");
+
+    console.log("[test] yourpipe VttSubtitleParser loops (yourpipe0.7.0.abc)");
+    verifyYourpipeVttSubtitleParser();
     console.log("    ok");
 
     console.log("[test] yourpipe AVPlayer resource object (yourpipe0.7.0.abc)");

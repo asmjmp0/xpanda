@@ -2876,8 +2876,7 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     let v3, v6;
     v3 = -1;
     v6 = 0;
-    while (true) {
-      if (v6 < this.chapters.length && this.chapters[v6].startTimeSeconds <= this.currentTime) break;
+    while (v6 >= this.chapters.length || this.chapters[v6].startTimeSeconds > this.currentTime) {
       v3 = v6;
       v6 += 1;
     }

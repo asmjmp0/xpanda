@@ -172,8 +172,7 @@ globalThis.AES.Base64 = {
     v6 = 0;
     v7 = "";
     v8 = p0.replace(new RegExp("[^A-Za-z0-9\\+\\/\\=]", "g"), "");
-    while (true) {
-      if (v6 >= v8.length) break;
+    while (v6 < v8.length) {
       v12 = v6 + 1;
       v6 = v8.charAt(v6);
       v9 = this.characters.indexOf(v6);

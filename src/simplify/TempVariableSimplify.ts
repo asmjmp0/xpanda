@@ -34,6 +34,8 @@ const {
     isAssignmentPattern,
     isBinaryExpression,
     isBlockStatement,
+    isBooleanLiteral,
+    isBreakStatement,
     isCallExpression,
     isCatchClause,
     isClassDeclaration,
@@ -461,14 +463,19 @@ export class TempVariableSimplify implements ISimplify {
                 if (this.cleanupVersion === version) break;
             }
             this.cleanupSequenceExpressions(body, ctx);
-            // 循环 test 是表达式序列,不在语句列表里,单独的活跃性/死存储逻辑覆盖不到它:
-            //   do { ... } while ((acc = f(v), v = acc, acc = !(acc !== undefined), v === undefined) || ...)
-            this.foldLoopTestTemps(body, ctx);
         }
         this.foldTestSequences(body, ctx);
         if (this.conditionsOnly) this.foldBooleanAliasAssignments(body, ctx);
         this.cleanupConditionAssignments(body, ctx);
         if (!this.conditionsOnly) {
+            // `while (true) { X = E; if (COND) break; ... }` -> `while (!COND) { ... }`。
+            // 放在条件折叠之后:守卫前的死保存/条件物化要先并进 if test,否则
+            // HighLevelGrammarSimplify 的 for/for-in 还原看不到以 if 开头的循环体。
+            this.foldWhileTrueBreakGuards(body, ctx);
+            // 循环 test 是表达式序列,不在语句列表里,单独的活跃性/死存储逻辑覆盖不到它:
+            //   do { ... } while ((acc = f(v), v = acc, acc = !(acc !== undefined), v === undefined) || ...)
+            // 守卫提成 test 后同样要靠它清理新生成的序列。
+            this.foldLoopTestTemps(body, ctx);
             this.foldShortCircuitChains(body, ctx);
             this.foldReturnAssignments(body, ctx);
             this.hoistNamedFunctionExpressions(body, ctx, scope);
@@ -2213,6 +2220,130 @@ export class TempVariableSimplify implements ISimplify {
     }
 
     /**
+     * `while (true) { if (COND) break; BODY }` -> `while (!COND) { BODY }`。
+     *
+     * ArkTS 把 `while (COND)` 折成常量 test + 守卫(二分查找、下标遍历等都是这个
+     * 形态)。守卫留在 body 里时,条件中的累加器物化既不在语句列表、也不是循环
+     * test,cleanupStatements/foldTestSequences 都扫不到,只能原样留在输出里;
+     * 提成 test 后同一轮的 foldLoopTestTemps 就能按求值顺序清理它,取反的
+     * De Morgan / 比较反转由流水线末尾的 normalizeConditionTests 完成。
+     *
+     * 必须跳过 `init; while (true) { if (!cond) break; BODY; update }`:
+     * HighLevelGrammarSimplify 还要把它还原成 for 循环(见 looksLikeForLoopLowering)。
+     * 等价性:COND 仍在每轮 body 之前求值一次,continue 回到 test 时同样先求值
+     * COND;要求守卫前只有表达式语句、break 不带 label(带 label 时不跳出本循环)。
+     */
+    private foldWhileTrueBreakGuards(stmts: TYPE.Statement[], ctx: FunctionContext): void {
+        for (let i = 0; i < stmts.length; i++) {
+            const stmt = stmts[i];
+            if (TYPE.isWhileStatement(stmt)) {
+                if (!this.looksLikeForLoopLowering(stmts, i) && this.foldWhileTrueBreakGuard(stmt)) {
+                    this.changed = true;
+                }
+                this.foldWhileTrueBreakGuardsInStatement(stmt.body, ctx);
+                continue;
+            }
+            this.foldWhileTrueBreakGuardsInStatement(stmt, ctx);
+        }
+    }
+
+    private foldWhileTrueBreakGuardsInStatement(stmt: TYPE.Statement, ctx: FunctionContext): void {
+        switch (stmt.type) {
+            case "BlockStatement":
+                this.foldWhileTrueBreakGuards(stmt.body, ctx);
+                return;
+            case "IfStatement":
+                this.foldWhileTrueBreakGuardsInStatement(stmt.consequent, ctx);
+                if (stmt.alternate) this.foldWhileTrueBreakGuardsInStatement(stmt.alternate, ctx);
+                return;
+            case "DoWhileStatement":
+            case "ForStatement":
+            case "ForInStatement":
+            case "ForOfStatement":
+            case "LabeledStatement":
+                this.foldWhileTrueBreakGuardsInStatement(stmt.body, ctx);
+                return;
+            case "TryStatement":
+                this.foldWhileTrueBreakGuards(stmt.block.body, ctx);
+                if (stmt.handler) this.foldWhileTrueBreakGuards(stmt.handler.body.body, ctx);
+                if (stmt.finalizer) this.foldWhileTrueBreakGuards(stmt.finalizer.body, ctx);
+                return;
+            case "SwitchStatement":
+                for (const c of stmt.cases) this.foldWhileTrueBreakGuards(c.consequent, ctx);
+                return;
+            default:
+                return;
+        }
+    }
+
+    /** 是否 HighLevelGrammarSimplify.checkAndTransformToForStatement 会消费的形态。 */
+    private looksLikeForLoopLowering(stmts: TYPE.Statement[], index: number): boolean {
+        const prev = stmts[index - 1];
+        if (!isExpressionStatement(prev)) return false;
+        const loop = stmts[index] as TYPE.WhileStatement;
+        if (!isBooleanLiteral(loop.test) || !loop.test.value) return false;
+        if (!isBlockStatement(loop.body)) return false;
+        const body = loop.body.body;
+        if (body.length < 2) return false;
+        const first = body[0];
+        if (!isIfStatement(first) || first.alternate) return false;
+        if (!isBreakStatement(first.consequent)) return false;
+        // 守卫 test 可能是已经取反的 `i >= n`,也可能是待 SyntaxRewriteSimplify 归一化的
+        // `!(i < n)`;两者最终都会成为 checkAndTransformToForStatement 需要的二元比较。
+        const test = first.test;
+        const binaryLike = isBinaryExpression(test)
+            || (isUnaryExpression(test) && test.operator === "!"
+                && isBinaryExpression(test.argument));
+        if (!binaryLike) return false;
+        return isExpressionStatement(body[body.length - 1]);
+    }
+
+    /** 取出守卫并折叠。守卫前连续的表达式语句(如 `acc = !(i < len)` 死保存)
+     *  一起搬进 test:它们原本就在每轮 body 最前面求值,进 test 后求值时机不变,
+     *  foldLoopTestTemps 才能按 test 的求值顺序判断是否死保存。 */
+    private foldWhileTrueBreakGuard(loop: TYPE.WhileStatement): boolean {
+        if (!isBooleanLiteral(loop.test) || !loop.test.value) return false;
+        if (!isBlockStatement(loop.body)) return false;
+        const body = loop.body.body;
+        let guardIndex = -1;
+        for (let i = 0; i < body.length; i++) {
+            const statement = body[i];
+            if (isExpressionStatement(statement)) {
+                // for-of / for-in 的 lowering 以 `vv = it.next()`(或 `.value`)开头,
+                // 这些循环要留给 HighLevelGrammarSimplify / simplifyTail 还原;
+                // 含调用的前缀同样不能搬进 test(否则 for-of 再也认不出来)。
+                if (!isPureExpression(statement.expression)) return false;
+                continue;
+            }
+            if (isIfStatement(statement) && !statement.alternate
+                && this.isUnlabelledBreak(statement.consequent)) {
+                guardIndex = i;
+            }
+            break;
+        }
+        if (guardIndex < 0) return false;
+        const guard = body[guardIndex] as TYPE.IfStatement;
+        const prefix = body.slice(0, guardIndex)
+            .map((statement) => (statement as TYPE.ExpressionStatement).expression);
+        const condition = prefix.length === 0
+            ? guard.test
+            : sequenceExpression([...prefix, guard.test] as TYPE.Expression[]);
+        loop.test = unaryExpression("!", condition);
+        body.splice(0, guardIndex + 1);
+        return true;
+    }
+
+    /** 语句是否就是一条跳出当前循环的 break(允许单语句块包裹)。 */
+    private isUnlabelledBreak(stmt: TYPE.Statement): boolean {
+        if (isBreakStatement(stmt)) return !stmt.label;
+        if (isBlockStatement(stmt) && stmt.body.length === 1) {
+            const inner = stmt.body[0];
+            return isBreakStatement(inner) && !inner.label;
+        }
+        return false;
+    }
+
+    /**
      * 循环 test 里的临时变量清理。
      *
      * 结构化归约会把循环条件生成为一整个 SequenceExpression,例如:
@@ -3501,6 +3632,14 @@ export class TempVariableSimplify implements ISimplify {
             if (collectReadNames(stmt.test).has(name)) return true;
             return this.branchReadsNameBeforeWrite(stmt.consequent, name)
                 || this.branchReadsNameBeforeWrite(stmt.alternate, name);
+        }
+        // while 的 test 在每轮 body 之前求值;test 不读 name 时,循环本身不构成
+        // “先读后写”,body 内部仍按语句顺序判断。否则嵌套循环里“先写后读”的
+        // 读取(inline 的累加器链)会被当成整个分支的首次读取,挡住外层条件的
+        // 累加器折叠(parseVttSubtitles 的 `acc = !!v11; if (!acc) {... else { while ... }}`)。
+        if (TYPE.isWhileStatement(stmt)) {
+            if (collectReadNames(stmt.test).has(name)) return true;
+            return this.branchReadsNameBeforeWrite(stmt.body, name);
         }
         return collectReadNames(stmt).has(name);
     }
