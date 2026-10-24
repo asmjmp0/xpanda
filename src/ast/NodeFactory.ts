@@ -186,7 +186,11 @@ export class NodeFactory {
 
 
     public static tryStatementNode(tryBody:TYPE.BlockStatement,catchBody:TYPE.BlockStatement):TYPE.TryStatement{
-        return TYPE.tryStatement(tryBody,TYPE.catchClause(TYPE.identifier("acc"),catchBody))
+        // catch 参数不能用 `acc`:handler 是照 Panda 累加器写的(异常在 acc 里进入,
+        // 之后 acc 继续当累加器用)。参数叫 acc 会把函数级累加器整个遮蔽,优化器只能
+        // 看到一串写 catch 参数的赋值(`catchAcc = ...` 死链)。这里用独立参数名,
+        // 由 TryCatchPandaStatement 在 handler 开头把异常搬回 acc。
+        return TYPE.tryStatement(tryBody,TYPE.catchClause(TYPE.identifier("catchAcc"),catchBody))
     }
 
     public static awaitExpressionNode(argument: TYPE.Expression):TYPE.AwaitExpression{

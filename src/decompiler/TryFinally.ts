@@ -65,7 +65,11 @@ export function buildFinallyPlans(cfg: PandaIRCFG): FinallyPlan[] {
     const blocks = cfg.pandaIRBasicBlocks;
     for (const tryBlock of method.methodCode!.pandaMethodTryBlocks!) {
         const catchBlock = tryBlock.pandaMethodCatchBlocks[0];
-        if (!catchBlock || catchBlock.codeSize !== 0 || tryBlock.length === 0) continue;
+        // 不同 ArkTS 13 编译器版本的 finally handler 会带 `sta vX` 保存异常
+        // (codeSize 0/2/3 都出现过);不能按 codeSize 过滤,否则这些 finally 会退化
+        // 成 `catch (acc) { if (acc != hole) throw acc }`。
+        // 真正的 catch 由下面的结构特征排除:try 结束块必须写 hole 哨兵并跳到 cleanup。
+        if (!catchBlock || tryBlock.length === 0) continue;
         const startBlock = cfg.getBasicBlockByPC(tryBlock.startPC);
         const endBlock = cfg.getBasicBlockByPC(tryBlock.startPC + tryBlock.length);
         const handlerBlock = cfg.getBasicBlockByPC(catchBlock.handlerPC);
@@ -142,6 +146,25 @@ export function isFinallyMarker(node: any): boolean {
 
 export function isFinallyMarkerExpression(node: any): boolean {
     return TYPE.isStringLiteral(node) && node.value.startsWith(MARKER_PREFIX);
+}
+
+/** 找到 try 块 body 正好是给定语句列表的 TryStatement */
+function findTryStatementForBlock(root: any, body: TYPE.Statement[]): TYPE.TryStatement | null {
+    if (!root || typeof root !== "object" || !root.type) return null;
+    if (TYPE.isTryStatement(root) && root.block?.body === body && root.handler) return root;
+    for (const key of TYPE.VISITOR_KEYS[root.type] ?? []) {
+        const value = root[key];
+        if (Array.isArray(value)) {
+            for (const item of value) {
+                const found = findTryStatementForBlock(item, body);
+                if (found) return found;
+            }
+        } else if (value && typeof value === "object") {
+            const found = findTryStatementForBlock(value, body);
+            if (found) return found;
+        }
+    }
+    return null;
 }
 
 /** 在 statements 数组里查找 target 所在的语句列表 */
@@ -310,7 +333,25 @@ export function applyFinallyPlans(astNode: any, plans: FinallyPlan[]): void {
             }
 
             const finallyStatements = cleanupList.slice(finallyStart, guard);
-            if (cleanupList === startList) {
+            // try/catch 布局:结构化分析已经把 finally handler 生成成了
+            // `try { <start> ... } catch (acc) { <cleanup> ... <guard> }`
+            // (try 表里同一个 try 起点既有真正的 catch、又有 finally handler 时
+            // 就会这样)。start 在 TryStatement 的 try 块里、cleanup/guard 在它的
+            // handler 块里,直接改写成 try/finally,sentinel 保存与重抛守卫整段丢弃。
+            const tryOwner = findTryStatementForBlock(astNode, startList);
+            if (tryOwner && tryOwner.handler && tryOwner.handler.body.body === cleanupList) {
+                const tryStatements = startList.slice(tryStart);
+                const tryNode = TYPE.tryStatement(
+                    TYPE.blockStatement(tryStatements),
+                    null,
+                    TYPE.blockStatement(finallyStatements),
+                );
+                const parentList = findStatementList(astNode, tryOwner);
+                const parentIndex = parentList ? parentList.indexOf(tryOwner) : -1;
+                if (parentIndex < 0) break left;
+                parentList!.splice(parentIndex, 1, tryNode);
+                applied = true;
+            } else if (cleanupList === startList) {
                 // 常规布局:try 体 = [tryStart, cleanup),守卫之后是 try/finally 之后的语句
                 if (!(cleanup > tryStart)) break left;
                 const tryStatements = startList.slice(tryStart, cleanup);

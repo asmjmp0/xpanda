@@ -30,15 +30,15 @@ ContentFilterRuntimeStore = class panda_jmp0_reserved_anonymous_0 {
     }
     for (v11 of v8) {
       {
-        let local_1_0;
+        let local_1_2_0;
         v20 = p0 === undefined ? "" : " WHERE content_key IN (" + v11.map(function (p0) {
           return "?";
         }).join(",") + ")";
-        local_1_0 = [];
+        local_1_2_0 = [];
         v11.forEach(function (p0) {
-          local_1_0.push(p0);
+          local_1_2_0.push(p0);
         });
-        v0 = await v4.querySql("SELECT content_key, view_count FROM content_filter_views" + v20, local_1_0);
+        v0 = await v4.querySql("SELECT content_key, view_count FROM content_filter_views" + v20, local_1_2_0);
         try {
           if (v0.goToFirstRow()) {
             do {
@@ -50,7 +50,7 @@ ContentFilterRuntimeStore = class panda_jmp0_reserved_anonymous_0 {
           v0.close();
         }
         v20 = "SELECT content_key FROM opened_content" + v20;
-        v11 = await v4.querySql(v20, local_1_0);
+        v11 = await v4.querySql(v20, local_1_2_0);
         try {
           if (v11.goToFirstRow()) {
             do {

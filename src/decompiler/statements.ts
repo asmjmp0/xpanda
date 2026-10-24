@@ -303,6 +303,16 @@ export class TryCatchPandaStatement implements IPandaDecompileAble {
         const tryBodyNode = factory.blockStatementNode();
         this.tryBody?.decompile(methodHandler, pandaLexical, tryBodyNode);
         const catchBodyNode = factory.blockStatementNode();
+        // handler 是按 Panda 累加器生成的:进入 catch 时异常在 acc 里,之后的
+        // `acc = ...` 继续当累加器用。catch 参数用的是独立名字 catchAcc,
+        // 这里先把异常搬回函数级 acc,后续语句就和 try 体里的累加器写法一致,
+        // 优化器能把 `catchAcc = ...` 死链正常折掉。
+        const toAcc = factory.assignmentExpressionNode(
+            "=",
+            factory.identifierNode("acc") as any,
+            factory.identifierNode("catchAcc") as any,
+        );
+        codeGenerator.getNodeUtils().insertNodeToBody(factory.expressionStatementNode(toAcc as any) as any, catchBodyNode);
         this.catchBody?.decompile(methodHandler, pandaLexical, catchBodyNode);
         const tryNode = factory.tryStatementNode(tryBodyNode, catchBodyNode);
         codeGenerator.getNodeUtils().insertNodeToBody(tryNode as any, astNode);

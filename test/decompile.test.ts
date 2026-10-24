@@ -12,6 +12,7 @@ import { HapFile } from "../src/hap/HapFile";
 import { ResourceIndexFile } from "../src/res/ResourceIndexFile";
 import { formatLongLogicalChains } from "../src/ast/FormatCode";
 import * as TYPE from "@babel/types";
+import traverse from "@babel/traverse";
 
 /**
  * 集成测试:
@@ -27,7 +28,8 @@ import * as TYPE from "@babel/types";
  *  10. 校验 DeepLinkResolver 的累加器/重复调用/布尔物化清理与解析语义(沙箱执行);
  *  11. 校验 ShareContracts 的自引用成员链、嵌套布尔物化与临时分享文件校验语义(沙箱执行);
  *  12. 校验 ContentDetailPages 的 try/finally 还原与整体输出快照;
- *  13. 校验 yourpipe0.7.0.abc 的 SabrResponseDecoder 在含嵌套作用域的 for-of 还原中不崩。
+ *  13. 校验 yourpipe0.7.0.abc 的 SabrResponseDecoder 在含嵌套作用域的 for-of 还原中不崩;
+ *  14. 校验 yourpipe0.7.0.abc 的 HttpDownloader 循环体内嵌套 try/catch 的区域归约与条件极性。
  */
 
 interface Sample {
@@ -613,7 +615,7 @@ function verifyZhihuTryFinally(): void {
     if (/undefined\s*[!=]==\s*undefined/.test(code)) {
         throw new Error(`try/finally 还原: 仍残留 undefined 常量条件\n${code}`);
     }
-    if (/\{\s*let local_\d+_\d+;\s*\}/.test(code)) {
+    if (/\{\s*let local_\d+_\d+(_\d+)?;\s*\}/.test(code)) {
         throw new Error(`lexenv 清理: 仍残留空的词法块\n${code}`);
     }
     if (!/finally \{\s*v0\.close\(\);\s*\}/.test(code) || !/finally \{\s*v11\.close\(\);\s*\}/.test(code)) {
@@ -1605,6 +1607,141 @@ function verifyYourpipeMpvPlayerView(): void {
 }
 
 /**
+ * 校验输出里所有 `local_X_Y[_Z]` / `sendable_X_Y[_Z]` 引用都能在作用域链上找到声明。
+ * 词法环境槽位是按层级命名的,同层级多个环境实例撞名时会生成未声明变量。
+ */
+function assertNoUndeclaredLexvars(code: string): void {
+    let program: TYPE.Program;
+    try {
+        program = NodeFactory.parse(code);
+    } catch {
+        return;
+    }
+    const missing: string[] = [];
+    try {
+        traverse(TYPE.file(program), {
+            ReferencedIdentifier: (path: any) => {
+                const name: string = path.node.name;
+                if (!/^(local|sendable)_\d+_\d+(_\d+)?$/.test(name)) return;
+                if (!path.scope.getBinding(name)) missing.push(name);
+            },
+        });
+    } catch {
+        return;
+    }
+    if (missing.length > 0) {
+        throw new Error(`存在未声明的词法环境变量: ${[...new Set(missing)].join(", ")}`);
+    }
+}
+
+/**
+ * 回归:循环体内的嵌套 try/catch 无法归约导致整个方法降级 SimpleAnalysis。
+ *
+ * `HttpDownloader.request` / `postBinaryWithRetry` 的循环体里每条分支都有一层
+ * try/catch:try 分支或 catch 分支归约后成为 out-degree 0 的 Tail(全部路径都
+ * return/throw/continue),另一条分支则是回到循环头的回边。这种形态既不满足
+ * reduceIfRegion 的 case 3(两条分支汇合到同一后继),也不满足 case 4(两条都是
+ * Tail),区域图会卡在 6 个节点反复重试 3000 次后抛 "can not reduce the graph"。
+ *
+ * 同一类回归:
+ *  1. try/catch 已经生成语句后 helper 标志没有清掉,区域继续吸收后续代码时会被
+ *     误判成新的 try/catch,把普通 `if (!code || code < 400) return` 输出成
+ *     `try { ... } catch { return ... }`;
+ *  2. `&&` 合并出的逻辑区域表达式本身就是 fallthrough 条件,true 边上的 Tail
+ *     若不取反分支就会得到反向条件(`if (code && code >= 400) return`);
+ *  3. ArkTS 13 另一个编译器版本把 finally handler 写成 `sta vX`(codeSize 非 0),
+ *     `request` 的 finally 要还原成 `try/finally`,不能残留 sentinel 重抛;
+ *  4. 词法层级按 pc 线性扫描会把成功分支里的 logger 命名成 `local_-1_3`;
+ *  5. 匿名 Promise 执行器的入口自引用被折进 if test 后,ReservedIdentifierSimplifier
+ *     删语句会把整个函数体删掉(postBinaryStreamOnce 曾输出空函数)。
+ *
+ * 最后与 test/expected/yourpipe-http-downloader.js 整类输出快照比对。
+ */
+function verifyYourpipeHttpDownloaderRetryTryCatch(): void {
+    const abcPath = path.join(__dirname, "resources", "yourpipe0.7.0.abc");
+    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
+    const clazz = pandaFile.getAllClasses().find((c) =>
+        c.name.content.includes("network/HttpDownloader"));
+    if (!clazz) throw new Error("yourpipe: 未找到 HttpDownloader");
+
+    const code = new PandaDecompiler().decompileClass(clazz);
+    NodeFactory.parse(code);
+    if (code.includes("created by SimpleAnalysis") || code.includes("decompiler_")) {
+        throw new Error(`HttpDownloader: 反编译降级或残留伪语句\n${code}`);
+    }
+
+    const requestStart = code.indexOf("async request(p0");
+    const requestEnd = code.indexOf("\n      sleep(p0) {", requestStart);
+    if (requestStart < 0 || requestEnd < 0) throw new Error(`HttpDownloader: 未找到 request\n${code}`);
+    const request = code.slice(requestStart, requestEnd);
+    const retryStart = code.indexOf("async postBinaryWithRetry(p0");
+    const retryEnd = code.indexOf("\n      postBinaryStreamOnce(p0", retryStart);
+    if (retryStart < 0 || retryEnd < 0) throw new Error(`HttpDownloader: 未找到 postBinaryWithRetry\n${code}`);
+    const retry = code.slice(retryStart, retryEnd);
+
+    for (const [name, body] of [["request", request], ["postBinaryWithRetry", retry]] as const) {
+        if (!body.includes("while (true)") || !body.includes("try {")) {
+            throw new Error(`HttpDownloader.${name}: 重试循环/try 未还原\n${body}`);
+        }
+    }
+
+    // `if (!responseCode || responseCode < 400) return response;`
+    if (!retry.includes("if (!v14.responseCode || v14.responseCode < 400) {")) {
+        throw new Error(`HttpDownloader.postBinaryWithRetry: 响应码判断极性错误\n${retry}`);
+    }
+    // `if (!isRecoverable || attempt >= MAX_RETRIES) throw err;`
+    if (!/if \(!v17\.isRecoverable \|\| v12 >= local_\S+ \/\*HttpDownloader\*\/\.MAX_RETRIES\) \{/.test(retry)) {
+        throw new Error(`HttpDownloader.postBinaryWithRetry: 重试上限判断丢失\n${retry}`);
+    }
+
+    // 成功路径必须是 error 分支的 else,而不是被误当成 try/catch 的 catch 体
+    const errorBranch = request.indexOf("if (v13.responseCode && v13.responseCode >= 400) {");
+    if (errorBranch < 0) {
+        throw new Error(`HttpDownloader.request: 错误码分支未还原\n${request}`);
+    }
+    const successAt = request.indexOf('debug("Success: ');
+    if (successAt < errorBranch) {
+        throw new Error(`HttpDownloader.request: 成功路径位置错误\n${request}`);
+    }
+    if (!/} else \{\s+local_\S+ \/\*logger\*\/\.debug\("Success: /.test(request.slice(errorBranch))) {
+        throw new Error(`HttpDownloader.request: 成功路径未落在 else 分支\n${request.slice(errorBranch)}`);
+    }
+
+    // ArkTS 13 的 finally handler(带 sta 保存异常、codeSize 非 0)要还原成 finally,
+    // 不能残留 `catch (acc) { if (acc != hole) throw acc }` 哨兵收尾。
+    if (!request.includes("} finally {") || !request.includes("v14.destroy();")) {
+        throw new Error(`HttpDownloader.request: try/finally 未还原\n${request}`);
+    }
+    if (code.includes("hole") || code.includes("local_-")) {
+        throw new Error(`HttpDownloader: 残留 hole 哨兵/非法词法层级变量\n${code}`);
+    }
+    // 同一层级连续定义的多个 class 会各自开一个 self-reference lexenv;命名不能撞车,
+    // 否则后声明的 `let local_1_0` 会遮蔽 HttpError 自己的引用,优化器还会把外层
+    // 声明删掉。这里按 Babel 作用域校验所有 local_X_Y[_Z] 引用都能解析到声明。
+    assertNoUndeclaredLexvars(code);
+
+    // 匿名 Promise 执行器曾在 ReservedIdentifierSimplifier 里被整条删掉函数体
+    // (入口自引用被折进 if 的 test 序列,删除语句把整个函数体一起删了)。
+    const streamOnceStart = code.indexOf("postBinaryStreamOnce(p0");
+    const streamOnceEnd = code.indexOf("processBinaryHeaders(p0", streamOnceStart);
+    if (streamOnceStart < 0 || streamOnceEnd < 0) {
+        throw new Error(`HttpDownloader: 未找到 postBinaryStreamOnce\n${code}`);
+    }
+    const streamOnce = code.slice(streamOnceStart, streamOnceEnd);
+    if (streamOnce.includes("new Promise(function (p0, p1) {})") || !streamOnce.includes("requestInStream(")) {
+        throw new Error(`HttpDownloader.postBinaryStreamOnce: Promise 执行器函数体丢失\n${streamOnce}`);
+    }
+
+    // 整个类的输出快照:锁住 request / postBinaryWithRetry / postBinaryStreamOnce
+    // 的还原结果以及其余方法的现状。
+    const expectedPath = path.join(__dirname, "expected", "yourpipe-http-downloader.js");
+    const expected = fs.readFileSync(expectedPath, "utf-8");
+    if (code !== expected) {
+        throw new Error(`HttpDownloader: 输出与快照不一致\n${firstDifference(expected, code)}`);
+    }
+}
+
+/**
  * 回归:if 条件尾部多条赋值序列还原成嵌套 if。
  * `if (A && B && (x = 1, y = 2, C))` 中序列只在 A/B 为真时求值,可安全搬进分支体;
  * 有 else 时外层条件为假也必须执行 else,因此不能用同一变换(否则 else 丢失)。
@@ -1972,6 +2109,10 @@ async function main(): Promise<void> {
 
     console.log("[test] yourpipe MpvPlayerView (yourpipe0.7.0.abc)");
     verifyYourpipeMpvPlayerView();
+    console.log("    ok");
+
+    console.log("[test] yourpipe HttpDownloader retry try/catch (yourpipe0.7.0.abc)");
+    verifyYourpipeHttpDownloaderRetryTryCatch();
     console.log("    ok");
 
     console.log("[test] simplify sequenced test prefix fold");

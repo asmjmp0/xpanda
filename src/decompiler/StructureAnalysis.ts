@@ -361,6 +361,9 @@ export class StructureAnalysis {
             return true;
         } else if (destSRegion === nextSRegion && destSRegion !== null) {
             region.addStatement(new IfPandaStatement(region, nextRegion, destRegion));
+            // 条件已经被消费成 if/try-catch 语句,不能把 helper 标志留给后续归约
+            // (否则该区域吸收下一段代码后会再次被当成 try/catch,把普通条件输出成 try/catch)
+            region.tryCatchHelperRegion = false;
             this.regionGraph.removeEdge(region, nextRegion);
             if (this.regionGraph.inDegree(nextRegion) === 0) {
                 this.regionGraph.removeNode(nextRegion);
@@ -374,6 +377,7 @@ export class StructureAnalysis {
             return true;
         } else if (destRegion.getType() === "Tail" && nextRegion.getType() === "Tail") {
             region.addStatement(new IfPandaStatement(region, nextRegion, destRegion));
+            region.tryCatchHelperRegion = false;
             this.regionGraph.removeEdge(region, nextRegion);
             if (this.regionGraph.inDegree(nextRegion) === 0) {
                 this.regionGraph.removeNode(nextRegion);
@@ -384,8 +388,50 @@ export class StructureAnalysis {
             }
             region.setType("Tail");
             return true;
+        } else if (region.isTryCatchHelperRegion() && this.reduceTryCatchWithDeadBranch(region, destRegion, nextRegion, destSRegion, nextSRegion)) {
+            return true;
         }
         return false;
+    }
+
+    /**
+     * try/catch 的一条分支不再顺序执行(return/throw/continue/break,即 out-degree 0 的 Tail),
+     * 另一条分支继续执行时,整个 try/catch 之后的落点就是继续分支的后继。
+     *
+     * 形态来自嵌套 try/catch 归约后的循环体:
+     *   try { ... } catch (e) { ... continue }   →  catch 分支成了 Tail,尝试分支是回边
+     *   try { ... throw } catch (e) { ... }      →  尝试分支成了 Tail,catch 分支是回边
+     * 这些分支不会像 case 3 那样汇合到同一个后继,也不会像 case 4 那样都是 Tail,
+     * 缺少这条归约时区域图会卡在 6 个节点反复重试,最终抛 "can not reduce the graph"。
+     */
+    private reduceTryCatchWithDeadBranch(
+        region: Region,
+        destRegion: Region,
+        nextRegion: Region,
+        destSRegion: Region | null,
+        nextSRegion: Region | null,
+    ): boolean {
+        const destDead = destRegion.getType() === "Tail" && this.regionGraph.outDegree(destRegion) === 0;
+        const nextDead = nextRegion.getType() === "Tail" && this.regionGraph.outDegree(nextRegion) === 0;
+        if (!destDead && !nextDead) return false;
+        // 两条分支必须只被这个 try/catch 使用,才能安全地把语句搬进 TryCatchPandaStatement
+        if (this.singlePredecessor(destRegion) !== region || this.singlePredecessor(nextRegion) !== region) {
+            return false;
+        }
+        // 继续执行的分支可能还没归约成 Linear(例如内层的 tryCatchHelper),留给下一轮定点迭代
+        const continuation = destDead ? nextSRegion : destSRegion;
+        if (continuation === null) return false;
+        // 参数顺序固定为 (consequent = false 边 = try 体, alternate = true 边 = catch 体)
+        region.addStatement(new IfPandaStatement(region, nextRegion, destRegion));
+        // 与 reduceIfRegion 的 case 3/4 一样,语句生成后 helper 标志必须清掉
+        region.tryCatchHelperRegion = false;
+        this.regionGraph.removeEdge(region, nextRegion);
+        this.regionGraph.removeNode(nextRegion);
+        this.regionGraph.removeEdge(region, destRegion);
+        this.regionGraph.removeNode(destRegion);
+        this.regionGraph.putEdgeValue(region, continuation, false);
+        region.setType("Linear");
+        return true;
     }
 
     private linearSuccessor(region: Region): Region | null {
@@ -569,11 +615,18 @@ export class StructureAnalysis {
                 this.addLabelToRegion(to);
             }
             if (from.getType() === "Condition") {
-                if (this.regionGraph.edgeValueOrThrow(from, to)) from.expInvert();
                 // INLINE 复制一份 Tail 语句作为 if 分支,不能直接引用目标区域
                 // (它还有别的前驱,后续还会被合并/改名)。
                 const target = desc.type === "INLINE" ? to.copy() : conditionalStatementOf(desc.type, to);
-                from.addStatement(new IfPandaStatement(from, target, null));
+                const onTrueEdge = this.regionGraph.edgeValueOrThrow(from, to);
+                if (onTrueEdge && from.isLogicalRegion()) {
+                    // 逻辑区域(`&&` 合并)的表达式是 fallthrough 条件,expInvert 不生效,
+                    // true 边上的出口用取反分支表达。
+                    from.addStatement(new IfPandaStatement(from, null, target));
+                } else {
+                    if (onTrueEdge) from.expInvert();
+                    from.addStatement(new IfPandaStatement(from, target, null));
+                }
                 from.setType("Linear");
             } else if (from.getType() === "Linear") {
                 if (desc.type === "INLINE") {
@@ -607,8 +660,19 @@ export class StructureAnalysis {
             // 只有折叠 true 边(跳转目标)时才需要对条件取反。
             for (const tail of succs) {
                 if (!contains(tail) || tail.getType() !== "Tail" || this.singlePredecessor(tail) !== n) continue;
-                if (this.regionGraph.edgeValueOrThrow(n, tail)) n.expInvert();
-                n.addStatement(new IfPandaStatement(n, tail, null));
+                if (this.regionGraph.edgeValueOrThrow(n, tail)) {
+                    if (n.isLogicalRegion()) {
+                        // 逻辑区域(`&&` 合并)的表达式本身就是 fallthrough 条件,expInvert 对
+                        // generateTestExpression 不生效。true 边上的 Tail 必须用取反分支表达:
+                        // `if (!(A && B)) tail`,normalizeConditionTests 再折成 `if (!A || !B) tail`。
+                        n.addStatement(new IfPandaStatement(n, null, tail));
+                    } else {
+                        n.expInvert();
+                        n.addStatement(new IfPandaStatement(n, tail, null));
+                    }
+                } else {
+                    n.addStatement(new IfPandaStatement(n, tail, null));
+                }
                 this.regionGraph.removeEdge(n, tail);
                 this.regionGraph.removeNode(tail);
                 n.setType("Linear");

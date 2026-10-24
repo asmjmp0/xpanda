@@ -624,12 +624,12 @@ const HANDLES: Record<string, Handle> = {
         const codeGenerator = mh.getCodeGenerator();
         const factory = codeGenerator.getNodeFactory();
         const utils = codeGenerator.getNodeUtils();
-        const nowLevel = l.getLevel(block.getParent(), ins.pc);
-        let name = ins.isSendAble ? "sendable" : "local";
-        name += "_" + nowLevel + "_";
+        // 环境实例的唯一前缀(同层级连续出现的多个环境带 `_2`/`_3` 后缀)
+        const prefix = l.getLexPrefix(block.getParent(), ins.pc)
+            ?? (ins.isSendAble ? "sendable" : "local") + "_" + l.getLevel(block.getParent(), ins.pc);
         const arrayObject = codeGenerator.arrayObject();
         for (let i = 0; i < ins.lexImm; i++) {
-            codeGenerator.addToArray(arrayObject, factory.variableDeclaratorNode(factory.identifierNode(name + i) as any, null));
+            codeGenerator.addToArray(arrayObject, factory.variableDeclaratorNode(factory.identifierNode(prefix + "_" + i) as any, null));
         }
         const variableDeclarationNode = factory.variableDeclarationNode(arrayObject as any, "let");
         utils.insertNodeToBody(factory.expressionStatementNode(factory.identifierNode("panda_jmp0_reserved_lex_begin") as any) as any, node);
@@ -638,21 +638,22 @@ const HANDLES: Record<string, Handle> = {
     },
     storeLex: (ins, block, mh, l, node) => {
         const factory = mh.getCodeGenerator().getNodeFactory();
-        let name = ins.isSendAble ? "sendable" : "local";
-        const nowLevel = l.getLevel(block.getParent(), ins.pc) - ins.lexLevel - 1;
-        name += "_" + nowLevel + "_";
-        const assignment = factory.assignmentExpressionNode("=", factory.identifierNode(name + ins.lexIndex) as any, factory.identifierNode("acc") as any);
+        const method = block.getParent();
+        const prefix = l.getLexPrefix(method, ins.pc)
+            ?? (ins.isSendAble ? "sendable" : "local") + "_" + (l.getLevel(method, ins.pc) - ins.lexLevel - 1);
+        const name = prefix + "_" + ins.lexIndex;
+        const assignment = factory.assignmentExpressionNode("=", factory.identifierNode(name) as any, factory.identifierNode("acc") as any);
         mh.getCodeGenerator().getNodeUtils().insertNodeToBody(factory.expressionStatementNode(assignment as any) as any, node);
         return false;
     },
     loadLex: (ins, block, mh, l, node) => {
         const factory = mh.getCodeGenerator().getNodeFactory();
-        const currentLevel = l.getLevel(block.getParent(), ins.pc);
-        const type = l.getTypeInfo(block.getParent(), ins.toSignature(currentLevel));
-        let name = ins.isSendAble ? "sendable" : "local";
-        const nowLevel = currentLevel - ins.lexLevel - 1;
-        name += "_" + nowLevel + "_";
-        const assignment = factory.assignmentExpressionNode("=", factory.identifierNode("acc") as any, factory.identifierNode(name + ins.lexIndex, type) as any);
+        const method = block.getParent();
+        const prefix = l.getLexPrefix(method, ins.pc)
+            ?? (ins.isSendAble ? "sendable" : "local") + "_" + (l.getLevel(method, ins.pc) - ins.lexLevel - 1);
+        const name = prefix + "_" + ins.lexIndex;
+        const type = l.getTypeInfo(method, name);
+        const assignment = factory.assignmentExpressionNode("=", factory.identifierNode("acc") as any, factory.identifierNode(name, type) as any);
         mh.getCodeGenerator().getNodeUtils().insertNodeToBody(factory.expressionStatementNode(assignment as any) as any, node);
         return false;
     },

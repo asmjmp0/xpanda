@@ -148,6 +148,11 @@ interface LoopLive {
     breakLive: Set<string>;
     /** 位于 switch 里的 break 只跳出 switch,不能套用 breakLive */
     inSwitch: boolean;
+    /**
+     * 外层 try/finally 的 finally 读取集合:return/throw/break/continue 这些跳出口
+     * 都会先执行 finally,活跃集必须并入它们在出口处的读取(活跃性模型没有异常边)。
+     */
+    finallyLive?: Set<string>;
 }
 
 /** 属性归一化键:非 computed 标识符与 computed 字符串字面量视为同一属性;动态键返回 null。 */
@@ -299,7 +304,7 @@ export class TempVariableSimplify implements ISimplify {
                 if (!parent || !(isBlockStatement(parent.node) || isProgramNode(parent.node))) return;
                 const kept = path.node.declarations.filter((declarator) => {
                     if (!isIdentifier(declarator.id) || declarator.init) return true;
-                    if (!/^(local|sendable)_\d+_\d+$/.test(declarator.id.name)) return true;
+                    if (!/^(local|sendable)_\d+_\d+(_\d+)?$/.test(declarator.id.name)) return true;
                     const binding = path.scope.getBinding(declarator.id.name);
                     if (!binding || binding.identifier !== declarator.id) return true;
                     return binding.referencePaths.length !== 0 || binding.constantViolations.length !== 0;
@@ -735,7 +740,7 @@ export class TempVariableSimplify implements ISimplify {
             if (!isExpressionStatement(stmt) || !isAssignmentExpression(stmt.expression)) continue;
             const assign = stmt.expression;
             if (assign.operator !== "=" || !isIdentifier(assign.left)) continue;
-            if (!/^local_\d+_\d+$/.test(assign.left.name)) continue;
+            if (!/^local_\d+_\d+(_\d+)?$/.test(assign.left.name)) continue;
             if (isFunctionExpression(assign.right) && assign.right.id) return true;
         }
         return false;
@@ -816,7 +821,7 @@ export class TempVariableSimplify implements ISimplify {
             const assign = stmt.expression;
             if (assign.operator !== "=" || !isIdentifier(assign.left)) continue;
             const name = assign.left.name;
-            if (!/^local_\d+_\d+$/.test(name)) continue;
+            if (!/^local_\d+_\d+(_\d+)?$/.test(name)) continue;
             if (!isFunctionExpression(assign.right) || !assign.right.id) continue;
             if (!ctx.infos.get(name) || ctx.infos.get(name)!.refs.size === 0) continue;
             candidates.push({ stmt, name, fn: assign.right });
@@ -2318,8 +2323,16 @@ export class TempVariableSimplify implements ISimplify {
     /** 删除没有任何引用的 temp 声明(替代旧方案反复 scope.crawl 的做法)。 */
     private removeUnusedDeclarations(stmts: TYPE.Statement[], ctx: FunctionContext): void {
         const written = new Set<string>();
+        // 名称出现次数(含声明自身)。ctx.infos.refs 在复制传播克隆表达式后会过期:
+        // 克隆出来的读取不在 refs 里,refs 归零会误删仍被引用的声明
+        // (`local_1_2_1` 的声明被删后 catch 里还留着两处读取)。这里按当前 AST
+        // 再数一遍,只有确实只剩声明本身时才允许删除。
+        const nameCount = new Map<string, number>();
         walkNode({ type: "BlockStatement", body: stmts } as TYPE.BlockStatement, (node) => {
+            // 嵌套函数/类里的同名变量是另一个绑定(每个函数都有自己的 vN 声明),
+            // 不参与外层的引用计数;外层临时变量被闭包捕获时由 info.captured 保护。
             if (isFunctionLike(node) || isClassLike(node)) return false;
+            if (isIdentifier(node)) nameCount.set(node.name, (nameCount.get(node.name) ?? 0) + 1);
             if (isAssignmentExpression(node)) addPatternNames(node.left, written);
             else if (isUpdateExpression(node) && isIdentifier(node.argument)) written.add(node.argument.name);
             else if (isForInStatement(node) || isForOfStatement(node)) addPatternNames(node.left, written);
@@ -2334,6 +2347,7 @@ export class TempVariableSimplify implements ISimplify {
                         if (!isIdentifier(declarator.id)) return true;
                         const name = declarator.id.name;
                         if (!isTempName(name)) return true;
+                        if ((nameCount.get(name) ?? 0) > 1) return true;
                         const info = ctx.infos.get(name);
                         if (!info || info.captured || info.refs.size !== 0) return true;
                         if (written.has(name)) return true;
@@ -2392,8 +2406,11 @@ export class TempVariableSimplify implements ISimplify {
     // ---------------------------------------------------------------- 语句
 
     /**
-     * catch (acc) 的 acc 会遮蔽函数级 acc。把它重命名为独立的 catchAcc,
-     * 避免优化器把 catch 参数和函数累加器 acc 混为一谈。
+     * 兼容路径:`catch (acc)` 的 acc 会遮蔽函数级 acc。
+     *
+     * 反编译器现在直接生成 `catch (catchAcc)` + handler 开头的 `acc = catchAcc`
+     * (见 NodeFactory.tryStatementNode),正常不会再出现 `catch (acc)`;这里保留
+     * 重命名是为了处理外部传入的 AST,避免优化器把 catch 参数和函数累加器混为一谈。
      */
     private renameCatchParameters(path: NodePath<TYPE.Program> | NodePath<TYPE.Function>, ctx: FunctionContext): void {
         const rootBody: TYPE.Node = isProgramNode(path.node) ? path.node : path.node.body;
@@ -3612,9 +3629,23 @@ export class TempVariableSimplify implements ISimplify {
             case "TryStatement": {
                 const finalizerReads = stmt.finalizer ? this.tempReads(stmt.finalizer, ctx) : new Set<string>();
                 const after = TempVariableSimplify.union(liveOut, finalizerReads);
-                const blockIn = this.transferNested(stmt.block, after, ctx, loop, cleanup);
+                // finally 会在 try/handler 的 return/throw/break/continue 出口上执行,
+                // try 里一旦有 finally 就可能在任何位置抛异常。出口活跃集必须并入
+                // finally 的读取,否则 finally 之前最后一次赋值会被当成死存储删掉
+                // (`v14 = request` 被删后 finally 只剩 try 之前的 `v14 = null`)。
+                let nestedLoop = loop;
+                if (stmt.finalizer) {
+                    const finallyLive = TempVariableSimplify.union(loop?.finallyLive ?? new Set<string>(), finalizerReads);
+                    nestedLoop = {
+                        breakLive: TempVariableSimplify.union(loop?.breakLive ?? liveOut, finalizerReads),
+                        continueLive: TempVariableSimplify.union(loop?.continueLive ?? liveOut, finalizerReads),
+                        inSwitch: loop?.inSwitch ?? false,
+                        finallyLive,
+                    };
+                }
+                const blockIn = this.transferNested(stmt.block, after, ctx, nestedLoop, cleanup);
                 const handlerIn = stmt.handler
-                    ? this.transferNested(stmt.handler.body, after, ctx, loop, cleanup)
+                    ? this.transferNested(stmt.handler.body, after, ctx, nestedLoop, cleanup)
                     : after;
                 const finalizerIn = stmt.finalizer
                     ? this.transferNested(stmt.finalizer, liveOut, ctx, loop, cleanup)
@@ -3639,8 +3670,12 @@ export class TempVariableSimplify implements ISimplify {
             }
             case "ReturnStatement":
             case "ThrowStatement":
-                // return/throw 之后没有代码,只有返回表达式里的读取需要保留
-                return this.tempReads(stmt.argument, ctx);
+                // return/throw 之后没有代码,只有返回表达式里的读取需要保留;
+                // 外层 try/finally 的 finally 读取在出口处也仍然活跃。
+                return TempVariableSimplify.union(
+                    this.tempReads(stmt.argument, ctx),
+                    loop?.finallyLive ?? new Set<string>(),
+                );
             case "ExportNamedDeclaration":
                 if (stmt.declaration && isStatementNode(stmt.declaration)) {
                     return this.transfer(stmt.declaration as TYPE.Statement, liveOut, ctx, loop, cleanup);
@@ -3652,10 +3687,17 @@ export class TempVariableSimplify implements ISimplify {
                 // break 跳出循环后,活跃集是循环之后的代码;switch 里的 break 只跳出 switch。
                 // 必须返回副本:调用方会 live.clear() 后把返回值写回 live,
                 // 直接返回 liveOut 时 before 与 live 是同一个 Set,clear() 会一起清空。
-                return new Set(loop && !loop.inSwitch ? loop.breakLive : liveOut);
+                return TempVariableSimplify.union(
+                    loop && !loop.inSwitch ? loop.breakLive : liveOut,
+                    loop?.finallyLive ?? new Set<string>(),
+                );
             case "ContinueStatement":
-                // continue 跳到循环头(test/update),循环头的读取仍然活跃。
-                return new Set(loop ? loop.continueLive : liveOut);
+                // continue 跳到循环头(test/update),循环头的读取仍然活跃;
+                // 外层 try/finally 的 finally 会先执行,它的读取也要算进来。
+                return TempVariableSimplify.union(
+                    loop ? loop.continueLive : liveOut,
+                    loop?.finallyLive ?? new Set<string>(),
+                );
             default:
                 return new Set(liveOut);
         }

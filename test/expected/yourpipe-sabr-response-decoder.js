@@ -432,8 +432,8 @@ SabrPartProcessor = class panda_jmp0_reserved_anonymous_3 {
         }
       }
     } catch (catchAcc) {
-      catchAcc = catchAcc instanceof Error ? catchAcc.message : String(catchAcc);
-      local_0_11 /*logger*/.warn("[SABR-DECODE] part=" + p0.type + " decode-failed: " + catchAcc + "");
+      acc = catchAcc instanceof Error ? catchAcc.message : String(catchAcc);
+      local_0_11 /*logger*/.warn("[SABR-DECODE] part=" + p0.type + " decode-failed: " + acc + "");
     }
   }
   finish() {
@@ -445,8 +445,10 @@ SabrPartProcessor = class panda_jmp0_reserved_anonymous_3 {
     return this.decoded;
   }
   deliverSegment(p0) {
-    let acc;
-    if (p0.header.contentLength >= 0 && (acc = p0.getLength(), !(p0.header.contentLength >= 0) !== p0.header.contentLength)) {
+    let v6, acc;
+    v6 = p0.header.contentLength;
+    acc = !(p0.header.contentLength >= 0);
+    if (p0.header.contentLength >= 0 && (acc = p0.getLength(), v6 = acc, acc = !(acc !== p0.header.contentLength), v6 !== p0.header.contentLength)) {
       local_0_11 /*logger*/.warn("[SABR-DECODE] withhold incomplete segment itag=" + p0.header.itag + " " + ("seq=" + p0.header.sequenceNumber + " expected=" + p0.header.contentLength + " actual=" + p0.getLength() + ""));
       return;
     } else {
@@ -455,8 +457,8 @@ SabrPartProcessor = class panda_jmp0_reserved_anonymous_3 {
         try {
           this.segmentSink(p0);
         } catch (catchAcc) {
-          catchAcc = catchAcc instanceof Error ? catchAcc.message : String(catchAcc);
-          local_0_11 /*logger*/.warn("[SABR-DECODE] segment sink failed itag=" + p0.header.itag + ": " + catchAcc + "");
+          acc = catchAcc instanceof Error ? catchAcc.message : String(catchAcc);
+          local_0_11 /*logger*/.warn("[SABR-DECODE] segment sink failed itag=" + p0.header.itag + ": " + acc + "");
         }
         return;
       } else {

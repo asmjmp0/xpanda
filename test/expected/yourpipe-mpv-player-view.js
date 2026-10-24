@@ -168,7 +168,21 @@ MpvPlayerView = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       return;
     }
   }
-  startSizePolling() {}
+  startSizePolling() {
+    let local_0_0;
+    local_0_0 = this;
+    if (local_0_0.sized || local_0_0.sizeTimer !== -1) {
+      return;
+    } else {
+      local_0_0.tryFixVideoSize();
+      if (!local_0_0.sized) {
+        local_0_0.sizeTimer = setInterval(function () {
+          return local_0_0.tryFixVideoSize();
+        }, 100);
+      }
+      return;
+    }
+  }
   aboutToDisappear() {
     if (this.sizeTimer !== -1) {
       clearInterval(this.sizeTimer);
@@ -184,7 +198,15 @@ MpvPlayerView = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       Stack.height("100%");
       Stack.clip(true);
       Stack.alignContent(Alignment.Center);
-      Stack.onAreaChange(function (p0, p1) {});
+      Stack.onAreaChange(function (p0, p1) {
+        let v5, v6;
+        v6 = vp2px(p1.width);
+        v5 = vp2px(p1.height);
+        if (v6 > 0 && v5 > 0) {
+          local_0_0.areaW = v6;
+          local_0_0.areaH = v5;
+        }
+      });
     }, Stack);
     local_0_0.observeComponentCreation2(function (p0, p1) {
       let acc;

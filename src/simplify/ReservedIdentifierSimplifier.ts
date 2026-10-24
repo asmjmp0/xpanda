@@ -17,6 +17,29 @@ const {
 } = TYPE;
 
 /**
+ * 语句本身是否只是 `vN = panda_jmp0_reserved_param_p0` 这样的入口自引用赋值。
+ * 只有这种语句可以整条删除;自引用出现在更大的表达式/条件里时删除整条语句
+ * 会连带删掉函数体。
+ */
+function isSelfParamPreambleStatement(statement: TYPE.Node | null | undefined, name: string): boolean {
+    if (!statement || !TYPE.isExpressionStatement(statement)) return false;
+    const expression = statement.expression;
+    if (TYPE.isAssignmentExpression(expression, { operator: "=" })
+        && TYPE.isIdentifier(expression.right, { name })
+        && TYPE.isIdentifier(expression.left)) {
+        return true;
+    }
+    // `(v0 = p0, v1 = p1, ...)` 这类只由自引用赋值组成的序列
+    if (TYPE.isSequenceExpression(expression)) {
+        return expression.expressions.every((item) => TYPE.isAssignmentExpression(item, { operator: "=" })
+            && TYPE.isIdentifier(item.right)
+            && item.right.name.startsWith("panda_jmp0_reserved_param_p")
+            && TYPE.isIdentifier(item.left));
+    }
+    return false;
+}
+
+/**
  * 还原编译器保留标识符:
  *   panda_jmp0_reserved_param_p0 -> this / 函数名 / 类名
  *   panda_jmp0_reserved_param_p1 -> new.target
@@ -66,7 +89,17 @@ export class ReservedIdentifierSimplifier implements ISimplify {
                         if (isFunctionExpression(func.node)) {
                             if (func.node.id == null) {
                                 const statement = path.getStatementParent();
-                                if (statement) statement.remove();
+                                // 匿名函数没有可用的自身名字。通常 p0 只出现在入口的
+                                // `vN = panda_jmp0_reserved_param_p0`,删掉整条语句即可;
+                                // 但入口指令会被结构化归约折进 if/while 的 test 序列
+                                // (`if ((v0 = p0, ..., cond)) { 整个函数体 }`),
+                                // 这时删整条语句会把函数体一起删掉(git 里的 Promise
+                                // 执行器回调曾因此变成空函数)。只删自引用赋值本身。
+                                if (statement && isSelfParamPreambleStatement(statement.node, name)) {
+                                    statement.remove();
+                                } else {
+                                    path.replaceWith(TYPE.identifier("undefined"));
+                                }
                                 path.skip();
                                 changed = true;
                                 return;
