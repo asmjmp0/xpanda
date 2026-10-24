@@ -22,6 +22,7 @@
 | `src/codegen/CodeGenerator.ts` | AST 生成入口(包装 `src/ast/`) |
 | `src/ast/` | `NodeFactory` / `NodeUtils`(Babel AST 工具);`FormatCode.ts` 对超长逻辑链输出折行 |
 | `src/simplify/` | 优化器流水线(`SimplifyExport`、`TempVariableSimplify`、`ConditionSimplify`、`SyntaxRewriteSimplify`、`ClassSyntaxSimplify`、`ObjectLiteralSimplify`、`NullishCoalescingSimplify`、`HighLevelGrammarSimplify`、`AstUtils`、`NormalizeDeclarations`);末尾含 `foldConditionAssignments`(条件取反链二次折叠)与 `hoistTestPrefixes`(常量前缀提升) |
+| `src/simplify/temp/` | `TempVariableSimplify` 的拆分实现:`copy-propagation.ts`(复制传播)、`liveness.ts`(活跃性/死存储)、`assignment-folds.ts`(return/累加器/别名)、`condition-folds.ts`(布尔物化/条件)、`test-folds.ts`(短路/test 序列/循环守卫)、`queries.ts`(纯 AST 查询)、`context.ts`(ctx 工具)、`env.ts`(传播环境)、`types.ts`(共享状态与类型)、`base.ts`(状态基类) |
 | `src/parallel/` | 按类并行的 simplify worker 池(`ParallelDecompiler.ts` 调度、`simplify-worker.ts` worker 入口) |
 | `src/hap/` | HAP 应用包适配:`ZipFile.ts`(只读 ZIP 解析,store/deflate)、`HapFile.ts`(.abc 条目/module.json/resources.index) |
 | `src/mcp/` | MCP Server(`server.ts` stdio 入口、`registry.ts` abc/hap 会话注册表、`tools/` 十个工具),文档见 [docs/MCP.md](docs/MCP.md) |
