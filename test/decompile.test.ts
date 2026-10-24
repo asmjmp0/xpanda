@@ -1908,6 +1908,93 @@ function verifyYourpipeVttSubtitleParser(): void {
 }
 
 /**
+ * 回归:空 then + else 赋值的短路物化(`if (acc) {} else acc = !p0.items`)。
+ *
+ * ArkTS 把 `if (!a || !b) return;` 折成
+ *   acc = !a; if (acc) {} else acc = !b; if (acc || ...) return;
+ * `matchShortCircuitFold` 原来只认 `if (X) { X = B }` / `if (!X) { X = B }`,
+ * 空 then 形态留在输出里(`if (acc) {}` 加一条 else 内赋值)。
+ * 现在空 then 按 `if (!X) { X = B }` 处理(极性翻转,`X = E || B`),
+ * 后续条件折叠再把 acc 并进 if test;restoreSnapshot 还原成
+ * `if (!p0 || !p0.items || p0.items.length === 0) return;`。
+ */
+function verifyYourpipePlayQueueManager(): void {
+    const abcPath = path.join(__dirname, "resources", "yourpipe0.7.0.abc");
+    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
+    pandaFile.parseAssembly();
+    const clazz = pandaFile.getAllClasses().find((c) =>
+        c.name.content.includes("player/PlayQueueManager"));
+    if (!clazz) throw new Error("yourpipe: 未找到 PlayQueueManager");
+
+    const code = new PandaDecompiler().decompileClass(clazz);
+    NodeFactory.parse(code);
+
+    if (!code.includes("if (!p0 || !p0.items || p0.items.length === 0) {")) {
+        throw new Error(`PlayQueueManager: restoreSnapshot 守卫未还原\n${code}`);
+    }
+    if (/if \(acc\) \{\}\s*else|else acc =/.test(code)) {
+        throw new Error(`PlayQueueManager: 仍残留空 then 短路物化\n${code}`);
+    }
+
+    const expectedPath = path.join(__dirname, "expected", "yourpipe-play-queue-manager.js");
+    const expected = fs.readFileSync(expectedPath, "utf-8");
+    if (code !== expected) {
+        throw new Error(`PlayQueueManager: 输出与快照不一致\n${firstDifference(expected, code)}`);
+    }
+
+    // 行为校验:去掉 import/export 后在沙箱执行,stub 掉 AppLog / FeedServiceProvider
+    const prelude = `
+const AppLog = {
+  getInstance: function () {
+    return { info: function () {}, debug: function () {}, warn: function () {}, error: function () {} };
+  }
+};
+const FeedServiceProvider = {};
+`;
+    const sandboxCode = prelude
+        + code.replace(/^import[^\n]*\n/gm, "").replace(/^export\s+\{[^}]*\};\s*$/gm, "")
+        + "\nglobalThis.__exports = { PlayQueueManager, QueueSourceType };";
+    const { sandbox } = runSandbox(sandboxCode);
+    const exported = sandbox.__exports as {
+        PlayQueueManager: new () => {
+            queue: Array<{ id: number }>;
+            currentIndex: number;
+            sourceType: string;
+            sourceId: string;
+            sourceName: string;
+            restoreSnapshot: (snapshot: unknown) => void;
+        };
+        QueueSourceType: Record<string, string>;
+    };
+    if (exported.QueueSourceType.LOCAL !== "local") {
+        throw new Error("PlayQueueManager: QueueSourceType 未还原");
+    }
+    const manager = new exported.PlayQueueManager();
+    manager.restoreSnapshot(undefined);
+    manager.restoreSnapshot({});
+    manager.restoreSnapshot({ items: [] });
+    // 显式标注 number,避免 TS 按前面的空队列检查把 length 收窄成字面量类型
+    const emptyLength: number = manager.queue.length;
+    const emptyIndex: number = manager.currentIndex;
+    if (emptyLength !== 0 || emptyIndex !== -1) {
+        throw new Error("PlayQueueManager: 非法快照不应改变队列");
+    }
+    manager.restoreSnapshot({
+        items: [{ id: 1 }, { id: 2 }],
+        currentIndex: 1,
+        sourceType: "remote",
+        sourceId: "sid",
+        sourceName: "name",
+    });
+    const restoredLength: number = manager.queue.length;
+    const restoredIndex: number = manager.currentIndex;
+    if (restoredLength !== 2 || restoredIndex !== 1
+        || manager.sourceType !== "remote" || manager.sourceId !== "sid" || manager.sourceName !== "name") {
+        throw new Error("PlayQueueManager: 合法快照未正确恢复");
+    }
+}
+
+/**
  * 回归:鸿蒙资源对象($r)的模板缓冲里,id 字段是 LiteralTag.ACCESSOR 编译器
  * 标记(toString() 为 "accessor:0"),由紧随其后的 __defineGetter__("id", ...)
  * 配合 __getResourceId__ 在运行时解析。createObject/createArray 的兜底分支曾把
@@ -2591,6 +2678,10 @@ async function main(): Promise<void> {
 
     console.log("[test] yourpipe VttSubtitleParser loops (yourpipe0.7.0.abc)");
     verifyYourpipeVttSubtitleParser();
+    console.log("    ok");
+
+    console.log("[test] yourpipe PlayQueueManager guard (yourpipe0.7.0.abc)");
+    verifyYourpipePlayQueueManager();
     console.log("    ok");
 
     console.log("[test] yourpipe AVPlayer resource object (yourpipe0.7.0.abc)");

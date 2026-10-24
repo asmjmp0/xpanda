@@ -1362,16 +1362,10 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     return;
   }
   scheduleHideControls() {
-    let acc;
     let local_1_0, local_1_1;
     local_1_1 = this;
     local_1_1.clearHideTimer();
-    acc = !local_1_1.showControls || local_1_1.activeInteraction !== local_0_3.NONE;
-    if (acc) {} else acc = !local_1_1.isPageShow;
-    if (!acc) {
-      acc = local_1_1.isAppBackground;
-    }
-    if (!acc) {
+    if (local_1_1.showControls && local_1_1.activeInteraction === local_0_3.NONE && local_1_1.isPageShow && !local_1_1.isAppBackground) {
       if (!local_1_1.canAutoHideControls()) {
         return;
       }
@@ -1554,10 +1548,7 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     Logger.debug(local_0_1 /*TAG*/, "Transient UI reset reason=" + p0 + "");
   }
   videoLayoutVp() {
-    let acc;
-    acc = this.containerVpWidth > 0 ? this.containerVpHeight <= 0 : this.containerVpWidth <= 0;
-    if (acc) {} else acc = !this.curSource.width;
-    if (!acc) {
+    if (!(this.containerVpWidth > 0 ? this.containerVpHeight <= 0 : this.containerVpWidth <= 0) && this.curSource.width) {
       if (!this.curSource.height) {
         return {
           "letterboxVp": 0,
@@ -2836,15 +2827,11 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     return;
   }
   getAudioLabel(p0) {
-    let acc;
-    acc = (p0.audioTrackName !== null && p0.audioTrackName !== undefined ? p0.audioTrackName.trim() : undefined)
+    return (p0.audioTrackName !== null && p0.audioTrackName !== undefined ? p0.audioTrackName.trim() : undefined)
       || (p0.audioLanguage !== null && p0.audioLanguage !== undefined ? p0.audioLanguage.trim() : undefined)
-      || (p0.audioTrackId !== null && p0.audioTrackId !== undefined ? p0.audioTrackId.trim() : undefined);
-    if (acc) {} else acc = p0.codecs !== null && p0.codecs !== undefined ? p0.codecs.trim() : undefined;
-    if (!acc) {
-      acc = "Audio";
-    }
-    return acc;
+      || (p0.audioTrackId !== null && p0.audioTrackId !== undefined ? p0.audioTrackId.trim() : undefined)
+      || (p0.codecs !== null && p0.codecs !== undefined ? p0.codecs.trim() : undefined)
+      || "Audio";
   }
   getVideoLabel(p0) {
     let v4;

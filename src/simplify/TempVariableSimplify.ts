@@ -1974,15 +1974,31 @@ export class TempVariableSimplify implements ISimplify {
         if (isDeclarationValue(assign.right)) return null;
 
         const ifStmt = stmts[i + 1];
-        if (!isIfStatement(ifStmt) || ifStmt.alternate) return null;
+        if (!isIfStatement(ifStmt)) return null;
 
-        // 分支体必须是唯一一条 `X = B`
-        let body: TYPE.Statement[];
-        if (isBlockStatement(ifStmt.consequent)) {
-            if (ifStmt.consequent.body.length !== 1) return null;
-            body = ifStmt.consequent.body;
+        // 分支体必须是唯一一条 `X = B`;空 then + else 赋值是同一语义的取反形态
+        // (`if (X) {} else X = B` ≡ `if (!X) { X = B }`),按 emptyThen 翻转极性。
+        const branchStatements = (statement: TYPE.Statement | null | undefined): TYPE.Statement[] | null => {
+            if (!statement || isEmptyStatement(statement)) return null;
+            if (isBlockStatement(statement)) {
+                return statement.body.length === 1 ? statement.body : null;
+            }
+            return [statement];
+        };
+        const isEmptyBranch = (statement: TYPE.Statement | null | undefined): boolean =>
+            !statement || isEmptyStatement(statement)
+            || (isBlockStatement(statement) && statement.body.length === 0);
+        let body = branchStatements(ifStmt.consequent);
+        let emptyThen = false;
+        if (body !== null) {
+            // then 是赋值语句时保持旧约定:不允许 else,否则会丢掉 else 分支
+            if (ifStmt.alternate) return null;
         } else {
-            body = [ifStmt.consequent];
+            // 只有 then 真正为空时才允许看 else;then 是多语句块时必须整体放弃
+            if (!isEmptyBranch(ifStmt.consequent) || !ifStmt.alternate) return null;
+            body = branchStatements(ifStmt.alternate);
+            if (body === null) return null;
+            emptyThen = true;
         }
         const only = body[0];
         if (!isExpressionStatement(only) || !isAssignmentExpression(only.expression)) return null;
@@ -1992,12 +2008,15 @@ export class TempVariableSimplify implements ISimplify {
         if (this.hasDeferredSelfReference(inner.right, name)) return null;
 
         const test = ifStmt.test;
+        // 有效极性:test 为 `!T` 时取反,空 then(`if (T) {} else X = B`)再取反一次。
+        const testNegated = isUnaryExpression(test) && test.operator === "!";
+        const effectiveNegated = testNegated !== emptyThen;
+        const operator = effectiveNegated ? "||" : "&&";
         if (isIdentifier(test) && test.name === name) {
-            return { value: logicalExpression("&&", assign.right, inner.right), removedTest: test };
+            return { value: logicalExpression(operator, assign.right, inner.right), removedTest: test };
         }
-        if (isUnaryExpression(test) && test.operator === "!"
-            && isIdentifier(test.argument) && test.argument.name === name) {
-            return { value: logicalExpression("||", assign.right, inner.right), removedTest: test };
+        if (testNegated && isIdentifier(test.argument) && test.argument.name === name) {
+            return { value: logicalExpression(operator, assign.right, inner.right), removedTest: test };
         }
         // 跨变量布尔物化:`X = E; Y = E; if (X/!X) { Y = B }` -> `Y = E &&/|| B`。
         // 编译器会把短路条件的左值物化到两个临时变量(一个用于跳转、一个存最终结果),
@@ -2020,21 +2039,20 @@ export class TempVariableSimplify implements ISimplify {
             };
         };
         if (isIdentifier(test) && test.name !== name && isTempName(test.name)) {
-            const folded = crossVar(test.name, false);
+            const folded = crossVar(test.name, effectiveNegated);
             if (folded) return folded;
         }
-        if (isUnaryExpression(test) && test.operator === "!"
+        if (testNegated
             && isIdentifier(test.argument) && test.argument.name !== name && isTempName(test.argument.name)) {
-            const folded = crossVar(test.argument.name, true);
+            const folded = crossVar(test.argument.name, effectiveNegated);
             if (folded) return folded;
         }
         // test 是结构化归约重新物化的同一表达式:X = E; if (E) { X = B } / if (!E) {...}
         // 只有 E 纯(重复求值无副作用)才能把两次求值合并成一次。
-        const testNegated = isUnaryExpression(test) && test.operator === "!";
         const testValue = testNegated ? (test as TYPE.UnaryExpression).argument : test;
         if (testValue && isNodeEqual(testValue, assign.right) && isPureExpression(assign.right)) {
             return {
-                value: logicalExpression(testNegated ? "||" : "&&", assign.right, inner.right),
+                value: logicalExpression(operator, assign.right, inner.right),
                 removedTest: test,
             };
         }

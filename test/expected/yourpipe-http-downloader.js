@@ -713,10 +713,8 @@ try {
         return acc.includes("407") ? new HttpError(acc, p1, p2, 407) : new HttpError(acc, p1, p2, undefined, undefined, undefined, p0.code);
       }
       static notifySetCookie(p0, p1) {
-        let v7, acc;
-        acc = !local_1_2_0 /*HttpDownloader*/.setCookieObserver;
-        if (acc) {} else acc = !p0;
-        if (!acc) {
+        let v7;
+        if (local_1_2_0 /*HttpDownloader*/.setCookieObserver && p0) {
           if (!p0.header) {
             return;
           }
