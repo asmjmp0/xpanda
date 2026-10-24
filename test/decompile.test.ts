@@ -29,7 +29,9 @@ import traverse from "@babel/traverse";
  *  11. 校验 ShareContracts 的自引用成员链、嵌套布尔物化与临时分享文件校验语义(沙箱执行);
  *  12. 校验 ContentDetailPages 的 try/finally 还原与整体输出快照;
  *  13. 校验 yourpipe0.7.0.abc 的 SabrResponseDecoder 在含嵌套作用域的 for-of 还原中不崩;
- *  14. 校验 yourpipe0.7.0.abc 的 HttpDownloader 循环体内嵌套 try/catch 的区域归约与条件极性。
+ *  14. 校验 yourpipe0.7.0.abc 的 HttpDownloader 循环体内嵌套 try/catch 的区域归约与条件极性;
+ *  15. 校验 yourpipe0.7.0.abc 的 MusicSearchService 的真值守卫三目到可选链、`it.next` 提升形态
+ *      的 for-of 还原与累加器死枢纽拷贝折叠。
  */
 
 interface Sample {
@@ -1607,6 +1609,75 @@ function verifyYourpipeMpvPlayerView(): void {
 }
 
 /**
+ * 回归:ArkTS 对 `?.` 的真值 lowering(`v14 ? v14.tabs : undefined`)与把 `it.next`
+ * 提升成临时方法量的 for-of lowering(`v21 = it; v20 = it.next; while (true)
+ * { v22 = v20.call(v21); ... }`)都要在流水线末尾的 simplifyTail() 还原:
+ * 前者依赖尾部条件折叠把 `!acc` 物化链折回标识符守卫,后者在主遍历阶段
+ * 与标准 `it.next()` 形状对不上。MusicSearchService.parseInitialMusicSearchResponse
+ * 的 YouTube 响应导航链正好覆盖这两条路径,可选链还原后累加器枢纽拷贝
+ * (`acc = E; v14 = acc`)也应被折叠成 `v14 = E`。
+ */
+function verifyYourpipeMusicSearchService(): void {
+    const abcPath = path.join(__dirname, "resources", "yourpipe0.7.0.abc");
+    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
+    const clazz = pandaFile.getAllClasses().find((c) =>
+        c.name.content.includes("features/home/MusicSearchService"));
+    if (!clazz) throw new Error("yourpipe: 未找到 MusicSearchService");
+
+    const code = new PandaDecompiler().decompileClass(clazz);
+    NodeFactory.parse(code);
+    if (code.includes("created by SimpleAnalysis") || code.includes("decompiler_")) {
+        throw new Error(`MusicSearchService: 反编译降级或残留伪语句\n${code}`);
+    }
+    const start = code.indexOf("static parseInitialMusicSearchResponse");
+    const end = code.indexOf("static parseMusicSearchContinuationResponse", start);
+    if (start < 0 || end < 0) throw new Error(`MusicSearchService: 未找到 parseInitialMusicSearchResponse\n${code}`);
+    const body = code.slice(start, end);
+    // 可选链还原 + 死枢纽拷贝折叠:守卫三目不允许残留,链要落在命名临时变量上。
+    const expectedChains = [
+        "v14 = p0.contents?.tabbedSearchResultsRenderer;",
+        "v15 = v14?.tabs;",
+        "v13 = v11?.tabRenderer;",
+        "v12 = v13?.content;",
+        "v9 = v12?.sectionListRenderer;",
+    ];
+    for (const chain of expectedChains) {
+        if (!body.includes(chain)) {
+            throw new Error(`MusicSearchService: 可选链未还原(缺 ${chain})\n${body}`);
+        }
+    }
+    if (/v1[45] = v1[45] \? | \? v1[45]\./.test(body)) {
+        throw new Error(`MusicSearchService: 守卫三目残留\n${body}`);
+    }
+    // `it.next` 提升的 for-of lowering 要还原成 for...of,且只供迭代器使用的
+    // 累加器枢纽要内联进 for-of 头部,迭代器残留清零。
+    if (!body.includes("for (v22 of v9 ? v9.contents : []) {")) {
+        throw new Error(`MusicSearchService: 提升方法量的 for...of 未还原(或迭代器枢纽未内联)\n${body}`);
+    }
+    if (body.includes("[Symbol.iterator]") || body.includes(".next") || /\.call\(v2[12]\)/.test(body)) {
+        throw new Error(`MusicSearchService: 迭代器 lowering 残留\n${body}`);
+    }
+    // 失去使用者的临时变量(v20/v21/acc)要从声明列表里清掉。
+    const decl = code.slice(start, end).match(/let ([^\n]*);/)?.[0] ?? "";
+    if (!decl) throw new Error(`MusicSearchService: 未找到声明列表\n${code.slice(start, start + 200)}`);
+    for (const dead of ["v20", "v21", "acc"]) {
+        if (new RegExp(`\\b${dead}\\b`).test(decl)) {
+            throw new Error(`MusicSearchService: 未用临时变量 ${dead} 残留在声明 ${decl.trim()}\n${code}`);
+        }
+    }
+    // 另一个方法里的成员守卫(`p0.continuationContents ? p0.continuationContents.x : undefined`)。
+    if (!code.includes("acc = p0.continuationContents?.musicShelfContinuation;")) {
+        throw new Error(`MusicSearchService: 成员守卫可选链未还原\n${code}`);
+    }
+
+    const expectedPath = path.join(__dirname, "expected", "yourpipe-music-search-service.js");
+    const expected = fs.readFileSync(expectedPath, "utf-8");
+    if (code !== expected) {
+        throw new Error(`MusicSearchService: 输出与快照不一致\n${firstDifference(expected, code)}`);
+    }
+}
+
+/**
  * 校验输出里所有 `local_X_Y[_Z]` / `sendable_X_Y[_Z]` 引用都能在作用域链上找到声明。
  * 词法环境槽位是按层级命名的,同层级多个环境实例撞名时会生成未声明变量。
  */
@@ -2109,6 +2180,10 @@ async function main(): Promise<void> {
 
     console.log("[test] yourpipe MpvPlayerView (yourpipe0.7.0.abc)");
     verifyYourpipeMpvPlayerView();
+    console.log("    ok");
+
+    console.log("[test] yourpipe MusicSearchService (yourpipe0.7.0.abc)");
+    verifyYourpipeMusicSearchService();
     console.log("    ok");
 
     console.log("[test] yourpipe HttpDownloader retry try/catch (yourpipe0.7.0.abc)");

@@ -86,6 +86,10 @@ export class SimplifyExport {
         SyntaxRewriteSimplify.hoistTestPrefixes(node);
         // 复合赋值放到最后一轮之后,避免提前改写成 += 后影响活跃性/复制传播
         SyntaxRewriteSimplify.foldCompoundAssignments(node);
+        // 守卫三目(`v14 ? v14.tabs : undefined` → `v14?.tabs`)、累加器死枢纽拷贝
+        // (`acc = E; v14 = acc`)与 while(true)+break 形态的 for-of(含 `it.next`
+        // 提升为临时方法量的 lowering)都在条件折叠之后才物化,这里统一还原。
+        new HighLevelGrammarSimplify().simplifyTail(node);
         // 静态可判定的 if 条件(如 finally 收尾被常量传播后的 `undefined == undefined`)
         SyntaxRewriteSimplify.foldConstantConditions(node);
         // ArkTS 13 try/finally / for...of 收尾残留的 `hole` 哨兵守卫

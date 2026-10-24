@@ -3,7 +3,7 @@ import {ISimplify} from "./ISimplify";
 import * as TYPE from "@babel/types";
 import traverse, {NodePath} from "@babel/traverse";
 import {SyntaxRewriteSimplify} from "./SyntaxRewriteSimplify";
-import {collectIdentifierNames, isDoneMember, isNextValue, isNodeEqual} from "./AstUtils";
+import {collectIdentifierNames, isDoneMember, isNextValue, isNodeEqual, isPureExpression, walkNode} from "./AstUtils";
 
 
 const {
@@ -29,11 +29,20 @@ const {
     isAssignmentExpression: isAssignmentExpressionNode,
     isBinaryExpression: isBinaryExpressionNode,
     isBlockStatement: isBlockStatementNode,
+    isDoWhileStatement: isDoWhileStatementNode,
     isExpressionStatement: isExpressionStatementNode,
+    isForInStatement: isForInStatementNode,
+    isForOfStatement: isForOfStatementNode,
+    isForStatement: isForStatementNode,
     isIdentifier: isIdentifierNode,
     isIfStatement: isIfStatementNode,
+    isLabeledStatement: isLabeledStatementNode,
     isNullLiteral: isNullLiteralNode,
     isReturnStatement: isReturnStatementNode,
+    isSwitchStatement: isSwitchStatementNode,
+    isTryStatement: isTryStatementNode,
+    isVariableDeclaration: isVariableDeclarationNode,
+    isWhileStatement: isWhileStatementNode,
     logicalExpression: logicalExpressionBuilder,
     returnStatement: returnStatementBuilder,
     switchStatement: switchStatementBuilder,
@@ -171,6 +180,94 @@ export class HighLevelGrammarSimplify implements ISimplify {
         const inner = this.makeOptionalChain(node.object as TYPE.Expression, target);
         if (!inner) return null;
         return optionalMemberExpression(inner, node.property as TYPE.Expression, node.computed, false);
+    }
+
+    /**
+     * makeOptionalChain 的按结构匹配版本:consequent 里与守卫表达式相同的链根
+     * (不一定是标识符,如 `p0.contents`)变成可选访问。守卫与链根必须是
+     * isNodeEqual 的同一段纯表达式,避免把不同求值合并到一起。
+     */
+    private makeGuardedOptionalChain(chain: TYPE.Expression, guard: TYPE.Expression): TYPE.Expression | null {
+        if (!isMemberExpression(chain) || chain.optional) return null;
+        if (isNodeEqual(chain.object, guard)) {
+            return optionalMemberExpression(chain.object as TYPE.Expression, chain.property as TYPE.Expression, chain.computed, true);
+        }
+        const inner = this.makeGuardedOptionalChain(chain.object, guard);
+        if (!inner) return null;
+        return optionalMemberExpression(inner, chain.property as TYPE.Expression, chain.computed, false);
+    }
+
+    /** 可选链守卫候选:标识符,或各部分都纯的成员链(`p0.contents`)。 */
+    private isOptionalChainGuard(expr: TYPE.Expression): boolean {
+        if (isIdentifierNode(expr)) return true;
+        if (!isMemberExpression(expr) || expr.optional) return false;
+        return this.isSideEffectFreeExpression(expr.object)
+            && (!expr.computed || this.isSideEffectFreeExpression(expr.property as TYPE.Expression));
+    }
+
+    /** 不含调用/赋值/函数等有副作用的子表达式(成员装载、字面量、普通运算都算纯)。 */
+    private isSideEffectFreeExpression(expr: TYPE.Node): boolean {
+        switch (expr.type) {
+            case "CallExpression":
+            case "NewExpression":
+            case "AssignmentExpression":
+            case "UpdateExpression":
+            case "FunctionExpression":
+            case "ArrowFunctionExpression":
+            case "ClassExpression":
+            case "AwaitExpression":
+            case "YieldExpression":
+            case "TaggedTemplateExpression":
+            case "OptionalCallExpression":
+                return false;
+            case "UnaryExpression":
+                return expr.operator !== "delete";
+            case "MemberExpression":
+                if (expr.optional) return false;
+                break;
+        }
+        for (const key of TYPE.VISITOR_KEYS[expr.type] ?? []) {
+            const child = (expr as unknown as Record<string, unknown>)[key];
+            if (Array.isArray(child)) {
+                for (const c of child) {
+                    if (c && typeof (c as TYPE.Node).type === "string" && !this.isSideEffectFreeExpression(c as TYPE.Node)) return false;
+                }
+            } else if (child && typeof (child as TYPE.Node).type === "string") {
+                if (!this.isSideEffectFreeExpression(child as TYPE.Node)) return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * 把两类 nullish/真值守卫三目还原成可选链:
+     *
+     *   1. `x == null ? undefined : x.prop`(ArkTS 的 nullish lowering,或已被
+     *      SyntaxRewriteSimplify 合并成 `x == null` 的形态)
+     *   2. `guard ? guard.prop : undefined` —— ArkTS 编译器在类型系统保证守卫值
+     *      是对象或 nullish 时,对 `?.` 使用的真值 lowering。此时两种写法对对象
+     *      与 nullish 值严格等价;仅当守卫是假值原始数(0/""/false)且包装对象上
+     *      恰好存在同名属性时有差异,恢复成 `?.` 同时把守卫的两次求值合并成一次。
+     *
+     * 该形态由结构化归约与尾部条件折叠在 HighLevelGrammarSimplify 主遍历之后
+     * 才物化出来,simplifyTail() 会在流水线末尾再跑一次本方法。
+     */
+    private tryRestoreOptionalChain(value: NodePath<TYPE.ConditionalExpression>): boolean {
+        const conditionalNode = value.node;
+        const nullishTarget = this.nullishGuardTarget(conditionalNode.test);
+        if (nullishTarget) {
+            if (!isIdentifierNode(conditionalNode.consequent) || conditionalNode.consequent.name !== 'undefined') return false;
+            const optionalChain = this.makeOptionalChain(conditionalNode.alternate, nullishTarget.name);
+            if (!optionalChain) return false;
+            value.replaceWith(optionalChain);
+            return true;
+        }
+        if (!isIdentifierNode(conditionalNode.alternate) || conditionalNode.alternate.name !== 'undefined') return false;
+        if (!this.isOptionalChainGuard(conditionalNode.test)) return false;
+        const optionalChain = this.makeGuardedOptionalChain(conditionalNode.consequent, conditionalNode.test);
+        if (!optionalChain) return false;
+        value.replaceWith(optionalChain);
+        return true;
     }
 
     /**
@@ -425,7 +522,7 @@ export class HighLevelGrammarSimplify implements ISimplify {
      * 都说明读取的不是被删除的初始化值。只沿读取自己的祖先块向前找直接赋值,
      * 保证“只要读到这一句,赋值就一定已经执行过”。
      */
-    private hasNewerValueBefore(ref: NodePath, loop: NodePath<TYPE.WhileStatement>, name: string): boolean {
+    private hasNewerValueBefore(ref: NodePath, loop: NodePath<TYPE.Statement>, name: string): boolean {
         // 闭包里的读取可能在循环执行期间被调用,无法按语句顺序判断,直接放弃。
         if (ref.getFunctionParent() !== loop.getFunctionParent()) return false;
 
@@ -451,8 +548,12 @@ export class HighLevelGrammarSimplify implements ISimplify {
         }
         if (!loopChild.parentPath || loopChild.parentPath.node !== common.node) return false;
         const loopIndex = body.indexOf(loopChild.node);
+        if (loopIndex < 0) return false;
         const refIndex = body.indexOf(refChild.node);
-        if (loopIndex < 0 || refIndex < 0) return false;
+        // ref 所在语句已在此前的改写(如 foldHoistedIteratorNext / 死枢纽折叠)中
+        // 删除:绑定里的 referencePaths 不会随之清理,但这条语句不会再执行,
+        // 不影响“删除初始化后读取是否还可见”的判断。
+        if (refIndex < 0) return true;
         // 循环之前的读取不受删除初始化影响。
         if (refIndex < loopIndex) return true;
         if (refIndex === loopIndex) return false;
@@ -478,7 +579,99 @@ export class HighLevelGrammarSimplify implements ISimplify {
         return false;
     }
 
+    /**
+     * 归一化 ArkTS 对 for-of 的另一种 lowering:把 `it.next` 提升成临时方法量,
+     * 循环里用 `next.call(it)` 调用:
+     *
+     *   v21 = acc;          // 迭代器别名(G = H)
+     *   v20 = acc.next;     // 提升的方法量(F = H.next / G.next)
+     *   while (true) { v22 = v20.call(v21); ... }
+     *
+     * → 删掉两条前置语句,循环首语句改写成 `v22 = H.next()`,
+     *   让 checkAndTransformToForOfStatement 能按标准形态识别。
+     *   F/G 在被删语句与该调用之外还有任何引用(如提前 return 分支内联的
+     *   `it.return()`)时保持原样,避免悬空引用。
+     */
+    private foldHoistedIteratorNext(value: NodePath<TYPE.WhileStatement>): void {
+        const body = value.get('body');
+        if (!isBlockStatementNode(body.node)) return;
+        const bodyStatements = (body as NodePath<TYPE.BlockStatement>).get('body');
+        if (bodyStatements.length === 0) return;
+        // 循环首语句必须是 `vv = F.call(G)`,F/G 都是标识符且互不相同。
+        const first = bodyStatements[0].node;
+        if (!isExpressionStatementNode(first) || !isAssignmentExpressionNode(first.expression)) return;
+        const assign = first.expression;
+        if (assign.operator !== "=" || !isIdentifierNode(assign.left)) return;
+        const call = assign.right;
+        if (!isCallExpression(call) || call.arguments.length !== 1) return;
+        if (!isMemberExpression(call.callee) || call.callee.computed) return;
+        if (!isIdentifierNode(call.callee.property) || call.callee.property.name !== "call") return;
+        if (!isIdentifierNode(call.callee.object) || !isIdentifierNode(call.arguments[0])) return;
+        const fnTemp = call.callee.object.name;
+        const iterAlias = (call.arguments[0] as TYPE.Identifier).name;
+        const vvName = assign.left.name;
+        if (fnTemp === iterAlias || fnTemp === vvName || iterAlias === vvName) return;
+        // 前一条:`F = G.next` 或 `F = H.next`(H 是迭代器本体)。
+        const prevFn = value.getPrevSibling();
+        if (!prevFn.isExpressionStatement() || !isAssignmentExpressionNode(prevFn.node.expression)) return;
+        const fnAssign = prevFn.node.expression as TYPE.AssignmentExpression;
+        if (fnAssign.operator !== "=" || !isIdentifierNode(fnAssign.left) || fnAssign.left.name !== fnTemp) return;
+        if (!isMemberExpression(fnAssign.right) || fnAssign.right.computed) return;
+        if (!isIdentifierNode(fnAssign.right.property) || fnAssign.right.property.name !== "next") return;
+        if (!isIdentifierNode(fnAssign.right.object)) return;
+        const nextObject = fnAssign.right.object.name;
+        // 再前一条:`G = H`,H 是标识符且与 F/G 不同名。
+        const prevAlias = prevFn.getPrevSibling();
+        if (!prevAlias.isExpressionStatement() || !isAssignmentExpressionNode(prevAlias.node.expression)) return;
+        const aliasAssign = prevAlias.node.expression as TYPE.AssignmentExpression;
+        if (aliasAssign.operator !== "=" || !isIdentifierNode(aliasAssign.left) || aliasAssign.left.name !== iterAlias) return;
+        if (!isIdentifierNode(aliasAssign.right)) return;
+        const iterName = aliasAssign.right.name;
+        if (iterName === iterAlias || iterName === fnTemp || iterName === vvName) return;
+        if (nextObject !== iterAlias && nextObject !== iterName) return;
+        // 再前一条:`H = X[Symbol.iterator]()`。
+        const prevInit = prevAlias.getPrevSibling();
+        if (!prevInit.isExpressionStatement() || !isAssignmentExpressionNode(prevInit.node.expression)) return;
+        const initAssign = prevInit.node.expression as TYPE.AssignmentExpression;
+        if (initAssign.operator !== "=" || !isIdentifierNode(initAssign.left) || initAssign.left.name !== iterName) return;
+        if (!this.iterableOfIteratorInit(initAssign.right as TYPE.Expression)) return;
+        // F / G 除这里的定义与调用外不能再有其它引用,否则删除会破坏它们。
+        const fnBinding = value.scope.getBinding(fnTemp);
+        const aliasBinding = value.scope.getBinding(iterAlias);
+        if (!fnBinding || !aliasBinding) return;
+        for (const ref of fnBinding.referencePaths) {
+            if (ref.node === call.callee.object) continue;
+            return;
+        }
+        for (const violation of fnBinding.constantViolations) {
+            if (violation.node === fnAssign || violation.node === prevFn.node) continue;
+            return;
+        }
+        for (const ref of aliasBinding.referencePaths) {
+            if (ref.node === call.arguments[0] || ref.node === fnAssign.right.object) continue;
+            return;
+        }
+        for (const violation of aliasBinding.constantViolations) {
+            if (violation.node === aliasAssign || violation.node === prevAlias.node) continue;
+            return;
+        }
+        // `vv = F.call(G)` → `vv = H.next()`;删掉两条前置语句。
+        bodyStatements[0].get('expression').replaceWith(
+            assignmentExpressionBuilder(
+                "=",
+                TYPE.identifier(vvName),
+                TYPE.callExpression(
+                    TYPE.memberExpression(TYPE.identifier(iterName), TYPE.identifier("next")),
+                    []
+                )
+            )
+        );
+        prevFn.remove();
+        prevAlias.remove();
+    }
+
     private checkAndTransformToForOfStatement(value:NodePath<TYPE.WhileStatement>){
+        this.foldHoistedIteratorNext(value);
         const pre = value.getPrevSibling();
         if (!isExpressionStatementNode(pre.node)) return false;
         const init = pre.node.expression;
@@ -562,7 +755,59 @@ export class HighLevelGrammarSimplify implements ISimplify {
         const forOfStatement = forOfStatementBuilder(vv,iterable as any,blockStatement);
         value.replaceWith(forOfStatement);
         pre.remove();
+        this.tryInlineForOfIterable(value);
         return true;
+    }
+
+    /**
+     * for-of 还原后,若迭代器初始化前一条语句是 `X = E` 且 X 的值只为迭代器供值,
+     * 把 E 内联进 for-of 头部并删掉该语句:
+     *
+     *   acc = v9 ? v9.contents : [];
+     *   acc = acc[Symbol.iterator]();
+     *   for (v22 of acc) ...
+     * → for (v22 of v9 ? v9.contents : []) ...
+     *
+     * 要求:E 自身不读取 X;循环体内不读 X(写也不行,保守起见);循环外的读取
+     * 必须先有新的 `X = ...` 覆盖(hasNewerValueBefore,含闭包外的语句序检查)。
+     */
+    private tryInlineForOfIterable(value: NodePath): void {
+        const prev = value.getPrevSibling();
+        if (!prev.isExpressionStatement() || !isAssignmentExpressionNode(prev.node.expression)) return;
+        const assign = prev.node.expression as TYPE.AssignmentExpression;
+        if (assign.operator !== "=" || !isIdentifierNode(assign.left)) return;
+        const hub = assign.left.name;
+        const right = value.get('right');
+        if (!right.isIdentifier() || right.node.name !== hub) return;
+        const binding = value.scope.getBinding(hub);
+        if (!binding) return;
+        const init = assign.right;
+        // E 里不能读 X:删掉 `X = E` 后 for-of 头部读到的是旧值。
+        let readsHub = false;
+        walkNode(init as TYPE.Node, (node) => {
+            if (isIdentifierNode(node) && node.name === hub) {
+                readsHub = true;
+                return false;
+            }
+            return true;
+        });
+        if (readsHub) return;
+        const functionParent = value.getFunctionParent();
+        for (const ref of binding.referencePaths) {
+            if (!ref.node) continue;
+            // for-of 头部自己的 `of X` 也是 X 的读取,内联后随之消失,不参与检查。
+            if (ref.node === right.node) continue;
+            if (ref.findParent((parent) => parent.node === value.node)) return;
+            if (ref.getFunctionParent() !== functionParent) return;
+            if (!this.hasNewerValueBefore(ref, value as NodePath<TYPE.Statement>, hub)) return;
+        }
+        for (const violation of binding.constantViolations) {
+            if (!violation.node) continue;
+            if (violation.findParent((parent) => parent.node === value.node)) return;
+            if (violation.getFunctionParent() !== functionParent) return;
+        }
+        right.replaceWith(TYPE.cloneNode(init));
+        prev.remove();
     }
 
     /** test 去掉偶数个 `!` 后是标识符时返回名字;`!X`(奇数次)返回 null。 */
@@ -752,6 +997,165 @@ export class HighLevelGrammarSimplify implements ISimplify {
         return true;
     }
 
+    /**
+     * `X = E; Y = X` 死枢纽拷贝折叠:结构化归约以累加器为枢纽生成
+     * `acc = <成员链>; v14 = acc; acc = v14?.tabs; v15 = acc; ...`,
+     * 可选链还原后这些拷贝就是纯粹的死枢纽。仅当三条件成立时折叠成 `Y = E`:
+     * E 纯(无调用/赋值/函数,搬移无副作用)、拷贝紧邻、且再下一条语句就是
+     * 对 X 的无条件写入(保证 X 的旧值此后不会被读到,也不存在语句间的闭包触发)。
+     */
+    private foldDeadHubCopies(node: Program): boolean {
+        let changed = false;
+        const foldList = (body: TYPE.Statement[]) => {
+            let i = 0;
+            while (i + 2 < body.length) {
+                const a = body[i];
+                const b = body[i + 1];
+                if (!isExpressionStatementNode(a) || !isAssignmentExpressionNode(a.expression)
+                    || !isExpressionStatementNode(b) || !isAssignmentExpressionNode(b.expression)) {
+                    i++;
+                    continue;
+                }
+                const assignA = a.expression;
+                const assignB = b.expression;
+                if (assignA.operator !== "=" || assignB.operator !== "="
+                    || !isIdentifierNode(assignA.left) || !isIdentifierNode(assignB.left)
+                    || !isIdentifierNode(assignB.right)) {
+                    i++;
+                    continue;
+                }
+                const hub = assignA.left.name;
+                if (assignB.right.name !== hub || assignB.left.name === hub) {
+                    i++;
+                    continue;
+                }
+                const next = body[i + 2];
+                if (!next || !this.isDirectAssignmentTo(next, hub)) {
+                    i++;
+                    continue;
+                }
+                if (!this.isSideEffectFreeExpression(assignA.right)) {
+                    i++;
+                    continue;
+                }
+                // `X = E; Y = X;` → `Y = E;`(删掉 X 的死写入)
+                body.splice(i, 1, expressionStatement(assignmentExpressionBuilder("=", assignB.left, assignA.right)));
+                body.splice(i + 1, 1);
+                changed = true;
+                // 新语句还可能与后续构成新的拷贝对(连续枢纽),原地重查。
+            }
+        };
+        traverse(file(node), {
+            Program: (value) => foldList(value.node.body),
+            BlockStatement: (value) => foldList(value.node.body),
+        });
+        return changed;
+    }
+
+    /**
+     * 清理“整个作用域里只剩声明自身”的临时变量声明(`let v7, v8, ..., acc;`)。
+     * TempVariableSimplify 的声明清理在定点迭代里执行,看不到 simplifyTail
+     * 删除迭代器/枢纽拷贝后失去最后使用者的残留(如 for-of 还原后的
+     * v20/v21/acc)。按整个函数子树(含嵌套函数,闭包里的同名出现会让声明
+     * 被保守保留)统计出现次数,只有确实只剩声明本身、且无 init 或 init 纯
+     * 时才删;只处理 `vN` / `acc` 这类反编译器生成的临时名。
+     */
+    private removeUnusedTempDeclarations(node: Program): void {
+        const isTempName = (name: string): boolean => /^(v\d+|acc)$/.test(name);
+        const cleanScope = (body: TYPE.Statement[]): void => {
+            const nameCount = new Map<string, number>();
+            for (const stmt of body) {
+                walkNode(stmt, (n) => {
+                    if (isIdentifierNode(n)) nameCount.set(n.name, (nameCount.get(n.name) ?? 0) + 1);
+                    return true;
+                });
+            }
+            const cleanList = (list: TYPE.Statement[]): void => {
+                for (let i = 0; i < list.length; i++) {
+                    const stmt = list[i];
+                    if (isVariableDeclarationNode(stmt) && stmt.kind === "let") {
+                        const kept = stmt.declarations.filter((declarator) => {
+                            if (!isIdentifierNode(declarator.id)) return true;
+                            const name = declarator.id.name;
+                            if (!isTempName(name)) return true;
+                            if ((nameCount.get(name) ?? 0) > 1) return true;
+                            if (declarator.init && !isPureExpression(declarator.init)) return true;
+                            return false;
+                        });
+                        if (kept.length === 0) {
+                            list.splice(i--, 1);
+                        } else if (kept.length !== stmt.declarations.length) {
+                            stmt.declarations = kept;
+                        }
+                        continue;
+                    }
+                    // 只在同一作用域内下钻;嵌套函数是独立作用域,由各自的访问器入口处理。
+                    if (isBlockStatementNode(stmt)) cleanList(stmt.body);
+                    else if (isLabeledStatementNode(stmt)) cleanList([stmt.body]);
+                    else if (isIfStatementNode(stmt)) {
+                        if (isBlockStatementNode(stmt.consequent)) cleanList(stmt.consequent.body);
+                        if (stmt.alternate && isBlockStatementNode(stmt.alternate)) cleanList(stmt.alternate.body);
+                    } else if (isForOfStatementNode(stmt) || isForInStatementNode(stmt) || isForStatementNode(stmt)) {
+                        if (isBlockStatementNode(stmt.body)) cleanList(stmt.body.body);
+                    } else if (isWhileStatementNode(stmt)) {
+                        if (isBlockStatementNode(stmt.body)) cleanList(stmt.body.body);
+                    } else if (isDoWhileStatementNode(stmt)) {
+                        if (isBlockStatementNode(stmt.body)) cleanList(stmt.body.body);
+                    } else if (isTryStatementNode(stmt)) {
+                        if (isBlockStatementNode(stmt.block)) cleanList(stmt.block.body);
+                        if (stmt.handler && isBlockStatementNode(stmt.handler.body)) cleanList(stmt.handler.body.body);
+                        if (stmt.finalizer && isBlockStatementNode(stmt.finalizer)) cleanList(stmt.finalizer.body);
+                    } else if (isSwitchStatementNode(stmt)) {
+                        for (const caseClause of stmt.cases) cleanList(caseClause.consequent);
+                    }
+                }
+            };
+            cleanList(body);
+        };
+        traverse(file(node), {
+            Program: (path) => cleanScope(path.node.body),
+            FunctionDeclaration: (path) => {
+                if (path.node.body) cleanScope(path.node.body.body);
+            },
+            FunctionExpression: (path) => {
+                if (path.node.body) cleanScope(path.node.body.body);
+            },
+            ArrowFunctionExpression: (path) => cleanScope([path.node.body]),
+            ClassMethod: (path) => {
+                if (path.node.body) cleanScope(path.node.body.body);
+            },
+            ObjectMethod: (path) => {
+                if (path.node.body) cleanScope(path.node.body.body);
+            },
+        });
+    }
+
+    /**
+     * 流水线末尾的二次语法还原。定点迭代与尾部条件折叠会把 `if (!T) { X = a }
+     * else { X = undefined }` 物化成守卫三目、把累加器枢纽拷贝留在语句序列里,
+     * 这些都发生在 simplify() 只跑一次的主遍历之后。这里只做四类安全且局部的
+     * 还原:守卫三目 → 可选链、死枢纽拷贝折叠、while(true)+break 形态的 for-of
+     * 还原(含 `it.next` 被提升为临时方法量的 lowering)、随之失去使用者的
+     * 临时变量声明清理。
+     * 必须在所有条件折叠之后调用(依赖 `!acc` 物化链已被折回标识符守卫)。
+     */
+    simplifyTail(node: Program): boolean {
+        let changed = false;
+        traverse(file(node), {
+            ConditionalExpression: (value) => {
+                if (this.tryRestoreOptionalChain(value)) changed = true;
+            },
+        });
+        if (this.foldDeadHubCopies(node)) changed = true;
+        traverse(file(node), {
+            WhileStatement: (value) => {
+                if (this.checkAndTransformToForOfStatement(value)) changed = true;
+            },
+        });
+        this.removeUnusedTempDeclarations(node);
+        return changed;
+    }
+
     simplify(node: Program): boolean {
         let changed = false;
         traverse(file(node), {
@@ -795,17 +1199,7 @@ export class HighLevelGrammarSimplify implements ISimplify {
                 }
             },
             ConditionalExpression:(value)=>{
-                // 把 `x == null ? undefined : x.prop` / `x === null || x === undefined ? undefined : x.prop`
-                // 还原成 `x?.prop`。test 可能已被 SyntaxRewriteSimplify 合并成 `== null`。
-                const conditionalNode = value.node;
-                const target = this.nullishGuardTarget(conditionalNode.test);
-                if (!target) return;
-                const consequent = conditionalNode.consequent;
-                if (!isIdentifierNode(consequent) || consequent.name !== 'undefined') return;
-                const optionalChain = this.makeOptionalChain(conditionalNode.alternate, target.name);
-                if (!optionalChain) return;
-                value.replaceWith(optionalChain);
-                changed = true;
+                if (this.tryRestoreOptionalChain(value)) changed = true;
             }
         })
 
