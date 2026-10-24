@@ -1,4 +1,5 @@
 import { Adler32, HapFile, PandaDecompiler, PandaFile, ResourceIndexFile } from "xpanda-core";
+import { loadPandaFile } from "./io";
 
 /**
  * MCP 会话注册表:fileId → 已加载的 abc/hap 会话
@@ -101,7 +102,7 @@ export class Registry {
     }
 
     private loadAbcPath(absPath: string): { session: AbcSession; cached: boolean } {
-        const pandaFile = PandaFile.from(absPath);
+        const pandaFile = loadPandaFile(absPath);
         const fileId = Registry.makeFileId(absPath, pandaFile.header.checksum);
         const session: AbcSession = {
             kind: "abc",

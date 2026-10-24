@@ -9,6 +9,7 @@ import {
     resolveJobs,
     ZipFile,
 } from "xpanda-core";
+import { saveClassFile } from "./io";
 
 /**
  * CLI 入口
@@ -103,7 +104,7 @@ async function decompileAbcData(decompiler: PandaDecompiler, data: Uint8Array, o
         const clazz = classes[index];
         outputs[index] = "\n/***************************" + clazz.name.content + "*************************************\n" + content;
         if (!options.stdout) {
-            PandaDecompiler.saveFile(classOutDir, clazz, content);
+            saveClassFile(classOutDir, clazz, content);
             console.log("written: " + clazz.name.content);
         }
     };

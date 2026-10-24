@@ -46,8 +46,11 @@ export class Header {
         const bs = PandaFileUtils.readSubBytes(data, index, HEADER_SIZE);
         let nowIndex = 0;
         this.magic = PandaFileUtils.readSubBytes(bs, nowIndex, 8);
-        if (Buffer.from(this.magic).toString("latin1") !== MAGIC_PANDA) {
-            throw new PandaParseException("magic not matched!");
+        // magic 逐字节比较(latin1 单字节编码,等价原 Buffer.toString("latin1") 比较)
+        for (let i = 0; i < MAGIC_PANDA.length; i++) {
+            if (this.magic[i] !== MAGIC_PANDA.charCodeAt(i)) {
+                throw new PandaParseException("magic not matched!");
+            }
         }
         nowIndex += 8;
         const dv = new DataView(bs.buffer, bs.byteOffset, bs.byteLength);

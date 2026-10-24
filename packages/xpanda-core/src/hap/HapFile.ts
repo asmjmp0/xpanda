@@ -34,7 +34,7 @@ export class HapFile {
         const bytes = this.readEntry("module.json");
         if (!bytes) return null;
         try {
-            return JSON.parse(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("utf8"));
+            return JSON.parse(new TextDecoder("utf-8").decode(bytes));
         } catch (e) {
             return null;
         }

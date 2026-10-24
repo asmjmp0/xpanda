@@ -67,11 +67,6 @@ export class PandaFile implements IPandaFile {
         this.foreignPandaClasses = foreignPandaClasses;
     }
 
-    static from(path: string): PandaFile {
-        const fs = require("fs");
-        return new PandaFile(new Uint8Array(fs.readFileSync(path)));
-    }
-
     resolveIndexHeaderByOffset(offset: Offset): IndexHeader | null {
         if (!offset.isValid()) return null;
         for (const indexHeader of this.indexHeaders) {

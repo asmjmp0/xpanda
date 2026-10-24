@@ -27,7 +27,7 @@
 | `packages/xpanda-core/src/simplify/temp/` | `TempVariableSimplify` 的拆分实现:`copy-propagation.ts`(复制传播)、`liveness.ts`(活跃性/死存储)、`assignment-folds.ts`(return/累加器/别名)、`condition-folds.ts`(布尔物化/条件)、`test-folds.ts`(短路/test 序列/循环守卫)、`queries.ts`(纯 AST 查询)、`context.ts`(ctx 工具)、`env.ts`(传播环境)、`types.ts`(共享状态与类型)、`base.ts`(状态基类) |
 | `packages/xpanda-core/src/parallel/` | 按类并行的 simplify worker 池(`ParallelDecompiler.ts` 调度、`simplify-worker.ts` worker 入口) |
 | `packages/xpanda-core/src/hap/` | HAP 应用包适配:`ZipFile.ts`(只读 ZIP 解析,store/deflate)、`HapFile.ts`(.abc 条目/module.json/resources.index) |
-| `packages/xpanda-core/src/PandaDecompiler.ts` | 对外总入口(库 API),`src/index.ts` 为包导出 |
+| `packages/xpanda-core/src/PandaDecompiler.ts` | 对外总入口(库 API),`src/index.ts` 为 Node 入口(转发 browser 子集 + parallel),`src/browser.ts` 为浏览器入口(无 Node 依赖、不做磁盘 IO) |
 | `packages/xpanda-core/resources/isa.yaml` | ArkCompiler 指令集描述(v24.0.0.0) |
 | `packages/xpanda-core/scripts/gen-opcodes.ts` | 生成 `packages/xpanda-core/src/disasm/opcodes.ts` |
 | `packages/xpanda-core/test/` | 集成测试 + 样本(`md5.abc`、`class.abc`、`aes.abc`、`zhihupp0.59.hap`、`yourpipe0.7.0.abc`) |
@@ -80,7 +80,7 @@ npm run test:mcp
 4. 不要引入 CI 配置或改变依赖结构,除非用户要求。
 5. 优化器 pass 返回 `boolean` 表示是否修改 AST,由 `SimplifyExport` 定点迭代;不要在 pass 内保留过程日志。
 6. **单类输出必须是该类的纯函数**:不要引入跨类的可变状态(全局计数器、按偏移共享的可变缓存等),否则 `-j` 并行结果与串行不一致。生成名计数器在 `PandaDecompiler.decompileRaw()` 里按类复位;`packages/xpanda-core/test/decompile.test.ts` 有串行/并行一致性回归。
-7. **跨包引用一律走包名**:cli / mcp 引用核心库只允许 `import ... from "xpanda-core"`(经 `packages/xpanda-core/src/index.ts` 导出),不要深路径相对引用;core 内部不得反向依赖 cli / mcp。core 新增对外能力时在 `src/index.ts` 补导出。
+7. **跨包引用一律走包名**:cli / mcp 引用核心库只允许 `import ... from "xpanda-core"`(Node 走 `src/index.ts`,浏览器 bundle 经 `"browser"` 条件走 `src/browser.ts`),不要深路径相对引用;core 内部不得反向依赖 cli / mcp。core 新增对外能力时在 `src/browser.ts` 补导出(Node-only 能力只加在 `src/index.ts`),`browser.ts` 的导入闭包内不得出现任何 Node 内建模块(fs / path / os / zlib / worker_threads / Buffer 等),Node 专用实现一律放 `src/parallel/`;磁盘 IO 不进 core,由 cli / mcp 各自的 `src/io.ts` 实现。
 
 ## 常见任务怎么做
 
@@ -165,7 +165,7 @@ npm run test:mcp
 
 - **降级路径是设计行为,不是 bug**:单方法 > 500 基本块、指令 kind 未注册 handle,二者使该方法走 `SimpleAnalysis` 线性输出;`jeq/jne/jstricteq/jnstricteq` 指令构造即抛异常,词法分析阶段(`PandaLexical`)会跳过该方法并输出占位函数体,不中断整个类。
 - 前缀指令占 2 字节(首字节 ≥ 251),`PandaDisAssembler` 有特殊处理;新增指令名(kind 映射)用 isa.yaml 的 `sig` 首词(如 `wide.callrange`)。
-- 类名形如 `Lpkg/Name;`,输出前由 `PandaDecompiler.saveFile()` demangle。
+- 类名形如 `Lpkg/Name;`,落盘前由 cli / mcp 的 `saveClassFile()` demangle(`Lpkg/Name;` → `outDir/pkg/Name.js`)。
 - `--no-simplify` 不执行优化器,适合验证解析/反汇编;大文件完整优化耗时主要来自逐类按函数分析和定点迭代。
 - `acc` 是 Panda 累加器,不是源码变量:`acc = !acc` 可能来自 `callruntime.isfalse`,也可能来自编译器对条件的布尔物化;二者叠加时看起来是两条取反,实际源码可能只有一个 `!`。
 - `HighLevelGrammarSimplify` 会把 `if (!X) { X = true } else { X = false }` 合成为 `X = !X`,可能和已有的 `X = !X` 形成新的连续取反链;因此流水线末尾必须再跑一次 `TempVariableSimplify.foldConditionAssignments`,不要删掉这一步。

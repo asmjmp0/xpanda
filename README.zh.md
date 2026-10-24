@@ -229,7 +229,7 @@ if (v11 !== 64) {
 ## 环境要求
 
 - Node.js ≥ 18
-- 开发依赖:`typescript`、`tsx`(core 另用 `@babel/*`,操作码生成脚本用 `js-yaml`)
+- 开发依赖:`typescript`、`tsx`(core 另用 `@babel/*` 与 `fflate` —— 纯 JS、浏览器可用的 inflate;操作码生成脚本用 `js-yaml`)
 
 ## 安装与使用
 
@@ -297,6 +297,8 @@ for (const cls of pandaFile.getAllClasses()) {
     // const js = decompiler.decompileClassRaw(cls); // 不含 simplify
 }
 ```
+
+核心库本身兼容浏览器、不做磁盘 IO:浏览器打包器(Vite / webpack / esbuild,浏览器目标)会把 `"xpanda-core"` 自动解析到无 Node 依赖的子集(经包的 `"browser"` 导出条件指向 `src/browser.ts`,不含 worker 池)。读盘与落盘由 `xpanda-cli` 与 `xpanda-mcp` 包各自实现。
 
 ## MCP Server
 
@@ -370,14 +372,17 @@ packages/
       hap/          HAP 应用包(ZIP)适配
       res/          resources.index 解析
       PandaDecompiler.ts  对外总入口
-      index.ts      包导出
+      index.ts      Node 入口(转发 browser 子集 + parallel worker 池)
+      browser.ts    浏览器入口(同一套 API,无 Node 依赖;经 "browser" 导出条件解析)
     resources/isa.yaml      ArkCompiler 指令集描述(v24.0.0.0,兼容 v13.0.1.0)
     scripts/gen-opcodes.ts  isa.yaml → src/disasm/opcodes.ts
     test/                   集成测试、样本与快照
   xpanda-cli/
     src/cli.ts              命令行
+    src/io.ts               文件 IO:按类名落盘反编译结果
   xpanda-mcp/
     src/                    MCP Server(stdio,供 AI 客户端接入)
+    src/io.ts               文件 IO:读盘解析 .abc、按类名落盘
     scripts/test-mcp.ts     端到端测试
 docs/                       架构文档、MCP 文档
 ```

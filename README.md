@@ -229,7 +229,7 @@ if (v11 !== 64) {
 ## Requirements
 
 - Node.js ≥ 18
-- Development dependencies: `typescript`, `tsx` (core additionally uses `@babel/*`; the opcode generator uses `js-yaml`)
+- Development dependencies: `typescript`, `tsx` (core additionally uses `@babel/*` and `fflate` — a pure-JS, browser-compatible inflate; the opcode generator uses `js-yaml`)
 
 ## Monorepo layout
 
@@ -309,6 +309,8 @@ for (const cls of pandaFile.getAllClasses()) {
 }
 ```
 
+The core is browser-compatible and does no disk IO: a browser bundle (Vite / webpack / esbuild, browser target) automatically resolves `"xpanda-core"` to the Node-free subset (`src/browser.ts`, no worker pool) via the package's `"browser"` export condition. Reading files from disk and writing output files live in the `xpanda-cli` and `xpanda-mcp` packages.
+
 ## MCP Server
 
 xpanda ships a built-in [Model Context Protocol](https://modelcontextprotocol.io) server, so AI clients such as Claude Code, OpenCode and Cursor can drive the decompiler — letting an agent analyze `.abc` and `.hap` files (HarmonyOS app packages containing bytecode and resources) on demand: load → browse classes → inspect metadata → decompile a single class → cross-check disassembly → search strings → query resources.
@@ -373,14 +375,17 @@ packages/
       hap/          HAP app package (ZIP) adapter
       res/          resources.index parsing
       PandaDecompiler.ts  public entry point
-      index.ts      package exports
+      index.ts      Node entry (re-exports browser + parallel worker pool)
+      browser.ts    browser entry (same API, no Node deps; resolved via the "browser" export condition)
     resources/isa.yaml    ArkCompiler instruction set description (v24.0.0.0, compatible with v13.0.1.0)
     scripts/gen-opcodes.ts  isa.yaml → src/disasm/opcodes.ts
     test/                 integration tests, sample files and snapshots
   xpanda-cli/
     src/cli.ts            command line interface
+    src/io.ts             file IO: write decompiled classes to disk
   xpanda-mcp/
     src/                  MCP server (stdio, for AI client integration)
+    src/io.ts             file IO: read .abc from disk, write decompiled classes
     scripts/test-mcp.ts   end-to-end test
 docs/                   architecture documentation, MCP documentation
 ```

@@ -81,7 +81,7 @@ JavaScript 源码(落盘 / stdout / 编程 API)
 
 ## 4. 容器与资源层 —— `src/hap/` + `src/res/`
 
-- `hap/ZipFile.ts`:极简**只读** ZIP 读取器。从文件尾部定位 EOCD,遍历中央目录,拒绝加密条目,支持 **store** 与 **deflate**(经 `zlib.inflateRawSync`)。不支持 ZIP64,无按条目缓存。`ZipFile.isZip(data)` 嗅探 PK 签名 —— CLI 对任意 ZIP 容器都走 HAP 流程。
+- `hap/ZipFile.ts`:极简**只读** ZIP 读取器。从文件尾部定位 EOCD,遍历中央目录,拒绝加密条目,支持 **store** 与 **deflate**(经纯 JS 的 `fflate` `inflateSync` 解压,Node 与浏览器通用)。不支持 ZIP64,无按条目缓存。`ZipFile.isZip(data)` 嗅探 PK 签名 —— CLI 对任意 ZIP 容器都走 HAP 流程。
 - `hap/HapFile.ts`:包装 `ZipFile`;暴露 `getAbcEntries()`(归档顺序的非目录 `*.abc` 条目)、`getModuleJson()`(解析失败返回 `null`)、`getResourcesIndexData()`(原始字节)与 `getResourceEntries()`(`resources/` 下的条目)。
 - `res/ResourceIndexFile.ts`:解析**两种格式**的 `resources.index`。头部以 128 字节版本字符串开始;`"Restool …"` 选择旧版布局,其余(如 `"RestoolV2 …"`)选择新版三段式布局(KEYS / IDSS / DATA + 字符串池)。产出 `items: ResourceItem[]` —— 每个(资源 × 限定词配置)一项。
 - `res/ResourceItem.ts`:名称、数字 ID、资源类型、限定词 key 参数、原始数据、`limitKey`(限定词目录名,如 `base` / `en_US` / `dark`)、`value`(字符串,PLURAL/STRARRAY 为 `string[]`)与 `typeName`。
@@ -271,7 +271,6 @@ normalizeDeclarations
 | `decompileClassRaw(cls)` | 单类,直接生成(不 simplify)。 |
 | `decompileClassAst(cls)` | 单类 AST JSON(让 simplify 能在 worker 执行的拆分点);无 `func_main_0` 或反汇编失败时返回 `""`。 |
 | `simplifyInProcess(astJson)` | `JSON.parse` → `SimplifyExport.simplify` → `NodeFactory.generate`;解析失败返回 `""`。 |
-| `saveFile(outDir, cls, content)`(静态) | demangle `Lpkg/Name;` → `pkg/Name.js`(中间段成为目录)。 |
 
 `decompileRaw` 按如下顺序组装一个类:import(来自模块元数据)→ 头注释 → 导出变量 `let` 声明 → `func_main_0` 方法体(StructureAnalysis,失败降级 SimpleAnalysis)→ export。
 
@@ -289,6 +288,8 @@ npx tsx packages/xpanda-cli/src/cli.ts unpack-index <resources.index> [-o outDir
 ### 11.3 编程 API —— `src/index.ts`
 
 导出 `PandaFile`、`PandaClass`、`PandaMethod`、`PandaDecompiler`、`decompileClassesParallel` / `resolveJobs`、`PandaLexical`、`PandaDisAssembler`、`PandaIRCFG` / `PandaIRBasicBlock`、opcode 表、`NodeFactory` / `NodeUtils`、`SimplifyExport`、`ResourceIndexFile` / `ResourceItem` / `ResourceUtils`、`HapFile` / `ZipFile` 以及异常类型。
+
+浏览器 bundle 对同一个 `"xpanda-core"` 导入会经包的 `"browser"` 导出条件解析到 `src/browser.ts` —— 同一套 API,但不含并行 worker 池。核心本身(解析 / 反汇编 / 反编译 / 优化器 / hap+zip / res)不依赖 Node、不做磁盘 IO:ZIP deflate 使用纯 JS 的 `fflate`,文本解码使用标准 `TextDecoder`,读写文件的 IO 由 `xpanda-cli` 与 `xpanda-mcp` 各自实现。
 
 约 5.5 MB 样本实测:解析 ≈ 36 ms,串行 simplify ≈ 81 s,`-j 4` ≈ 49 s(≈ 1.66×)。瓶颈是单类 simplify 的内存/GC 带宽,而非解析或反汇编。
 

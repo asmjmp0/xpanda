@@ -190,27 +190,4 @@ export class PandaDecompiler {
         }
         return results;
     }
-
-    /** 按类名落盘(移植自 Java PandaDecompiler.saveFile) */
-    static saveFile(outDir: string, pandaClass: PandaClass, content: string): void {
-        const fs = require("fs");
-        const path = require("path");
-        try {
-            const clsPath = pandaClass.name.content;
-            if (clsPath.length === 0) return;
-            const parts = clsPath.substring(1, clsPath.length - 1).split("/");
-            let outFile: string;
-            if (parts.length === 1) {
-                outFile = path.join(outDir, parts[0] + ".js");
-            } else {
-                const name = parts[parts.length - 1];
-                const dir = path.join(outDir, ...parts.slice(0, -1));
-                fs.mkdirSync(dir, { recursive: true });
-                outFile = path.join(dir, name + ".js");
-            }
-            fs.writeFileSync(outFile, content);
-        } catch (e) {
-            console.error(e);
-        }
-    }
 }

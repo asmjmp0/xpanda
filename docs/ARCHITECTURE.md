@@ -81,7 +81,7 @@ All parse products are cached in `PandaFile.offsets` (a `Map<number, unknown>`) 
 
 ## 4. Container & Resource Layer — `src/hap/` + `src/res/`
 
-- `hap/ZipFile.ts`: minimal **read-only** ZIP reader. Locates the EOCD from the tail, walks the central directory, rejects encrypted entries, supports **store** and **deflate** (via `zlib.inflateRawSync`). No ZIP64, no per-entry cache. `ZipFile.isZip(data)` sniffs the PK signatures — the CLI routes any ZIP container to the HAP flow.
+- `hap/ZipFile.ts`: minimal **read-only** ZIP reader. Locates the EOCD from the tail, walks the central directory, rejects encrypted entries, supports **store** and **deflate** (via the pure-JS `fflate` `inflateSync`, so the reader runs in Node and browsers alike). No ZIP64, no per-entry cache. `ZipFile.isZip(data)` sniffs the PK signatures — the CLI routes any ZIP container to the HAP flow.
 - `hap/HapFile.ts`: wraps a `ZipFile`; exposes `getAbcEntries()` (non-directory `*.abc` entries in archive order), `getModuleJson()` (parsed or `null`), `getResourcesIndexData()` (raw bytes), and `getResourceEntries()` (entries under `resources/`).
 - `res/ResourceIndexFile.ts`: parses `resources.index` in **both** formats. The header starts with a 128-byte version string; `"Restool …"` selects the legacy layout, anything else (e.g. `"RestoolV2 …"`) the new three-segment layout (KEYS / IDSS / DATA + string pool). Produces `items: ResourceItem[]` — one item per (resource × qualifier config).
 - `res/ResourceItem.ts`: name, numeric id, resource type, qualifier key params, raw data, `limitKey` (qualifier directory name such as `base` / `en_US` / `dark`), `value` (string, or `string[]` for plural/string-array), and `typeName`.
@@ -271,7 +271,6 @@ Why the tail is ordered this way:
 | `decompileClassRaw(cls)` | One class, AST generated directly (no simplify). |
 | `decompileClassAst(cls)` | One class as AST JSON (the split point that lets simplify run in a worker); `""` when there is no `func_main_0` or disassembly failed. |
 | `simplifyInProcess(astJson)` | `JSON.parse` → `SimplifyExport.simplify` → `NodeFactory.generate`; `""` on parse failure. |
-| `saveFile(outDir, cls, content)` (static) | Demangles `Lpkg/Name;` → `pkg/Name.js` (intermediate segments become directories). |
 
 `decompileRaw` assembles a class as: imports (from module metadata) → header comment → export-name `let` declarations → `func_main_0` body (StructureAnalysis, falling back to SimpleAnalysis) → exports.
 
@@ -289,6 +288,8 @@ npx tsx packages/xpanda-cli/src/cli.ts unpack-index <resources.index> [-o outDir
 ### 11.3 Library API — `src/index.ts`
 
 Exports `PandaFile`, `PandaClass`, `PandaMethod`, `PandaDecompiler`, `decompileClassesParallel` / `resolveJobs`, `PandaLexical`, `PandaDisAssembler`, `PandaIRCFG` / `PandaIRBasicBlock`, the opcode tables, `NodeFactory` / `NodeUtils`, `SimplifyExport`, `ResourceIndexFile` / `ResourceItem` / `ResourceUtils`, `HapFile` / `ZipFile`, and the exception types.
+
+Browser bundles resolve the same `"xpanda-core"` import to `src/browser.ts` via the package's `"browser"` export condition — the same API minus the parallel worker pool. The core itself (parser / disassembler / decompiler / optimizer / hap+zip / res) is Node-free and does no disk IO: ZIP deflate uses pure-JS `fflate`, text decoding uses the standard `TextDecoder`, and file IO (reading `.abc` from disk, writing output) lives in the `xpanda-cli` and `xpanda-mcp` packages.
 
 Measured on a ~5.5 MB sample: parsing ≈ 36 ms, serial simplify ≈ 81 s, `-j 4` ≈ 49 s (≈ 1.66×). The bottleneck is per-class simplify memory/GC bandwidth, not parsing or disassembly.
 
