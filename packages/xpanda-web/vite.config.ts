@@ -8,6 +8,8 @@ import react from "@vitejs/plugin-react";
  * @Author: jmp0
  */
 export default defineConfig({
+    // 部署在 https://tencent.jmp0.top/xpanda/ 子路径下
+    base: "/xpanda/",
     plugins: [react()],
     // simplify worker 使用 ES module:与主 bundle 相同的模块语义,
     // 避免 IIFE worker 在打包 @babel/* 的 CJS 互操作时出问题
