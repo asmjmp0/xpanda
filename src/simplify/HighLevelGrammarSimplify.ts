@@ -620,21 +620,32 @@ export class HighLevelGrammarSimplify implements ISimplify {
         if (!isIdentifierNode(fnAssign.right.property) || fnAssign.right.property.name !== "next") return;
         if (!isIdentifierNode(fnAssign.right.object)) return;
         const nextObject = fnAssign.right.object.name;
-        // 再前一条:`G = H`,H 是标识符且与 F/G 不同名。
+        // 再前一条有两种形态:
+        //   1) `G = H`,H 是标识符;再前一条是 `H = X[Symbol.iterator]()`;
+        //   2) 别名已被累加器折叠:直接 `G = X[Symbol.iterator]()`(G 就是迭代器本体)。
         const prevAlias = prevFn.getPrevSibling();
         if (!prevAlias.isExpressionStatement() || !isAssignmentExpressionNode(prevAlias.node.expression)) return;
         const aliasAssign = prevAlias.node.expression as TYPE.AssignmentExpression;
         if (aliasAssign.operator !== "=" || !isIdentifierNode(aliasAssign.left) || aliasAssign.left.name !== iterAlias) return;
-        if (!isIdentifierNode(aliasAssign.right)) return;
-        const iterName = aliasAssign.right.name;
-        if (iterName === iterAlias || iterName === fnTemp || iterName === vvName) return;
-        if (nextObject !== iterAlias && nextObject !== iterName) return;
-        // 再前一条:`H = X[Symbol.iterator]()`。
-        const prevInit = prevAlias.getPrevSibling();
-        if (!prevInit.isExpressionStatement() || !isAssignmentExpressionNode(prevInit.node.expression)) return;
-        const initAssign = prevInit.node.expression as TYPE.AssignmentExpression;
-        if (initAssign.operator !== "=" || !isIdentifierNode(initAssign.left) || initAssign.left.name !== iterName) return;
-        if (!this.iterableOfIteratorInit(initAssign.right as TYPE.Expression)) return;
+        let iterName: string;
+        let aliasStatement: NodePath | null = prevAlias;
+        if (isIdentifierNode(aliasAssign.right)) {
+            iterName = aliasAssign.right.name;
+            if (iterName === iterAlias || iterName === fnTemp || iterName === vvName) return;
+            if (nextObject !== iterAlias && nextObject !== iterName) return;
+            // 再前一条:`H = X[Symbol.iterator]()`。
+            const init = prevAlias.getPrevSibling();
+            if (!init.isExpressionStatement() || !isAssignmentExpressionNode(init.node.expression)) return;
+            const initAssign = init.node.expression as TYPE.AssignmentExpression;
+            if (initAssign.operator !== "=" || !isIdentifierNode(initAssign.left) || initAssign.left.name !== iterName) return;
+            if (!this.iterableOfIteratorInit(initAssign.right as TYPE.Expression)) return;
+        } else {
+            // 折叠形态:G 直接由 `X[Symbol.iterator]()` 初始化,没有单独的别名语句可删。
+            if (nextObject !== iterAlias) return;
+            if (!this.iterableOfIteratorInit(aliasAssign.right as TYPE.Expression)) return;
+            iterName = iterAlias;
+            aliasStatement = null;
+        }
         // F / G 除这里的定义与调用外不能再有其它引用,否则删除会破坏它们。
         const fnBinding = value.scope.getBinding(fnTemp);
         const aliasBinding = value.scope.getBinding(iterAlias);
@@ -667,7 +678,7 @@ export class HighLevelGrammarSimplify implements ISimplify {
             )
         );
         prevFn.remove();
-        prevAlias.remove();
+        if (aliasStatement) aliasStatement.remove();
     }
 
     private checkAndTransformToForOfStatement(value:NodePath<TYPE.WhileStatement>){
@@ -699,15 +710,31 @@ export class HighLevelGrammarSimplify implements ISimplify {
         // `it = ...` 覆盖时才安全(编译器会复用同一个临时迭代器连续写多个 while)。
         const nextCall = nextAssign.right as TYPE.CallExpression;
         const iterObjectNode = (nextCall.callee as TYPE.MemberExpression).object;
+        // 绑定里的 referencePaths / constantViolations 可能指向早先被替换掉的表达式
+        // (如 `v20.call(v21)` → `v21.next()`),这些节点的 parentPath 链是陈旧的,
+        // findParent 会误判成“仍在循环体内”。按当前 AST 的实际节点集合判断:
+        // 已经不在函数子树里的读写不会再执行,直接跳过。
+        const functionRoot = value.getFunctionParent() ?? value;
+        const liveNodes = new Set<TYPE.Node>();
+        walkNode(functionRoot.node, (node) => {
+            liveNodes.add(node);
+            return true;
+        });
+        const loopNodes = new Set<TYPE.Node>();
+        walkNode(value.node, (node) => {
+            loopNodes.add(node);
+            return true;
+        });
         for (const ref of iterBinding.referencePaths) {
             if (!ref.node || ref.node === iterObjectNode) continue;
-            if (ref.findParent((parent) => parent.node === value.node)) return false;
+            if (!liveNodes.has(ref.node)) continue;
+            if (loopNodes.has(ref.node)) return false;
             if (!this.hasNewerValueBefore(ref, value, init.left.name)) return false;
         }
         // 循环体内改写迭代器会改变下一次 next() 的对象,for-of 无法保留这种语义。
         for (const violation of iterBinding.constantViolations) {
-            if (!violation.node) continue;
-            if (violation.findParent((parent) => parent.node === value.node)) return false;
+            if (!violation.node || !liveNodes.has(violation.node)) continue;
+            if (loopNodes.has(violation.node)) return false;
             if (violation.getFunctionParent() !== value.getFunctionParent()) return false;
         }
         const vv = nextAssign.left as TYPE.Identifier;
@@ -717,8 +744,8 @@ export class HighLevelGrammarSimplify implements ISimplify {
         const valueBinding = value.scope.getBinding(vv.name);
         if (valueBinding) {
             for (const ref of valueBinding.referencePaths) {
-                if (!ref.node) continue;
-                if (ref.findParent((parent) => parent.node === value.node)) continue;
+                if (!ref.node || !liveNodes.has(ref.node)) continue;
+                if (loopNodes.has(ref.node)) continue;
                 if (!this.hasNewerValueBefore(ref, value, vv.name)) return false;
             }
         }

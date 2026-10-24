@@ -151,10 +151,9 @@ ContentFilterRuntimeStore = class panda_jmp0_reserved_anonymous_0 {
   }
   async readComputedStats(p0) {
     let v0, v3, v7, v8, v10;
-    v0 = await p0.querySql("SELECT COALESCE(SUM(view_count), 0) AS kept_count FROM content_filter_views");
-    v3 = v0;
+    v3 = await p0.querySql("SELECT COALESCE(SUM(view_count), 0) AS kept_count FROM content_filter_views");
     v7 = 0;
-    v8 = v0.goToFirstRow() ? v0.getLong(v0.getColumnIndex("kept_count")) : 0;
+    v8 = v3.goToFirstRow() ? v3.getLong(v3.getColumnIndex("kept_count")) : 0;
     v0 = await this.history.queryRecent();
     v8 += v0.length;
     v10 = {

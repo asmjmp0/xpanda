@@ -184,6 +184,85 @@ function buildBatchDelBody(p0, p1) {
 }
 
 /**
+ * 回归:成员调用链 + Hub 别名(累加器旧值在别名之后仍被读取)。
+ *
+ *   acc = p0 || ""; acc = acc.trim(); v5 = acc;
+ *   if (acc.length === 0) {...}  v6 = exec(acc);  acc = G;
+ *
+ * `acc = acc.trim()` 是成员调用自读取(不是二元运算),链要先折成 `acc = (p0 || "").trim()`;
+ * `v5 = acc` 之后到下一次写 acc 之前的读取都属于旧值,要整体重定向到 v5,
+ * 让 `acc = E` 与 `v5 = acc` 合并成 `v5 = (p0 || "").trim()`。
+ */
+function verifyAccumulatorMemberCallChain(): void {
+    const program = NodeFactory.parse(`
+function buildChain(p0) {
+  let v5, v6, acc;
+  acc = p0 || "";
+  acc = acc.trim();
+  v5 = acc;
+  if (acc.length === 0) {
+    return [];
+  }
+  v6 = exec(acc);
+  acc = v6 ? v5 : "x";
+  return [v5, acc];
+}
+`);
+    SimplifyExport.simplify(program);
+    const code = NodeFactory.generate(program);
+    if (!code.includes('v5 = (p0 || "").trim();')) {
+        throw new Error(`simplify: 成员调用累加器链未折叠\n${code}`);
+    }
+    if (!code.includes("if (v5.length === 0)") || !code.includes("exec(v5)")) {
+        throw new Error(`simplify: Hub 之后的读取未重定向到别名\n${code}`);
+    }
+    if (!code.includes('? v5 : "x"') || code.includes("acc = acc.trim()") || code.includes("exec(acc)")) {
+        throw new Error(`simplify: 第二次写入/旧值残留不正确\n${code}`);
+    }
+}
+
+/**
+ * 回归:`then` 分支一定终止时展开 else(守卫子句)。
+ *   if (!p0) { return null; } else { BODY }  ->  if (!p0) { return null; } BODY
+ * 两分支都是单条 return 的 if/else 仍由三目合成处理(verifyConditionMaterializationIntoTest)。
+ */
+function verifyElseAfterExitFlatten(): void {
+    const program = NodeFactory.parse(`
+function pick(p0, p1) {
+  let v0;
+  if (!p0) {
+    return null;
+  } else {
+    v0 = p1 + 1;
+    return v0;
+  }
+}
+function early(p0) {
+  let v0;
+  if (p0) {
+    throw new Error("bad");
+  } else {
+    v0 = p0.length;
+  }
+  return v0;
+}
+`);
+    SimplifyExport.simplify(program);
+    const code = NodeFactory.generate(program);
+    if (code.includes("else")) {
+        throw new Error(`simplify: then 分支终止后 else 未展开\n${code}`);
+    }
+    // 两分支都能合成三目的仍然合成三目(不因展开而拆散源码里的条件表达式)
+    if (!code.includes("return p0 ? p1 + 1 : null;")) {
+        throw new Error(`simplify: 三目合成被 else 展开破坏\n${code}`);
+    }
+    // 另一分支没有单条 return 可合成时,展开成守卫子句
+    if (!/if \(p0\) \{\s*throw new Error\("bad"\);\s*\}\s*return p0\.length;/.test(code)) {
+        throw new Error(`simplify: 守卫子句未保留\n${code}`);
+    }
+}
+
+/**
  * 回归:条件物化 `X = !E; if (X/!X/复合条件)` 折回 test。
  *   acc = !isAllowed(p0); if (acc) throw ... else ...
  *   acc = !p0.isEnd; acc = !acc; if (!acc && ...)
@@ -719,17 +798,22 @@ function verifyZhihuContentDetailPages(): void {
     const moveStart = code.indexOf("async moveAnswer(p0) {");
     if (moveStart < 0) throw new Error(`ContentDetailPages: 未找到 moveAnswer\n${code}`);
     const moveBody = code.slice(moveStart, code.indexOf("\n  }\n", moveStart));
-    if (!moveBody.includes("try {\n        v6 = this.answerNavigator === null")) {
+    // `if (navigatorBusy) return; else { 整个方法体 }` 已展开成守卫子句:
+    // 守卫之后的代码不再整体多缩进一层。
+    if (!/if \(this\.navigatorBusy\) \{\s*return undefined;\s*\}\s*this\.navigatorBusy = true;/.test(moveBody)) {
+        throw new Error(`moveAnswer: 早返回守卫的 else 未展开\n${moveBody}`);
+    }
+    if (!/try \{\s*v6 = this\.answerNavigator === null/.test(moveBody)) {
         throw new Error(`moveAnswer: try 未包住可选链求值\n${moveBody}`);
     }
-    if (!moveBody.includes("} finally {\n        this.navigatorBusy = false;\n      }")) {
+    if (!/\} finally \{\s*this\.navigatorBusy = false;\s*\}/.test(moveBody)) {
         throw new Error(`moveAnswer: finally 未还原 navigatorBusy 复位\n${moveBody}`);
     }
 
     const refreshStart = code.indexOf("async refreshQuestion() {");
     if (refreshStart < 0) throw new Error(`ContentDetailPages: 未找到 refreshQuestion\n${code}`);
     const refreshBody = code.slice(refreshStart, code.indexOf("\n  }\n", refreshStart));
-    if (!refreshBody.includes("} finally {\n      this.refreshingAnswers = false;\n    }")) {
+    if (!/\} finally \{\s*this\.refreshingAnswers = false;\s*\}/.test(refreshBody)) {
         throw new Error(`refreshQuestion: finally 未还原 refreshingAnswers 复位\n${refreshBody}`);
     }
 
@@ -1679,6 +1763,63 @@ function verifyYourpipeMusicSearchService(): void {
 }
 
 /**
+ * 回归:MediaThumb(@Component 结构体)的访问器与原型/静态方法还原。
+ *
+ * 该类记录里 es2abc 用 `definegettersetterbyvalue v7(prototype), v8(名), v10(fn), v9(undefined)`
+ * 定义访问器(getter/setter 各一条,空的一半是 undefined),且 v7(类)与 v7(prototype)
+ * 复用同一寄存器,复制传播会把 `v7.__defineGetter__(...)` 内联成
+ * `acc.prototype.__defineGetter__(...)`(callee.object 是成员表达式),
+ * 旧版 ClassSyntaxSimplify 只接受裸标识符对象,访问器与
+ * `acc.prototype.M = fn` / `acc.M = fn`(静态)全部留在类外。
+ */
+function verifyYourpipeMediaThumb(): void {
+    const abcPath = path.join(__dirname, "resources", "yourpipe0.7.0.abc");
+    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
+    const clazz = pandaFile.getAllClasses().find((c) =>
+        c.name.content.includes("components/MediaThumb"));
+    if (!clazz) throw new Error("yourpipe: 未找到 MediaThumb");
+
+    const code = new PandaDecompiler().decompileClass(clazz);
+    NodeFactory.parse(code);
+    // 访问器定义(含 undefined 半边)必须全部并入类,不允许残留
+    if (code.includes("__defineGetter__") || code.includes("__defineSetter__")) {
+        throw new Error(`MediaThumb: 访问器未并入类\n${code}`);
+    }
+    // get/set 成对还原成类访问器
+    for (const prop of ["imageUrl", "displayUrl", "fallbackIndex"]) {
+        if (!code.includes(`get ${prop}() {`) || !code.includes(`set ${prop}(p0) {`)) {
+            throw new Error(`MediaThumb: 缺少 ${prop} 访问器\n${code}`);
+        }
+    }
+    // 原型方法并入类、静态方法还原 static
+    for (const method of ["aboutToAppear() {", "onImageError() {", "initialRender() {", "rerender() {"]) {
+        if (!code.includes(method)) {
+            throw new Error(`MediaThumb: 原型方法未并入类(缺 ${method})\n${code}`);
+        }
+    }
+    if (!code.includes("static buildFallbackChain(p0) {") || !code.includes("static firstChoiceUrl(p0) {")) {
+        throw new Error(`MediaThumb: 静态方法未还原\n${code}`);
+    }
+    // buildFallbackChain 的累加器链/别名/Hub 读取都要还原成源码形态
+    if (!code.includes('v5 = (p0 || "").trim();')) {
+        throw new Error(`MediaThumb: 取反/成员调用累加器链未折叠\n${code}`);
+    }
+    if (code.includes("v5 = acc;") || code.includes("acc = acc.trim();") || code.includes("exec(acc)")) {
+        throw new Error(`MediaThumb: 累加器 Hub 或旧值读取残留\n${code}`);
+    }
+    // then 分支只有 return 时 else 展开成守卫子句
+    if (!/if \(v5\.length === 0\) \{\s*return \[\];\s*\}/.test(code)) {
+        throw new Error(`MediaThumb: 守卫子句未还原\n${code}`);
+    }
+
+    const expectedPath = path.join(__dirname, "expected", "yourpipe-media-thumb.js");
+    const expected = fs.readFileSync(expectedPath, "utf-8");
+    if (code !== expected) {
+        throw new Error(`MediaThumb: 输出与快照不一致\n${firstDifference(expected, code)}`);
+    }
+}
+
+/**
  * 回归:鸿蒙资源对象($r)的模板缓冲里,id 字段是 LiteralTag.ACCESSOR 编译器
  * 标记(toString() 为 "accessor:0"),由紧随其后的 __defineGetter__("id", ...)
  * 配合 __getResourceId__ 在运行时解析。createObject/createArray 的兜底分支曾把
@@ -1801,7 +1942,8 @@ function verifyYourpipeHttpDownloaderRetryTryCatch(): void {
         throw new Error(`HttpDownloader.postBinaryWithRetry: 重试上限判断丢失\n${retry}`);
     }
 
-    // 成功路径必须是 error 分支的 else,而不是被误当成 try/catch 的 catch 体
+    // 成功路径必须是错误码分支的兄弟语句(分支以 continue/throw 结束后 else 已展开),
+    // 不能被误当成 try/catch 的 catch 体:同一缩进层级 + 位于错误分支之后。
     const errorBranch = request.indexOf("if (v13.responseCode && v13.responseCode >= 400) {");
     if (errorBranch < 0) {
         throw new Error(`HttpDownloader.request: 错误码分支未还原\n${request}`);
@@ -1810,8 +1952,15 @@ function verifyYourpipeHttpDownloaderRetryTryCatch(): void {
     if (successAt < errorBranch) {
         throw new Error(`HttpDownloader.request: 成功路径位置错误\n${request}`);
     }
-    if (!/} else \{\s+local_\S+ \/\*logger\*\/\.debug\("Success: /.test(request.slice(errorBranch))) {
-        throw new Error(`HttpDownloader.request: 成功路径未落在 else 分支\n${request.slice(errorBranch)}`);
+    const indentOf = (text: string, index: number): string => {
+        const lineStart = text.lastIndexOf("\n", index) + 1;
+        return /^\s*/.exec(text.slice(lineStart))![0];
+    };
+    if (indentOf(request, successAt) !== indentOf(request, errorBranch)) {
+        throw new Error(`HttpDownloader.request: 成功路径被误放进 catch 分支\n${request.slice(errorBranch)}`);
+    }
+    if (!/local_\S+ \/\*logger\*\/\.debug\("Success: /.test(request.slice(successAt - 40))) {
+        throw new Error(`HttpDownloader.request: 成功路径未还原\n${request.slice(errorBranch)}`);
     }
 
     // ArkTS 13 的 finally handler(带 sta 保存异常、codeSize 非 0)要还原成 finally,
@@ -2106,6 +2255,14 @@ async function main(): Promise<void> {
     verifyAccumulatorChainFold();
     console.log("    ok");
 
+    console.log("[test] simplify accumulator member-call chain + hub alias");
+    verifyAccumulatorMemberCallChain();
+    console.log("    ok");
+
+    console.log("[test] simplify else-after-exit flatten");
+    verifyElseAfterExitFlatten();
+    console.log("    ok");
+
     console.log("[test] simplify condition materialization into test");
     verifyConditionMaterializationIntoTest();
     console.log("    ok");
@@ -2220,6 +2377,10 @@ async function main(): Promise<void> {
 
     console.log("[test] yourpipe MusicSearchService (yourpipe0.7.0.abc)");
     verifyYourpipeMusicSearchService();
+    console.log("    ok");
+
+    console.log("[test] yourpipe MediaThumb accessors (yourpipe0.7.0.abc)");
+    verifyYourpipeMediaThumb();
     console.log("    ok");
 
     console.log("[test] yourpipe AVPlayer resource object (yourpipe0.7.0.abc)");

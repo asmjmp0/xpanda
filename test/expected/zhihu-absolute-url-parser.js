@@ -32,8 +32,7 @@ parseAbsoluteUrl = function (p0) {
       v5 = "";
       v4 = v6;
     } else {
-      v5 += 1;
-      v5 = v4.slice(v5);
+      v5 = v4.slice(v5 + 1);
       v4 = v6;
     }
   }
@@ -56,47 +55,45 @@ parseAbsoluteUrl = function (p0) {
   }
   if (v2.length === v1) {
     return undefined;
-  } else {
-    v8 = v0[4] ?? "";
-    v1 = local_0_1(v8);
-    return v1 === undefined ? undefined : {
-      "protocol": "" + v0[1].toLowerCase() + ":",
-      "hostname": v2.toLowerCase(),
-      "port": v6,
-      "username": v4,
-      "password": v5,
-      "hasUserInfo": v7,
-      "pathname": v0[3],
-      "params": v1
-    };
   }
+  v8 = v0[4] ?? "";
+  v1 = local_0_1(v8);
+  return v1 === undefined ? undefined : {
+    "protocol": "" + v0[1].toLowerCase() + ":",
+    "hostname": v2.toLowerCase(),
+    "port": v6,
+    "username": v4,
+    "password": v5,
+    "hasUserInfo": v7,
+    "pathname": v0[3],
+    "params": v1
+  };
 };
 local_0_1 = function (p0) {
   let v1, v3, v4, v5, v6, v7;
   v1 = new Map();
   if (p0.length === 0) {
     return v1;
-  } else {
-    v3 = p0.split("&");
-    for (v4 = 0; v4 < v3.length; v4 += 1) {
-      v6 = v3[v4].indexOf("=");
-      v7 = v6 >= 0 ? v3[v4].slice(0, v6) : v3[v4];
-      if (v6 < 0) {
-        v5 = "";
-      } else {
-        v6 += 1;
-        v5 = v3[v4].slice(v6);
-      }
-      v6 = local_0_0(v7);
-      v5 = local_0_0(v5);
-      if (v6 === undefined || v5 === undefined) {
-        return undefined;
-      }
-      if (!v1.has(v6)) {
-        v1.set(v6, v5);
-      }
-    }
-    return v1;
   }
+  v3 = p0.split("&");
+  for (v4 = 0; v4 < v3.length; v4 += 1) {
+    v6 = v3[v4].indexOf("=");
+    v7 = v6 >= 0 ? v3[v4].slice(0, v6) : v3[v4];
+    if (v6 < 0) {
+      v5 = "";
+    } else {
+      v6 += 1;
+      v5 = v3[v4].slice(v6);
+    }
+    v6 = local_0_0(v7);
+    v5 = local_0_0(v5);
+    if (v6 === undefined || v5 === undefined) {
+      return undefined;
+    }
+    if (!v1.has(v6)) {
+      v1.set(v6, v5);
+    }
+  }
+  return v1;
 };
 export { parseAbsoluteUrl };

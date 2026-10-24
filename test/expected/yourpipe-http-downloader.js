@@ -15,23 +15,22 @@ local_0_0 = function (p0) {
   let v4, v5, v6, v7, v8;
   if (!p0) {
     return "";
-  } else {
-    v6 = p0.toLowerCase();
-    v7 = v6.indexOf("://");
-    if (v7 >= 0) {
-      v6 = v6.substring(v7 + 3);
-    }
-    v4 = v6.length;
-    v8 = v6.indexOf("/");
-    if (v8 >= 0 && v8 < v6.length) {
-      v4 = v8;
-    }
-    v5 = v6.indexOf(":");
-    if (v5 >= 0 && v5 < v4) {
-      v4 = v5;
-    }
-    return v6.substring(0, v4);
   }
+  v6 = p0.toLowerCase();
+  v7 = v6.indexOf("://");
+  if (v7 >= 0) {
+    v6 = v6.substring(v7 + 3);
+  }
+  v4 = v6.length;
+  v8 = v6.indexOf("/");
+  if (v8 >= 0 && v8 < v6.length) {
+    v4 = v8;
+  }
+  v5 = v6.indexOf(":");
+  if (v5 >= 0 && v5 < v4) {
+    v4 = v5;
+  }
+  return v6.substring(0, v4);
 };
 local_0_1 = function (p0) {
   let v4;
@@ -48,27 +47,25 @@ local_0_4 = class panda_jmp0_reserved_anonymous_0 {
     let local_1_0, local_1_1, local_1_2;
     if (local_0_1(p0.url)) {
       return Promise.resolve(true);
-    } else {
-      local_1_2 = p0.header;
-      if (!local_1_2 /*header*/) {
-        return Promise.resolve(true);
-      } else {
-        local_1_0 = [];
-        local_1_1 = {};
-        Object.keys(local_1_2 /*header*/).forEach(function (p0) {
-          if (local_0_2 /*REDIRECT_STRIP_HEADERS*/.indexOf(p0.toLowerCase()) >= 0) {
-            local_1_0 /*stripped*/.push(p0);
-          } else {
-            local_1_1 /*kept*/[p0] = local_1_2 /*header*/[p0];
-          }
-        });
-        if (local_1_0 /*stripped*/.length > 0) {
-          p0.header = local_1_1 /*kept*/;
-          local_0_3 /*logger*/.warn("Redirect to non-YouTube host=" + (local_0_0(p0.url) || "(invalid-url)") + " stripped=[" + local_1_0 /*stripped*/.join(",") + "]");
-        }
-        return Promise.resolve(true);
-      }
     }
+    local_1_2 = p0.header;
+    if (!local_1_2 /*header*/) {
+      return Promise.resolve(true);
+    }
+    local_1_0 = [];
+    local_1_1 = {};
+    Object.keys(local_1_2 /*header*/).forEach(function (p0) {
+      if (local_0_2 /*REDIRECT_STRIP_HEADERS*/.indexOf(p0.toLowerCase()) >= 0) {
+        local_1_0 /*stripped*/.push(p0);
+      } else {
+        local_1_1 /*kept*/[p0] = local_1_2 /*header*/[p0];
+      }
+    });
+    if (local_1_0 /*stripped*/.length > 0) {
+      p0.header = local_1_1 /*kept*/;
+      local_0_3 /*logger*/.warn("Redirect to non-YouTube host=" + (local_0_0(p0.url) || "(invalid-url)") + " stripped=[" + local_1_0 /*stripped*/.join(",") + "]");
+    }
+    return Promise.resolve(true);
   }
 };
 local_0_5 = class panda_jmp0_reserved_anonymous_1 {
@@ -111,74 +108,76 @@ try {
           "errorType": HttpErrorType.NETWORK_ERROR,
           "isRecoverable": true
         };
-      } else if (p0 >= 100 && p0 < 200) {
+      }
+      if (p0 >= 100 && p0 < 200) {
         return {
           "errorType": HttpErrorType.INFORMATIONAL,
           "isRecoverable": false
         };
-      } else if (p0 >= 400 && p0 < 500) {
-        if (p0 === 400) {
-          return {
-            "errorType": HttpErrorType.BAD_REQUEST,
-            "isRecoverable": false
-          };
-        } else if (p0 === 401 || p0 === 403) {
-          return {
-            "errorType": HttpErrorType.FORBIDDEN,
-            "isRecoverable": false
-          };
-        } else if (p0 === 404) {
-          return {
-            "errorType": HttpErrorType.NOT_FOUND,
-            "isRecoverable": false
-          };
-        } else if (p0 === 407) {
-          return {
-            "errorType": HttpErrorType.PROXY_AUTH_REQUIRED,
-            "isRecoverable": false
-          };
-        } else if (p0 === 408) {
-          return {
-            "errorType": HttpErrorType.TIMEOUT,
-            "isRecoverable": true
-          };
-        } else if (p0 === 416) {
-          return {
-            "errorType": HttpErrorType.RANGE_NOT_SATISFIABLE,
-            "isRecoverable": false
-          };
-        } else if (p0 === 429) {
-          return {
-            "errorType": HttpErrorType.TOO_MANY_REQUESTS,
-            "isRecoverable": true
-          };
-        } else {
-          return {
-            "errorType": HttpErrorType.CLIENT_ERROR,
-            "isRecoverable": false
-          };
-        }
-      } else if (p0 < 500 || p0 >= 600) {
+      }
+      if (p0 >= 400 && p0 < 500) if (p0 === 400) {
         return {
-          "errorType": HttpErrorType.UNKNOWN,
+          "errorType": HttpErrorType.BAD_REQUEST,
           "isRecoverable": false
         };
-      } else if (p0 === 500) {
+      } else if (p0 === 401 || p0 === 403) {
         return {
-          "errorType": HttpErrorType.SERVER_ERROR,
+          "errorType": HttpErrorType.FORBIDDEN,
+          "isRecoverable": false
+        };
+      } else if (p0 === 404) {
+        return {
+          "errorType": HttpErrorType.NOT_FOUND,
+          "isRecoverable": false
+        };
+      } else if (p0 === 407) {
+        return {
+          "errorType": HttpErrorType.PROXY_AUTH_REQUIRED,
+          "isRecoverable": false
+        };
+      } else if (p0 === 408) {
+        return {
+          "errorType": HttpErrorType.TIMEOUT,
           "isRecoverable": true
         };
-      } else if (p0 !== 502 && (acc = p0 !== 503, p0 !== 503) && p0 !== 504) {
+      } else if (p0 === 416) {
         return {
-          "errorType": HttpErrorType.SERVER_ERROR,
+          "errorType": HttpErrorType.RANGE_NOT_SATISFIABLE,
+          "isRecoverable": false
+        };
+      } else if (p0 === 429) {
+        return {
+          "errorType": HttpErrorType.TOO_MANY_REQUESTS,
           "isRecoverable": true
         };
       } else {
         return {
-          "errorType": HttpErrorType.SERVICE_UNAVAILABLE,
+          "errorType": HttpErrorType.CLIENT_ERROR,
+          "isRecoverable": false
+        };
+      }
+      if (p0 < 500 || p0 >= 600) {
+        return {
+          "errorType": HttpErrorType.UNKNOWN,
+          "isRecoverable": false
+        };
+      }
+      if (p0 === 500) {
+        return {
+          "errorType": HttpErrorType.SERVER_ERROR,
           "isRecoverable": true
         };
       }
+      if (p0 !== 502 && (acc = p0 !== 503, p0 !== 503) && p0 !== 504) {
+        return {
+          "errorType": HttpErrorType.SERVER_ERROR,
+          "isRecoverable": true
+        };
+      }
+      return {
+        "errorType": HttpErrorType.SERVICE_UNAVAILABLE,
+        "isRecoverable": true
+      };
     }
     getFriendlyMessage() {
       let v6;
@@ -199,28 +198,27 @@ try {
       return "" + (v6[this.errorType] || "An error occurred") + " [" + this.method + " " + this.url + "] (" + this.responseCode + ")";
     }
     static classifyHostUnreachable(p0, p1, p2) {
-      let v6, acc;
+      let v14;
       if (p0) {
         return false;
-      } else if (p1 === 2300006 || p1 === 2300007) {
-        return true;
-      } else if (p1 === 2300005) {
-        return false;
-      } else {
-        acc = p2 || "";
-        acc = acc.toLowerCase();
-        v6 = acc;
-        return acc.includes.call(acc, "couldn't resolve host")
-          || v6.includes("could not resolve host")
-          || v6.includes("unknownhost")
-          || v6.includes("no route to host")
-          || v6.includes("couldn't connect to server")
-          || v6.includes("could not connect to server");
       }
+      if (p1 === 2300006 || p1 === 2300007) {
+        return true;
+      }
+      if (p1 === 2300005) {
+        return false;
+      }
+      v14 = (p2 || "").toLowerCase();
+      return v14.includes.call(v14, "couldn't resolve host")
+        || v14.includes("could not resolve host")
+        || v14.includes("unknownhost")
+        || v14.includes("no route to host")
+        || v14.includes("couldn't connect to server")
+        || v14.includes("could not connect to server");
     }
   };
   local_1_0 = acc;
-  HttpError = acc;
+  HttpError = local_1_0;
   HttpAbortToken = class panda_jmp0_reserved_anonymous_3 {
     constructor() {
       this.aborted = false;
@@ -260,10 +258,10 @@ try {
   };
   let local_1_2_0;
   try {
-    acc = class panda_jmp0_reserved_anonymous_5 {
+    local_1_2_0 = class panda_jmp0_reserved_anonymous_5 {
       constructor() {}
       async request(p0, p1, p2, p3, p4, p5, p6) {
-        let v8, v9, v10, v11, v12, v13, v14, v16, v17, v18, v19, v21, acc;
+        let v8, v9, v10, v11, v12, v13, v14, v16, v17, v19, v21, acc;
         let local_2_0;
         local_2_0 = p1;
         v8 = p5;
@@ -345,18 +343,16 @@ try {
                       } catch (catchAcc) {}
                     }
                     continue;
-                  } else {
-                    throw v19;
                   }
-                } else {
-                  local_0_3 /*logger*/.debug("Success: " + p0 + " " + local_2_0 + "");
-                  if (local_3_0 /*request*/) {
-                    try {
-                      local_3_0 /*request*/.destroy();
-                    } catch (catchAcc) {}
-                  }
-                  return v13;
+                  throw v19;
                 }
+                local_0_3 /*logger*/.debug("Success: " + p0 + " " + local_2_0 + "");
+                if (local_3_0 /*request*/) {
+                  try {
+                    local_3_0 /*request*/.destroy();
+                  } catch (catchAcc) {}
+                }
+                return v13;
               } finally {
                 if (v14) {
                   try {
@@ -367,17 +363,14 @@ try {
             } catch (catchAcc) {
               if (catchAcc instanceof HttpError) {
                 throw catchAcc;
-              } else {
-                v18 = local_1_2_0 /*HttpDownloader*/.fromNetworkError(catchAcc, local_2_0, p0);
-                v11 = v18;
-                if (v18.isRecoverable && v10 < v12) {
-                  local_0_3 /*logger*/.debug("Retrying network error in " + local_1_2_0 /*HttpDownloader*/.RETRY_DELAY + "ms...");
-                  await this.sleep(local_1_2_0 /*HttpDownloader*/.RETRY_DELAY * v10);
-                  continue;
-                } else {
-                  throw v18;
-                }
               }
+              v11 = local_1_2_0 /*HttpDownloader*/.fromNetworkError(catchAcc, local_2_0, p0);
+              if (v11.isRecoverable && v10 < v12) {
+                local_0_3 /*logger*/.debug("Retrying network error in " + local_1_2_0 /*HttpDownloader*/.RETRY_DELAY + "ms...");
+                await this.sleep(local_1_2_0 /*HttpDownloader*/.RETRY_DELAY * v10);
+                continue;
+              }
+              throw v11;
             }
           } catch (catchAcc) {
             throw catchAcc;
@@ -497,25 +490,25 @@ try {
               v13 = catchAcc;
               if (catchAcc.responseCode === 403) {
                 throw catchAcc;
-              } else if (!catchAcc.isRecoverable || v12 >= local_1_2_0 /*HttpDownloader*/.MAX_RETRIES) {
-                throw catchAcc;
-              } else if (p6?.aborted) {
-                throw new HttpError("request aborted", p0, "POST");
-              } else {
+              }
+              if (catchAcc.isRecoverable && v12 < local_1_2_0 /*HttpDownloader*/.MAX_RETRIES) {
+                if (p6?.aborted) {
+                  throw new HttpError("request aborted", p0, "POST");
+                }
                 await this.sleep(local_1_2_0 /*HttpDownloader*/.RETRY_DELAY * v12);
                 continue;
               }
-            } else {
-              v13 = local_1_2_0 /*HttpDownloader*/.fromNetworkError(catchAcc, p0, "POST");
-              if (!v13.isRecoverable || v12 >= local_1_2_0 /*HttpDownloader*/.MAX_RETRIES) {
-                throw v13;
-              } else if (p6?.aborted) {
-                throw new HttpError("request aborted", p0, "POST");
-              } else {
-                await this.sleep(local_1_2_0 /*HttpDownloader*/.RETRY_DELAY * v12);
-                continue;
-              }
+              throw catchAcc;
             }
+            v13 = local_1_2_0 /*HttpDownloader*/.fromNetworkError(catchAcc, p0, "POST");
+            if (v13.isRecoverable && v12 < local_1_2_0 /*HttpDownloader*/.MAX_RETRIES) {
+              if (p6?.aborted) {
+                throw new HttpError("request aborted", p0, "POST");
+              }
+              await this.sleep(local_1_2_0 /*HttpDownloader*/.RETRY_DELAY * v12);
+              continue;
+            }
+            throw v13;
           }
         }
         acc = v13 || new HttpError("Unknown error", p0, "POST");
@@ -582,11 +575,10 @@ try {
           };
           local_3_13 = function () {
             let v3, v4, v6, v7, v9, v10;
-            if (local_3_2 /*settled*/ || !local_3_3 /*requestReturned*/) {
-              return;
-            } else if (!local_3_4 /*streamEnded*/) {
-              return;
-            } else {
+            if (!local_3_2 /*settled*/ && local_3_3 /*requestReturned*/) {
+              if (!local_3_4 /*streamEnded*/) {
+                return;
+              }
               local_3_2 = true;
               v4 = new ArrayBuffer(0);
               if (local_2_2) {
@@ -612,16 +604,16 @@ try {
               local_3_10(v3);
               return;
             }
+            return;
           };
           local_3_12 = function (p0) {
             if (local_3_2 /*settled*/) {
               return;
-            } else {
-              local_3_2 = true;
-              local_3_7 /*cleanup*/();
-              local_3_11(p0);
-              return;
             }
+            local_3_2 = true;
+            local_3_7 /*cleanup*/();
+            local_3_11(p0);
+            return;
           };
           local_2_1 /*httpRequest*/.on("headersReceive", function (p0) {
             local_3_9 = p0;
@@ -630,30 +622,29 @@ try {
             let v5, v6, acc;
             if (local_3_2 /*settled*/) {
               return;
-            } else {
-              if (p0 && (acc = !(p0.byteLength > 0), p0.byteLength > 0)) {
-                v6 = new ArrayBuffer(p0.byteLength);
-                v5 = new Uint8Array(v6);
-                v5.set(new Uint8Array(p0));
-                if (local_2_2) {
-                  local_3_6 /*chunks*/.push(v6);
-                } else {
-                  try {
-                    if (local_2_4 != null) {
-                      local_2_4(v5);
-                    }
-                  } catch (catchAcc) {
-                    acc = catchAcc instanceof Error ? catchAcc.message : String(catchAcc);
-                    local_0_3 /*logger*/.error("POST-BIN-STREAM chunk consumer failed: " + acc + "");
-                    local_3_12 /*finishErr*/(new HttpError("chunk consumer failed: " + acc + "", local_2_3, "POST"));
+            }
+            if (p0 && (acc = !(p0.byteLength > 0), p0.byteLength > 0)) {
+              v6 = new ArrayBuffer(p0.byteLength);
+              v5 = new Uint8Array(v6);
+              v5.set(new Uint8Array(p0));
+              if (local_2_2) {
+                local_3_6 /*chunks*/.push(v6);
+              } else {
+                try {
+                  if (local_2_4 != null) {
+                    local_2_4(v5);
                   }
-                }
-                if (local_2_5 != null) {
-                  local_2_5(p0.byteLength);
+                } catch (catchAcc) {
+                  acc = catchAcc instanceof Error ? catchAcc.message : String(catchAcc);
+                  local_0_3 /*logger*/.error("POST-BIN-STREAM chunk consumer failed: " + acc + "");
+                  local_3_12 /*finishErr*/(new HttpError("chunk consumer failed: " + acc + "", local_2_3, "POST"));
                 }
               }
-              return;
+              if (local_2_5 != null) {
+                local_2_5(p0.byteLength);
+              }
             }
+            return;
           });
           local_2_1 /*httpRequest*/.on("dataEnd", function () {
             local_3_4 = true;
@@ -662,22 +653,21 @@ try {
           if (local_2_0 && (local_2_0.request = local_2_1 /*httpRequest*/, local_2_0.aborted)) {
             local_3_12 /*finishErr*/(new HttpError("request aborted", local_2_3, "POST"));
             return;
-          } else {
-            local_3_0 = setTimeout(function () {
-              local_3_0 = -1;
-              local_0_3 /*logger*/.warn("POST-BIN-STREAM stalled: no dataEnd within " + local_3_14 /*watchdogMs*/ + "ms, aborting request");
-              local_3_12 /*finishErr*/(new HttpError("stream stalled: no dataEnd", local_2_3, "POST"));
-            }, local_3_14 /*watchdogMs*/);
-            acc = local_2_1 /*httpRequest*/.requestInStream(local_2_3, local_2_6 /*httpOptions*/).then(function (p0) {
-              local_3_8 = p0 || 0;
-              local_3_3 = true;
-              local_3_13 /*finishOk*/();
-            });
-            acc.catch(function (p0) {
-              local_3_12 /*finishErr*/(p0);
-            });
-            return;
           }
+          local_3_0 = setTimeout(function () {
+            local_3_0 = -1;
+            local_0_3 /*logger*/.warn("POST-BIN-STREAM stalled: no dataEnd within " + local_3_14 /*watchdogMs*/ + "ms, aborting request");
+            local_3_12 /*finishErr*/(new HttpError("stream stalled: no dataEnd", local_2_3, "POST"));
+          }, local_3_14 /*watchdogMs*/);
+          acc = local_2_1 /*httpRequest*/.requestInStream(local_2_3, local_2_6 /*httpOptions*/).then(function (p0) {
+            local_3_8 = p0 || 0;
+            local_3_3 = true;
+            local_3_13 /*finishOk*/();
+          });
+          acc.catch(function (p0) {
+            local_3_12 /*finishErr*/(p0);
+          });
+          return;
         });
         return acc;
       }
@@ -726,30 +716,29 @@ try {
         let v7, acc;
         acc = !local_1_2_0 /*HttpDownloader*/.setCookieObserver;
         if (acc) {} else acc = !p0;
-        if (acc) {
-          return;
-        } else if (!p0.header) {
-          return;
-        } else {
+        if (!acc) {
+          if (!p0.header) {
+            return;
+          }
           v7 = p0.header["Set-Cookie"];
           if (!p0.header["Set-Cookie"]) {
             v7 = p0.header["set-cookie"];
           }
           if (!v7) {
             return;
-          } else {
-            try {
-              if (Array.isArray(v7)) {
-                local_1_2_0 /*HttpDownloader*/.setCookieObserver(v7, p1);
-              } else if (typeof v7 === "string") {
-                local_1_2_0 /*HttpDownloader*/.setCookieObserver(v7, p1);
-              }
-            } catch (catchAcc) {
-              local_0_3 /*logger*/.error("Set-Cookie observer threw");
-            }
-            return;
           }
+          try {
+            if (Array.isArray(v7)) {
+              local_1_2_0 /*HttpDownloader*/.setCookieObserver(v7, p1);
+            } else if (typeof v7 === "string") {
+              local_1_2_0 /*HttpDownloader*/.setCookieObserver(v7, p1);
+            }
+          } catch (catchAcc) {
+            local_0_3 /*logger*/.error("Set-Cookie observer threw");
+          }
+          return;
         }
+        return;
       }
       static applyProxyToOptions(p0, p1) {
         let v5, v7, v8, v9;
@@ -757,7 +746,8 @@ try {
         if (!HttpProxyOptions.isActive(v5) || HttpProxyOptions.shouldBypass(p1, v5)) {
           p0.usingProxy = false;
           return;
-        } else if (v5.kind === "http") {
+        }
+        if (v5.kind === "http") {
           v8 = {
             "host": v5.host.trim(),
             "port": v5.port,
@@ -770,7 +760,8 @@ try {
           }
           p0.usingProxy = v8;
           return;
-        } else if (v5.kind === "socks5") {
+        }
+        if (v5.kind === "socks5") {
           if (deviceInfo.sdkApiVersion >= 26) {
             v7 = {
               "host": v5.host.trim(),
@@ -795,28 +786,25 @@ try {
             p0.usingProxy = false;
           }
           return;
-        } else {
-          p0.usingProxy = false;
-          return;
         }
+        p0.usingProxy = false;
+        return;
       }
       static applyConnectionPoolReuse(p0) {
         if (deviceInfo.sdkApiVersion < 26) {
           return;
-        } else {
-          p0.reuseConnections = true;
-          p0.inactivityMs = 30000;
-          return;
         }
+        p0.reuseConnections = true;
+        p0.inactivityMs = 30000;
+        return;
       }
     };
-    local_1_2_0 = acc;
     (function () {
       this.MAX_RETRIES = 3;
       this.RETRY_DELAY = 1000;
       this.setCookieObserver = undefined;
-    }).call(acc);
-    HttpDownloader = acc;
+    }).call(local_1_2_0);
+    HttpDownloader = local_1_2_0;
   } catch (catchAcc) {
     throw catchAcc;
   }

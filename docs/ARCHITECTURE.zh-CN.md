@@ -227,12 +227,12 @@ normalizeDeclarations
 | `AstUtils.ts` | 无 traverse 的线性 AST 工具(临时名识别、纯度/可复制判定、节点大小、读写收集)。在大 AST 上避免 `scope.crawl()`。 |
 | `NormalizeDeclarations.ts` | 在任何 Babel traverse 之前去重重复 `let` 声明、处理 import 与声明冲突(防止 "Duplicate declaration" 崩溃)。 |
 | `ReservedIdentifierSimplifier.ts` | 还原 `panda_jmp0_reserved_*` 名字(`param_p0/p1/p2` → `this` / 函数或类名 / `new.target`、export default、lex 哨兵)。入口自引用语句只有**整条就是赋值**时才删。 |
-| `TempVariableSimplify.ts` | 最重的 pass:按作用域活跃性做复制传播 + 死存储消除。预算:传播表达式 ≤ **24** 节点、单次运行克隆预算 **120000**。处理 `finally` 出口活跃读取、非纯表达式只在真正最后一次使用时搬移、循环 test 临时变量折叠(`foldLoopTestTemps`、`foldDoWhileTestAssignments`)、按奇偶性处理自取反链;并暴露流水线尾部使用的静态入口(`foldShortCircuitAssignments`、`foldReturnAssignments`、`foldConditionAssignments`、`removeUnusedLexicalDeclarations`)。 |
+| `TempVariableSimplify.ts` | 最重的 pass:按作用域活跃性做复制传播 + 死存储消除。预算:传播表达式 ≤ **24** 节点、单次运行克隆预算 **120000**。处理 `finally` 出口活跃读取、非纯表达式只在真正最后一次使用时搬移、循环 test 临时变量折叠(`foldLoopTestTemps`、`foldDoWhileTestAssignments`)、按奇偶性处理自取反链、累加器链(二元/成员调用/成员装载,如 `X = E; X = X.trim()`)、Hub 别名与旧值读取重定向(`foldTempAliasAssignments`);并暴露流水线尾部使用的静态入口(`foldShortCircuitAssignments`、`foldReturnAssignments`、`foldAccumulatorAssignments`、`foldConditionAssignments`、`removeUnusedLexicalDeclarations`)。 |
 | `AccCallSimplify.ts` | 还原 `recv = acc; acc = acc.m; acc.call(recv, …)` → `recv.m(...)`;`simplifySequences` 处理条件序列里的同一形态。 |
 | `EnumSimplify.ts` | 把 ArkTS enum 惰性初始化字节码模式还原为对象字面量(含反向映射对象)。 |
 | `ConditionSimplify.ts` | 把 if test 中无条件求值的序列前缀提升出来、清理物化条件临时变量(`foldMaterializedTestArtifacts`)、折叠语句级自取反链、合并 null/undefined 判断。刻意不处理循环。 |
-| `SyntaxRewriteSimplify.ts` | test 化简、if/else 归一化、`.call` 还原、函数表达式提升;以及静态尾部辅助(`foldSequencedTestPrefixes`、`normalizeConditionTests`、`hoistTestPrefixes`、`foldCompoundAssignments`、`foldConstantConditions`、`foldSentinelGuards`、`removeUnreachableStatements`、`removeOrphanJumps`)。 |
-| `ClassSyntaxSimplify.ts` | 从 `__defineGetter__` 风格赋值还原 getter/setter 与 prototype 方法语法;单表达式 class 还原。 |
+| `SyntaxRewriteSimplify.ts` | test 化简、if/else 归一化、`.call` 还原、函数表达式提升;以及静态尾部辅助(`foldSequencedTestPrefixes`、`flattenElseAfterExit`、`normalizeConditionTests`、`hoistTestPrefixes`、`foldCompoundAssignments`、`foldConstantConditions`、`foldSentinelGuards`、`removeUnreachableStatements`、`removeOrphanJumps`)。 |
+| `ClassSyntaxSimplify.ts` | 从 `__defineGetter__` 风格赋值还原 getter/setter 与 prototype/static 方法语法,兼容裸对象(`v1.__defineGetter__(…)`)与复制传播内联后的 `acc.prototype.__defineGetter__(…)` 两种形态;单表达式 class 还原。 |
 | `ObjectLiteralSimplify.ts` | 合并 `createobjectwithbuffer` 模板对象与相邻字面量字段赋值(`obj = {k: null}; obj.k = E` → `{k: E}`);要求初值是字面量、字段顺序一致、未被闭包捕获。安全时把 `obj = {…}; return obj` 内联为 `return {…}`。 |
 | `HighLevelGrammarSimplify.ts` | 主遍历:while → for / for-in / for-of、提前 return 的 do-while → for-of、if → 三目(自底向上;return 链保留 `else if`)、if → switch(nullish 合成)、可选链还原;`simplifyTail`(见上)。 |
 | `NullishCoalescingSimplify.ts` | 还原 switch 降级的 `??`(`v = obj.k; switch (obj.k) { case null: case undefined: v = d }` → `v = obj.k ?? d`);仅限判别式为纯成员表达式。 |

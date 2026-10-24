@@ -13,210 +13,254 @@ decodeAppDestination = function (p0, p1) {
   let v0 /*parseStrictJson*/, v1 /*JsonObjectValue*/, v2, v3, v4, v5, v6, v7, v8, v10;
   if (!isAppDestinationName(p0)) {
     return undefined;
-  } else {
-    v0 = parseStrictJson(JSON.stringify(p1));
-    if (!(v0 instanceof JsonObjectValue)) {
-      return undefined;
-    } else if (local_0_0(v0, "name") !== p0) {
-      return undefined;
-    } else if (p0 === AppDestinationName.HOME) {
-      return local_0_1(v0) ? {
-        "name": AppDestinationName.HOME
-      } : undefined;
-    } else if (p0 === AppDestinationName.FOLLOWING) {
-      return local_0_1(v0) ? {
-        "name": AppDestinationName.FOLLOWING
-      } : undefined;
-    } else if (p0 === AppDestinationName.HOT) {
-      return local_0_1(v0) ? {
-        "name": AppDestinationName.HOT
-      } : undefined;
-    } else if (p0 === AppDestinationName.DAILY) {
-      return local_0_1(v0) ? {
-        "name": AppDestinationName.DAILY
-      } : undefined;
-    } else if (p0 === AppDestinationName.DAILY_STORY) {
-      return local_0_2(v0, AppDestinationName.DAILY_STORY);
-    } else if (p0 === AppDestinationName.NOTIFICATION) {
-      return local_0_1(v0) ? {
-        "name": AppDestinationName.NOTIFICATION
-      } : undefined;
-    } else if (p0 === AppDestinationName.NOTIFICATION_ENTRY) {
-      return local_0_3(v0);
-    } else if (p0 === AppDestinationName.PRIVATE_MESSAGE) {
-      return local_0_4(v0);
-    } else if (p0 === AppDestinationName.NOTIFICATION_SETTINGS) {
-      return local_0_1(v0) ? {
-        "name": AppDestinationName.NOTIFICATION_SETTINGS
-      } : undefined;
-    } else if (p0 === AppDestinationName.APPEARANCE_SETTINGS) {
-      return local_0_1(v0) ? {
-        "name": AppDestinationName.APPEARANCE_SETTINGS
-      } : undefined;
-    } else if (p0 === AppDestinationName.THEME_COLOR_SETTINGS) {
-      return local_0_1(v0) ? {
-        "name": AppDestinationName.THEME_COLOR_SETTINGS
-      } : undefined;
-    } else if (p0 === AppDestinationName.IDENTITY_MANAGEMENT) {
-      return local_0_1(v0) ? {
-        "name": AppDestinationName.IDENTITY_MANAGEMENT
-      } : undefined;
-    } else if (p0 === AppDestinationName.READING_SETTINGS) {
-      return local_0_1(v0) ? {
-        "name": AppDestinationName.READING_SETTINGS
-      } : undefined;
-    } else if (p0 === AppDestinationName.SYSTEM_UPDATE_SETTINGS) {
-      return local_0_1(v0) ? {
-        "name": AppDestinationName.SYSTEM_UPDATE_SETTINGS
-      } : undefined;
-    } else if (p0 === AppDestinationName.WHATS_NEW) {
-      return local_0_5(v0);
-    } else if (p0 === AppDestinationName.RECOMMENDATION_FILTER_SETTINGS) {
-      return local_0_1(v0) ? {
-        "name": AppDestinationName.RECOMMENDATION_FILTER_SETTINGS
-      } : undefined;
-    } else if (p0 === AppDestinationName.LOGIN) {
-      return local_0_1(v0) ? {
-        "name": AppDestinationName.LOGIN
-      } : undefined;
-    } else if (p0 === AppDestinationName.SETTINGS) {
-      return local_0_1(v0) ? {
-        "name": AppDestinationName.SETTINGS
-      } : undefined;
-    } else if (p0 === AppDestinationName.BLOCKING_RULES) {
-      return local_0_1(v0) ? {
-        "name": AppDestinationName.BLOCKING_RULES
-      } : undefined;
-    } else if (p0 === AppDestinationName.BLOCKED_FEED_HISTORY) {
-      return local_0_1(v0) ? {
-        "name": AppDestinationName.BLOCKED_FEED_HISTORY
-      } : undefined;
-    } else if (p0 === AppDestinationName.READ_HISTORY) {
-      return local_0_1(v0) ? {
-        "name": AppDestinationName.READ_HISTORY
-      } : undefined;
-    } else if (p0 === AppDestinationName.LOCAL_HISTORY) {
-      return local_0_1(v0) ? {
-        "name": AppDestinationName.LOCAL_HISTORY
-      } : undefined;
-    } else if (p0 === AppDestinationName.TECHNICAL_LAB) {
-      return local_0_1(v0) ? {
-        "name": AppDestinationName.TECHNICAL_LAB
-      } : undefined;
-    } else if (p0 === AppDestinationName.READER_PROBE) {
-      return local_0_1(v0) ? {
-        "name": AppDestinationName.READER_PROBE
-      } : undefined;
-    } else if (p0 === AppDestinationName.IMAGE_PROBE) {
-      return local_0_1(v0) ? {
-        "name": AppDestinationName.IMAGE_PROBE
-      } : undefined;
-    } else if (p0 === AppDestinationName.DATABASE_PROBE) {
-      return local_0_1(v0) ? {
-        "name": AppDestinationName.DATABASE_PROBE
-      } : undefined;
-    } else if (p0 === AppDestinationName.DEEP_LINK_PROBE) {
-      return local_0_1(v0) ? {
-        "name": AppDestinationName.DEEP_LINK_PROBE
-      } : undefined;
-    } else if (p0 === AppDestinationName.QR_SCAN_PROBE) {
-      return local_0_1(v0) ? {
-        "name": AppDestinationName.QR_SCAN_PROBE
-      } : undefined;
-    } else if (p0 === AppDestinationName.QR_DESKTOP_LOGIN_SCAN) {
-      return local_0_1(v0) ? {
-        "name": AppDestinationName.QR_DESKTOP_LOGIN_SCAN
-      } : undefined;
-    } else if (p0 === AppDestinationName.BACKGROUND_TASK_PROBE) {
-      return local_0_1(v0) ? {
-        "name": AppDestinationName.BACKGROUND_TASK_PROBE
-      } : undefined;
-    } else if (p0 === AppDestinationName.DOMAIN_FIXTURE_PROBE) {
-      return local_0_1(v0) ? {
-        "name": AppDestinationName.DOMAIN_FIXTURE_PROBE
-      } : undefined;
-    } else if (p0 === AppDestinationName.PIN_DRAFTS) {
-      return local_0_1(v0) ? {
-        "name": AppDestinationName.PIN_DRAFTS
-      } : undefined;
-    } else if (p0 === AppDestinationName.QUESTION) {
-      return local_0_2(v0, AppDestinationName.QUESTION);
-    } else if (p0 === AppDestinationName.ANSWER) {
-      return local_0_2(v0, AppDestinationName.ANSWER);
-    } else if (p0 === AppDestinationName.ARTICLE) {
-      return local_0_2(v0, AppDestinationName.ARTICLE);
-    } else if (p0 === AppDestinationName.VIDEO) {
-      return local_0_2(v0, AppDestinationName.VIDEO);
-    } else if (p0 === AppDestinationName.PIN) {
-      return local_0_2(v0, AppDestinationName.PIN);
-    } else if (p0 === AppDestinationName.PEOPLE) {
-      return local_0_2(v0, AppDestinationName.PEOPLE);
-    } else if (p0 === AppDestinationName.COLLECTION) {
-      return local_0_2(v0, AppDestinationName.COLLECTION);
-    } else if (p0 === AppDestinationName.COLLECTIONS) {
-      return local_0_2(v0, AppDestinationName.COLLECTIONS);
-    } else if (p0 === AppDestinationName.WRITE_ANSWER) {
-      return local_0_6(v0);
-    } else if (p0 === AppDestinationName.WRITE_PIN) {
-      return local_0_7(v0);
-    } else if (p0 === AppDestinationName.COMMENT) {
-      v1 = local_0_0(v0, "contentType");
-      v2 = local_0_0(v0, "contentId");
-      v3 = local_0_0(v0, "commentId");
-      v4 = local_0_0(v0, "segmentId");
-      v5 = local_0_0(v0, "segmentContent");
-      v6 = local_0_0(v0, "segmentParagraphId");
-      v7 = local_0_8(v0, "segmentStartOffset");
-      v8 = local_0_8(v0, "segmentEndOffset");
-      v10 = v1 !== "answer" && v1 !== "article" && v1 !== "question" && v1 !== "pin" || v2 === undefined;
-      if ((v1 === "answer" || v1 === "article" || v1 === "question" || v1 === "pin") && v2 !== undefined) {
-        v10 = !local_0_9(v2);
-      }
-      if (!v10) {
-        v10 = local_0_0(v0, "id") !== undefined;
-      }
-      if (!v10) {
-        v10 = local_0_0(v0, "query") !== undefined;
-      }
-      if (!v10 && (v10 = v3 !== undefined, v3 !== undefined)) {
-        v10 = !local_0_9(v3);
-      }
-      if (!v10) {
-        if (v4 !== undefined || v5 !== undefined || v6 !== undefined || v7 !== undefined || v8 !== undefined) {
-          v10 = v4 === undefined;
-          if (v4 !== undefined) {
-            v10 = !local_0_10(v4);
-          }
-          if (!v10) {
-            v10 = v5 === undefined;
-          }
-          if (!v10) {
-            v10 = !local_0_9(v5);
-          }
-          if (!v10) {
-            v10 = v6 === undefined;
-          }
-          if (!v10) {
-            v10 = !local_0_9(v6);
-          }
-          if (!v10) {
-            v10 = v7 === undefined;
-          }
-          if (!v10) {
-            v10 = v8 === undefined;
-          }
-          if (!v10) {
-            v10 = v8 < v7;
-          }
-        } else {
-          v10 = v4 !== undefined || v5 !== undefined || v6 !== undefined || v7 !== undefined || v8 !== undefined;
+  }
+  v0 = parseStrictJson(JSON.stringify(p1));
+  if (!(v0 instanceof JsonObjectValue)) {
+    return undefined;
+  }
+  if (local_0_0(v0, "name") !== p0) {
+    return undefined;
+  }
+  if (p0 === AppDestinationName.HOME) {
+    return local_0_1(v0) ? {
+      "name": AppDestinationName.HOME
+    } : undefined;
+  }
+  if (p0 === AppDestinationName.FOLLOWING) {
+    return local_0_1(v0) ? {
+      "name": AppDestinationName.FOLLOWING
+    } : undefined;
+  }
+  if (p0 === AppDestinationName.HOT) {
+    return local_0_1(v0) ? {
+      "name": AppDestinationName.HOT
+    } : undefined;
+  }
+  if (p0 === AppDestinationName.DAILY) {
+    return local_0_1(v0) ? {
+      "name": AppDestinationName.DAILY
+    } : undefined;
+  }
+  if (p0 === AppDestinationName.DAILY_STORY) {
+    return local_0_2(v0, AppDestinationName.DAILY_STORY);
+  }
+  if (p0 === AppDestinationName.NOTIFICATION) {
+    return local_0_1(v0) ? {
+      "name": AppDestinationName.NOTIFICATION
+    } : undefined;
+  }
+  if (p0 === AppDestinationName.NOTIFICATION_ENTRY) {
+    return local_0_3(v0);
+  }
+  if (p0 === AppDestinationName.PRIVATE_MESSAGE) {
+    return local_0_4(v0);
+  }
+  if (p0 === AppDestinationName.NOTIFICATION_SETTINGS) {
+    return local_0_1(v0) ? {
+      "name": AppDestinationName.NOTIFICATION_SETTINGS
+    } : undefined;
+  }
+  if (p0 === AppDestinationName.APPEARANCE_SETTINGS) {
+    return local_0_1(v0) ? {
+      "name": AppDestinationName.APPEARANCE_SETTINGS
+    } : undefined;
+  }
+  if (p0 === AppDestinationName.THEME_COLOR_SETTINGS) {
+    return local_0_1(v0) ? {
+      "name": AppDestinationName.THEME_COLOR_SETTINGS
+    } : undefined;
+  }
+  if (p0 === AppDestinationName.IDENTITY_MANAGEMENT) {
+    return local_0_1(v0) ? {
+      "name": AppDestinationName.IDENTITY_MANAGEMENT
+    } : undefined;
+  }
+  if (p0 === AppDestinationName.READING_SETTINGS) {
+    return local_0_1(v0) ? {
+      "name": AppDestinationName.READING_SETTINGS
+    } : undefined;
+  }
+  if (p0 === AppDestinationName.SYSTEM_UPDATE_SETTINGS) {
+    return local_0_1(v0) ? {
+      "name": AppDestinationName.SYSTEM_UPDATE_SETTINGS
+    } : undefined;
+  }
+  if (p0 === AppDestinationName.WHATS_NEW) {
+    return local_0_5(v0);
+  }
+  if (p0 === AppDestinationName.RECOMMENDATION_FILTER_SETTINGS) {
+    return local_0_1(v0) ? {
+      "name": AppDestinationName.RECOMMENDATION_FILTER_SETTINGS
+    } : undefined;
+  }
+  if (p0 === AppDestinationName.LOGIN) {
+    return local_0_1(v0) ? {
+      "name": AppDestinationName.LOGIN
+    } : undefined;
+  }
+  if (p0 === AppDestinationName.SETTINGS) {
+    return local_0_1(v0) ? {
+      "name": AppDestinationName.SETTINGS
+    } : undefined;
+  }
+  if (p0 === AppDestinationName.BLOCKING_RULES) {
+    return local_0_1(v0) ? {
+      "name": AppDestinationName.BLOCKING_RULES
+    } : undefined;
+  }
+  if (p0 === AppDestinationName.BLOCKED_FEED_HISTORY) {
+    return local_0_1(v0) ? {
+      "name": AppDestinationName.BLOCKED_FEED_HISTORY
+    } : undefined;
+  }
+  if (p0 === AppDestinationName.READ_HISTORY) {
+    return local_0_1(v0) ? {
+      "name": AppDestinationName.READ_HISTORY
+    } : undefined;
+  }
+  if (p0 === AppDestinationName.LOCAL_HISTORY) {
+    return local_0_1(v0) ? {
+      "name": AppDestinationName.LOCAL_HISTORY
+    } : undefined;
+  }
+  if (p0 === AppDestinationName.TECHNICAL_LAB) {
+    return local_0_1(v0) ? {
+      "name": AppDestinationName.TECHNICAL_LAB
+    } : undefined;
+  }
+  if (p0 === AppDestinationName.READER_PROBE) {
+    return local_0_1(v0) ? {
+      "name": AppDestinationName.READER_PROBE
+    } : undefined;
+  }
+  if (p0 === AppDestinationName.IMAGE_PROBE) {
+    return local_0_1(v0) ? {
+      "name": AppDestinationName.IMAGE_PROBE
+    } : undefined;
+  }
+  if (p0 === AppDestinationName.DATABASE_PROBE) {
+    return local_0_1(v0) ? {
+      "name": AppDestinationName.DATABASE_PROBE
+    } : undefined;
+  }
+  if (p0 === AppDestinationName.DEEP_LINK_PROBE) {
+    return local_0_1(v0) ? {
+      "name": AppDestinationName.DEEP_LINK_PROBE
+    } : undefined;
+  }
+  if (p0 === AppDestinationName.QR_SCAN_PROBE) {
+    return local_0_1(v0) ? {
+      "name": AppDestinationName.QR_SCAN_PROBE
+    } : undefined;
+  }
+  if (p0 === AppDestinationName.QR_DESKTOP_LOGIN_SCAN) {
+    return local_0_1(v0) ? {
+      "name": AppDestinationName.QR_DESKTOP_LOGIN_SCAN
+    } : undefined;
+  }
+  if (p0 === AppDestinationName.BACKGROUND_TASK_PROBE) {
+    return local_0_1(v0) ? {
+      "name": AppDestinationName.BACKGROUND_TASK_PROBE
+    } : undefined;
+  }
+  if (p0 === AppDestinationName.DOMAIN_FIXTURE_PROBE) {
+    return local_0_1(v0) ? {
+      "name": AppDestinationName.DOMAIN_FIXTURE_PROBE
+    } : undefined;
+  }
+  if (p0 === AppDestinationName.PIN_DRAFTS) {
+    return local_0_1(v0) ? {
+      "name": AppDestinationName.PIN_DRAFTS
+    } : undefined;
+  }
+  if (p0 === AppDestinationName.QUESTION) {
+    return local_0_2(v0, AppDestinationName.QUESTION);
+  }
+  if (p0 === AppDestinationName.ANSWER) {
+    return local_0_2(v0, AppDestinationName.ANSWER);
+  }
+  if (p0 === AppDestinationName.ARTICLE) {
+    return local_0_2(v0, AppDestinationName.ARTICLE);
+  }
+  if (p0 === AppDestinationName.VIDEO) {
+    return local_0_2(v0, AppDestinationName.VIDEO);
+  }
+  if (p0 === AppDestinationName.PIN) {
+    return local_0_2(v0, AppDestinationName.PIN);
+  }
+  if (p0 === AppDestinationName.PEOPLE) {
+    return local_0_2(v0, AppDestinationName.PEOPLE);
+  }
+  if (p0 === AppDestinationName.COLLECTION) {
+    return local_0_2(v0, AppDestinationName.COLLECTION);
+  }
+  if (p0 === AppDestinationName.COLLECTIONS) {
+    return local_0_2(v0, AppDestinationName.COLLECTIONS);
+  }
+  if (p0 === AppDestinationName.WRITE_ANSWER) {
+    return local_0_6(v0);
+  }
+  if (p0 === AppDestinationName.WRITE_PIN) {
+    return local_0_7(v0);
+  }
+  if (p0 === AppDestinationName.COMMENT) {
+    v1 = local_0_0(v0, "contentType");
+    v2 = local_0_0(v0, "contentId");
+    v3 = local_0_0(v0, "commentId");
+    v4 = local_0_0(v0, "segmentId");
+    v5 = local_0_0(v0, "segmentContent");
+    v6 = local_0_0(v0, "segmentParagraphId");
+    v7 = local_0_8(v0, "segmentStartOffset");
+    v8 = local_0_8(v0, "segmentEndOffset");
+    v10 = v1 !== "answer" && v1 !== "article" && v1 !== "question" && v1 !== "pin" || v2 === undefined;
+    if ((v1 === "answer" || v1 === "article" || v1 === "question" || v1 === "pin") && v2 !== undefined) {
+      v10 = !local_0_9(v2);
+    }
+    if (!v10) {
+      v10 = local_0_0(v0, "id") !== undefined;
+    }
+    if (!v10) {
+      v10 = local_0_0(v0, "query") !== undefined;
+    }
+    if (!v10 && (v10 = v3 !== undefined, v3 !== undefined)) {
+      v10 = !local_0_9(v3);
+    }
+    if (!v10) {
+      if (v4 !== undefined || v5 !== undefined || v6 !== undefined || v7 !== undefined || v8 !== undefined) {
+        v10 = v4 === undefined;
+        if (v4 !== undefined) {
+          v10 = !local_0_10(v4);
         }
+        if (!v10) {
+          v10 = v5 === undefined;
+        }
+        if (!v10) {
+          v10 = !local_0_9(v5);
+        }
+        if (!v10) {
+          v10 = v6 === undefined;
+        }
+        if (!v10) {
+          v10 = !local_0_9(v6);
+        }
+        if (!v10) {
+          v10 = v7 === undefined;
+        }
+        if (!v10) {
+          v10 = v8 === undefined;
+        }
+        if (!v10) {
+          v10 = v8 < v7;
+        }
+      } else {
+        v10 = v4 !== undefined || v5 !== undefined || v6 !== undefined || v7 !== undefined || v8 !== undefined;
       }
-      if (v10) {
+    }
+    if (!v10) {
+      if (!local_0_11(v0, ["name", "contentType", "contentId", "commentId", "segmentId", "segmentContent", "segmentParagraphId", "segmentStartOffset", "segmentEndOffset"])) {
         return undefined;
-      } else if (!local_0_11(v0, ["name", "contentType", "contentId", "commentId", "segmentId", "segmentContent", "segmentParagraphId", "segmentStartOffset", "segmentEndOffset"])) {
-        return undefined;
-      } else if (v4 !== undefined || v5 !== undefined || v6 !== undefined || v7 !== undefined || v8 !== undefined) {
+      }
+      if (v4 !== undefined || v5 !== undefined || v6 !== undefined || v7 !== undefined || v8 !== undefined) {
         return {
           "name": AppDestinationName.COMMENT,
           "contentType": v1,
@@ -227,45 +271,44 @@ decodeAppDestination = function (p0, p1) {
           "segmentStartOffset": v7,
           "segmentEndOffset": v8
         };
-      } else {
-        return v3 === undefined ? {
-          "name": AppDestinationName.COMMENT,
-          "contentType": v1,
-          "contentId": v2
-        } : {
-          "name": AppDestinationName.COMMENT,
-          "contentType": v1,
-          "contentId": v2,
-          "commentId": v3
-        };
       }
-    } else if (p0 === AppDestinationName.SEARCH) {
-      v1 = local_0_0(v0, "query");
-      v2 = v1 === undefined;
-      if (v1 !== undefined) {
-        v2 = !isSafeSearchDestinationQuery(v1);
-      }
-      if (!v2) {
-        v2 = local_0_0(v0, "id") !== undefined;
-      }
-      if (!v2) {
-        v2 = local_0_0(v0, "contentId") !== undefined;
-      }
-      if (!v2) {
-        v2 = local_0_0(v0, "commentId") !== undefined;
-      }
-      if (!v2) {
-        return local_0_11(v0, ["name", "query"]) ? {
-          "name": AppDestinationName.SEARCH,
-          "query": v1
-        } : undefined;
-      } else {
-        return undefined;
-      }
-    } else {
-      return undefined;
+      return v3 === undefined ? {
+        "name": AppDestinationName.COMMENT,
+        "contentType": v1,
+        "contentId": v2
+      } : {
+        "name": AppDestinationName.COMMENT,
+        "contentType": v1,
+        "contentId": v2,
+        "commentId": v3
+      };
     }
+    return undefined;
   }
+  if (p0 === AppDestinationName.SEARCH) {
+    v1 = local_0_0(v0, "query");
+    v2 = v1 === undefined;
+    if (v1 !== undefined) {
+      v2 = !isSafeSearchDestinationQuery(v1);
+    }
+    if (!v2) {
+      v2 = local_0_0(v0, "id") !== undefined;
+    }
+    if (!v2) {
+      v2 = local_0_0(v0, "contentId") !== undefined;
+    }
+    if (!v2) {
+      v2 = local_0_0(v0, "commentId") !== undefined;
+    }
+    if (!v2) {
+      return local_0_11(v0, ["name", "query"]) ? {
+        "name": AppDestinationName.SEARCH,
+        "query": v1
+      } : undefined;
+    }
+    return undefined;
+  }
+  return undefined;
 };
 local_0_2 = function (p0, p1) {
   let v0, v1;
@@ -283,11 +326,10 @@ local_0_2 = function (p0, p1) {
   if (!v1) {
     v1 = local_0_0(p0, "query") !== undefined;
   }
-  if (v1) {
-    return undefined;
-  } else if (!local_0_11(p0, ["name", "id"])) {
-    return undefined;
-  } else {
+  if (!v1) {
+    if (!local_0_11(p0, ["name", "id"])) {
+      return undefined;
+    }
     v1 = true;
     switch (p1) {
       case AppDestinationName.PIN:
@@ -310,6 +352,7 @@ local_0_2 = function (p0, p1) {
       "id": v0
     } : undefined;
   }
+  return undefined;
 };
 local_0_3 = function (p0) {
   let v0, v1;
@@ -321,9 +364,8 @@ local_0_3 = function (p0) {
       "entryName": v0,
       "title": v1
     } : undefined;
-  } else {
-    return undefined;
   }
+  return undefined;
 };
 local_0_4 = function (p0) {
   let v0, v1, v2, v3;
@@ -344,18 +386,16 @@ local_0_4 = function (p0) {
       "peerName": v1,
       "avatarUrl": v2
     } : undefined;
-  } else {
-    return undefined;
   }
+  return undefined;
 };
 local_0_5 = function (p0) {
   let v0;
   v0 = local_0_0(p0, "version");
-  if (v0 !== undefined && !isSafeWhatsNewVersion(v0)) {
-    return undefined;
-  } else if (!local_0_11(p0, v0 === undefined ? ["name"] : ["name", "version"])) {
-    return undefined;
-  } else {
+  if (v0 === undefined || isSafeWhatsNewVersion(v0)) {
+    if (!local_0_11(p0, v0 === undefined ? ["name"] : ["name", "version"])) {
+      return undefined;
+    }
     return v0 === undefined ? {
       "name": AppDestinationName.WHATS_NEW
     } : {
@@ -363,6 +403,7 @@ local_0_5 = function (p0) {
       "version": v0
     };
   }
+  return undefined;
 };
 local_0_6 = function (p0) {
   let v0, v1, v2;
@@ -375,11 +416,10 @@ local_0_6 = function (p0) {
   if (!v2 && (v2 = v1 !== undefined, v1 !== undefined)) {
     v2 = !isSafeDecimalContentId(v1);
   }
-  if (v2) {
-    return undefined;
-  } else if (!local_0_11(p0, ["name", "questionId", "answerId"])) {
-    return undefined;
-  } else {
+  if (!v2) {
+    if (!local_0_11(p0, ["name", "questionId", "answerId"])) {
+      return undefined;
+    }
     return v1 === undefined ? {
       "name": AppDestinationName.WRITE_ANSWER,
       "questionId": v0
@@ -389,6 +429,7 @@ local_0_6 = function (p0) {
       "answerId": v1
     };
   }
+  return undefined;
 };
 local_0_7 = function (p0) {
   let v0, v1;
@@ -402,9 +443,8 @@ local_0_7 = function (p0) {
       "name": AppDestinationName.WRITE_PIN,
       "draftId": v0
     } : undefined;
-  } else {
-    return undefined;
   }
+  return undefined;
 };
 local_0_1 = function (p0) {
   return local_0_0(p0, "id") === undefined

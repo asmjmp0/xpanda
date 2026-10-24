@@ -8,13 +8,12 @@ let local_0_0, local_0_1, local_0_2, local_0_3, local_0_4, local_0_5, local_0_6,
 createTemporaryShareLifecycle = function (p0) {
   if (!local_0_7(p0.createdAtMillis)) {
     throw new ShareFailure(ShareFailureKind.INVALID_PAYLOAD);
-  } else {
-    return {
-      "path": p0.path,
-      "createdAtMillis": p0.createdAtMillis,
-      "cleanupAfterMillis": p0.createdAtMillis + SHARE_TEMPORARY_MAX_AGE_MILLIS
-    };
   }
+  return {
+    "path": p0.path,
+    "createdAtMillis": p0.createdAtMillis,
+    "cleanupAfterMillis": p0.createdAtMillis + SHARE_TEMPORARY_MAX_AGE_MILLIS
+  };
 };
 local_0_12 = function (p0) {
   return local_0_11(p0) || p0 === "text/plain" || p0 === "application/pdf";
@@ -29,10 +28,9 @@ local_0_14 = function (p0, p1) {
   let v1;
   if (p0.length === 0 || p0.length > 2048 || new RegExp("[\\r\\n\\t ]").test(p0) || p0.includes("@") || p0.includes("\\")) {
     return false;
-  } else {
-    v1 = new RegExp("^https:\\/\\/([^/?#:]+)(?::[0-9]+)?\\/").exec(p0);
-    return v1 !== null && v1[1] !== undefined && p1.test(v1[1]) && !p0.includes("..");
   }
+  v1 = new RegExp("^https:\\/\\/([^/?#:]+)(?::[0-9]+)?\\/").exec(p0);
+  return v1 !== null && v1[1] !== undefined && p1.test(v1[1]) && !p0.includes("..");
 };
 local_0_10 = function (p0) {
   return new RegExp("^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$").test(p0) && !p0.includes("..");
@@ -45,88 +43,81 @@ local_0_13 = function (p0, p1) {
   }
   if (v0 || new RegExp("[\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F]").test(p0)) {
     return false;
-  } else {
-    return !new RegExp("<\\/?[A-Za-z][^>]*>").test(p0)
-      && !new RegExp("(?:cookie|set-cookie|authorization)\\s*:", "i").test(p0)
-      && !new RegExp("(?:cookie|authorization)=", "i").test(p0);
   }
+  return !new RegExp("<\\/?[A-Za-z][^>]*>").test(p0)
+    && !new RegExp("(?:cookie|set-cookie|authorization)\\s*:", "i").test(p0)
+    && !new RegExp("(?:cookie|authorization)=", "i").test(p0);
 };
 markSharePanelOpened = function (p0, p1) {
   if (!local_0_7(p1) || p1 < p0.createdAtMillis) {
     throw new ShareFailure(ShareFailureKind.INVALID_PAYLOAD);
-  } else {
-    return {
-      "path": p0.path,
-      "createdAtMillis": p0.createdAtMillis,
-      "panelOpenedAtMillis": p1,
-      "cleanupAfterMillis": Math.min(p1 + SHARE_PANEL_GRACE_MILLIS, p0.createdAtMillis + SHARE_TEMPORARY_MAX_AGE_MILLIS)
-    };
   }
+  return {
+    "path": p0.path,
+    "createdAtMillis": p0.createdAtMillis,
+    "panelOpenedAtMillis": p1,
+    "cleanupAfterMillis": Math.min(p1 + SHARE_PANEL_GRACE_MILLIS, p0.createdAtMillis + SHARE_TEMPORARY_MAX_AGE_MILLIS)
+  };
 };
 local_0_9 = function (p0) {
   let v0 /*ShareFailure*/;
   v0 = p0.replace(new RegExp("\\\\", "g"), "/").replace(new RegExp("\\/+$", "g"), "");
   if (!new RegExp("^\\/[A-Za-z0-9._/-]+$").test(v0) || v0.includes("..")) {
     throw new ShareFailure(ShareFailureKind.INVALID_PAYLOAD);
-  } else {
-    return v0;
   }
+  return v0;
 };
 local_0_2 = function (p0) {
   let v0 /*ShareFailure*/;
   v0 = p0.trim();
   if (!local_0_13(v0, MAX_SHARE_SUMMARY_LENGTH)) {
     throw new ShareFailure(ShareFailureKind.INVALID_PAYLOAD);
-  } else {
-    return v0;
   }
+  return v0;
 };
 local_0_8 = function (p0, p1, p2) {
   let v0 /*ShareFailure*/;
   if (!local_0_7(p0.createdAtMillis) || p0.createdAtMillis > p1.nowMillis || p1.nowMillis - p0.createdAtMillis > SHARE_TEMPORARY_MAX_AGE_MILLIS) {
     throw new ShareFailure(ShareFailureKind.FILE_UNAVAILABLE);
-  } else {
-    v0 = local_0_9(p1.cacheDir) + "/" + SHARE_TEMPORARY_DIRECTORY + "/";
-    if (p0.path.startsWith(v0)) {
-      v0 = p0.path.substring(v0.length);
-      if (!local_0_10(v0)) {
-        throw new ShareFailure(ShareFailureKind.INVALID_PAYLOAD);
-      } else if (p2 ? !local_0_11(p0.mimeType) : !local_0_12(p0.mimeType)) {
-        throw new ShareFailure(ShareFailureKind.INVALID_PAYLOAD);
-      } else {
-        return p0;
-      }
-    } else {
+  }
+  v0 = local_0_9(p1.cacheDir) + "/" + SHARE_TEMPORARY_DIRECTORY + "/";
+  if (p0.path.startsWith(v0)) {
+    v0 = p0.path.substring(v0.length);
+    if (!local_0_10(v0)) {
       throw new ShareFailure(ShareFailureKind.INVALID_PAYLOAD);
     }
+    if (p2 ? !local_0_11(p0.mimeType) : !local_0_12(p0.mimeType)) {
+      throw new ShareFailure(ShareFailureKind.INVALID_PAYLOAD);
+    }
+    return p0;
   }
+  throw new ShareFailure(ShareFailureKind.INVALID_PAYLOAD);
 };
 local_0_1 = function (p0) {
   let v0 /*ShareFailure*/;
   v0 = p0.trim();
   if (!local_0_13(v0, MAX_SHARE_TITLE_LENGTH)) {
     throw new ShareFailure(ShareFailureKind.INVALID_PAYLOAD);
-  } else {
-    return v0;
   }
+  return v0;
 };
 local_0_3 = function (p0) {
   if (!local_0_14(p0, new RegExp("^(?:www\\.zhihu\\.com|zhuanlan\\.zhihu\\.com)$"))) {
     throw new ShareFailure(ShareFailureKind.INVALID_PAYLOAD);
-  } else if (!new RegExp("^https:\\/\\/(?:www\\.zhihu\\.com\\/(?:question\\/[1-9][0-9]{0,29}(?:\\/answer\\/[1-9][0-9]{0,29})?|answer\\/[1-9][0-9]{0,29}|pin\\/[1-9][0-9]{0,29}|people\\/[A-Za-z0-9-]{1,100}|zvideo\\/[1-9][0-9]{0,29})|zhuanlan\\.zhihu\\.com\\/p\\/[1-9][0-9]{0,29})(?:[?#][A-Za-z0-9%&=._~!$'()*+,;:@/?-]*)?$").test(p0)) {
-    throw new ShareFailure(ShareFailureKind.INVALID_PAYLOAD);
-  } else {
-    return p0;
   }
+  if (!new RegExp("^https:\\/\\/(?:www\\.zhihu\\.com\\/(?:question\\/[1-9][0-9]{0,29}(?:\\/answer\\/[1-9][0-9]{0,29})?|answer\\/[1-9][0-9]{0,29}|pin\\/[1-9][0-9]{0,29}|people\\/[A-Za-z0-9-]{1,100}|zvideo\\/[1-9][0-9]{0,29})|zhuanlan\\.zhihu\\.com\\/p\\/[1-9][0-9]{0,29})(?:[?#][A-Za-z0-9%&=._~!$'()*+,;:@/?-]*)?$").test(p0)) {
+    throw new ShareFailure(ShareFailureKind.INVALID_PAYLOAD);
+  }
+  return p0;
 };
 local_0_4 = function (p0) {
-  if (!local_0_14(p0, new RegExp("^(?:pic|pica|picx|pic[0-9]+)\\.zhimg\\.com$"))) {
-    throw new ShareFailure(ShareFailureKind.INVALID_PAYLOAD);
-  } else if (!new RegExp("^https:\\/\\/(?:pic|pica|picx|pic[0-9]+)\\.zhimg\\.com\\/[A-Za-z0-9%&=._~!$'()*+,;:@/?-]+$").test(p0)) {
-    throw new ShareFailure(ShareFailureKind.INVALID_PAYLOAD);
-  } else {
+  if (local_0_14(p0, new RegExp("^(?:pic|pica|picx|pic[0-9]+)\\.zhimg\\.com$"))) {
+    if (!new RegExp("^https:\\/\\/(?:pic|pica|picx|pic[0-9]+)\\.zhimg\\.com\\/[A-Za-z0-9%&=._~!$'()*+,;:@/?-]+$").test(p0)) {
+      throw new ShareFailure(ShareFailureKind.INVALID_PAYLOAD);
+    }
     return p0;
   }
+  throw new ShareFailure(ShareFailureKind.INVALID_PAYLOAD);
 };
 local_0_6 = function (p0, p1, p2, p3) {
   let v0;
@@ -142,32 +133,30 @@ local_0_6 = function (p0, p1, p2, p3) {
 };
 local_0_5 = function (p0, p1, p2, p3) {
   let v0 /*ShareFailure*/;
-  if (p0.sourceKind !== ShareImageSourceKind.TRUSTED_URL) {
-    if (p0.trustedImageUrl !== undefined || p0.temporaryFile === undefined) {
-      throw new ShareFailure(ShareFailureKind.INVALID_PAYLOAD);
-    } else {
-      v0 = local_0_8(p0.temporaryFile, p1, true);
-      return {
-        "kind": SharePayloadKind.IMAGE,
-        "dispatchKind": ShareDispatchKind.TEMPORARY_FILE,
-        "title": p2,
-        "summary": p3,
-        "mimeType": v0.mimeType,
-        "source": v0.path
-      };
-    }
-  } else if (p0.temporaryFile !== undefined || p0.trustedImageUrl === undefined) {
+  if (p0.sourceKind !== ShareImageSourceKind.TRUSTED_URL) if (p0.trustedImageUrl !== undefined || p0.temporaryFile === undefined) {
     throw new ShareFailure(ShareFailureKind.INVALID_PAYLOAD);
   } else {
+    v0 = local_0_8(p0.temporaryFile, p1, true);
     return {
       "kind": SharePayloadKind.IMAGE,
-      "dispatchKind": ShareDispatchKind.REMOTE_IMAGE_LINK,
+      "dispatchKind": ShareDispatchKind.TEMPORARY_FILE,
       "title": p2,
       "summary": p3,
-      "mimeType": "text/plain",
-      "source": local_0_4(p0.trustedImageUrl)
+      "mimeType": v0.mimeType,
+      "source": v0.path
     };
   }
+  if (p0.temporaryFile !== undefined || p0.trustedImageUrl === undefined) {
+    throw new ShareFailure(ShareFailureKind.INVALID_PAYLOAD);
+  }
+  return {
+    "kind": SharePayloadKind.IMAGE,
+    "dispatchKind": ShareDispatchKind.REMOTE_IMAGE_LINK,
+    "title": p2,
+    "summary": p3,
+    "mimeType": "text/plain",
+    "source": local_0_4(p0.trustedImageUrl)
+  };
 };
 prepareSharePayload = function (p0, p1) {
   let v0, v1, v2, v3, v4;
@@ -226,20 +215,21 @@ toShareFailure = function (p0) {
   let v0 /*ShareFailure*/;
   if (p0 instanceof ShareFailure) {
     return p0;
-  } else {
-    v0 = p0.message.toLowerCase();
-    if (v0.includes("cancel")) {
-      return new ShareFailure(ShareFailureKind.CANCELLED);
-    } else if (v0.includes("permission") || v0.includes("denied")) {
-      return new ShareFailure(ShareFailureKind.PERMISSION_DENIED);
-    } else if (v0.includes("not found") || v0.includes("no handler") || v0.includes("ability")) {
-      return new ShareFailure(ShareFailureKind.NO_HANDLER);
-    } else if (v0.includes("file") || v0.includes("uri")) {
-      return new ShareFailure(ShareFailureKind.FILE_UNAVAILABLE);
-    } else {
-      return new ShareFailure(ShareFailureKind.TEMPORARY_FAILURE);
-    }
   }
+  v0 = p0.message.toLowerCase();
+  if (v0.includes("cancel")) {
+    return new ShareFailure(ShareFailureKind.CANCELLED);
+  }
+  if (v0.includes("permission") || v0.includes("denied")) {
+    return new ShareFailure(ShareFailureKind.PERMISSION_DENIED);
+  }
+  if (v0.includes("not found") || v0.includes("no handler") || v0.includes("ability")) {
+    return new ShareFailure(ShareFailureKind.NO_HANDLER);
+  }
+  if (v0.includes("file") || v0.includes("uri")) {
+    return new ShareFailure(ShareFailureKind.FILE_UNAVAILABLE);
+  }
+  return new ShareFailure(ShareFailureKind.TEMPORARY_FAILURE);
 };
 MAX_SHARE_TITLE_LENGTH = 120;
 MAX_SHARE_SUMMARY_LENGTH = 1000;

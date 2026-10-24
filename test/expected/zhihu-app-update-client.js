@@ -41,7 +41,7 @@ local_0_1 = "zhuoyi233/zhihu-plus-plus-HMOS";
 local_0_5 = 4000;
 {
   let local_1_0;
-  acc = class panda_jmp0_reserved_anonymous_0 {
+  local_1_0 = class panda_jmp0_reserved_anonymous_0 {
     constructor() {
       this.requestHandle = http.createHttp();
     }
@@ -56,26 +56,23 @@ local_0_5 = 4000;
         if (v0 === undefined) {
           v3 = decodeLatestRelease(local_1_0.bundledLatestJson);
           return v3 !== undefined && v3.versionName === p0 ? resolveAppUpdateCheck(p0, v3, "") : resolveAppUpdateCheck(p0, undefined, "检查更新失败：静态更新源与 Releases 备用源均不可用");
-        } else {
-          v3 = decodeLatestRelease(local_1_0.bundledLatestJson);
-          return v3 !== undefined && v3.versionName === v0.versionName ? resolveAppUpdateCheck(p0, v3, "") : resolveAppUpdateCheck(p0, v0, "");
         }
-      } else {
-        this.enrichSha256FromBundled(v4);
-        return resolveAppUpdateCheck(p0, v4, "");
+        v3 = decodeLatestRelease(local_1_0.bundledLatestJson);
+        return v3 !== undefined && v3.versionName === v0.versionName ? resolveAppUpdateCheck(p0, v3, "") : resolveAppUpdateCheck(p0, v0, "");
       }
+      this.enrichSha256FromBundled(v4);
+      return resolveAppUpdateCheck(p0, v4, "");
     }
     enrichSha256FromBundled(p0) {
       let v0 /*decodeLatestRelease*/;
       if (p0.assetSha256 !== undefined && p0.assetSha256.length > 0) {
         return;
-      } else {
-        v0 = decodeLatestRelease(local_1_0.bundledLatestJson);
-        if (v0 !== undefined && v0.versionName === p0.versionName && v0.assetSha256 !== undefined) {
-          p0.assetSha256 = v0.assetSha256;
-        }
-        return;
       }
+      v0 = decodeLatestRelease(local_1_0.bundledLatestJson);
+      if (v0 !== undefined && v0.versionName === p0.versionName && v0.assetSha256 !== undefined) {
+        p0.assetSha256 = v0.assetSha256;
+      }
+      return;
     }
     async requestStatic(p0) {
       let v0, v2 /*http*/, v7;
@@ -95,10 +92,9 @@ local_0_5 = 4000;
       Number(v0.responseCode);
       if (v0 !== 200 || typeof v0.result !== "string") {
         throw new Error("静态源响应码 " + v0.responseCode + "");
-      } else {
-        v2.destroy();
-        return v0.result;
       }
+      v2.destroy();
+      return v0.result;
     }
     fetchStatic(p0, p1) {
       let acc;
@@ -118,17 +114,16 @@ local_0_5 = 4000;
         local_3_3 = false;
         local_3_6 = function () {
           let v1 /*total*/;
-          if (local_3_0 /*settled*/ || local_3_1 < local_3_2) {
-            return;
-          } else if (!local_3_3 && local_2_0[1].length > 0) {
-            return;
-          } else {
+          if (!local_3_0 /*settled*/ && local_3_1 >= local_3_2) {
+            if (!local_3_3 && local_2_0[1].length > 0) {
+              return;
+            }
             local_3_0 = true;
-            v1 = local_3_5 > 0 ? "静态更新数据格式错误" : "静态更新源不可用";
-            v1 = new Error(v1);
+            v1 = new Error(local_3_5 > 0 ? "静态更新数据格式错误" : "静态更新源不可用");
             local_3_4(v1);
             return;
           }
+          return;
         };
         local_3_8 = function () {
           local_3_1 += 1;
@@ -139,15 +134,15 @@ local_0_5 = 4000;
           acc = local_2_2.requestStatic(p0).then(function (p0) {
             if (local_3_0 /*settled*/) {
               return;
-            } else if (local_2_1(p0)) {
+            }
+            if (local_2_1(p0)) {
               local_3_0 = true;
               local_3_7(p0);
               return;
-            } else {
-              local_3_5 += 1;
-              local_3_8();
-              return;
             }
+            local_3_5 += 1;
+            local_3_8();
+            return;
           });
           acc.catch(function (p0) {
             local_3_8();
@@ -160,15 +155,14 @@ local_0_5 = 4000;
           let v3;
           if (local_3_0) {
             return;
-          } else {
-            local_3_2 += local_2_0[1].length;
-            local_3_3 = true;
-            for (v3 of local_2_0[1]) {
-              local_3_9(v3);
-            }
-            local_3_6();
-            return;
           }
+          local_3_2 += local_2_0[1].length;
+          local_3_3 = true;
+          for (v3 of local_2_0[1]) {
+            local_3_9(v3);
+          }
+          local_3_6();
+          return;
         }, local_0_5);
       });
       return acc;
@@ -178,27 +172,25 @@ local_0_5 = 4000;
       v2 = !p0 && local_1_0.latestJson.length > 0;
       if (v2 && (acc = Date.now(), !v2 - local_1_0.latestFetchedAt < local_0_0)) {
         return local_1_0.latestJson;
-      } else {
-        v0 = await this.fetchStatic("version.json", function (p0) {
-          return decodeLatestRelease(p0) !== undefined;
-        });
-        local_1_0.latestJson = v0;
-        local_1_0.latestFetchedAt = Date.now();
-        return v0;
       }
+      v0 = await this.fetchStatic("version.json", function (p0) {
+        return decodeLatestRelease(p0) !== undefined;
+      });
+      local_1_0.latestJson = v0;
+      local_1_0.latestFetchedAt = Date.now();
+      return v0;
     }
     async releasesCatalog() {
       let v0, acc;
       if (local_1_0.releasesJson.length > 0 && (acc = Date.now(), !(local_1_0.releasesJson.length > 0) - local_1_0.releasesFetchedAt < local_0_0)) {
         return local_1_0.releasesJson;
-      } else {
-        v0 = await this.fetchStatic("releases.json", function (p0) {
-          return Array.isArray(JSON.parse(p0));
-        });
-        local_1_0.releasesJson = v0;
-        local_1_0.releasesFetchedAt = Date.now();
-        return v0;
       }
+      v0 = await this.fetchStatic("releases.json", function (p0) {
+        return Array.isArray(JSON.parse(p0));
+      });
+      local_1_0.releasesJson = v0;
+      local_1_0.releasesFetchedAt = Date.now();
+      return v0;
     }
     async requestAtomFallback() {
       let v0, v5;
@@ -267,7 +259,6 @@ local_0_5 = 4000;
       }
     }
   };
-  local_1_0 = acc;
   (function () {
     this.latestJson = "";
     this.latestFetchedAt = 0;
@@ -275,7 +266,7 @@ local_0_5 = 4000;
     this.releasesFetchedAt = 0;
     this.bundledLatestJson = "";
     this.bundledReleasesJson = "";
-  }).call(acc);
+  }).call(local_1_0);
 }
 AppUpdateClient = acc;
 export { AppUpdateClient };

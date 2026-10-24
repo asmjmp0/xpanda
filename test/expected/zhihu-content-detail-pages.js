@@ -73,12 +73,8 @@ local_0_12 = function (p0, p1) {
   v0 = Math.min(1, Math.max(0, p1));
   if (v0 >= 1) {
     return p0;
-  } else {
-    v0 *= 255;
-    v0 = Math.round(v0);
-    v0 = v0.toString(16);
-    return "" + p0 + "" + v0.padStart(2, "0") + "";
   }
+  return "" + p0 + "" + Math.round(v0 * 255).toString(16).padStart(2, "0") + "";
 };
 local_0_0 = function (p0) {
   let v2;
@@ -123,14 +119,13 @@ contentAuthorBadge = function (p0) {
   v0 = p0.value.author === null || p0.value.author === undefined ? undefined : p0.value.author.badge;
   if (v0 === undefined || v0.iconUrl.trim().length === 0) {
     return undefined;
-  } else {
-    v1 = v0.iconUrl.startsWith("http://") ? "https://" + v0.iconUrl.substring(7) + "" : v0.iconUrl;
-    return new RegExp("^https:\\/\\/[A-Za-z0-9.-]+").test(v1) ? {
-      "title": v0.title,
-      "description": v0.description,
-      "iconUrl": v1
-    } : undefined;
   }
+  v1 = v0.iconUrl.startsWith("http://") ? "https://" + v0.iconUrl.substring(7) + "" : v0.iconUrl;
+  return new RegExp("^https:\\/\\/[A-Za-z0-9.-]+").test(v1) ? {
+    "title": v0.title,
+    "description": v0.description,
+    "iconUrl": v1
+  } : undefined;
 };
 contentAuthorHeadline = function (p0) {
   let v0;
@@ -170,24 +165,22 @@ contentContextTitle = function (p0) {
       v0 = "";
     }
     return v0;
-  } else {
-    return contentTitle(p0).trim();
   }
+  return contentTitle(p0).trim();
 };
 contentCreatedAtText = function (p0) {
   let v0, acc;
   if (p0.kind !== ContentDetailKind.ANSWER && p0.kind !== ContentDetailKind.ARTICLE) {
     return "";
-  } else {
-    v0 = formatContentDateTime(p0.value.createdAt);
-    if (v0.length > 0) {
-      v0 = "发布于 " + v0;
-      acc = v0 + "";
-    } else {
-      acc = "";
-    }
-    return acc;
   }
+  v0 = formatContentDateTime(p0.value.createdAt);
+  if (v0.length > 0) {
+    v0 = "发布于 " + v0;
+    acc = v0 + "";
+  } else {
+    acc = "";
+  }
+  return acc;
 };
 contentDetailPageTitle = function (p0) {
   switch (p0) {
@@ -205,36 +198,33 @@ contentEmptyMessage = function (p0) {
   let v0;
   if (p0.kind === ContentDetailKind.QUESTION) {
     return "问题暂时没有补充说明";
-  } else {
-    v0 = p0.value.excerpt.trim();
-    if (v0.length <= 0) {
-      v0 = "正文为空";
-    }
-    return v0;
   }
+  v0 = p0.value.excerpt.trim();
+  if (v0.length <= 0) {
+    v0 = "正文为空";
+  }
+  return v0;
 };
 contentEndorsements = function (p0) {
   if (p0.kind === ContentDetailKind.QUESTION) {
     return [];
-  } else {
-    return p0.value.endorsements ?? [];
   }
+  return p0.value.endorsements ?? [];
 };
 contentHtml = function (p0) {
   if (p0.kind === ContentDetailKind.QUESTION) {
     return p0.value.detailHtml;
-  } else if (p0.kind !== ContentDetailKind.ANSWER && p0.kind !== ContentDetailKind.ARTICLE) {
-    return;
-  } else {
-    return p0.value.contentHtml;
   }
+  if (p0.kind !== ContentDetailKind.ANSWER && p0.kind !== ContentDetailKind.ARTICLE) {
+    return;
+  }
+  return p0.value.contentHtml;
 };
 contentIpInfo = function (p0) {
   if (p0.kind === ContentDetailKind.QUESTION) {
     return "";
-  } else {
-    return (p0.value.ipInfo ?? "").trim();
   }
+  return (p0.value.ipInfo ?? "").trim();
 };
 contentShareSummary = function (p0) {
   let v0;
@@ -285,14 +275,14 @@ contentStatistics = function (p0, p1, p2) {
       p2 = p0.value.followerCount;
     }
     return "" + p0.value.answerCount + " 个回答 · " + p2 + " 人关注 · " + ("" + p0.value.commentCount + " 条评论");
-  } else if (p0.kind !== ContentDetailKind.ANSWER && p0.kind !== ContentDetailKind.ARTICLE) {
-    return;
-  } else {
-    if (p1 == null) {
-      p1 = p0.value.voteupCount;
-    }
-    return "" + p1 + " 赞同 · " + p0.value.commentCount + " 条评论";
   }
+  if (p0.kind !== ContentDetailKind.ANSWER && p0.kind !== ContentDetailKind.ARTICLE) {
+    return;
+  }
+  if (p1 == null) {
+    p1 = p0.value.voteupCount;
+  }
+  return "" + p1 + " 赞同 · " + p0.value.commentCount + " 条评论";
 };
 contentTitle = function (p0) {
   switch (p0.kind) {
@@ -310,12 +300,12 @@ contentUpdatedAtText = function (p0) {
   let v1 /*ContentDetailKind*/;
   if (p0.kind !== ContentDetailKind.ANSWER && p0.kind !== ContentDetailKind.ARTICLE) {
     return "";
-  } else if (p0.value.updatedAt <= 0 || p0.value.updatedAt === p0.value.createdAt) {
-    return "";
-  } else {
-    v1 = formatContentDateTime(p0.value.updatedAt);
-    return v1.length > 0 ? "编辑于 " + v1 + "" : "";
   }
+  if (p0.value.updatedAt <= 0 || p0.value.updatedAt === p0.value.createdAt) {
+    return "";
+  }
+  v1 = formatContentDateTime(p0.value.updatedAt);
+  return v1.length > 0 ? "编辑于 " + v1 + "" : "";
 };
 local_0_2 = function (p0, p1, p2) {
   let v0;
@@ -331,15 +321,14 @@ local_0_8 = function (p0) {
   if (v0.startsWith("GBK") || v0.startsWith("GBL") || v0.startsWith("GRD") || v0.startsWith("GYL")) {
     v0 = local_0_11(v0);
     return local_0_12(v0, p0.backgroundColorAlpha);
-  } else {
-    return {
-      "id": 50331657,
-      "type": 10001,
-      "params": [],
-      "bundleName": "com.github.zhuoyi233.zhplus",
-      "moduleName": "entry"
-    };
   }
+  return {
+    "id": 50331657,
+    "type": 10001,
+    "params": [],
+    "bundleName": "com.github.zhuoyi233.zhplus",
+    "moduleName": "entry"
+  };
 };
 local_0_11 = function (p0) {
   switch (p0) {
@@ -373,29 +362,27 @@ local_0_9 = function (p0) {
   v0 = p0.textColorGroup ?? "";
   if (v0.startsWith("GBK") || v0.startsWith("GBL") || v0.startsWith("GRD") || v0.startsWith("GYL")) {
     return local_0_11(v0);
-  } else {
-    v0 = AppStorage.get("resolvedThemeColor");
-    if (v0 == null) {
-      v0 = DEFAULT_THEME_COLOR;
-    }
-    return v0;
   }
+  v0 = AppStorage.get("resolvedThemeColor");
+  if (v0 == null) {
+    v0 = DEFAULT_THEME_COLOR;
+  }
+  return v0;
 };
 formatContentDateTime = function (p0) {
   let v0, v1, v2, v3;
   if (!Number.isFinite(p0) || p0 <= 0) {
     return "";
-  } else {
-    v0 = new Date(p0 * 1000);
-    v1 = function (p0) {
-      return p0 < 10 ? "0" + p0 + "" : "" + p0 + "";
-    };
-    v2 = "" + v0.getFullYear() + "-" + v1(v0.getMonth() + 1) + "-" + v1(v0.getDate()) + " ";
-    v3 = "" + v1(v0.getHours()) + ":";
-    v0 = v0.getMinutes();
-    v0 = v3 + v1(v0);
-    return v2 + (v0 + "");
   }
+  v0 = new Date(p0 * 1000);
+  v1 = function (p0) {
+    return p0 < 10 ? "0" + p0 + "" : "" + p0 + "";
+  };
+  v2 = "" + v0.getFullYear() + "-" + v1(v0.getMonth() + 1) + "-" + v1(v0.getDate()) + " ";
+  v3 = "" + v1(v0.getHours()) + ":";
+  v0 = v0.getMinutes();
+  v0 = v3 + v1(v0);
+  return v2 + (v0 + "");
 };
 local_0_1 = function (p0) {
   let acc;
@@ -403,85 +390,82 @@ local_0_1 = function (p0) {
     let local_1_0, local_1_1;
     if (p0.marks.length <= 1) {
       return p0;
-    } else {
-      local_1_0 = new Map();
-      p0.marks.forEach(function (p0) {
-        let v1 /*groups*/;
-        v1 = local_1_0.get("" + p0.startIndex + ":" + p0.endIndex + "");
-        if (v1 === undefined) {
-          local_1_0.set("" + p0.startIndex + ":" + p0.endIndex + "", [p0]);
-        } else {
-          v1.push(p0);
-        }
-      });
-      local_1_1 = [];
-      local_1_0.forEach(function (p0) {
-        let v0 /*merged*/, v3;
-        let local_2_0, local_2_1, local_2_2, local_2_3, local_2_4, local_2_5;
-        v0 = p0.filter(function (p0) {
-          return p0.masterSegInfo !== undefined;
-        }).concat(p0.filter(function (p0) {
-          return p0.masterSegInfo === undefined;
-        }));
-        local_2_0 = [];
-        v0.forEach(function (p0) {
-          let v0 /*effectiveSegmentMeta*/;
-          v0 = effectiveSegmentMeta(p0);
-          if (v0 === undefined) {
-            return;
-          } else {
-            v0 = v0.segIds;
-            v0.forEach(function (p0) {
-              if (!local_2_0.includes(p0)) {
-                local_2_0.push(p0);
-              }
-            });
-            return;
-          }
-        });
-        local_2_1 = 0;
-        local_2_2 = 0;
-        local_2_3 = 0;
-        local_2_4 = false;
-        local_2_5 = false;
-        v0.forEach(function (p0) {
-          let v0 /*effectiveSegmentMeta*/;
-          v0 = effectiveSegmentMeta(p0);
-          if (v0 === undefined) {
-            return;
-          } else {
-            local_2_1 = Math.max(local_2_1 /*likeCount*/, v0.likeCount);
-            local_2_2 = Math.max(local_2_2 /*commentCount*/, v0.commentCount);
-            local_2_3 = Math.max(local_2_3 /*myCommentCount*/, v0.myCommentCount);
-            local_2_4 = local_2_4 /*isLike*/ || v0.isLike;
-            local_2_5 = local_2_5 /*isSpan*/ || v0.isSpan;
-            return;
-          }
-        });
-        v3 = {
-          "startIndex": p0[0].startIndex,
-          "endIndex": p0[0].endIndex,
-          "segInfo": null
-        };
-        v3.segInfo = {
-          "segIds": local_2_0,
-          "isLike": local_2_4,
-          "likeCount": local_2_1,
-          "commentCount": local_2_2,
-          "myCommentCount": local_2_3,
-          "isSpan": local_2_5
-        };
-        local_1_1.push(v3);
-      });
-      local_1_1.sort(function (p0, p1) {
-        return p0.startIndex - p1.startIndex;
-      });
-      return {
-        "pid": p0.pid,
-        "text": p0.text,
-        "marks": local_1_1
-      };
     }
+    local_1_0 = new Map();
+    p0.marks.forEach(function (p0) {
+      let v1 /*groups*/;
+      v1 = local_1_0.get("" + p0.startIndex + ":" + p0.endIndex + "");
+      if (v1 === undefined) {
+        local_1_0.set("" + p0.startIndex + ":" + p0.endIndex + "", [p0]);
+      } else {
+        v1.push(p0);
+      }
+    });
+    local_1_1 = [];
+    local_1_0.forEach(function (p0) {
+      let v0 /*merged*/, v3;
+      let local_2_0, local_2_1, local_2_2, local_2_3, local_2_4, local_2_5;
+      v0 = p0.filter(function (p0) {
+        return p0.masterSegInfo !== undefined;
+      }).concat(p0.filter(function (p0) {
+        return p0.masterSegInfo === undefined;
+      }));
+      local_2_0 = [];
+      v0.forEach(function (p0) {
+        let v0 /*effectiveSegmentMeta*/;
+        v0 = effectiveSegmentMeta(p0);
+        if (v0 === undefined) {
+          return;
+        }
+        v0 = v0.segIds;
+        v0.forEach(function (p0) {
+          if (!local_2_0.includes(p0)) {
+            local_2_0.push(p0);
+          }
+        });
+        return;
+      });
+      local_2_1 = 0;
+      local_2_2 = 0;
+      local_2_3 = 0;
+      local_2_4 = false;
+      local_2_5 = false;
+      v0.forEach(function (p0) {
+        let v0 /*effectiveSegmentMeta*/;
+        v0 = effectiveSegmentMeta(p0);
+        if (v0 === undefined) {
+          return;
+        }
+        local_2_1 = Math.max(local_2_1 /*likeCount*/, v0.likeCount);
+        local_2_2 = Math.max(local_2_2 /*commentCount*/, v0.commentCount);
+        local_2_3 = Math.max(local_2_3 /*myCommentCount*/, v0.myCommentCount);
+        local_2_4 = local_2_4 /*isLike*/ || v0.isLike;
+        local_2_5 = local_2_5 /*isSpan*/ || v0.isSpan;
+        return;
+      });
+      v3 = {
+        "startIndex": p0[0].startIndex,
+        "endIndex": p0[0].endIndex,
+        "segInfo": null
+      };
+      v3.segInfo = {
+        "segIds": local_2_0,
+        "isLike": local_2_4,
+        "likeCount": local_2_1,
+        "commentCount": local_2_2,
+        "myCommentCount": local_2_3,
+        "isSpan": local_2_5
+      };
+      local_1_1.push(v3);
+    });
+    local_1_1.sort(function (p0, p1) {
+      return p0.startIndex - p1.startIndex;
+    });
+    return {
+      "pid": p0.pid,
+      "text": p0.text,
+      "marks": local_1_1
+    };
   });
   return acc;
 };
@@ -634,13 +618,13 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     local_1_0.onHoldingHandChanged = function (p0) {
       if (p0 !== motion.HoldingHandStatus.LEFT_HAND_HELD && p0 !== motion.HoldingHandStatus.RIGHT_HAND_HELD) {
         return;
-      } else if (p0 === local_1_0.holdingHand) {
-        return;
-      } else {
-        local_1_0.holdingHand = p0;
-        local_1_0.snapAnswerFabToHand();
+      }
+      if (p0 === local_1_0.holdingHand) {
         return;
       }
+      local_1_0.holdingHand = p0;
+      local_1_0.snapAnswerFabToHand();
+      return;
     };
     v3 = AppStorage.get("resolvedThemeColor");
     if (v3 == null) {
@@ -1549,30 +1533,29 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
         local_1_0.controller.load(local_1_0.kind, local_1_0.activeContentId);
       }
       return;
-    } else if (local_1_0.repository === undefined) {
+    }
+    if (local_1_0.repository === undefined) {
       local_1_0.phase = ContentDetailPhase.ERROR;
       local_1_0.errorMessage = "内容数据源未配置";
       return;
-    } else {
-      local_1_0.controller = new ContentDetailController(local_1_0.repository, local_1_0.openedContentStore, function (p0) {
-        return local_1_0.applyState(p0);
-      }, local_1_0.historyUploader);
-      local_1_0.controller.activate();
-      local_1_0.controller.load(local_1_0.kind, local_1_0.activeContentId);
-      local_1_0.createBlockingAction();
-      local_1_0.ensureAnswers();
-      return;
     }
+    local_1_0.controller = new ContentDetailController(local_1_0.repository, local_1_0.openedContentStore, function (p0) {
+      return local_1_0.applyState(p0);
+    }, local_1_0.historyUploader);
+    local_1_0.controller.activate();
+    local_1_0.controller.load(local_1_0.kind, local_1_0.activeContentId);
+    local_1_0.createBlockingAction();
+    local_1_0.ensureAnswers();
+    return;
   }
   ensureAnswers() {
     let v0;
     let local_1_0;
     local_1_0 = this;
-    if (!local_1_0.pageActive || local_1_0.kind !== ContentDetailKind.QUESTION) {
-      return;
-    } else if (!local_1_0.authenticated) {
-      return;
-    } else {
+    if (local_1_0.pageActive && local_1_0.kind === ContentDetailKind.QUESTION) {
+      if (!local_1_0.authenticated) {
+        return;
+      }
       if (local_1_0.answersController === undefined) {
         v0 = local_1_0.questionAnswerFeedFactory();
         if (v0 === undefined) {
@@ -1587,6 +1570,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       local_1_0.answersController.activate();
       return;
     }
+    return;
   }
   onLoginChanged() {
     let v0;
@@ -1594,22 +1578,21 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     this.authenticated = v0 === SessionStatus.AUTHENTICATED;
     if (!this.pageActive) {
       return;
-    } else {
-      if (this.answersController !== null && this.answersController !== undefined) {
-        this.answersController.deactivate();
-      }
-      this.answersController = undefined;
-      this.answerDataSource.replace([]);
-      this.ensureAnswers();
-      if (this.followController !== null && this.followController !== undefined) {
-        this.followController.deactivate();
-      }
-      this.followController = undefined;
-      if (this.controller !== null && this.controller !== undefined) {
-        this.controller.load(this.kind, this.activeContentId);
-      }
-      return;
     }
+    if (this.answersController !== null && this.answersController !== undefined) {
+      this.answersController.deactivate();
+    }
+    this.answersController = undefined;
+    this.answerDataSource.replace([]);
+    this.ensureAnswers();
+    if (this.followController !== null && this.followController !== undefined) {
+      this.followController.deactivate();
+    }
+    this.followController = undefined;
+    if (this.controller !== null && this.controller !== undefined) {
+      this.controller.load(this.kind, this.activeContentId);
+    }
+    return;
   }
   aboutToDisappear() {
     this.pageActive = false;
@@ -1650,21 +1633,19 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     let acc;
     if (p0.marks[p1] === undefined || (acc = effectiveSegmentMeta(p0.marks[p1]), p0.marks[p1] === undefined === undefined)) {
       return;
-    } else {
-      this.segmentSheetPid = p0.pid;
-      this.segmentSheetMarkIndex = p1;
-      this.segmentSheetOpenedAt = Date.now();
-      this.segmentSheetShown = true;
-      return;
     }
+    this.segmentSheetPid = p0.pid;
+    this.segmentSheetMarkIndex = p1;
+    this.segmentSheetOpenedAt = Date.now();
+    this.segmentSheetShown = true;
+    return;
   }
   guardSegmentSheetDismiss(p0) {
     if (Date.now() - this.segmentSheetOpenedAt < 400) {
       return;
-    } else {
-      p0.dismiss();
-      return;
     }
+    p0.dismiss();
+    return;
   }
   currentSegmentMeta() {
     let v0;
@@ -1675,10 +1656,9 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     });
     if (v0 === undefined) {
       return undefined;
-    } else {
-      v0 = v0.marks[local_1_0.segmentSheetMarkIndex];
-      return v0 === undefined ? undefined : effectiveSegmentMeta(v0);
     }
+    v0 = v0.marks[local_1_0.segmentSheetMarkIndex];
+    return v0 === undefined ? undefined : effectiveSegmentMeta(v0);
   }
   currentSegmentQuote() {
     let v0, v1, v2, acc;
@@ -1689,20 +1669,20 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     });
     if (v0 === undefined) {
       return "";
-    } else if (v0.marks[local_1_0.segmentSheetMarkIndex] === undefined) {
-      return "";
-    } else {
-      v2 = Math.max(0, Math.min(v0.text.length, v0.marks[local_1_0.segmentSheetMarkIndex].startIndex));
-      v1 = Math.max(0, Math.min(v0.text.length, v0.marks[local_1_0.segmentSheetMarkIndex].endIndex));
-      if (v1 > v2) {
-        acc = v0.text;
-        v0 = v0.text;
-        acc = acc.substring.call(v0, v2, v1);
-      } else {
-        acc = "";
-      }
-      return acc;
     }
+    if (v0.marks[local_1_0.segmentSheetMarkIndex] === undefined) {
+      return "";
+    }
+    v2 = Math.max(0, Math.min(v0.text.length, v0.marks[local_1_0.segmentSheetMarkIndex].startIndex));
+    v1 = Math.max(0, Math.min(v0.text.length, v0.marks[local_1_0.segmentSheetMarkIndex].endIndex));
+    if (v1 > v2) {
+      acc = v0.text;
+      v0 = v0.text;
+      acc = acc.substring.call(v0, v2, v1);
+    } else {
+      acc = "";
+    }
+    return acc;
   }
   applySegmentMeta(p0, p1, p2) {
     let local_1_0, local_1_1, local_1_2, local_1_3;
@@ -1727,10 +1707,9 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
             v0.masterSegInfo = p0.masterSegInfo === undefined ? p0.masterSegInfo : local_1_3;
             local_2_0.push(v0);
             return;
-          } else {
-            local_2_0.push(p0);
-            return;
           }
+          local_2_0.push(p0);
+          return;
         });
         local_1_1.push({
           "pid": p0.pid,
@@ -1738,10 +1717,9 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
           "marks": local_2_0
         });
         return;
-      } else {
-        local_1_1.push(p0);
-        return;
       }
+      local_1_1.push(p0);
+      return;
     });
     this.segmentInfos = local_1_1;
   }
@@ -1751,43 +1729,41 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     v3 = 0;
     if (this.segmentLikeBusy || this.segmentReactionRepository === undefined || this.session === undefined || this.segmentSheetMarkIndex < 0) {
       return undefined;
-    } else if (this.kind !== ContentDetailKind.ANSWER && this.kind !== ContentDetailKind.ARTICLE) {
+    }
+    if (this.kind !== ContentDetailKind.ANSWER && this.kind !== ContentDetailKind.ARTICLE) {
       return undefined;
-    } else {
-      local_1_0 = this.segmentSheetPid;
-      v5 = this.segmentInfos.find(function (p0) {
-        return p0.pid === local_1_0;
-      });
-      if (v5 === undefined) {
-        return undefined;
-      } else {
-        v6 = v5.marks[this.segmentSheetMarkIndex] === undefined ? undefined : effectiveSegmentMeta(v5.marks[this.segmentSheetMarkIndex]);
-        if (v6 === undefined) {
-          return undefined;
-        } else {
-          v7 = this.kind === ContentDetailKind.ANSWER ? "answer" : "article";
-          v8 = {
-            "segIds": v6.segIds,
-            "isLike": null,
-            "likeCount": null,
-            "commentCount": null,
-            "myCommentCount": null,
-            "isSpan": null
-          };
-          v8.isLike = !v6.isLike;
-          v8.likeCount = v6.isLike ? Math.max(v3, v6.likeCount - 1) : v6.likeCount + 1;
-          v8.commentCount = v6.commentCount;
-          v8.myCommentCount = v6.myCommentCount;
-          v8.isSpan = v6.isSpan;
-          this.segmentLikeBusy = true;
-          try {
-            this.applySegmentMeta(local_1_0, this.segmentSheetMarkIndex, v8);
-            this.applySegmentMeta(local_1_0, this.segmentSheetMarkIndex, await this.segmentReactionRepository.toggleSegmentLike(v7, this.activeContentId, v5, this.segmentSheetMarkIndex));
-          } finally {
-            this.segmentLikeBusy = false;
-          }
-        }
-      }
+    }
+    local_1_0 = this.segmentSheetPid;
+    v5 = this.segmentInfos.find(function (p0) {
+      return p0.pid === local_1_0;
+    });
+    if (v5 === undefined) {
+      return undefined;
+    }
+    v6 = v5.marks[this.segmentSheetMarkIndex] === undefined ? undefined : effectiveSegmentMeta(v5.marks[this.segmentSheetMarkIndex]);
+    if (v6 === undefined) {
+      return undefined;
+    }
+    v7 = this.kind === ContentDetailKind.ANSWER ? "answer" : "article";
+    v8 = {
+      "segIds": v6.segIds,
+      "isLike": null,
+      "likeCount": null,
+      "commentCount": null,
+      "myCommentCount": null,
+      "isSpan": null
+    };
+    v8.isLike = !v6.isLike;
+    v8.likeCount = v6.isLike ? Math.max(v3, v6.likeCount - 1) : v6.likeCount + 1;
+    v8.commentCount = v6.commentCount;
+    v8.myCommentCount = v6.myCommentCount;
+    v8.isSpan = v6.isSpan;
+    this.segmentLikeBusy = true;
+    try {
+      this.applySegmentMeta(local_1_0, this.segmentSheetMarkIndex, v8);
+      this.applySegmentMeta(local_1_0, this.segmentSheetMarkIndex, await this.segmentReactionRepository.toggleSegmentLike(v7, this.activeContentId, v5, this.segmentSheetMarkIndex));
+    } finally {
+      this.segmentLikeBusy = false;
     }
   }
   notifySegmentLikeFailure() {
@@ -1798,9 +1774,8 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
   extractSegmentInfos(p0) {
     if (p0 === undefined || p0.kind === ContentDetailKind.QUESTION) {
       return [];
-    } else {
-      return local_0_1(p0.value.segmentInfos ?? []);
     }
+    return local_0_1(p0.value.segmentInfos ?? []);
   }
   copySegmentQuote() {
     let v0;
@@ -1809,20 +1784,19 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     v0 = local_1_0.currentSegmentQuote();
     if (v0.length === 0) {
       return;
-    } else {
-      v0 = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, v0);
-      v0 = pasteboard.getSystemPasteboard().setData(v0);
-      v0.then(function () {
-        local_1_0.getUIContext().getPromptAction().showToast({
-          "message": "已复制划线内容"
-        });
-      }).catch(function () {
-        local_1_0.getUIContext().getPromptAction().showToast({
-          "message": "复制失败"
-        });
-      });
-      return;
     }
+    v0 = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, v0);
+    v0 = pasteboard.getSystemPasteboard().setData(v0);
+    v0.then(function () {
+      local_1_0.getUIContext().getPromptAction().showToast({
+        "message": "已复制划线内容"
+      });
+    }).catch(function () {
+      local_1_0.getUIContext().getPromptAction().showToast({
+        "message": "复制失败"
+      });
+    });
+    return;
   }
   segmentActionSheet(p0) {
     let local_1_0;
@@ -2176,13 +2150,12 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     local_1_0 = this;
     if (local_1_0.rules === undefined || local_1_0.history === undefined) {
       return;
-    } else {
-      local_1_0.blockingAction = new BlockingActionController(local_1_0.rules, local_1_0.history, function (p0) {
-        local_1_0.blockingMessage = p0.message;
-        local_1_0.blockingBusy = p0.busy;
-      });
-      return;
     }
+    local_1_0.blockingAction = new BlockingActionController(local_1_0.rules, local_1_0.history, function (p0) {
+      local_1_0.blockingMessage = p0.message;
+      local_1_0.blockingBusy = p0.busy;
+    });
+    return;
   }
   initialRender() {
     let local_1_0;
@@ -2769,23 +2742,21 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     if (local_1_1.collectionRepository === undefined || local_1_1.session === undefined || local_1_1.session.getState().status !== SessionStatus.AUTHENTICATED || local_1_1.kind === ContentDetailKind.QUESTION) {
       local_1_1.contentFavorited = false;
       return;
-    } else {
-      v1 = local_1_1.kind === ContentDetailKind.ARTICLE ? "article" : "answer";
-      local_1_0 = local_1_1.activeContentId;
-      local_1_1.favoriteStateContentId = local_1_0;
-      acc = local_1_1.collectionRepository.getContentCollections(v1, local_1_0).then(function (p0) {
-        if (!local_1_1.pageActive || local_1_1.favoriteStateContentId !== local_1_0) {
-          return;
-        } else {
-          local_1_1.contentFavorited = p0.some(function (p0) {
-            return p0.isFavorited;
-          });
-          return;
-        }
-      });
-      acc.catch(function (p0) {});
-      return;
     }
+    v1 = local_1_1.kind === ContentDetailKind.ARTICLE ? "article" : "answer";
+    local_1_0 = local_1_1.activeContentId;
+    local_1_1.favoriteStateContentId = local_1_0;
+    acc = local_1_1.collectionRepository.getContentCollections(v1, local_1_0).then(function (p0) {
+      if (!local_1_1.pageActive || local_1_1.favoriteStateContentId !== local_1_0) {
+        return;
+      }
+      local_1_1.contentFavorited = p0.some(function (p0) {
+        return p0.isFavorited;
+      });
+      return;
+    });
+    acc.catch(function (p0) {});
+    return;
   }
   statusPanel(p0, p1, p2) {
     let local_1_0, local_1_1, local_1_2;
@@ -3013,11 +2984,10 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
           local_1_1.contentDateFooter(local_1_0);
         };
         acc.onScrollOffset = function (p0) {
-          if (!local_1_1.pageActive) {
-            return;
-          } else if (!acceptsContentDocumentEvent(local_1_1.phase, local_1_1.content, local_1_0)) {
-            return;
-          } else {
+          if (local_1_1.pageActive) {
+            if (!acceptsContentDocumentEvent(local_1_1.phase, local_1_1.content, local_1_0)) {
+              return;
+            }
             local_1_1.updateChromeHiddenByScroll(p0);
             if (local_1_1.kind === ContentDetailKind.ANSWER) {
               local_1_1.updateAnswerTitleScrolled(local_1_0, p0);
@@ -3026,27 +2996,28 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
             }
             return;
           }
+          return;
         };
         acc.onBottomEdgeChange = function (p0) {
-          if (!local_1_1.pageActive) {
-            return;
-          } else if (!acceptsContentDocumentEvent(local_1_1.phase, local_1_1.content, local_1_0)) {
-            return;
-          } else {
+          if (local_1_1.pageActive) {
+            if (!acceptsContentDocumentEvent(local_1_1.phase, local_1_1.content, local_1_0)) {
+              return;
+            }
             local_1_1.contentAtBottom = p0;
             local_1_1.revealChromeAtBottom(p0);
             return;
           }
+          return;
         };
         acc.onTopEdgeChange = function (p0) {
-          if (!local_1_1.pageActive) {
-            return;
-          } else if (!acceptsContentDocumentEvent(local_1_1.phase, local_1_1.content, local_1_0)) {
-            return;
-          } else {
+          if (local_1_1.pageActive) {
+            if (!acceptsContentDocumentEvent(local_1_1.phase, local_1_1.content, local_1_0)) {
+              return;
+            }
             local_1_1.contentAtTop = p0;
             return;
           }
+          return;
         };
         acc.onPageTurnPastStart = function () {
           if (local_1_1.pageTurnSwitchAnswer && local_1_1.kind === ContentDetailKind.ANSWER) {
@@ -3114,11 +3085,10 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
             local_1_1.contentDateFooter(local_1_0);
           };
           acc.onScrollOffset = function (p0) {
-            if (!local_1_1.pageActive) {
-              return;
-            } else if (!acceptsContentDocumentEvent(local_1_1.phase, local_1_1.content, local_1_0)) {
-              return;
-            } else {
+            if (local_1_1.pageActive) {
+              if (!acceptsContentDocumentEvent(local_1_1.phase, local_1_1.content, local_1_0)) {
+                return;
+              }
               local_1_1.updateChromeHiddenByScroll(p0);
               if (local_1_1.kind === ContentDetailKind.ANSWER) {
                 local_1_1.updateAnswerTitleScrolled(local_1_0, p0);
@@ -3127,27 +3097,28 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
               }
               return;
             }
+            return;
           };
           acc.onBottomEdgeChange = function (p0) {
-            if (!local_1_1.pageActive) {
-              return;
-            } else if (!acceptsContentDocumentEvent(local_1_1.phase, local_1_1.content, local_1_0)) {
-              return;
-            } else {
+            if (local_1_1.pageActive) {
+              if (!acceptsContentDocumentEvent(local_1_1.phase, local_1_1.content, local_1_0)) {
+                return;
+              }
               local_1_1.contentAtBottom = p0;
               local_1_1.revealChromeAtBottom(p0);
               return;
             }
+            return;
           };
           acc.onTopEdgeChange = function (p0) {
-            if (!local_1_1.pageActive) {
-              return;
-            } else if (!acceptsContentDocumentEvent(local_1_1.phase, local_1_1.content, local_1_0)) {
-              return;
-            } else {
+            if (local_1_1.pageActive) {
+              if (!acceptsContentDocumentEvent(local_1_1.phase, local_1_1.content, local_1_0)) {
+                return;
+              }
               local_1_1.contentAtTop = p0;
               return;
             }
+            return;
           };
           acc.onPageTurnPastStart = function () {
             if (local_1_1.pageTurnSwitchAnswer && local_1_1.kind === ContentDetailKind.ANSWER) {
@@ -4286,16 +4257,13 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     this.answerFabPanPrevY = p0.offsetY;
     if (v1 === 0 && v2 === 0) {
       return;
-    } else {
-      v1 = this.answerFabOffsetX + v1;
-      v1 = Math.max(this.answerFabMinX(), v1);
-      this.answerFabOffsetX = Math.min(0, v1);
-      v3 = this.answerFabMaxDownY();
-      v2 = this.answerFabOffsetY + v2;
-      v2 = Math.max(this.answerFabMinY(), v2);
-      this.answerFabOffsetY = Math.min(v3, v2);
-      return;
     }
+    v1 = Math.max(this.answerFabMinX(), this.answerFabOffsetX + v1);
+    this.answerFabOffsetX = Math.min(0, v1);
+    v3 = this.answerFabMaxDownY();
+    v2 = Math.max(this.answerFabMinY(), this.answerFabOffsetY + v2);
+    this.answerFabOffsetY = Math.min(v3, v2);
+    return;
   }
   answerFabMinX() {
     return this.answerFabWidthVp + 12 - this.answerFabOverlayWidthVp;
@@ -4346,40 +4314,37 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     }
     if (v0 || local_1_1.answerFabWidthVp <= 0) {
       return;
-    } else {
-      if (local_1_1.gripIsLeftHand()) {
-        v1 = local_1_1.answerFabMinX();
-      }
-      local_1_0 = v1;
-      if (Math.abs(local_1_0 - local_1_1.answerFabOffsetX) >= 1) {
-        local_1_1.getUIContext().animateTo({
-          "duration": 300,
-          "curve": Curve.EaseOut
-        }, function () {
-          local_1_1.answerFabOffsetX = local_1_0;
-        });
-      }
-      local_1_1.persistAnswerFabPosition(local_1_0);
-      return;
     }
+    if (local_1_1.gripIsLeftHand()) {
+      v1 = local_1_1.answerFabMinX();
+    }
+    local_1_0 = v1;
+    if (Math.abs(local_1_0 - local_1_1.answerFabOffsetX) >= 1) {
+      local_1_1.getUIContext().animateTo({
+        "duration": 300,
+        "curve": Curve.EaseOut
+      }, function () {
+        local_1_1.answerFabOffsetX = local_1_0;
+      });
+    }
+    local_1_1.persistAnswerFabPosition(local_1_0);
+    return;
   }
   subscribeHoldingHand() {
     if (!this.gripMotionSupported || this.gripMotionSubscribed) {
       return;
-    } else {
-      motion.on("holdingHandChanged", this.onHoldingHandChanged);
-      this.gripMotionSubscribed = true;
-      return;
     }
+    motion.on("holdingHandChanged", this.onHoldingHandChanged);
+    this.gripMotionSubscribed = true;
+    return;
   }
   unsubscribeHoldingHand() {
     if (!this.gripMotionSubscribed) {
       return;
-    } else {
-      motion.off("holdingHandChanged", this.onHoldingHandChanged);
-      this.gripMotionSubscribed = false;
-      return;
     }
+    motion.off("holdingHandChanged", this.onHoldingHandChanged);
+    this.gripMotionSubscribed = false;
+    return;
   }
   loadAnswerFabPosition() {
     let v0 /*getAbilityContext*/, acc;
@@ -4390,34 +4355,33 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     if (v0 === undefined) {
       local_1_0.answerFabPositionReady = true;
       return;
-    } else {
-      local_1_0.answerFabPreferences = new AppPreferencesStore(v0);
-      acc = local_1_0.answerFabPreferences.loadFabPosition("fabSkipAnswer").then(function (p0) {
-        if (p0 !== undefined) {
-          local_1_0.savedAnswerFabPosition = p0;
-          local_1_0.answerFabOffsetX = p0.x;
-          local_1_0.answerFabOffsetY = p0.y;
-        }
-        local_1_0.answerFabPositionReady = true;
-        local_1_0.applySavedAnswerFabPosition();
-      });
-      acc.catch(function (p0) {
-        local_1_0.answerFabPositionReady = true;
-      });
-      return;
     }
+    local_1_0.answerFabPreferences = new AppPreferencesStore(v0);
+    acc = local_1_0.answerFabPreferences.loadFabPosition("fabSkipAnswer").then(function (p0) {
+      if (p0 !== undefined) {
+        local_1_0.savedAnswerFabPosition = p0;
+        local_1_0.answerFabOffsetX = p0.x;
+        local_1_0.answerFabOffsetY = p0.y;
+      }
+      local_1_0.answerFabPositionReady = true;
+      local_1_0.applySavedAnswerFabPosition();
+    });
+    acc.catch(function (p0) {
+      local_1_0.answerFabPositionReady = true;
+    });
+    return;
   }
   applySavedAnswerFabPosition() {
     if (this.answerFabPositionApplied || !this.answerFabPositionLoaded || this.savedAnswerFabPosition === undefined) {
       return;
-    } else if (this.answerFabOverlayWidthVp <= 0 || this.answerFabOverlayHeightVp <= 0 || this.answerFabWidthVp <= 0) {
-      return;
-    } else {
-      this.answerFabPositionApplied = true;
-      this.answerFabOffsetX = Math.min(0, Math.max(this.answerFabMinX(), this.savedAnswerFabPosition.x));
-      this.answerFabOffsetY = Math.min(this.answerFabMaxDownY(), Math.max(this.answerFabMinY(), this.savedAnswerFabPosition.y));
+    }
+    if (this.answerFabOverlayWidthVp <= 0 || this.answerFabOverlayHeightVp <= 0 || this.answerFabWidthVp <= 0) {
       return;
     }
+    this.answerFabPositionApplied = true;
+    this.answerFabOffsetX = Math.min(0, Math.max(this.answerFabMinX(), this.savedAnswerFabPosition.x));
+    this.answerFabOffsetY = Math.min(this.answerFabMaxDownY(), Math.max(this.answerFabMinY(), this.savedAnswerFabPosition.y));
+    return;
   }
   persistAnswerFabPosition(p0) {
     let v0 /*getAbilityContext*/;
@@ -5202,8 +5166,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
                   if (!If.canRetake("" + local_1_0.kind + "_detail_header_author_badge")) {
                     local_1_1.observeComponentCreation2(function (p0, p1) {
                       let v2;
-                      v2 = contentAuthorBadge(local_1_0);
-                      v2 = v2?.iconUrl;
+                      v2 = contentAuthorBadge(local_1_0)?.iconUrl;
                       if (v2 == null) {
                         v2 = "";
                       }
@@ -5267,43 +5230,42 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     let local_1_0, local_1_1, local_1_2;
     local_1_2 = this;
     local_1_0 = p0;
-    if (local_1_0.kind !== ContentDetailKind.ANSWER) {
-      return;
-    } else if (local_1_0.value.id === (local_1_2.content === null || local_1_2.content === undefined ? undefined : local_1_2.content.value.id)) {
-      v0 = 64;
-      if (local_1_2.contentTitleHeightVp > 0) {
-        v0 = local_1_2.contentTitleHeightVp + 8;
+    if (local_1_0.kind === ContentDetailKind.ANSWER) {
+      if (local_1_0.value.id === (local_1_2.content === null || local_1_2.content === undefined ? undefined : local_1_2.content.value.id)) {
+        v0 = 64;
+        if (local_1_2.contentTitleHeightVp > 0) {
+          v0 = local_1_2.contentTitleHeightVp + 8;
+        }
+        local_1_1 = p1 > v0;
+        if (local_1_1 !== local_1_2.answerQuestionScrolled) {
+          local_1_2.answerQuestionScrolled = local_1_1;
+          local_1_2.getUIContext().animateTo({
+            "duration": 220,
+            "curve": Curve.EaseInOut
+          }, function () {
+            let v1, v2 /*scrolled*/;
+            v1 = {
+              "id": local_1_2.contentId,
+              "questionTitle": contentContextTitle(local_1_0),
+              "authorName": contentAuthorName(local_1_0),
+              "authorAvatarUrl": contentAuthorAvatarUrl(local_1_0),
+              "authorBadgeIconUrl": null,
+              "scrolled": null
+            };
+            v2 = contentAuthorBadge(local_1_0)?.iconUrl;
+            if (v2 == null) {
+              v2 = "";
+            }
+            v1.authorBadgeIconUrl = v2;
+            v1.scrolled = local_1_1;
+            publishAnswerTitle(v1);
+          });
+        }
+        return;
       }
-      local_1_1 = p1 > v0;
-      if (local_1_1 !== local_1_2.answerQuestionScrolled) {
-        local_1_2.answerQuestionScrolled = local_1_1;
-        local_1_2.getUIContext().animateTo({
-          "duration": 220,
-          "curve": Curve.EaseInOut
-        }, function () {
-          let v1, v2 /*scrolled*/;
-          v1 = {
-            "id": local_1_2.contentId,
-            "questionTitle": contentContextTitle(local_1_0),
-            "authorName": contentAuthorName(local_1_0),
-            "authorAvatarUrl": contentAuthorAvatarUrl(local_1_0),
-            "authorBadgeIconUrl": null,
-            "scrolled": null
-          };
-          v2 = contentAuthorBadge(local_1_0);
-          v2 = v2?.iconUrl;
-          if (v2 == null) {
-            v2 = "";
-          }
-          v1.authorBadgeIconUrl = v2;
-          v1.scrolled = local_1_1;
-          publishAnswerTitle(v1);
-        });
-      }
-      return;
-    } else {
       return;
     }
+    return;
   }
   updateChromeHiddenByScroll(p0) {
     let v0;
@@ -5329,43 +5291,42 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     let local_1_0, local_1_1, local_1_2;
     local_1_2 = this;
     local_1_0 = p0;
-    if (local_1_0.kind !== ContentDetailKind.ARTICLE) {
-      return;
-    } else if (local_1_0.value.id === (local_1_2.content === null || local_1_2.content === undefined ? undefined : local_1_2.content.value.id)) {
-      v0 = 64;
-      if (local_1_2.contentTitleHeightVp > 0) {
-        v0 = local_1_2.contentTitleHeightVp + 8;
+    if (local_1_0.kind === ContentDetailKind.ARTICLE) {
+      if (local_1_0.value.id === (local_1_2.content === null || local_1_2.content === undefined ? undefined : local_1_2.content.value.id)) {
+        v0 = 64;
+        if (local_1_2.contentTitleHeightVp > 0) {
+          v0 = local_1_2.contentTitleHeightVp + 8;
+        }
+        local_1_1 = p1 > v0;
+        if (local_1_1 !== local_1_2.articleTitleScrolled) {
+          local_1_2.articleTitleScrolled = local_1_1;
+          local_1_2.getUIContext().animateTo({
+            "duration": 220,
+            "curve": Curve.EaseInOut
+          }, function () {
+            let v1, v2 /*scrolled*/;
+            v1 = {
+              "id": local_1_2.contentId,
+              "title": contentContextTitle(local_1_0),
+              "authorName": contentAuthorName(local_1_0),
+              "authorAvatarUrl": contentAuthorAvatarUrl(local_1_0),
+              "authorBadgeIconUrl": null,
+              "scrolled": null
+            };
+            v2 = contentAuthorBadge(local_1_0)?.iconUrl;
+            if (v2 == null) {
+              v2 = "";
+            }
+            v1.authorBadgeIconUrl = v2;
+            v1.scrolled = local_1_1;
+            publishArticleTitle(v1);
+          });
+        }
+        return;
       }
-      local_1_1 = p1 > v0;
-      if (local_1_1 !== local_1_2.articleTitleScrolled) {
-        local_1_2.articleTitleScrolled = local_1_1;
-        local_1_2.getUIContext().animateTo({
-          "duration": 220,
-          "curve": Curve.EaseInOut
-        }, function () {
-          let v1, v2 /*scrolled*/;
-          v1 = {
-            "id": local_1_2.contentId,
-            "title": contentContextTitle(local_1_0),
-            "authorName": contentAuthorName(local_1_0),
-            "authorAvatarUrl": contentAuthorAvatarUrl(local_1_0),
-            "authorBadgeIconUrl": null,
-            "scrolled": null
-          };
-          v2 = contentAuthorBadge(local_1_0);
-          v2 = v2?.iconUrl;
-          if (v2 == null) {
-            v2 = "";
-          }
-          v1.authorBadgeIconUrl = v2;
-          v1.scrolled = local_1_1;
-          publishArticleTitle(v1);
-        });
-      }
-      return;
-    } else {
       return;
     }
+    return;
   }
   questionDocument(p0, p1) {
     let local_1_0, local_1_1;
@@ -5558,28 +5519,27 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     let local_1_0;
     local_1_0 = this;
     v0 = contentLinkDestination(p0);
-    if (v0 !== undefined) {
-      local_1_0.navigate(v0);
-      return;
-    } else if (!new RegExp("^https?:\\/\\/", "i").test(p0)) {
-      return;
-    } else {
+    if (v0 === undefined) {
+      if (!new RegExp("^https?:\\/\\/", "i").test(p0)) {
+        return;
+      }
       v0 = getAbilityContext();
       if (v0 === undefined) {
         return;
-      } else {
-        v0 = v0.startAbility({
-          "action": "ohos.want.action.viewData",
-          "uri": p0
-        });
-        v0.catch(function (p0) {
-          local_1_0.getUIContext().getPromptAction().showToast({
-            "message": "暂时无法打开链接"
-          });
-        });
-        return;
       }
+      v0 = v0.startAbility({
+        "action": "ohos.want.action.viewData",
+        "uri": p0
+      });
+      v0.catch(function (p0) {
+        local_1_0.getUIContext().getPromptAction().showToast({
+          "message": "暂时无法打开链接"
+        });
+      });
+      return;
     }
+    local_1_0.navigate(v0);
+    return;
   }
   questionBodyFooter(p0, p1) {
     let local_1_0, local_1_1;
@@ -5992,13 +5952,12 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     v0 = this.pendingUserBlock;
     if (this.pendingUserBlock === undefined || this.blockingAction === undefined || this.content === undefined) {
       return;
-    } else {
-      this.pendingUserBlock = undefined;
-      v4 = v0.userId;
-      v0 = v0.userName;
-      this.blockingAction.blockUser(v4, v0, this.blockContext(this.content));
-      return;
     }
+    this.pendingUserBlock = undefined;
+    v4 = v0.userId;
+    v0 = v0.userName;
+    this.blockingAction.blockUser(v4, v0, this.blockContext(this.content));
+    return;
   }
   confirmKeywordBlock() {
     let v1, v3;
@@ -6011,10 +5970,9 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     }
     if (v3 || this.content === undefined) {
       return;
-    } else {
-      this.blockingAction.blockKeyword(v1, this.blockContext(this.content));
-      return;
     }
+    this.blockingAction.blockKeyword(v1, this.blockContext(this.content));
+    return;
   }
   blockContext(p0) {
     return {
@@ -7134,16 +7092,15 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     let v0 /*QuestionAnswerSortOrder*/;
     if (p0 !== 0 && p0 !== 1) {
       return;
-    } else {
-      if (this.answersSortIndexes[0] !== p0) {
-        this.answersSortIndexes = [p0];
-      }
-      v0 = p0 === 0 ? QuestionAnswerSortOrder.DEFAULT : QuestionAnswerSortOrder.UPDATED;
-      if (this.answersController !== null && this.answersController !== undefined) {
-        this.answersController.setSortOrder(v0);
-      }
-      return;
     }
+    if (this.answersSortIndexes[0] !== p0) {
+      this.answersSortIndexes = [p0];
+    }
+    v0 = p0 === 0 ? QuestionAnswerSortOrder.DEFAULT : QuestionAnswerSortOrder.UPDATED;
+    if (this.answersController !== null && this.answersController !== undefined) {
+      this.answersController.setSortOrder(v0);
+    }
+    return;
   }
   navigatorHasPrevious() {
     let v0;
@@ -7175,7 +7132,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     });
   }
   openSegmentComments() {
-    let v0, v1, v2, v5, acc;
+    let v0, v1, v2, v5;
     v0 = 0;
     let local_1_0;
     local_1_0 = this;
@@ -7183,85 +7140,84 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     if (v1 === undefined || v1.segIds.length === 0) {
       local_1_0.openComments();
       return;
-    } else if (local_1_0.kind !== ContentDetailKind.ANSWER && local_1_0.kind !== ContentDetailKind.ARTICLE) {
+    }
+    if (local_1_0.kind !== ContentDetailKind.ANSWER && local_1_0.kind !== ContentDetailKind.ARTICLE) {
       local_1_0.openComments();
       return;
-    } else {
-      v2 = local_1_0.segmentInfos.find(function (p0) {
-        return p0.pid === local_1_0.segmentSheetPid;
-      });
-      v2 = v2?.marks[local_1_0.segmentSheetMarkIndex];
-      acc = {
-        "name": null,
-        "contentType": null,
-        "contentId": null,
-        "segmentId": null,
-        "segmentContent": null,
-        "segmentParagraphId": null,
-        "segmentStartOffset": null,
-        "segmentEndOffset": null
-      };
-      v5 = acc;
-      acc.name = AppDestinationName.COMMENT;
-      v5.contentType = local_1_0.kind === ContentDetailKind.ARTICLE ? "article" : "answer";
-      v5.contentId = local_1_0.activeContentId;
-      v1 = v1.segIds;
-      v5.segmentId = v1.join(",");
-      v5.segmentContent = local_1_0.currentSegmentQuote();
-      v5.segmentParagraphId = local_1_0.segmentSheetPid;
-      v5.segmentStartOffset = v2 === undefined ? 0 : v2.startIndex;
-      if (v2 !== undefined) {
-        v0 = v2.endIndex;
-      }
-      v5.segmentEndOffset = v0;
-      local_1_0.navigate(v5);
-      return;
     }
+    v2 = local_1_0.segmentInfos.find(function (p0) {
+      return p0.pid === local_1_0.segmentSheetPid;
+    })?.marks[local_1_0.segmentSheetMarkIndex];
+    v5 = {
+      "name": null,
+      "contentType": null,
+      "contentId": null,
+      "segmentId": null,
+      "segmentContent": null,
+      "segmentParagraphId": null,
+      "segmentStartOffset": null,
+      "segmentEndOffset": null
+    };
+    v5.name = AppDestinationName.COMMENT;
+    v5.contentType = local_1_0.kind === ContentDetailKind.ARTICLE ? "article" : "answer";
+    v5.contentId = local_1_0.activeContentId;
+    v1 = v1.segIds;
+    v5.segmentId = v1.join(",");
+    v5.segmentContent = local_1_0.currentSegmentQuote();
+    v5.segmentParagraphId = local_1_0.segmentSheetPid;
+    v5.segmentStartOffset = v2 === undefined ? 0 : v2.startIndex;
+    if (v2 !== undefined) {
+      v0 = v2.endIndex;
+    }
+    v5.segmentEndOffset = v0;
+    local_1_0.navigate(v5);
+    return;
   }
   onContentDoubleTap() {
     if (this.phase !== ContentDetailPhase.READY || this.navigatorBusy) {
       return;
-    } else if (this.answerDoubleTapAction === AnswerDoubleTapAction.NONE) {
+    }
+    if (this.answerDoubleTapAction === AnswerDoubleTapAction.NONE) {
       return;
-    } else if (this.answerDoubleTapAction === AnswerDoubleTapAction.OPEN_COMMENTS) {
+    }
+    if (this.answerDoubleTapAction === AnswerDoubleTapAction.OPEN_COMMENTS) {
       performConfirmHaptic();
       this.openComments();
       return;
-    } else if (this.answerDoubleTapAction === AnswerDoubleTapAction.TOGGLE_IMMERSIVE) {
+    }
+    if (this.answerDoubleTapAction === AnswerDoubleTapAction.TOGGLE_IMMERSIVE) {
       this.immersiveReading = !this.immersiveReading;
       return;
-    } else if (this.answerDoubleTapAction === AnswerDoubleTapAction.VOTE_UP) {
+    }
+    if (this.answerDoubleTapAction === AnswerDoubleTapAction.VOTE_UP) {
       performConfirmHaptic();
       this.voteUpFromBodyDoubleTap();
       return;
-    } else {
-      this.doubleTapAskSheetShown = true;
-      return;
     }
+    this.doubleTapAskSheetShown = true;
+    return;
   }
   voteUpFromBodyDoubleTap() {
     if (this.kind === ContentDetailKind.QUESTION) {
       this.showMenuToast("问题详情不支持点赞，可在设置中选择打开评论或切换沉浸式");
       return;
-    } else {
-      if (this.voteController !== null && this.voteController !== undefined) {
-        this.voteController.voteUpFromDoubleTap();
-      }
-      return;
     }
+    if (this.voteController !== null && this.voteController !== undefined) {
+      this.voteController.voteUpFromDoubleTap();
+    }
+    return;
   }
   async restoreAnswerDoubleTapAction() {
     let v0, v3 /*getAbilityContext*/;
     v3 = getAbilityContext();
     if (v3 === undefined) {
       return undefined;
-    } else {
-      v0 = await new AppPreferencesStore(v3).loadAnswerDoubleTapAction();
-      if (this.pageActive) {
-        AppStorage.setOrCreate("answerDoubleTapAction", v0);
-      }
-      return undefined;
     }
+    v0 = await new AppPreferencesStore(v3).loadAnswerDoubleTapAction();
+    if (this.pageActive) {
+      AppStorage.setOrCreate("answerDoubleTapAction", v0);
+    }
+    return undefined;
   }
   saveAnswerDoubleTapAction(p0) {
     let v0 /*getAbilityContext*/;
@@ -7279,80 +7235,77 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     let v0, v6, v7, v10 /*ContentDetailKind*/, acc;
     if (this.navigatorBusy) {
       return undefined;
-    } else {
-      this.navigatorBusy = true;
-      this.resetAnswerOverscroll(false);
-      try {
-        v6 = this.answerNavigator === null || this.answerNavigator === undefined ? undefined : this.answerNavigator.move(p0);
-        v0 = await v6;
-        this.navigatorRevision = this.navigatorRevision + 1;
-        if (!this.pageActive) {
-          this.navigatorBusy = false;
-          return undefined;
-        } else if (v0 === undefined) {
-          v6 = this.answerNavigator === null || this.answerNavigator === undefined ? undefined : this.answerNavigator.errorMessage();
-          if (v6 == null) {
-            v6 = "";
-          }
-          v7 = this.getUIContext().getPromptAction();
-          v10 = {
-            "message": null
-          };
-          if (v6.length <= 0) {
-            v6 = "暂时无法切换回答";
-          }
-          v10.message = v6;
-          v7.showToast(v10);
-          this.navigatorBusy = false;
-          return undefined;
-        } else {
-          this.contentAtBottom = false;
-          this.contentAtTop = true;
-          this.answerQuestionScrolled = false;
-          this.chromeHiddenByScroll = false;
-          this.lastContentScrollOffset = 0;
-          AppStorage.setOrCreate("detailTitleHiddenByScroll", false);
-          if (this.voteController !== null && this.voteController !== undefined) {
-            this.voteController.deactivate();
-          }
-          this.voteController = undefined;
-          this.favoriteDialogShown = false;
-          this.contentFavorited = false;
-          this.activeContentId = v0;
-          acc = this.controller === null || this.controller === undefined ? undefined : this.controller.load(ContentDetailKind.ANSWER, v0);
-          await acc;
-        }
-      } finally {
+    }
+    this.navigatorBusy = true;
+    this.resetAnswerOverscroll(false);
+    try {
+      v6 = this.answerNavigator === null || this.answerNavigator === undefined ? undefined : this.answerNavigator.move(p0);
+      v0 = await v6;
+      this.navigatorRevision = this.navigatorRevision + 1;
+      if (!this.pageActive) {
         this.navigatorBusy = false;
+        return undefined;
       }
+      if (v0 === undefined) {
+        v6 = this.answerNavigator === null || this.answerNavigator === undefined ? undefined : this.answerNavigator.errorMessage();
+        if (v6 == null) {
+          v6 = "";
+        }
+        v7 = this.getUIContext().getPromptAction();
+        v10 = {
+          "message": null
+        };
+        if (v6.length <= 0) {
+          v6 = "暂时无法切换回答";
+        }
+        v10.message = v6;
+        v7.showToast(v10);
+        this.navigatorBusy = false;
+        return undefined;
+      }
+      this.contentAtBottom = false;
+      this.contentAtTop = true;
+      this.answerQuestionScrolled = false;
+      this.chromeHiddenByScroll = false;
+      this.lastContentScrollOffset = 0;
+      AppStorage.setOrCreate("detailTitleHiddenByScroll", false);
+      if (this.voteController !== null && this.voteController !== undefined) {
+        this.voteController.deactivate();
+      }
+      this.voteController = undefined;
+      this.favoriteDialogShown = false;
+      this.contentFavorited = false;
+      this.activeContentId = v0;
+      acc = this.controller === null || this.controller === undefined ? undefined : this.controller.load(ContentDetailKind.ANSWER, v0);
+      await acc;
+    } finally {
+      this.navigatorBusy = false;
     }
   }
   onAnswerOverscrollPanUpdate(p0) {
     let v1 /*ContentDetailKind*/, v2, acc;
     if (this.kind !== ContentDetailKind.ANSWER || this.answerFabDragging || this.answerSwitchMode === "off") {
       return;
-    } else if (this.bodyTextSelectionActive) {
+    }
+    if (this.bodyTextSelectionActive) {
       if (this.answerOverscrollOffset !== 0) {
         this.cancelAnswerOverscrollPan();
       }
       return;
-    } else {
-      v1 = this.answerSwitchMode === "horizontal" ? p0.offsetX : p0.offsetY;
-      v2 = v1 - this.overscrollPanPrevY;
-      this.overscrollPanPrevY = v1;
-      if (v2 === 0 || this.navigatorBusy) {
-        return;
-      } else {
-        acc = accumulateAnswerSwitchDrag(this.answerSwitchMode, this.overscrollRawDrag, this.answerOverscrollOffset, v2, this.contentAtTop, this.contentAtBottom, this.navigatorHasPrevious(), this.navigatorHasNext());
-        if (acc === this.overscrollRawDrag) {
-          return;
-        } else {
-          this.overscrollRawDrag = acc;
-          this.applyOverscrollOffset(local_0_2(this.overscrollRawDrag, this.answerSwitchMode === "horizontal" ? local_0_3 : local_0_4, local_0_5));
-          return;
-        }
-      }
     }
+    v1 = this.answerSwitchMode === "horizontal" ? p0.offsetX : p0.offsetY;
+    v2 = v1 - this.overscrollPanPrevY;
+    this.overscrollPanPrevY = v1;
+    if (v2 === 0 || this.navigatorBusy) {
+      return;
+    }
+    acc = accumulateAnswerSwitchDrag(this.answerSwitchMode, this.overscrollRawDrag, this.answerOverscrollOffset, v2, this.contentAtTop, this.contentAtBottom, this.navigatorHasPrevious(), this.navigatorHasNext());
+    if (acc === this.overscrollRawDrag) {
+      return;
+    }
+    this.overscrollRawDrag = acc;
+    this.applyOverscrollOffset(local_0_2(this.overscrollRawDrag, this.answerSwitchMode === "horizontal" ? local_0_3 : local_0_4, local_0_5));
+    return;
   }
   applyOverscrollOffset(p0) {
     this.answerOverscrollOffset = p0;
@@ -7369,14 +7322,13 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     local_1_0.overscrollRawDrag = 0;
     if (local_1_0.answerOverscrollOffset === 0) {
       return;
-    } else {
-      local_1_0.getUIContext().animateTo({
-        "curve": curves.springMotion(0.32, 0.78)
-      }, function () {
-        local_1_0.applyOverscrollOffset(0);
-      });
-      return;
     }
+    local_1_0.getUIContext().animateTo({
+      "curve": curves.springMotion(0.32, 0.78)
+    }, function () {
+      local_1_0.applyOverscrollOffset(0);
+    });
+    return;
   }
   resetAnswerOverscroll(p0) {}
   answerOverscrollTriggered() {
@@ -7395,8 +7347,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
   }
   answerPreviewAuthorName(p0) {
     let v0;
-    v0 = this.answerPreviewData(p0);
-    v0 = v0?.authorName;
+    v0 = this.answerPreviewData(p0)?.authorName;
     if (v0 == null) {
       v0 = "";
     }
@@ -7404,8 +7355,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
   }
   answerPreviewAvatarUrl(p0) {
     let v0;
-    v0 = this.answerPreviewData(p0);
-    v0 = v0?.authorAvatarUrl;
+    v0 = this.answerPreviewData(p0)?.authorAvatarUrl;
     if (v0 == null) {
       v0 = "";
     }
@@ -7416,14 +7366,12 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     v0 = this.answerPreviewData(p0);
     if (v0 === undefined) {
       return "";
-    } else {
-      return v0.detailLoaded ? v0.excerpt : "";
     }
+    return v0.detailLoaded ? v0.excerpt : "";
   }
   answerPreviewAuthorHeadline(p0) {
     let v0;
-    v0 = this.answerPreviewData(p0);
-    v0 = v0?.authorHeadline;
+    v0 = this.answerPreviewData(p0)?.authorHeadline;
     if (v0 == null) {
       v0 = "";
     }
@@ -7458,16 +7406,16 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
   openExistingAnswerEditor() {
     if (!this.canEditExistingAnswer() || this.content === undefined || this.content.kind !== ContentDetailKind.ANSWER) {
       return;
-    } else if (!stageAnswerEditSeed(this.content.value.id, this.content.value.contentHtml)) {
-      return;
-    } else {
-      this.navigate({
-        "name": AppDestinationName.WRITE_ANSWER,
-        "questionId": this.content.value.questionId,
-        "answerId": this.content.value.id
-      });
+    }
+    if (!stageAnswerEditSeed(this.content.value.id, this.content.value.contentHtml)) {
       return;
     }
+    this.navigate({
+      "name": AppDestinationName.WRITE_ANSWER,
+      "questionId": this.content.value.questionId,
+      "answerId": this.content.value.id
+    });
+    return;
   }
   actionMenuSheet(p0) {
     let v0;
@@ -8173,19 +8121,18 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     local_1_0 = this;
     if (local_1_0.content === undefined) {
       return;
-    } else if (local_1_0.content.value.url.trim().length === 0) {
-      return;
-    } else {
-      v0 = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, local_1_0.content.value.url);
-      v0 = pasteboard.getSystemPasteboard().setData(v0);
-      v0 = v0.then(function () {
-        local_1_0.showMenuToast("已复制链接");
-      });
-      v0.catch(function (p0) {
-        local_1_0.showMenuToast("复制失败，请重试");
-      });
+    }
+    if (local_1_0.content.value.url.trim().length === 0) {
       return;
     }
+    v0 = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, local_1_0.content.value.url);
+    v0 = pasteboard.getSystemPasteboard().setData(v0).then(function () {
+      local_1_0.showMenuToast("已复制链接");
+    });
+    v0.catch(function (p0) {
+      local_1_0.showMenuToast("复制失败，请重试");
+    });
+    return;
   }
   isCurrentContentSpeaking() {
     let v0 /*getSpeechPlaybackService*/, v1;
@@ -8204,23 +8151,21 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     let v3, v4 /*getSpeechPlaybackService*/, v5 /*defaultSpeechPreferences*/, v7 /*AppPreferencesStore*/;
     if (this.content === undefined) {
       return undefined;
-    } else {
-      v4 = getSpeechPlaybackService();
-      if (this.isCurrentContentSpeaking()) {
-        v4.stop();
-        this.showMenuToast("已停止朗读");
-        return undefined;
-      } else {
-        v5 = getAbilityContext();
-        v5 = v5 === undefined ? defaultSpeechPreferences() : await new AppPreferencesStore(v5).loadSpeechPreferences();
-        v7 = contentContextTitle(this.content).length > 0 ? contentContextTitle(this.content) : contentDetailPageTitle(this.content.kind);
-        await v4.speak(this.activeContentId, v7, contentSpeechText(this.content), v5);
-        v3 = v4.getSnapshot();
-        v3 = v3.status === SpeechPlaybackStatus.ERROR ? v3.message : "已开始朗读";
-        this.showMenuToast(v3);
-        return undefined;
-      }
     }
+    v4 = getSpeechPlaybackService();
+    if (this.isCurrentContentSpeaking()) {
+      v4.stop();
+      this.showMenuToast("已停止朗读");
+      return undefined;
+    }
+    v5 = getAbilityContext();
+    v5 = v5 === undefined ? defaultSpeechPreferences() : await new AppPreferencesStore(v5).loadSpeechPreferences();
+    v7 = contentContextTitle(this.content).length > 0 ? contentContextTitle(this.content) : contentDetailPageTitle(this.content.kind);
+    await v4.speak(this.activeContentId, v7, contentSpeechText(this.content), v5);
+    v3 = v4.getSnapshot();
+    v3 = v3.status === SpeechPlaybackStatus.ERROR ? v3.message : "已开始朗读";
+    this.showMenuToast(v3);
+    return undefined;
   }
   shareContentLink() {
     let v1 /*getAbilityContext*/, v2, v3, v4, acc;
@@ -8234,30 +8179,29 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     if (v2 || (v2 = 0, local_1_0.content.value.url.trim().length === 0)) {
       local_1_0.showMenuToast("暂时无法打开分享面板");
       return;
-    } else {
-      v3 = contentContextTitle(local_1_0.content);
-      v4 = {
-        "kind": SharePayloadKind.TEXT,
-        "title": null,
-        "summary": null,
-        "contentUrl": null,
-        "thumbnailUrl": null
-      };
-      if (v3.length <= v2) {
-        v3 = contentDetailPageTitle(local_1_0.content.kind);
-      }
-      v4.title = v3;
-      v4.summary = contentShareSummary(local_1_0.content);
-      v4.contentUrl = local_1_0.content.value.url;
-      v4.thumbnailUrl = contentShareThumbnailUrl(local_1_0.content);
-      acc = createSystemShareService(v1).share(v4).then(function (p0) {
-        local_1_0.showMenuToast(p0 === ShareOutcome.CANCELLED ? "" : "已打开系统分享面板");
-      });
-      acc.catch(function () {
-        local_1_0.showMenuToast("暂时无法打开分享面板");
-      });
-      return;
     }
+    v3 = contentContextTitle(local_1_0.content);
+    v4 = {
+      "kind": SharePayloadKind.TEXT,
+      "title": null,
+      "summary": null,
+      "contentUrl": null,
+      "thumbnailUrl": null
+    };
+    if (v3.length <= v2) {
+      v3 = contentDetailPageTitle(local_1_0.content.kind);
+    }
+    v4.title = v3;
+    v4.summary = contentShareSummary(local_1_0.content);
+    v4.contentUrl = local_1_0.content.value.url;
+    v4.thumbnailUrl = contentShareThumbnailUrl(local_1_0.content);
+    acc = createSystemShareService(v1).share(v4).then(function (p0) {
+      local_1_0.showMenuToast(p0 === ShareOutcome.CANCELLED ? "" : "已打开系统分享面板");
+    });
+    acc.catch(function () {
+      local_1_0.showMenuToast("暂时无法打开分享面板");
+    });
+    return;
   }
   articleTopicsFlow(p0, p1) {
     let local_1_0, local_1_1;
@@ -8756,8 +8700,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
           "authorBadgeIconUrl": null,
           "scrolled": null
         };
-        v2 = contentAuthorBadge(p0.content);
-        v2 = v2?.iconUrl;
+        v2 = contentAuthorBadge(p0.content)?.iconUrl;
         if (v2 == null) {
           v2 = "";
         }
@@ -8774,8 +8717,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
           "authorBadgeIconUrl": null,
           "scrolled": null
         };
-        v2 = contentAuthorBadge(p0.content);
-        v2 = v2?.iconUrl;
+        v2 = contentAuthorBadge(p0.content)?.iconUrl;
         if (v2 == null) {
           v2 = "";
         }
@@ -8795,12 +8737,11 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     v0 = local_1_0.questionAnswerFeedFactory();
     if (v0 === undefined) {
       return;
-    } else {
-      local_1_0.answerNavigator = new QuestionAnswerNavigator(p0, local_1_0.activeContentId, undefined, v0, function () {
-        local_1_0.navigatorRevision = local_1_0.navigatorRevision + 1;
-      });
-      return;
     }
+    local_1_0.answerNavigator = new QuestionAnswerNavigator(p0, local_1_0.activeContentId, undefined, v0, function () {
+      local_1_0.navigatorRevision = local_1_0.navigatorRevision + 1;
+    });
+    return;
   }
   activateInteraction(p0) {
     let v0;
@@ -8954,7 +8895,7 @@ QuestionDetailPage = class panda_jmp0_reserved_anonymous_1 extends ViewPU {
     local_1_0.observeComponentCreation2(function (p0, p1) {
       let acc;
       if (p1) {
-        acc = {
+        acc = new local_0_10(local_1_0, {
           "kind": ContentDetailKind.QUESTION,
           "questionAnswerFeedFactory": local_1_0.questionAnswerFeedFactory,
           "contentId": local_1_0.contentId,
@@ -8972,8 +8913,7 @@ QuestionDetailPage = class panda_jmp0_reserved_anonymous_1 extends ViewPU {
           "navigate": local_1_0.navigate,
           "onBack": local_1_0.onBack,
           "segmentReactionRepository": local_1_0.segmentReactionRepository
-        };
-        acc = new local_0_10(local_1_0, acc, undefined, p0, function () {}, {
+        }, undefined, p0, function () {}, {
           "page": "entry/src/main/ets/pages/ContentDetailPages.ets",
           "line": 3372,
           "col": 5
@@ -9108,7 +9048,7 @@ AnswerDetailPage = class panda_jmp0_reserved_anonymous_2 extends ViewPU {
     local_1_0.observeComponentCreation2(function (p0, p1) {
       let acc;
       if (p1) {
-        acc = {
+        acc = new local_0_10(local_1_0, {
           "kind": ContentDetailKind.ANSWER,
           "questionAnswerFeedFactory": local_1_0.questionAnswerFeedFactory,
           "contentId": local_1_0.contentId,
@@ -9126,8 +9066,7 @@ AnswerDetailPage = class panda_jmp0_reserved_anonymous_2 extends ViewPU {
           "navigate": local_1_0.navigate,
           "onBack": local_1_0.onBack,
           "segmentReactionRepository": local_1_0.segmentReactionRepository
-        };
-        acc = new local_0_10(local_1_0, acc, undefined, p0, function () {}, {
+        }, undefined, p0, function () {}, {
           "page": "entry/src/main/ets/pages/ContentDetailPages.ets",
           "line": 3419,
           "col": 5
@@ -9256,7 +9195,7 @@ ArticleDetailPage = class panda_jmp0_reserved_anonymous_3 extends ViewPU {
     local_1_0.observeComponentCreation2(function (p0, p1) {
       let acc;
       if (p1) {
-        acc = {
+        acc = new local_0_10(local_1_0, {
           "kind": ContentDetailKind.ARTICLE,
           "contentId": local_1_0.contentId,
           "repository": local_1_0.repository,
@@ -9273,8 +9212,7 @@ ArticleDetailPage = class panda_jmp0_reserved_anonymous_3 extends ViewPU {
           "navigate": local_1_0.navigate,
           "onBack": local_1_0.onBack,
           "segmentReactionRepository": local_1_0.segmentReactionRepository
-        };
-        acc = new local_0_10(local_1_0, acc, undefined, p0, function () {}, {
+        }, undefined, p0, function () {}, {
           "page": "entry/src/main/ets/pages/ContentDetailPages.ets",
           "line": 3465,
           "col": 5

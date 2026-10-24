@@ -488,9 +488,13 @@ export class TempVariableSimplify implements ISimplify {
         // HighLevelGrammarSimplify 在定点迭代之后才把条件物化合成三元赋值,
         // 轮内已经跑过的复制传播来不及处理 acc = C ? A : B; acc = v0 + acc。
         if (this.returnsOnly) {
+            // 累加器链必须先于别名折叠:X 的旧值可能先经过一次自读取
+            // (`acc = C ? A : B; acc = acc.trim(); Y = acc`),先折链得到
+            // `acc = (C ? A : B).trim()`,别名折叠才能整块搬进 Y;
+            // 反过来会留下无人的 `acc = C ? A : B` 死存储。
+            this.foldAccumulatorChains(stmts, ctx);
             // `X = E; Y = X`(X 之后已死)-> `Y = E`,同样针对尾部才生成的三元赋值。
             this.foldTempAliasAssignments(stmts, ctx);
-            this.foldAccumulatorChains(stmts, ctx);
             // `X = E; f(X)`(调用参数位置,X 之后已死)-> `f(E)`。
             // HighLevelGrammarSimplify 的三目合成在定点迭代之后,轮内的复制传播
             // 来不及处理紧随其后的调用参数(典型:`acc = isPlaying || isBuffering;
@@ -575,11 +579,15 @@ export class TempVariableSimplify implements ISimplify {
     }
 
     /**
-     * 累加器链:`X = E; X = <二元运算, 其中 X 只出现一次>` -> `X = ...E...`。
+     * 累加器链:`X = E; X = <只读取一次 X 的表达式>` -> `X = ...E...`。
      *
      * 编译器为字符串拼接生成 `v0 = v0 + "..."; acc = v0 + acc; return acc + "}"`,
      * 这些语句各自只消费旧值一次,可以整体合并成一个表达式。E 含有调用(如
      * `p0.map(...).join(...)`)时复制传播不允许克隆,只能靠本方法整块搬移。
+     *
+     * 不只限二元运算:成员调用链(`X = E; X = X.trim()`)和成员装载链
+     * (`X = E; X = X.length`)同样只读取旧值一次,由下面的求值位置/纯度检查
+     * 兜底(读取位置不是最先求值时才要求 E 纯)。
      */
     private foldAccumulatorChains(stmts: TYPE.Statement[], ctx: FunctionContext): void {
         for (let i = 0; i < stmts.length; i++) {
@@ -603,7 +611,6 @@ export class TempVariableSimplify implements ISimplify {
         if (b.left.name !== name || !isTempName(name)) return false;
         const info = ctx.infos.get(name);
         if (!info || info.captured) return false;
-        if (!isBinaryExpression(b.right)) return false;
         if (this.countReadsInNode(b.right, name) !== 1) return false;
         if (collectAssignedNames(b.right).has(name)) return false;
         // 闭包里对 X 的延迟读取在两种写法里看到的都是最终值,但立即执行的闭包
@@ -670,8 +677,11 @@ export class TempVariableSimplify implements ISimplify {
         if (!isTempName(source) || b.right.name !== source) return false;
         // 目标是变量时保持原有限制;目标是成员(`v0.sbox = acc`)时只要求左值求值无副作用,
         // 否则把 E 搬到赋值右侧会改变 E 与左值副作用之间的求值顺序。
+        // 成员目标不做读取重定向(搬移后目标不是一个变量,无法用它替换读取)。
+        let targetName: string | null = null;
         if (isIdentifier(b.left)) {
             if (!isTempName(b.left.name) || b.left.name === source) return false;
+            targetName = b.left.name;
         } else if (isMemberExpression(b.left)) {
             const member = b.left;
             if (!isPureExpression(member.object as TYPE.Expression)) return false;
@@ -681,14 +691,69 @@ export class TempVariableSimplify implements ISimplify {
         }
         const info = ctx.infos.get(source);
         if (!info || info.captured) return false;
-        // X 的旧值在第二条语句之后必须已死;闭包里的读取由 captured 兜底
+        // X 的旧值在第二条语句之后必须已死;闭包里的读取由 captured 兜底。
+        // 如果 X 之后仍被读取,先把这些读取(下一次写入 X 之前)改看 Y,
+        // 旧值随之死掉——典型:
+        //   acc = E; v5 = acc; if (acc.length === 0) {...} f(acc); acc = G; ...
+        // 这里 acc 的前两个读取都属于 hub 时的值,不能因为后面还有第二次写入就放弃。
         const liveAfter = ctx.liveAfter.get(second);
-        if (!liveAfter || liveAfter.has(source)) return false;
+        if (!liveAfter || liveAfter.has(source)) {
+            if (!targetName) return false;
+            if (!this.redirectReadsUntilWrite(stmts, i + 2, source, targetName)) return false;
+        }
         info.refs.delete(b.right);
         b.right = a.right;
         stmts.splice(i, 1);
         this.changed = true;
         return true;
+    }
+
+    /**
+     * 从 list[start] 起按源码顺序把对 source 的读取改成 target,直到遇到对 source
+     * 的无条件写入。`X = E; Y = X; ...` 把 X 的旧值整体搬进 Y 后,这些读取都要看 Y。
+     *
+     * 扫描停止/放弃规则(保证每次被改写的读取都仍读 Hub 时的值):
+     *   - 语句本身是 `X = <expr>`(含复合赋值/自增):条件必然成立,之后的读取都看
+     *     新值,停止;右值里的自读取发生在写入之前,先改写再停止。
+     *   - 其它语句里出现对 X 或 target 的写入(分支/循环/异常路径):无法确定
+     *     读取与写入的先后,放弃本次折叠。
+     *   - 没有写入的语句:改写其中全部读取(嵌套函数/类跳过,由 captured 兜底)。
+     */
+    private redirectReadsUntilWrite(
+        list: TYPE.Statement[], start: number, source: string, targetName: string,
+    ): boolean {
+        for (let k = start; k < list.length; k++) {
+            const statement = list[k];
+            const unconditional = isExpressionStatement(statement) && (
+                (isAssignmentExpression(statement.expression) && isIdentifier(statement.expression.left)
+                    && statement.expression.left.name === source)
+                || (isUpdateExpression(statement.expression) && isIdentifier(statement.expression.argument)
+                    && statement.expression.argument.name === source));
+            if (unconditional) {
+                const expression = (statement as TYPE.ExpressionStatement).expression;
+                if (isAssignmentExpression(expression)) {
+                    const rhs = expression.right;
+                    if (collectAssignedNames(rhs).has(source) || collectAssignedNames(rhs).has(targetName)) return false;
+                    this.rewriteReadsInNode(rhs, source, targetName);
+                }
+                return true;
+            }
+            const assigned = collectAssignedNames(statement);
+            if (assigned.has(source) || assigned.has(targetName)) return false;
+            this.rewriteReadsInNode(statement, source, targetName);
+        }
+        return true;
+    }
+
+    /** 把 node 子树上对 source 的读取(标识符引用)改名为 target;跳过嵌套函数/类 */
+    private rewriteReadsInNode(node: TYPE.Node, source: string, target: string): void {
+        walkNode(node, (current, parent) => {
+            if (isFunctionLike(current) || isClassLike(current)) return false;
+            if (isIdentifier(current) && current.name === source && parent && isReferenced(current, parent)) {
+                current.name = target;
+            }
+            return true;
+        });
     }
 
     /**

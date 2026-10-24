@@ -276,22 +276,20 @@ isRecoverableIntegrityIssues = function (p0) {
   let v10;
   if (p0.length === 0) {
     return false;
-  } else {
-    for (v10 of p0) {
-      if (v10.startsWith("length-mismatch:") || v10.startsWith("missing-media-end:") || v10.startsWith("missing-media:") || v10.startsWith("media-without-header:") || v10.startsWith("media-end-without-header:")) {
-        continue;
-      }
-      if (!v10.startsWith("truncated-ump-response:")) return false;
-    }
-    return true;
   }
+  for (v10 of p0) {
+    if (v10.startsWith("length-mismatch:") || v10.startsWith("missing-media-end:") || v10.startsWith("missing-media:") || v10.startsWith("media-without-header:") || v10.startsWith("media-end-without-header:")) {
+      continue;
+    }
+    if (!v10.startsWith("truncated-ump-response:")) return false;
+  }
+  return true;
 };
 requireUmpContentType = function (p0, p1) {
   if (!p0 || p0.toLowerCase().indexOf("application/vnd.yt-ump") < 0) {
     throw new SabrProtocolException("Expected UMP response, got content type: " + p0 + ", status=" + p1 + "");
-  } else {
-    return;
   }
+  return;
 };
 sabrDecodeBody = function (p0) {
   return sabrDecodeParts(umpReadAll(p0));
@@ -445,27 +443,26 @@ SabrPartProcessor = class panda_jmp0_reserved_anonymous_3 {
     return this.decoded;
   }
   deliverSegment(p0) {
-    let v6, acc;
-    v6 = p0.header.contentLength;
-    acc = !(p0.header.contentLength >= 0);
-    if (p0.header.contentLength >= 0 && (acc = p0.getLength(), v6 = acc, acc = !(acc !== p0.header.contentLength), v6 !== p0.header.contentLength)) {
-      local_0_11 /*logger*/.warn("[SABR-DECODE] withhold incomplete segment itag=" + p0.header.itag + " " + ("seq=" + p0.header.sequenceNumber + " expected=" + p0.header.contentLength + " actual=" + p0.getLength() + ""));
-      return;
-    } else {
-      this.segmentCountValue = this.segmentCountValue + 1;
-      if (this.segmentSink) {
-        try {
-          this.segmentSink(p0);
-        } catch (catchAcc) {
-          acc = catchAcc instanceof Error ? catchAcc.message : String(catchAcc);
-          local_0_11 /*logger*/.warn("[SABR-DECODE] segment sink failed itag=" + p0.header.itag + ": " + acc + "");
-        }
-        return;
-      } else {
-        this.retainedSegments.push(p0);
+    let acc;
+    if (p0.header.contentLength >= 0) {
+      acc = p0.getLength();
+      if (p0.header.contentLength !== p0.header.contentLength) {
+        local_0_11 /*logger*/.warn("[SABR-DECODE] withhold incomplete segment itag=" + p0.header.itag + " " + ("seq=" + p0.header.sequenceNumber + " expected=" + p0.header.contentLength + " actual=" + p0.getLength() + ""));
         return;
       }
     }
+    this.segmentCountValue = this.segmentCountValue + 1;
+    if (this.segmentSink) {
+      try {
+        this.segmentSink(p0);
+      } catch (catchAcc) {
+        acc = catchAcc instanceof Error ? catchAcc.message : String(catchAcc);
+        local_0_11 /*logger*/.warn("[SABR-DECODE] segment sink failed itag=" + p0.header.itag + ": " + acc + "");
+      }
+      return;
+    }
+    this.retainedSegments.push(p0);
+    return;
   }
 };
 export { PART_FORMAT_INITIALIZATION_METADATA };

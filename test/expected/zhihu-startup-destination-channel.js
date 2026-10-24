@@ -10,19 +10,23 @@ let LatestOperationGuard, StartupDestinationChannel, appDestinationIdentity, fin
 appDestinationIdentity = function (p0) {
   if (p0.name === AppDestinationName.QUESTION || p0.name === AppDestinationName.ANSWER || p0.name === AppDestinationName.ARTICLE || p0.name === AppDestinationName.VIDEO || p0.name === AppDestinationName.PIN || p0.name === AppDestinationName.PEOPLE || p0.name === AppDestinationName.COLLECTION || p0.name === AppDestinationName.COLLECTIONS) {
     return "" + p0.name + ":" + encodeURIComponent(p0.id) + "";
-  } else if (p0.name === AppDestinationName.WRITE_ANSWER) {
-    return "" + p0.name + ":" + encodeURIComponent(p0.questionId) + ":" + encodeURIComponent(p0.answerId ?? "");
-  } else if (p0.name === AppDestinationName.WRITE_PIN) {
-    return "" + p0.name + ":" + encodeURIComponent(p0.draftId) + "";
-  } else if (p0.name === AppDestinationName.COMMENT) {
-    return "" + p0.name + ":" + p0.contentType + ":" + encodeURIComponent(p0.contentId) + ":" + encodeURIComponent(p0.commentId ?? "") + ":" + encodeURIComponent(p0.segmentId ?? "");
-  } else if (p0.name === AppDestinationName.SEARCH) {
-    return "" + p0.name + ":" + encodeURIComponent(p0.query) + "";
-  } else if (p0.name === AppDestinationName.WHATS_NEW) {
-    return "" + p0.name + ":" + encodeURIComponent(p0.version ?? "") + "";
-  } else {
-    return p0.name;
   }
+  if (p0.name === AppDestinationName.WRITE_ANSWER) {
+    return "" + p0.name + ":" + encodeURIComponent(p0.questionId) + ":" + encodeURIComponent(p0.answerId ?? "");
+  }
+  if (p0.name === AppDestinationName.WRITE_PIN) {
+    return "" + p0.name + ":" + encodeURIComponent(p0.draftId) + "";
+  }
+  if (p0.name === AppDestinationName.COMMENT) {
+    return "" + p0.name + ":" + p0.contentType + ":" + encodeURIComponent(p0.contentId) + ":" + encodeURIComponent(p0.commentId ?? "") + ":" + encodeURIComponent(p0.segmentId ?? "");
+  }
+  if (p0.name === AppDestinationName.SEARCH) {
+    return "" + p0.name + ":" + encodeURIComponent(p0.query) + "";
+  }
+  if (p0.name === AppDestinationName.WHATS_NEW) {
+    return "" + p0.name + ":" + encodeURIComponent(p0.version ?? "") + "";
+  }
+  return p0.name;
 };
 findAppDestinationStackIndex = function (p0, p1) {
   let v1, v2, v3 /*decodeAppDestination*/;
@@ -116,18 +120,16 @@ StartupDestinationChannel = class panda_jmp0_reserved_anonymous_1 {
     if (this.listeners.length === 0) {
       this.pending = local_0_0;
       return;
-    } else {
-      v0 = appDestinationIdentity(local_0_0);
-      if (v0 === this.activeIdentity) {
-        return;
-      } else {
-        this.activeIdentity = v0;
-        this.listeners.slice().forEach(function (p0) {
-          return p0(local_0_0);
-        });
-        return;
-      }
     }
+    v0 = appDestinationIdentity(local_0_0);
+    if (v0 === this.activeIdentity) {
+      return;
+    }
+    this.activeIdentity = v0;
+    this.listeners.slice().forEach(function (p0) {
+      return p0(local_0_0);
+    });
+    return;
   }
   subscribe(p0) {
     let v0;

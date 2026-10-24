@@ -134,11 +134,11 @@ MpvPlayerView = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
   fitScale() {
     if ((this.videoW > 0 ? this.videoH <= 0 : this.videoW <= 0) || this.areaW <= 0 || this.areaH <= 0) {
       return 1;
-    } else if (this.videoFit === VideoFit.Cover) {
-      return Math.max(this.areaW / this.videoW, this.areaH / this.videoH);
-    } else {
-      return Math.min(this.areaW / this.videoW, this.areaH / this.videoH);
     }
+    if (this.videoFit === VideoFit.Cover) {
+      return Math.max(this.areaW / this.videoW, this.areaH / this.videoH);
+    }
+    return Math.min(this.areaW / this.videoW, this.areaH / this.videoH);
   }
   fitScaleX() {
     return this.videoFit === VideoFit.Fill && this.videoW > 0 && this.areaW > 0 ? this.areaW / this.videoW : this.fitScale();
@@ -147,41 +147,38 @@ MpvPlayerView = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     return this.videoFit === VideoFit.Fill && this.videoH > 0 && this.areaH > 0 ? this.areaH / this.videoH : this.fitScale();
   }
   tryFixVideoSize() {
-    let v3, v4, v5, v6, acc;
+    let v3, v4, v5, v6;
     if (this.sized) {
       return;
-    } else {
-      v4 = this.controller.getMediaInfo();
-      acc = v4 && v4.video && v4.video.length > 0 ? v4.video[0] : undefined;
-      v5 = acc;
-      v6 = v5 ? v5.width : 0;
-      v3 = v5 ? v5.height : 0;
-      if (v6 > 0 && v3 > 0) {
-        this.videoW = v6;
-        this.videoH = v3;
-        this.sized = true;
-        if (this.sizeTimer !== -1) {
-          clearInterval(this.sizeTimer);
-          this.sizeTimer = -1;
-        }
-      }
-      return;
     }
+    v4 = this.controller.getMediaInfo();
+    v5 = v4 && v4.video && v4.video.length > 0 ? v4.video[0] : undefined;
+    v6 = v5 ? v5.width : 0;
+    v3 = v5 ? v5.height : 0;
+    if (v6 > 0 && v3 > 0) {
+      this.videoW = v6;
+      this.videoH = v3;
+      this.sized = true;
+      if (this.sizeTimer !== -1) {
+        clearInterval(this.sizeTimer);
+        this.sizeTimer = -1;
+      }
+    }
+    return;
   }
   startSizePolling() {
     let local_0_0;
     local_0_0 = this;
     if (local_0_0.sized || local_0_0.sizeTimer !== -1) {
       return;
-    } else {
-      local_0_0.tryFixVideoSize();
-      if (!local_0_0.sized) {
-        local_0_0.sizeTimer = setInterval(function () {
-          return local_0_0.tryFixVideoSize();
-        }, 100);
-      }
-      return;
     }
+    local_0_0.tryFixVideoSize();
+    if (!local_0_0.sized) {
+      local_0_0.sizeTimer = setInterval(function () {
+        return local_0_0.tryFixVideoSize();
+      }, 100);
+    }
+    return;
   }
   aboutToDisappear() {
     if (this.sizeTimer !== -1) {

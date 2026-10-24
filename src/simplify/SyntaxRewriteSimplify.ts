@@ -6,6 +6,7 @@ import { collectIdentifierNames, isDeclarationValue, isNodeEqual, isPureExpressi
 
 
 const {
+    VISITOR_KEYS,
     binaryExpression,
     booleanLiteral,
     emptyStatement,
@@ -230,6 +231,68 @@ export class SyntaxRewriteSimplify implements ISimplify {
         } else {
             path.replaceWith(emptyStatement());
         }
+    }
+
+    /**
+     * `if (C) { ...终止语句 } else { BODY }` -> `if (C) { ...终止语句 } BODY`。
+     *
+     * 分支一定不落空(return/throw/break/continue),else 只是 "then 没走" 的补充,
+     * 展开成同级语句与源码常见的守卫子句写法一致;更重要的是后续折叠能看到连续的
+     * 语句列表(累加器链、临时别名等原先被 else 块切断)。
+     *
+     * 必须放在 HighLevelGrammarSimplify 的三目合成之后:两个分支都是单条 return
+     * 的 if/else 会先被合成 `C ? A : B`(源码里的三目),展开只会把它拆散。
+     *
+     * 只展开语句列表里的 if(LabeledStatement 直接包住 if 时 break label 依赖
+     * else 仍在标签内,不能展开);else 块顶层的块级声明展开到外层会改变作用域,
+     * 保守跳过。
+     */
+    public static flattenElseAfterExit(node: Program): boolean {
+        return SyntaxRewriteSimplify.flattenStatementList(node.body);
+    }
+
+    /** 对语句数组展开 `then 终止` 的 else;同时递归所有子节点里的语句数组 */
+    private static flattenStatementList(list: TYPE.Statement[]): boolean {
+        let changed = false;
+        for (let i = 0; i < list.length; i++) {
+            const statement = list[i];
+            if (isIfStatement(statement) && statement.alternate
+                && SyntaxRewriteSimplify.terminates(statement.consequent)) {
+                const alternate = statement.alternate;
+                const blockScoped = isBlockStatement(alternate) && alternate.body.some((inner) =>
+                    (isVariableDeclaration(inner) && inner.kind !== "var")
+                    || isClassDeclaration(inner)
+                    || isFunctionDeclaration(inner));
+                if (!blockScoped) {
+                    statement.alternate = null;
+                    const spliced = isBlockStatement(alternate) ? alternate.body : [alternate];
+                    list.splice(i + 1, 0, ...spliced);
+                    changed = true;
+                }
+            }
+            // 递归子节点(含刚展开出来的语句)
+            if (SyntaxRewriteSimplify.flattenInChildren(list[i])) changed = true;
+        }
+        return changed;
+    }
+
+    /** 递归所有子节点(VISITOR_KEYS),对每个语句数组容器展开 else */
+    private static flattenInChildren(node: TYPE.Node): boolean {
+        // 数组字面量允许空位(`[1, , 3]`),元素可能是 null
+        if (!node || typeof node.type !== "string") return false;
+        let changed = false;
+        const keys = VISITOR_KEYS[node.type] ?? [];
+        for (const key of keys) {
+            const child = (node as any)[key];
+            if (Array.isArray(child)) {
+                if (child.some((element) => element && typeof element.type === "string")) {
+                    if (SyntaxRewriteSimplify.flattenStatementList(child)) changed = true;
+                }
+            } else if (child && typeof child.type === "string") {
+                if (SyntaxRewriteSimplify.flattenInChildren(child)) changed = true;
+            }
+        }
+        return changed;
     }
 
     /** 语句本身一定会终止(不落出当前块) */

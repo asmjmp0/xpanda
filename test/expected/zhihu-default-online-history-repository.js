@@ -15,9 +15,8 @@ buildBatchDelBody = function (p0, p1) {
 buildOnlineHistoryUrl = function (p0) {
   if (!Number.isSafeInteger(p0) || p0 < 0 || p0 > 100000) {
     throw new OnlineHistoryRepositoryFailure(OnlineHistoryRepositoryFailureKind.INVALID_CURSOR);
-  } else {
-    return "" + ONLINE_HISTORY_BASE_URL + "?offset=" + p0 + "&limit=" + ONLINE_HISTORY_LIMIT + "";
   }
+  return "" + ONLINE_HISTORY_BASE_URL + "?offset=" + p0 + "&limit=" + ONLINE_HISTORY_LIMIT + "";
 };
 canonicalOnlineHistoryCursorKey = function (p0) {
   return "" + ONLINE_HISTORY_BASE_URL + "?" + p0.substring(p0.indexOf("?") + 1).split("&").slice().sort().join("&") + "";
@@ -38,57 +37,52 @@ isOnlineHistoryCursorUrl = function (p0) {
   }
   if (v1 || new RegExp("[\\u0000-\\u0020\\u007F-\\uFFFF]").test(p0)) {
     return false;
-  } else if (!p0.startsWith("" + ONLINE_HISTORY_BASE_URL + "?")) {
-    return false;
-  } else {
-    v1 = p0.substring(p0.indexOf("?") + 1);
-    if (v1.length === 0) {
-      return false;
-    } else {
-      v0 = v1.split("&");
-      if (v0.length === 2) {
-        v1 = local_0_0(v0, "offset");
-        v0 = local_0_0(v0, "limit");
-        return v1 !== undefined && v1 <= 100000 && v0 === 10;
-      } else {
-        return false;
-      }
-    }
   }
+  if (!p0.startsWith("" + ONLINE_HISTORY_BASE_URL + "?")) {
+    return false;
+  }
+  v1 = p0.substring(p0.indexOf("?") + 1);
+  if (v1.length === 0) {
+    return false;
+  }
+  v0 = v1.split("&");
+  if (v0.length === 2) {
+    v1 = local_0_0(v0, "offset");
+    v0 = local_0_0(v0, "limit");
+    return v1 !== undefined && v1 <= 100000 && v0 === 10;
+  }
+  return false;
 };
 onlineHistoryDeletePairOf = function (p0) {
   let v0 /*OnlineHistoryRepositoryFailure*/, v1;
   v1 = p0.indexOf(":");
   if (v1 <= 0 || v1 !== p0.lastIndexOf(":")) {
     throw new OnlineHistoryRepositoryFailure(OnlineHistoryRepositoryFailureKind.INVALID_CONTENT_KEY);
-  } else {
-    v0 = p0.substring(0, v1);
-    v1 += 1;
-    v1 = p0.substring(v1);
-    if (!new RegExp("^(?:question|answer|article|pin)$").test(v0)) {
-      throw new OnlineHistoryRepositoryFailure(OnlineHistoryRepositoryFailureKind.INVALID_CONTENT_KEY);
-    } else if (!new RegExp("^[1-9][0-9]{0,29}$").test(v1)) {
-      throw new OnlineHistoryRepositoryFailure(OnlineHistoryRepositoryFailureKind.INVALID_CONTENT_KEY);
-    } else {
-      return {
-        "contentToken": v1,
-        "contentType": v0
-      };
-    }
   }
+  v0 = p0.substring(0, v1);
+  v1 = p0.substring(v1 + 1);
+  if (new RegExp("^(?:question|answer|article|pin)$").test(v0)) {
+    if (!new RegExp("^[1-9][0-9]{0,29}$").test(v1)) {
+      throw new OnlineHistoryRepositoryFailure(OnlineHistoryRepositoryFailureKind.INVALID_CONTENT_KEY);
+    }
+    return {
+      "contentToken": v1,
+      "contentType": v0
+    };
+  }
+  throw new OnlineHistoryRepositoryFailure(OnlineHistoryRepositoryFailureKind.INVALID_CONTENT_KEY);
 };
 onlineHistoryOffsetOf = function (p0) {
   let v0 /*OnlineHistoryRepositoryFailure*/, v1;
   if (!isOnlineHistoryCursorUrl(p0)) {
     throw new OnlineHistoryRepositoryFailure(OnlineHistoryRepositoryFailureKind.INVALID_CURSOR);
-  } else {
-    v0 = 0;
-    v1 = local_0_0(p0.substring(p0.indexOf("?") + 1).split("&"), "offset");
-    if (v1 != null) {
-      v0 = v1;
-    }
-    return v0;
   }
+  v0 = 0;
+  v1 = local_0_0(p0.substring(p0.indexOf("?") + 1).split("&"), "offset");
+  if (v1 != null) {
+    v0 = v1;
+  }
+  return v0;
 };
 local_0_0 = function (p0, p1) {
   let v0, v2, v5, v9, v10;
@@ -125,13 +119,12 @@ local_0_0 = function (p0, p1) {
       v2.return();
     }
     return undefined;
-  } else {
-    v0 = Number(v5);
-    if (v2.return != undefined) {
-      v2.return();
-    }
-    return v0;
   }
+  v0 = Number(v5);
+  if (v2.return != undefined) {
+    v2.return();
+  }
+  return v0;
 };
 local_0_2 = function (p0) {
   let v0;
@@ -199,123 +192,117 @@ DefaultOnlineHistoryRepository = class panda_jmp0_reserved_anonymous_1 {
       v6 = canonicalOnlineHistoryCursorKey(v5);
       if (p0 !== undefined && this.requestedCursors.has(v6)) {
         throw new OnlineHistoryRepositoryFailure(OnlineHistoryRepositoryFailureKind.REPEATED_CURSOR);
-      } else {
-        v0 = await this.httpClient.execute({
-          "url": v5,
-          "accept": "application/json",
-          "useSession": true,
-          "signWithZse": true
-        });
-        if (this.generation === this.generation) {
-          v3 = decodeOnlineHistoryPage(v0.body);
-          v5 = p0 === undefined ? new Set() : local_0_1(this.requestedCursors);
-          local_1_0 = p0 === undefined ? new Set() : local_0_1(this.deliveredIdentities);
-          v5.add(v6);
-          local_1_1 = [];
-          v3.items.forEach(function (p0) {
-            if (local_1_0.has(p0.contentKey)) {
-              return;
-            } else {
-              local_1_0.add(p0.contentKey);
-              local_1_1.push(p0);
-              return;
-            }
-          });
-          if (!v3.cursor.isEnd && local_1_1.length > 0) {
-            v4 += 10;
-            v2 = buildOnlineHistoryUrl(v4);
-          } else {
-            v2 = undefined;
-          }
-          v4 = v2 === undefined ? undefined : canonicalOnlineHistoryCursorKey(v2);
-          v7 = v2 === undefined && !v3.cursor.isEnd || v4 === v6;
-          if (!v7 && (v7 = v4 !== undefined, v4 !== undefined)) {
-            v7 = v5.has(v4);
-          }
-          this.requestedCursors = v5;
-          this.deliveredIdentities = local_1_0;
-          v4 = {
-            "items": local_1_1,
-            "cursor": null
-          };
-          v4.cursor = {
-            "isEnd": v3.cursor.isEnd,
-            "isStart": v3.cursor.isStart,
-            "next": v2,
-            "page": v3.cursor.page,
-            "total": v3.cursor.total
-          };
-          if (v7) {
-            v4 = local_0_2(v4);
-          }
-          return v4;
-        } else {
-          throw new OnlineHistoryRepositoryFailure(OnlineHistoryRepositoryFailureKind.CANCELLED);
-        }
       }
-    } else if (!isOnlineHistoryCursorUrl(p0)) {
-      throw new OnlineHistoryRepositoryFailure(OnlineHistoryRepositoryFailureKind.INVALID_CURSOR);
-    } else {
-      v4 = p0 === undefined ? 0 : onlineHistoryOffsetOf(p0);
-      v5 = p0 === undefined ? buildOnlineHistoryUrl(0) : p0;
-      v6 = canonicalOnlineHistoryCursorKey(v5);
-      if (p0 !== undefined && this.requestedCursors.has(v6)) {
-        throw new OnlineHistoryRepositoryFailure(OnlineHistoryRepositoryFailureKind.REPEATED_CURSOR);
-      } else {
-        v0 = await this.httpClient.execute({
-          "url": v5,
-          "accept": "application/json",
-          "useSession": true,
-          "signWithZse": true
+      v0 = await this.httpClient.execute({
+        "url": v5,
+        "accept": "application/json",
+        "useSession": true,
+        "signWithZse": true
+      });
+      if (this.generation === this.generation) {
+        v3 = decodeOnlineHistoryPage(v0.body);
+        v5 = p0 === undefined ? new Set() : local_0_1(this.requestedCursors);
+        local_1_0 = p0 === undefined ? new Set() : local_0_1(this.deliveredIdentities);
+        v5.add(v6);
+        local_1_1 = [];
+        v3.items.forEach(function (p0) {
+          if (local_1_0.has(p0.contentKey)) {
+            return;
+          }
+          local_1_0.add(p0.contentKey);
+          local_1_1.push(p0);
+          return;
         });
-        if (this.generation === this.generation) {
-          v3 = decodeOnlineHistoryPage(v0.body);
-          v5 = p0 === undefined ? new Set() : local_0_1(this.requestedCursors);
-          local_1_0 = p0 === undefined ? new Set() : local_0_1(this.deliveredIdentities);
-          v5.add(v6);
-          local_1_1 = [];
-          v3.items.forEach(function (p0) {
-            if (local_1_0.has(p0.contentKey)) {
-              return;
-            } else {
-              local_1_0.add(p0.contentKey);
-              local_1_1.push(p0);
-              return;
-            }
-          });
-          if (!v3.cursor.isEnd && local_1_1.length > 0) {
-            v4 += 10;
-            v2 = buildOnlineHistoryUrl(v4);
-          } else {
-            v2 = undefined;
-          }
-          v4 = v2 === undefined ? undefined : canonicalOnlineHistoryCursorKey(v2);
-          v7 = v2 === undefined && !v3.cursor.isEnd || v4 === v6;
-          if (!v7 && (v7 = v4 !== undefined, v4 !== undefined)) {
-            v7 = v5.has(v4);
-          }
-          this.requestedCursors = v5;
-          this.deliveredIdentities = local_1_0;
-          v4 = {
-            "items": local_1_1,
-            "cursor": null
-          };
-          v4.cursor = {
-            "isEnd": v3.cursor.isEnd,
-            "isStart": v3.cursor.isStart,
-            "next": v2,
-            "page": v3.cursor.page,
-            "total": v3.cursor.total
-          };
-          if (v7) {
-            v4 = local_0_2(v4);
-          }
-          return v4;
+        if (!v3.cursor.isEnd && local_1_1.length > 0) {
+          v4 += 10;
+          v2 = buildOnlineHistoryUrl(v4);
         } else {
-          throw new OnlineHistoryRepositoryFailure(OnlineHistoryRepositoryFailureKind.CANCELLED);
+          v2 = undefined;
         }
+        v4 = v2 === undefined ? undefined : canonicalOnlineHistoryCursorKey(v2);
+        v7 = v2 === undefined && !v3.cursor.isEnd || v4 === v6;
+        if (!v7 && (v7 = v4 !== undefined, v4 !== undefined)) {
+          v7 = v5.has(v4);
+        }
+        this.requestedCursors = v5;
+        this.deliveredIdentities = local_1_0;
+        v4 = {
+          "items": local_1_1,
+          "cursor": null
+        };
+        v4.cursor = {
+          "isEnd": v3.cursor.isEnd,
+          "isStart": v3.cursor.isStart,
+          "next": v2,
+          "page": v3.cursor.page,
+          "total": v3.cursor.total
+        };
+        if (v7) {
+          v4 = local_0_2(v4);
+        }
+        return v4;
       }
+      throw new OnlineHistoryRepositoryFailure(OnlineHistoryRepositoryFailureKind.CANCELLED);
     }
+    if (!isOnlineHistoryCursorUrl(p0)) {
+      throw new OnlineHistoryRepositoryFailure(OnlineHistoryRepositoryFailureKind.INVALID_CURSOR);
+    }
+    v4 = p0 === undefined ? 0 : onlineHistoryOffsetOf(p0);
+    v5 = p0 === undefined ? buildOnlineHistoryUrl(0) : p0;
+    v6 = canonicalOnlineHistoryCursorKey(v5);
+    if (p0 !== undefined && this.requestedCursors.has(v6)) {
+      throw new OnlineHistoryRepositoryFailure(OnlineHistoryRepositoryFailureKind.REPEATED_CURSOR);
+    }
+    v0 = await this.httpClient.execute({
+      "url": v5,
+      "accept": "application/json",
+      "useSession": true,
+      "signWithZse": true
+    });
+    if (this.generation === this.generation) {
+      v3 = decodeOnlineHistoryPage(v0.body);
+      v5 = p0 === undefined ? new Set() : local_0_1(this.requestedCursors);
+      local_1_0 = p0 === undefined ? new Set() : local_0_1(this.deliveredIdentities);
+      v5.add(v6);
+      local_1_1 = [];
+      v3.items.forEach(function (p0) {
+        if (local_1_0.has(p0.contentKey)) {
+          return;
+        }
+        local_1_0.add(p0.contentKey);
+        local_1_1.push(p0);
+        return;
+      });
+      if (!v3.cursor.isEnd && local_1_1.length > 0) {
+        v4 += 10;
+        v2 = buildOnlineHistoryUrl(v4);
+      } else {
+        v2 = undefined;
+      }
+      v4 = v2 === undefined ? undefined : canonicalOnlineHistoryCursorKey(v2);
+      v7 = v2 === undefined && !v3.cursor.isEnd || v4 === v6;
+      if (!v7 && (v7 = v4 !== undefined, v4 !== undefined)) {
+        v7 = v5.has(v4);
+      }
+      this.requestedCursors = v5;
+      this.deliveredIdentities = local_1_0;
+      v4 = {
+        "items": local_1_1,
+        "cursor": null
+      };
+      v4.cursor = {
+        "isEnd": v3.cursor.isEnd,
+        "isStart": v3.cursor.isStart,
+        "next": v2,
+        "page": v3.cursor.page,
+        "total": v3.cursor.total
+      };
+      if (v7) {
+        v4 = local_0_2(v4);
+      }
+      return v4;
+    }
+    throw new OnlineHistoryRepositoryFailure(OnlineHistoryRepositoryFailureKind.CANCELLED);
   }
   async clearAll() {
     let acc;
@@ -333,9 +320,8 @@ DefaultOnlineHistoryRepository = class panda_jmp0_reserved_anonymous_1 {
       acc = this.onClear === null || this.onClear === undefined ? undefined : this.onClear();
       await acc;
       return undefined;
-    } else {
-      throw new OnlineHistoryRepositoryFailure(OnlineHistoryRepositoryFailureKind.CANCELLED);
     }
+    throw new OnlineHistoryRepositoryFailure(OnlineHistoryRepositoryFailureKind.CANCELLED);
   }
   async deleteEntry(p0) {
     let v6;
@@ -351,9 +337,8 @@ DefaultOnlineHistoryRepository = class panda_jmp0_reserved_anonymous_1 {
     await this.httpClient.execute(v6);
     if (this.generation === this.generation) {
       return undefined;
-    } else {
-      throw new OnlineHistoryRepositoryFailure(OnlineHistoryRepositoryFailureKind.CANCELLED);
     }
+    throw new OnlineHistoryRepositoryFailure(OnlineHistoryRepositoryFailureKind.CANCELLED);
   }
 };
 export { DefaultOnlineHistoryRepository };

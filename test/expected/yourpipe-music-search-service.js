@@ -11,15 +11,14 @@ import { getMusicContinuationToken } from "@normalized:N&&&entry/src/main/ets/fe
 import { getTextFromRuns } from "@normalized:N&&&entry/src/main/ets/features/home/utils/TextUtils&";
 import { getThumbnailUrlFromThumbnailObject } from "@normalized:N&&&entry/src/main/ets/features/home/utils/ThumbnailUtils&";
 let MusicSearchService;
-let acc;
 let local_0_0;
 try {
-  acc = class panda_jmp0_reserved_anonymous_0 {
+  local_0_0 = class panda_jmp0_reserved_anonymous_0 {
     constructor() {}
     static isMusicSearch(p0) {
-      let acc;
-      acc = p0 && p0.length > 0;
-      return !!(acc && p0[0].startsWith("music_"));
+      let v5;
+      v5 = p0 && p0.length > 0;
+      return !!(v5 && p0[0].startsWith("music_"));
     }
     static parseInitialMusicSearchResponse(p0, p1, p2) {
       let v7, v8, v9, v11, v12, v13, v14, v15, v22, v28;
@@ -75,94 +74,87 @@ try {
         let v4, v8, v10, v12, v13, v15;
         if (!p0.musicResponsiveListItemRenderer) {
           return;
-        } else if ((p0.musicResponsiveListItemRenderer.musicItemRendererDisplayPolicy || "") === "MUSIC_ITEM_RENDERER_DISPLAY_POLICY_GREY_OUT") {
+        }
+        if ((p0.musicResponsiveListItemRenderer.musicItemRendererDisplayPolicy || "") === "MUSIC_ITEM_RENDERER_DISPLAY_POLICY_GREY_OUT") {
           return;
-        } else {
-          v8 = local_0_0 /*MusicSearchService*/.getMusicTextFromFlexColumn(p0.musicResponsiveListItemRenderer.flexColumns, 0)
-            || "Untitled";
-          v4 = local_0_0 /*MusicSearchService*/.getMusicDescriptionRuns(p0.musicResponsiveListItemRenderer);
-          switch (local_1_0 /*searchType*/) {
-            case "music_songs":
-            case "music_videos":
-              v13 = local_0_0 /*MusicSearchService*/.getMusicVideoId(p0.musicResponsiveListItemRenderer);
-              if (!v13) {
-                return;
-              } else {
-                v10 = local_0_0 /*MusicSearchService*/.getMusicAuthorFromRuns(v4) || "Unknown";
-                v15 = local_1_0 /*searchType*/ === "music_videos" ? local_0_0 /*MusicSearchService*/.getMusicViewCountFromRuns(v4) : "";
-                v12 = local_0_0 /*MusicSearchService*/.getMusicThumbnailUrl(p0.musicResponsiveListItemRenderer);
-                local_1_2 /*items*/.push(new SearchStreamItem(local_1_1 /*idCounter*/, new VideoItem(local_1_1 /*idCounter*/, v13, v8, v10, v15, v12, false, ThumbnailPlaceholder.pickColor(v13 || v8, local_1_1 /*idCounter*/), "", "", "", "")));
-                local_1_1 += 1;
-                return;
-              }
-              break;
-            default:
-              switch (local_1_0 /*searchType*/) {
-                case "music_albums":
-                case "music_playlists":
-                  v12 = local_0_0 /*MusicSearchService*/.getMusicPlaylistId(p0.musicResponsiveListItemRenderer);
-                  v13 = local_0_0 /*MusicSearchService*/.getMusicUploaderFromRuns(v4, local_1_0 /*searchType*/);
-                  v10 = local_0_0 /*MusicSearchService*/.getMusicThumbnailUrl(p0.musicResponsiveListItemRenderer);
-                  local_1_2 /*items*/.push(new SearchPlaylistItem(local_1_1 /*idCounter*/, v12, v8, v13, "", v10, "", ThumbnailPlaceholder.pickColor(v12 || v8, local_1_1 /*idCounter*/)));
-                  local_1_1 += 1;
-                  break;
-              }
+        }
+        v8 = local_0_0 /*MusicSearchService*/.getMusicTextFromFlexColumn(p0.musicResponsiveListItemRenderer.flexColumns, 0)
+          || "Untitled";
+        v4 = local_0_0 /*MusicSearchService*/.getMusicDescriptionRuns(p0.musicResponsiveListItemRenderer);
+        switch (local_1_0 /*searchType*/) {
+          case "music_songs":
+          case "music_videos":
+            v13 = local_0_0 /*MusicSearchService*/.getMusicVideoId(p0.musicResponsiveListItemRenderer);
+            if (!v13) {
               return;
-          }
+            }
+            v10 = local_0_0 /*MusicSearchService*/.getMusicAuthorFromRuns(v4) || "Unknown";
+            v15 = local_1_0 /*searchType*/ === "music_videos" ? local_0_0 /*MusicSearchService*/.getMusicViewCountFromRuns(v4) : "";
+            v12 = local_0_0 /*MusicSearchService*/.getMusicThumbnailUrl(p0.musicResponsiveListItemRenderer);
+            local_1_2 /*items*/.push(new SearchStreamItem(local_1_1 /*idCounter*/, new VideoItem(local_1_1 /*idCounter*/, v13, v8, v10, v15, v12, false, ThumbnailPlaceholder.pickColor(v13 || v8, local_1_1 /*idCounter*/), "", "", "", "")));
+            local_1_1 += 1;
+            return;
+            break;
+          default:
+            switch (local_1_0 /*searchType*/) {
+              case "music_albums":
+              case "music_playlists":
+                v12 = local_0_0 /*MusicSearchService*/.getMusicPlaylistId(p0.musicResponsiveListItemRenderer);
+                v13 = local_0_0 /*MusicSearchService*/.getMusicUploaderFromRuns(v4, local_1_0 /*searchType*/);
+                v10 = local_0_0 /*MusicSearchService*/.getMusicThumbnailUrl(p0.musicResponsiveListItemRenderer);
+                local_1_2 /*items*/.push(new SearchPlaylistItem(local_1_1 /*idCounter*/, v12, v8, v13, "", v10, "", ThumbnailPlaceholder.pickColor(v12 || v8, local_1_1 /*idCounter*/)));
+                local_1_1 += 1;
+                break;
+            }
+            return;
         }
       });
       return local_1_2 /*items*/;
     }
     static getMusicTextFromFlexColumn(p0, p1) {
-      let acc;
+      let v6;
       if (!p0 || p0.length <= p1) {
         return "";
-      } else {
-        acc = p0[p1]?.musicResponsiveListItemFlexColumnRenderer;
-        return getTextFromRuns(acc?.text);
       }
+      v6 = p0[p1]?.musicResponsiveListItemFlexColumnRenderer;
+      return getTextFromRuns(v6?.text);
     }
     static getMusicDescriptionRuns(p0) {
       let v6, v8, acc;
       if (!p0.flexColumns || p0.flexColumns.length < 2) {
         return [];
-      } else {
-        v6 = p0.flexColumns[1]?.musicResponsiveListItemFlexColumnRenderer;
-        v8 = v6?.text;
-        acc = v8?.runs;
-        if (acc == null) {
-          acc = [];
-        }
-        return acc;
       }
+      v6 = p0.flexColumns[1]?.musicResponsiveListItemFlexColumnRenderer;
+      v8 = v6?.text;
+      acc = v8?.runs;
+      if (acc == null) {
+        acc = [];
+      }
+      return acc;
     }
     static getMusicAuthorFromRuns(p0) {
-      let v4, acc;
-      acc = p0 && p0.length > 0 ? p0[0] : undefined;
-      v4 = acc;
-      return acc ? v4.text || "" : "";
+      let v4;
+      v4 = p0 && p0.length > 0 ? p0[0] : undefined;
+      return v4 ? v4.text || "" : "";
     }
     static getMusicUploaderFromRuns(p0, p1) {
-      let v7, acc;
+      let v7;
       if (!p0 || p0.length === 0) {
         return "";
-      } else if (p1 === "music_albums") {
-        acc = p0.length > 2 ? p0[2] : p0[0];
-        v7 = acc;
-        return acc ? v7.text || "" : "";
-      } else {
-        return p0[0] ? p0[0].text || "" : "";
       }
+      if (p1 === "music_albums") {
+        v7 = p0.length > 2 ? p0[2] : p0[0];
+        return v7 ? v7.text || "" : "";
+      }
+      return p0[0] ? p0[0].text || "" : "";
     }
     static getMusicViewCountFromRuns(p0) {
-      let v4, acc;
+      let v4;
       if (!p0 || p0.length === 0) {
         return "";
-      } else {
-        acc = p0.length >= 3 ? p0[p0.length - 3] : p0[p0.length - 1];
-        v4 = acc;
-        return acc ? v4.text || "" : "";
       }
+      v4 = p0.length >= 3 ? p0[p0.length - 3] : p0[p0.length - 1];
+      return v4 ? v4.text || "" : "";
     }
     static getMusicVideoId(p0) {
       return p0.playlistItemData ? p0.playlistItemData.videoId || "" : "";
@@ -181,38 +173,34 @@ try {
             v4 = v11?.content;
             v10 = v4?.musicPlayButtonRenderer;
             v5 = v10?.playNavigationEndpoint;
-            acc = v5?.watchPlaylistEndpoint;
-            v12 = acc;
-            return acc ? v12.playlistId || "" : "";
+            v12 = v5?.watchPlaylistEndpoint;
+            return v12 ? v12.playlistId || "" : "";
           }
           v26 = v19.value.toggleMenuServiceItemRenderer?.toggledServiceEndpoint;
           v22 = v26?.likeEndpoint;
           v24 = v22?.target;
           v23 = v24 ? v24.playlistId : "";
-          acc = !acc;
+          acc = !v23;
         } while (acc);
         if (v18.return != undefined) {
           v18.return();
         }
         return v23;
-      } else {
-        v11 = p0.overlay?.musicItemThumbnailOverlayRenderer;
-        v4 = v11?.content;
-        v10 = v4?.musicPlayButtonRenderer;
-        v5 = v10?.playNavigationEndpoint;
-        acc = v5?.watchPlaylistEndpoint;
-        v12 = acc;
-        return acc ? v12.playlistId || "" : "";
       }
+      v11 = p0.overlay?.musicItemThumbnailOverlayRenderer;
+      v4 = v11?.content;
+      v10 = v4?.musicPlayButtonRenderer;
+      v5 = v10?.playNavigationEndpoint;
+      v12 = v5?.watchPlaylistEndpoint;
+      return v12 ? v12.playlistId || "" : "";
     }
     static getMusicThumbnailUrl(p0) {
-      let acc;
-      acc = p0.thumbnail?.musicThumbnailRenderer;
-      return getThumbnailUrlFromThumbnailObject(acc?.thumbnail);
+      let v5;
+      v5 = p0.thumbnail?.musicThumbnailRenderer;
+      return getThumbnailUrlFromThumbnailObject(v5?.thumbnail);
     }
   };
-  local_0_0 = acc;
-  MusicSearchService = acc;
+  MusicSearchService = local_0_0;
 } catch (catchAcc) {
   throw catchAcc;
 }

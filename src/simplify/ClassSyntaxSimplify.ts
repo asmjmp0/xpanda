@@ -40,6 +40,45 @@ class GetterSetterDesc {
     public setterFunc: TYPE.FunctionExpression | null = null;
     public clazz: TYPE.ClassExpression | null = null;
     public funcName: string | null = null;
+    /**
+     * callee.object 是 `<id>.prototype` 而不是裸标识符。
+     * 复制传播把原型寄存器内联后(TempVariableSimplify 在 ClassSyntaxSimplify 之前跑),
+     * `v7.__defineGetter__(...)` 会变成 `acc.prototype.__defineGetter__(...)`,
+     * yourpipe 等新版本编译产物的访问器/原型方法都是这种形态。
+     */
+    public prototypeForm = false;
+}
+
+/**
+ * `X.prototype` 形态(非计算成员、属性名 prototype、对象是标识符)。
+ */
+function isPrototypeMember(node: TYPE.Node): node is TYPE.MemberExpression & { object: TYPE.Identifier } {
+    return isMemberExpression(node) && !node.computed
+        && isIdentifier(node.property) && node.property.name === "prototype"
+        && isIdentifier(node.object);
+}
+
+/**
+ * 从语句位置向前解析 `<name>` 当前绑定的类表达式(X.prototype.M = fn / X.M = fn 的直接形态)。
+ * 沿途遇到对 `<cur>` 的赋值:右值是类表达式 → 命中;右值是标识符 → 别名转发继续找;
+ * 其它值说明 `<cur>` 已被改写成本对象之外的东西,保守放弃,避免把访问器/方法折进错误的类。
+ * 其它标识符的赋值一律跳过(词法上不影响 `<cur>` 的值)。
+ */
+function resolveClassForTarget(name: string, statement: NodePath<TYPE.Statement>): TYPE.ClassExpression | null {
+    let current = name;
+    for (const pre of statement.getAllPrevSiblings()) {
+        if (!isExpressionStatement(pre.node)) continue;
+        const expression = pre.node.expression;
+        if (!isAssignmentExpression(expression) || !isIdentifier(expression.left)) continue;
+        if (expression.left.name !== current) continue;
+        if (isClassExpressionNode(expression.right)) return expression.right;
+        if (isIdentifier(expression.right)) {
+            current = expression.right.name;
+            continue;
+        }
+        return null;
+    }
+    return null;
 }
 
 export class ClassSyntaxSimplify implements ISimplify {
@@ -54,8 +93,16 @@ export class ClassSyntaxSimplify implements ISimplify {
         if (!isMemberExpression(callee) || !isIdentifier(callee.property)) return null;
         const kind = callee.property.name;
         if (kind !== "__defineGetter__" && kind !== "__defineSetter__") return null;
-        if (!isIdentifier(callee.object) || node.arguments.length !== 2) return null;
-        gsd.target = callee.object;
+        if (node.arguments.length !== 2) return null;
+        // 裸标识符:v1.__defineGetter__(...) ;或内联原型:acc.prototype.__defineGetter__(...)
+        if (isIdentifier(callee.object)) {
+            gsd.target = callee.object;
+        } else if (isPrototypeMember(callee.object)) {
+            gsd.target = callee.object.object;
+            gsd.prototypeForm = true;
+        } else {
+            return null;
+        }
         const name = node.arguments[0];
         if (!isStringLiteral(name)) return null;
         gsd.name = name.value;
@@ -127,7 +174,13 @@ export class ClassSyntaxSimplify implements ISimplify {
     }
 
     private findClass(path: NodePath<TYPE.CallExpression>, gsd: GetterSetterDesc): void {
-        for (const pre of path.getStatementParent().getAllPrevSiblings()) {
+        const statement = path.getStatementParent();
+        // acc.prototype.__defineGetter__(...) 直接形态:对象变量在定义点之后不允许被改写
+        if (gsd.prototypeForm) {
+            gsd.clazz = resolveClassForTarget(gsd.target!.name, statement);
+            return;
+        }
+        for (const pre of statement.getAllPrevSiblings()) {
             if (!isExpressionStatement(pre.node)) continue;
             const expression = pre.node.expression;
             // 到达 __defineGetter__/__defineSetter__ 的作用域边界
@@ -158,36 +211,40 @@ export class ClassSyntaxSimplify implements ISimplify {
         if (!isAssignmentExpression(expression) || expression.operator !== "=") return false;
         const left = expression.left;
         const right = expression.right;
-        if (!isMemberExpression(left) || !isIdentifier(left.object)) return false;
-        if (!isFunctionExpression(right)) return false;
+        if (!isMemberExpression(left) || !isFunctionExpression(right)) return false;
         if (left.computed && !isStringLiteral(left.property)) return false;
         if (!left.computed && !isIdentifier(left.property)) return false;
-        const objectName = left.object.name;
         const property = left.property as TYPE.Identifier | TYPE.StringLiteral;
         const methodName = isIdentifier(property) ? property.name : property.value;
         if (!methodName) return false;
 
-        let ownerName: string | null = null;
         let clazz: TYPE.ClassExpression | null = null;
-        for (const pre of value.getAllPrevSiblings()) {
-            if (!isExpressionStatement(pre.node) || !isAssignmentExpression(pre.node.expression)) continue;
-            const assign = pre.node.expression;
-            if (assign.operator !== "=") continue;
-            // P = Q.prototype
-            if (ownerName === null && isIdentifier(assign.left) && assign.left.name === objectName
-                && isMemberExpression(assign.right) && !assign.right.computed
-                && isIdentifier(assign.right.property) && assign.right.property.name === "prototype"
-                && isIdentifier(assign.right.object)) {
-                ownerName = assign.right.object.name;
-                continue;
-            }
-            // Q = class ...
-            if (ownerName !== null && isIdentifier(assign.left) && assign.left.name === ownerName) {
-                if (isClassExpressionNode(assign.right)) {
-                    clazz = assign.right;
+        if (isIdentifier(left.object)) {
+            const objectName = left.object.name;
+            let ownerName: string | null = null;
+            for (const pre of value.getAllPrevSiblings()) {
+                if (!isExpressionStatement(pre.node) || !isAssignmentExpression(pre.node.expression)) continue;
+                const assign = pre.node.expression;
+                if (assign.operator !== "=") continue;
+                // P = Q.prototype
+                if (ownerName === null && isIdentifier(assign.left) && assign.left.name === objectName
+                    && isMemberExpression(assign.right) && !assign.right.computed
+                    && isIdentifier(assign.right.property) && assign.right.property.name === "prototype"
+                    && isIdentifier(assign.right.object)) {
+                    ownerName = assign.right.object.name;
+                    continue;
                 }
-                break;
+                // Q = class ...
+                if (ownerName !== null && isIdentifier(assign.left) && assign.left.name === ownerName) {
+                    if (isClassExpressionNode(assign.right)) {
+                        clazz = assign.right;
+                    }
+                    break;
+                }
             }
+        } else if (isPrototypeMember(left.object)) {
+            // 直接形态:X.prototype.M = fn(原型寄存器被复制传播内联进对象位置)
+            clazz = resolveClassForTarget(left.object.object.name, value);
         }
         if (!clazz) return false;
         const exists = clazz.body.body.some((member) => isClassMethod(member)
@@ -199,6 +256,39 @@ export class ClassSyntaxSimplify implements ISimplify {
             ? identifier(methodName) : stringLiteral(methodName);
         clazz.body.body.push(classMethod(
             "method", key, right.params, right.body, false, false, right.generator, right.async));
+        value.remove();
+        return true;
+    }
+
+    /**
+     * `X.M = function(){...}`(对象直接挂在类上)→ 类的 static 方法。
+     * 必须在 tryTransformPrototypeMethod 之后调用:两步形态的 `P.M = fn` 已被前者
+     * 消费;这里向前解析 X 时遇到 `P = Q.prototype`(右值非类/标识符)会直接放弃,
+     * 不会把实例方法重复折成静态。
+     */
+    private tryTransformStaticMethod(value: NodePath<TYPE.ExpressionStatement>): boolean {
+        const expression = value.node.expression;
+        if (!isAssignmentExpression(expression) || expression.operator !== "=") return false;
+        const left = expression.left;
+        const right = expression.right;
+        if (!isMemberExpression(left) || !isIdentifier(left.object) || !isFunctionExpression(right)) return false;
+        if (left.computed && !isStringLiteral(left.property)) return false;
+        if (!left.computed && !isIdentifier(left.property)) return false;
+        const property = left.property as TYPE.Identifier | TYPE.StringLiteral;
+        const methodName = isIdentifier(property) ? property.name : property.value;
+        if (!methodName) return false;
+        const clazz = resolveClassForTarget(left.object.name, value);
+        if (!clazz) return false;
+        const exists = clazz.body.body.some((member) => isClassMethod(member)
+            && member.static
+            && ((isIdentifier(member.key) && member.key.name === methodName)
+                || (isStringLiteral(member.key) && member.key.value === methodName)));
+        if (exists) return false;
+
+        const key = /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(methodName)
+            ? identifier(methodName) : stringLiteral(methodName);
+        clazz.body.body.push(classMethod(
+            "method", key, right.params, right.body, false, true, right.generator, right.async));
         value.remove();
         return true;
     }
@@ -276,6 +366,10 @@ export class ClassSyntaxSimplify implements ISimplify {
             },
             ExpressionStatement: (value: NodePath<TYPE.ExpressionStatement>) => {
                 if (this.tryTransformPrototypeMethod(value)) {
+                    changed = true;
+                    return;
+                }
+                if (this.tryTransformStaticMethod(value)) {
                     changed = true;
                     return;
                 }

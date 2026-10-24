@@ -270,10 +270,9 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       if (!p0) {
         local_1_0.aiTranslateProgress = "";
         return;
-      } else {
-        local_1_0.aiTranslateProgress = "" + p0.doneBatches + "/" + p0.totalBatches + "";
-        return;
       }
+      local_1_0.aiTranslateProgress = "" + p0.doneBatches + "/" + p0.totalBatches + "";
+      return;
     };
     local_1_0.setInitiallyProvidedValue(p1);
     local_1_0.declareWatch("isFullLandscapeScreen", local_1_0.onFullscreenModeChange);
@@ -1146,11 +1145,10 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
   syncPlaybackStateFromController() {
     if (!this.controller) {
       return;
-    } else {
-      this.currentTime = this.vm.currentTime;
-      this.durationTime = this.vm.durationTime;
-      return;
     }
+    this.currentTime = this.vm.currentTime;
+    this.durationTime = this.vm.durationTime;
+    return;
   }
   getErrorDisplay(p0) {
     let v4, v5;
@@ -1163,67 +1161,68 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
         "bundleName": "com.talon.yourpipe",
         "moduleName": "entry"
       }.id) : "[Player] Playback error, please retry";
-    } else if (!v4) {
+    }
+    if (!v4) {
       return p0;
-    } else {
-      v5 = p0.match(new RegExp("^\\[(API|PLAYER)\\]\\s*(.+)"));
-      if (v5) {
-        try {
-          if (v5[1] !== "API") {
-            return p0;
-          } else if (v5[2] === "NO_PLAYABLE_STREAM") {
-            return "[API] " + v4.resourceManager.getStringSync({
-              "id": 16777654,
-              "type": 10003,
-              "params": [],
-              "bundleName": "com.talon.yourpipe",
-              "moduleName": "entry"
-            }.id);
-          } else if (v5[2] === "NO_SUPPORTED_STREAM") {
-            return "[API] " + v4.resourceManager.getStringSync({
-              "id": 16777655,
-              "type": 10003,
-              "params": [],
-              "bundleName": "com.talon.yourpipe",
-              "moduleName": "entry"
-            }.id);
-          } else {
-            return p0;
-          }
-        } catch (catchAcc) {
-          Logger.warn(local_0_1 /*TAG*/, "getErrorDisplay localization failed: " + catchAcc + "");
+    }
+    v5 = p0.match(new RegExp("^\\[(API|PLAYER)\\]\\s*(.+)"));
+    if (v5) {
+      try {
+        if (v5[1] !== "API") {
           return p0;
         }
-      } else if (p0 === "NO_PLAYABLE_STREAM") {
-        return "[API] " + v4.resourceManager.getStringSync({
-          "id": 16777654,
-          "type": 10003,
-          "params": [],
-          "bundleName": "com.talon.yourpipe",
-          "moduleName": "entry"
-        }.id);
-      } else if (p0 === "NO_SUPPORTED_STREAM") {
-        return "[API] " + v4.resourceManager.getStringSync({
-          "id": 16777655,
-          "type": 10003,
-          "params": [],
-          "bundleName": "com.talon.yourpipe",
-          "moduleName": "entry"
-        }.id);
-      } else {
+        if (v5[2] === "NO_PLAYABLE_STREAM") {
+          return "[API] " + v4.resourceManager.getStringSync({
+            "id": 16777654,
+            "type": 10003,
+            "params": [],
+            "bundleName": "com.talon.yourpipe",
+            "moduleName": "entry"
+          }.id);
+        }
+        if (v5[2] === "NO_SUPPORTED_STREAM") {
+          return "[API] " + v4.resourceManager.getStringSync({
+            "id": 16777655,
+            "type": 10003,
+            "params": [],
+            "bundleName": "com.talon.yourpipe",
+            "moduleName": "entry"
+          }.id);
+        }
+        return p0;
+      } catch (catchAcc) {
+        Logger.warn(local_0_1 /*TAG*/, "getErrorDisplay localization failed: " + catchAcc + "");
         return p0;
       }
+    } else if (p0 === "NO_PLAYABLE_STREAM") {
+      return "[API] " + v4.resourceManager.getStringSync({
+        "id": 16777654,
+        "type": 10003,
+        "params": [],
+        "bundleName": "com.talon.yourpipe",
+        "moduleName": "entry"
+      }.id);
+    } else if (p0 === "NO_SUPPORTED_STREAM") {
+      return "[API] " + v4.resourceManager.getStringSync({
+        "id": 16777655,
+        "type": 10003,
+        "params": [],
+        "bundleName": "com.talon.yourpipe",
+        "moduleName": "entry"
+      }.id);
+    } else {
+      return p0;
     }
   }
   onSourceChange() {
     this.resetTransientUi("source-change");
-    this.hasStreams = this.curSource.streams && this.curSource.streams.length > 0;
+    this.hasStreams = !!(this.curSource.streams && this.curSource.streams.length > 0);
     this.playbackStarted = false;
     this.syncPlaybackStateFromController();
     this.calculateSurfaceSize();
   }
   onControllerChanged() {
-    let v5;
+    let v5, acc;
     this.resetTransientUi("controller-change");
     if (this.lastController && this.lastController !== this.controller) {
       this.lastController.unsubscribeProgress(this.progressListener);
@@ -1247,7 +1246,8 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       this.playbackStateListener(this.controller.getPlaybackState());
       try {
         v5 = this.controller;
-        if (!this.controller.surfaceID && (v5 = this.x_componentController.getXComponentSurfaceId(), this.controller.surfaceID)) {
+        acc = !!this.controller.surfaceID;
+        if (!acc && (v5 = this.x_componentController.getXComponentSurfaceId(), acc)) {
           this.controller.setSurfaceID(v5);
           Logger.debug(local_0_1 /*TAG*/, "SurfaceID re-injected after controller change: " + v5 + "");
         }
@@ -1264,26 +1264,25 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     if (acc) {
       this.resetTransientUi("page-hidden");
       return;
-    } else {
-      if (v4.playerState === PlayerState.RELEASED) {
-        v4.ensureInitialized().catch(function () {});
-      }
-      if (!this.controller.surfaceID) {
-        try {
-          v6 = this.x_componentController.getXComponentSurfaceId();
-          if (v6) {
-            this.controller.setSurfaceID(v6);
-            Logger.info(local_0_1 /*TAG*/, "SurfaceID re-bound on visibility change: " + v6 + "");
-          }
-        } catch (catchAcc) {
-          Logger.warn(local_0_1 /*TAG*/, "Failed to get surfaceId on visibility change");
-        }
-      }
-      this.syncPlaybackStateFromController();
-      this.showControls = true;
-      this.scheduleHideControls();
-      return;
     }
+    if (v4.playerState === PlayerState.RELEASED) {
+      v4.ensureInitialized().catch(function () {});
+    }
+    if (!this.controller.surfaceID) {
+      try {
+        v6 = this.x_componentController.getXComponentSurfaceId();
+        if (v6) {
+          this.controller.setSurfaceID(v6);
+          Logger.info(local_0_1 /*TAG*/, "SurfaceID re-bound on visibility change: " + v6 + "");
+        }
+      } catch (catchAcc) {
+        Logger.warn(local_0_1 /*TAG*/, "Failed to get surfaceId on visibility change");
+      }
+    }
+    this.syncPlaybackStateFromController();
+    this.showControls = true;
+    this.scheduleHideControls();
+    return;
   }
   aboutToAppear() {
     let v3, v11, acc;
@@ -1327,7 +1326,7 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     this.controller.addStateListener(this.keepScreenListener);
     this.envService.setKeepScreenOn(this.vm.isPlaying || this.vm.isBuffering);
     PiPManager.getInstance().updatePlayPauseStatus(this.vm.isPlaying);
-    this.hasStreams = this.curSource.streams && this.curSource.streams.length > 0;
+    this.hasStreams = !!(this.curSource.streams && this.curSource.streams.length > 0);
     this.calculateSurfaceSize();
     PlayerSession.getInstance().ensureInitialized().catch(function (p0) {
       Logger.warn(local_0_1 /*TAG*/, "Deferred engine initialization failed: " + (p0.message || p0) + "");
@@ -1354,17 +1353,16 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     this.cacheCanvasCtx.clearRect(0, 0, this.cacheCanvasCtx.width, this.cacheCanvasCtx.height);
     if ((this.durationTime > 0 ? this.vm.seekableRanges.length === 0 : this.durationTime <= 0) || this.cacheCanvasCtx.width <= 0) {
       return;
-    } else {
-      this.cacheCanvasCtx.fillStyle = "rgba(255,255,255,0.5)";
-      for (v14 of this.vm.seekableRanges) {
-        v19 = Math.max(0, v14[0]);
-        v17 = Math.min(this.durationTime, v14[1]);
-        if (v17 > v19) {
-          this.cacheCanvasCtx.fillRect(v19 / this.durationTime * this.cacheCanvasCtx.width, 0, (v17 - v19) / this.durationTime * this.cacheCanvasCtx.width, this.cacheCanvasCtx.height);
-        }
-      }
-      return;
     }
+    this.cacheCanvasCtx.fillStyle = "rgba(255,255,255,0.5)";
+    for (v14 of this.vm.seekableRanges) {
+      v19 = Math.max(0, v14[0]);
+      v17 = Math.min(this.durationTime, v14[1]);
+      if (v17 > v19) {
+        this.cacheCanvasCtx.fillRect(v19 / this.durationTime * this.cacheCanvasCtx.width, 0, (v17 - v19) / this.durationTime * this.cacheCanvasCtx.width, this.cacheCanvasCtx.height);
+      }
+    }
+    return;
   }
   scheduleHideControls() {
     let acc;
@@ -1376,11 +1374,10 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     if (!acc) {
       acc = local_1_1.isAppBackground;
     }
-    if (acc) {
-      return;
-    } else if (!local_1_1.canAutoHideControls()) {
-      return;
-    } else {
+    if (!acc) {
+      if (!local_1_1.canAutoHideControls()) {
+        return;
+      }
       local_1_0 = local_1_1.interactionEpoch;
       local_1_1.controlsHideTimerId = setTimeout(function () {
         local_1_1.controlsHideTimerId = -1;
@@ -1391,6 +1388,7 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       }, local_0_4 /*CONTROLS_HIDE_DELAY*/);
       return;
     }
+    return;
   }
   clearHideTimer() {
     if (this.controlsHideTimerId >= 0) {
@@ -1404,31 +1402,30 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     local_1_0 = this;
     if (local_1_0.activeInteraction !== local_0_3.NONE) {
       return;
-    } else if (local_1_0.isCenterButtonTap(p0)) {
+    }
+    if (local_1_0.isCenterButtonTap(p0)) {
       local_1_0.lastTapAtMs = 0;
       local_1_0.clearPendingSingleTap();
       local_1_0.interactionEpoch = local_1_0.interactionEpoch + 1;
       local_1_0.clearHideTimer();
       local_1_0.scheduleHideControls();
       return;
-    } else {
-      v4 = Date.now();
-      if (local_1_0.lastTapAtMs > 0 && v4 - local_1_0.lastTapAtMs <= local_0_5 /*DOUBLE_TAP_WINDOW_MS*/) {
-        local_1_0.lastTapAtMs = 0;
-        local_1_0.clearPendingSingleTap();
-        local_1_0.performDoubleTap(p0);
-        return;
-      } else {
-        local_1_0.lastTapAtMs = v4;
-        local_1_0.clearPendingSingleTap();
-        local_1_0.pendingSingleTapTimerId = setTimeout(function () {
-          local_1_0.pendingSingleTapTimerId = -1;
-          local_1_0.lastTapAtMs = 0;
-          local_1_0.applySingleTapToggle();
-        }, local_0_5 /*DOUBLE_TAP_WINDOW_MS*/);
-        return;
-      }
     }
+    v4 = Date.now();
+    if (local_1_0.lastTapAtMs > 0 && v4 - local_1_0.lastTapAtMs <= local_0_5 /*DOUBLE_TAP_WINDOW_MS*/) {
+      local_1_0.lastTapAtMs = 0;
+      local_1_0.clearPendingSingleTap();
+      local_1_0.performDoubleTap(p0);
+      return;
+    }
+    local_1_0.lastTapAtMs = v4;
+    local_1_0.clearPendingSingleTap();
+    local_1_0.pendingSingleTapTimerId = setTimeout(function () {
+      local_1_0.pendingSingleTapTimerId = -1;
+      local_1_0.lastTapAtMs = 0;
+      local_1_0.applySingleTapToggle();
+    }, local_0_5 /*DOUBLE_TAP_WINDOW_MS*/);
+    return;
   }
   clearPendingSingleTap() {
     if (this.pendingSingleTapTimerId >= 0) {
@@ -1442,16 +1439,15 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     if (!this.canAutoHideControls()) {
       this.showControls = true;
       return;
-    } else {
-      this.showControls = !this.showControls;
-      if (this.showControls) {
-        this.scheduleHideControls();
-      } else {
-        this.clearHideTimer();
-        this.clearGestureHints();
-      }
-      return;
     }
+    this.showControls = !this.showControls;
+    if (this.showControls) {
+      this.scheduleHideControls();
+    } else {
+      this.clearHideTimer();
+      this.clearGestureHints();
+    }
+    return;
   }
   performDoubleTap(p0) {
     let v5, acc;
@@ -1494,10 +1490,9 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     let v3;
     if (!this.controller || this.hasError) {
       return false;
-    } else {
-      v3 = this.controller.getPlaybackState();
-      return v3.isPlaying || v3.isBuffering || v3.engineState === "buffering";
     }
+    v3 = this.controller.getPlaybackState();
+    return v3.isPlaying || v3.isBuffering || v3.engineState === "buffering";
   }
   beginInteraction(p0) {
     this.interactionEpoch = this.interactionEpoch + 1;
@@ -1566,41 +1561,41 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     let acc;
     acc = this.containerVpWidth > 0 ? this.containerVpHeight <= 0 : this.containerVpWidth <= 0;
     if (acc) {} else acc = !this.curSource.width;
-    if (acc) {
-      return {
-        "letterboxVp": 0,
-        "videoHVp": this.containerVpHeight,
-        "videoWVp": this.containerVpWidth
-      };
-    } else if (!this.curSource.height) {
-      return {
-        "letterboxVp": 0,
-        "videoHVp": this.containerVpHeight,
-        "videoWVp": this.containerVpWidth
-      };
-    } else if (this.curSource.width / this.curSource.height > this.containerVpWidth / this.containerVpHeight) {
-      return {
-        "letterboxVp": (this.containerVpHeight - this.containerVpWidth / (this.curSource.width / this.curSource.height)) / 2,
-        "videoHVp": this.containerVpWidth / (this.curSource.width / this.curSource.height),
-        "videoWVp": this.containerVpWidth
-      };
-    } else {
+    if (!acc) {
+      if (!this.curSource.height) {
+        return {
+          "letterboxVp": 0,
+          "videoHVp": this.containerVpHeight,
+          "videoWVp": this.containerVpWidth
+        };
+      }
+      if (this.curSource.width / this.curSource.height > this.containerVpWidth / this.containerVpHeight) {
+        return {
+          "letterboxVp": (this.containerVpHeight - this.containerVpWidth / (this.curSource.width / this.curSource.height)) / 2,
+          "videoHVp": this.containerVpWidth / (this.curSource.width / this.curSource.height),
+          "videoWVp": this.containerVpWidth
+        };
+      }
       return {
         "letterboxVp": 0,
         "videoHVp": this.containerVpHeight,
         "videoWVp": this.containerVpHeight * (this.curSource.width / this.curSource.height)
       };
     }
+    return {
+      "letterboxVp": 0,
+      "videoHVp": this.containerVpHeight,
+      "videoWVp": this.containerVpWidth
+    };
   }
   subtitleBottomVp() {
     let v5, v8;
     if (this.containerVpWidth <= 0 || this.containerVpHeight <= 0) {
       return Number(this.playbackConfig.subtitleBottomMarginVp);
-    } else {
-      v5 = this.displayLayoutVp();
-      v8 = v5.letterboxVp + Math.min(Math.max(local_0_7 /*SUBTITLE_MARGIN_MIN_VP*/, v5.videoHVp * local_0_8 /*SUBTITLE_VIDEO_MARGIN_RATIO*/), Number(this.playbackConfig.subtitleBottomMarginVp));
-      return Math.min(Math.max(Math.max(v8, !(this.subtitleDragLiftRatio === 0 ? this.subtitleDragOffsetXRatio !== 0 : this.subtitleDragLiftRatio !== 0) && this.showControls ? this.bottomControlBarVpH + local_0_9 /*SUBTITLE_BAR_GAP_VP*/ : 0) + this.subtitleDragLiftRatio * v5.videoHVp, v5.letterboxVp + 8), v5.letterboxVp + v5.videoHVp * local_0_10 /*SUBTITLE_DRAG_MAX_RATIO*/);
     }
+    v5 = this.displayLayoutVp();
+    v8 = v5.letterboxVp + Math.min(Math.max(local_0_7 /*SUBTITLE_MARGIN_MIN_VP*/, v5.videoHVp * local_0_8 /*SUBTITLE_VIDEO_MARGIN_RATIO*/), Number(this.playbackConfig.subtitleBottomMarginVp));
+    return Math.min(Math.max(Math.max(v8, !(this.subtitleDragLiftRatio === 0 ? this.subtitleDragOffsetXRatio !== 0 : this.subtitleDragLiftRatio !== 0) && this.showControls ? this.bottomControlBarVpH + local_0_9 /*SUBTITLE_BAR_GAP_VP*/ : 0) + this.subtitleDragLiftRatio * v5.videoHVp, v5.letterboxVp + 8), v5.letterboxVp + v5.videoHVp * local_0_10 /*SUBTITLE_DRAG_MAX_RATIO*/);
   }
   resetSubtitleDrag() {
     if (this.subtitleDragLiftRatio !== 0 || this.subtitleDragOffsetXRatio !== 0) {
@@ -1623,8 +1618,7 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     v9 = 1;
     switch (this.videoAspectMode) {
       case "fill":
-        v8 = Math.max(Math.max(1, this.containerVpWidth) / Math.max(1, v7.videoWVp), Math.max(1, this.containerVpHeight) / Math.max(1, v7.videoHVp));
-        v9 = v8;
+        v9 = Math.max(Math.max(1, this.containerVpWidth) / Math.max(1, v7.videoWVp), Math.max(1, this.containerVpHeight) / Math.max(1, v7.videoHVp));
         break;
       case "stretch":
         v8 = Math.max(1, this.containerVpWidth) / Math.max(1, v7.videoWVp);
@@ -1800,7 +1794,8 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     let v7, v12, acc;
     if (!this.showControls) {
       return;
-    } else if (p0.touches.length === 2) {
+    }
+    if (p0.touches.length === 2) {
       v12 = (p0.touches[0].x - p0.touches[1].x) * (p0.touches[0].x - p0.touches[1].x);
       acc = v12 + (p0.touches[0].y - p0.touches[1].y) * (p0.touches[0].y - p0.touches[1].y);
       v7 = Math.sqrt(acc);
@@ -1818,49 +1813,47 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
         this.ignorePlayerPan("pinch-start");
         this.subtitleDragging = false;
         return;
-      } else {
-        if (p0.type === TouchType.Move) {
-          if (this.pinchGestureMode === "undecided") {
-            v12 = Math.abs(v7 - this.pinchStartDistanceVp);
-            acc = Math.hypot((p0.touches[0].x + p0.touches[1].x) / 2 - this.pinchStartMidXVp, (p0.touches[0].y + p0.touches[1].y) / 2 - this.pinchStartMidYVp);
-            if (acc > local_0_11 /*PINCH_DECIDE_VP*/ && acc > v12 * 1.5) {
-              this.pinchGestureMode = "pan";
-            } else if (v12 / this.pinchStartDistanceVp > local_0_12 /*PINCH_DECIDE_SCALE_RATIO*/ && v12 > acc * 1.5) {
-              this.pinchGestureMode = "scale";
-            }
-          }
-          switch (this.pinchGestureMode) {
-            case "scale":
-              v12 = Math.min(Math.max(this.pinchStartScale * (v7 / this.pinchStartDistanceVp), 1), local_0_13 /*VIDEO_PINCH_MAX_SCALE*/);
-              if (Math.abs(v12 - this.pinchAppliedScale) / this.pinchAppliedScale >= 0.01) {
-                this.pinchAppliedScale = v12;
-                this.videoPinchScale = v12;
-                this.clampVideoPan();
-              }
-              break;
-            case "pan":
-              this.videoPanXVp = this.videoPanXVp + ((p0.touches[0].x + p0.touches[1].x) / 2 - this.pinchLastMidXVp);
-              this.videoPanYVp = this.videoPanYVp + ((p0.touches[0].y + p0.touches[1].y) / 2 - this.pinchLastMidYVp);
-              this.clampVideoPan();
-              break;
-          }
-          this.pinchLastMidXVp = (p0.touches[0].x + p0.touches[1].x) / 2;
-          this.pinchLastMidYVp = (p0.touches[0].y + p0.touches[1].y) / 2;
-        }
-        return;
       }
-    } else {
-      if (this.videoPinching) {
-        if (p0.type === TouchType.Up || p0.type === TouchType.Cancel) {
-          this.videoPinching = false;
-          if (this.videoPinchScale <= 1.05) {
-            this.resetVideoZoom();
+      if (p0.type === TouchType.Move) {
+        if (this.pinchGestureMode === "undecided") {
+          v12 = Math.abs(v7 - this.pinchStartDistanceVp);
+          acc = Math.hypot((p0.touches[0].x + p0.touches[1].x) / 2 - this.pinchStartMidXVp, (p0.touches[0].y + p0.touches[1].y) / 2 - this.pinchStartMidYVp);
+          if (acc > local_0_11 /*PINCH_DECIDE_VP*/ && acc > v12 * 1.5) {
+            this.pinchGestureMode = "pan";
+          } else if (v12 / this.pinchStartDistanceVp > local_0_12 /*PINCH_DECIDE_SCALE_RATIO*/ && v12 > acc * 1.5) {
+            this.pinchGestureMode = "scale";
           }
-          this.scheduleHideControls();
         }
+        switch (this.pinchGestureMode) {
+          case "scale":
+            v12 = Math.min(Math.max(this.pinchStartScale * (v7 / this.pinchStartDistanceVp), 1), local_0_13 /*VIDEO_PINCH_MAX_SCALE*/);
+            if (Math.abs(v12 - this.pinchAppliedScale) / this.pinchAppliedScale >= 0.01) {
+              this.pinchAppliedScale = v12;
+              this.videoPinchScale = v12;
+              this.clampVideoPan();
+            }
+            break;
+          case "pan":
+            this.videoPanXVp = this.videoPanXVp + ((p0.touches[0].x + p0.touches[1].x) / 2 - this.pinchLastMidXVp);
+            this.videoPanYVp = this.videoPanYVp + ((p0.touches[0].y + p0.touches[1].y) / 2 - this.pinchLastMidYVp);
+            this.clampVideoPan();
+            break;
+        }
+        this.pinchLastMidXVp = (p0.touches[0].x + p0.touches[1].x) / 2;
+        this.pinchLastMidYVp = (p0.touches[0].y + p0.touches[1].y) / 2;
       }
       return;
     }
+    if (this.videoPinching) {
+      if (p0.type === TouchType.Up || p0.type === TouchType.Cancel) {
+        this.videoPinching = false;
+        if (this.videoPinchScale <= 1.05) {
+          this.resetVideoZoom();
+        }
+        this.scheduleHideControls();
+      }
+    }
+    return;
   }
   onFullscreenModeChange() {
     this.resetTransientUi("fullscreen-change");
@@ -1871,11 +1864,10 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
   isInFullscreenGestureSafeEdge(p0, p1) {
     if (!this.isFullLandscapeScreen) {
       return false;
-    } else {
-      return (p0 > this.playerGestureSafeLeft ? p0 >= this.containerVpWidth - this.playerGestureSafeRight : p0 <= this.playerGestureSafeLeft)
-        || p1 <= Math.max(this.playerGestureSafeTop, this.safeAreaTop)
-        || p1 >= this.containerVpHeight - this.playerGestureSafeBottom;
     }
+    return (p0 > this.playerGestureSafeLeft ? p0 >= this.containerVpWidth - this.playerGestureSafeRight : p0 <= this.playerGestureSafeLeft)
+      || p1 <= Math.max(this.playerGestureSafeTop, this.safeAreaTop)
+      || p1 >= this.containerVpHeight - this.playerGestureSafeBottom;
   }
   ignorePlayerPan(p0) {
     this.gestureMode = local_0_2.IGNORED;
@@ -1890,42 +1882,41 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     if (this.subtitleDragging || this.videoPinching) {
       this.ignorePlayerPan(this.subtitleDragging ? "subtitle-dragging" : "pinching");
       return;
-    } else if (this.isSliderDragging) {
+    }
+    if (this.isSliderDragging) {
       this.gestureMode = local_0_2.IGNORED;
       Logger.debug(local_0_1 /*TAG*/, "Player pan ignored reason=slider-dragging-start");
       return;
-    } else {
-      acc = p0.fingerList[0] !== null && p0.fingerList[0] !== undefined ? p0.fingerList[0].localX : undefined;
-      if (acc == null) {
-        acc = 0;
-      }
-      this.gestureStartX = acc - p0.offsetX;
-      acc = p0.fingerList[0] !== null && p0.fingerList[0] !== undefined ? p0.fingerList[0].localY : undefined;
-      if (acc == null) {
-        acc = 0;
-      }
-      this.gestureStartY = acc - p0.offsetY;
-      this.gestureSeekStartTime = this.currentTime;
-      this.gestureSeekTime = this.currentTime;
-      this.panEndTime = this.currentTime;
-      if (!this.showControls) {
-        this.hiddenUiSeekOnly = true;
-        this.gestureMode = local_0_2.PENDING;
-        if (p0.fingerList.length !== 1) {
-          this.ignorePlayerPan("finger-count");
-        }
-        return;
-      } else {
-        this.beginInteraction(local_0_3.PAN);
-        this.gestureMode = local_0_2.PENDING;
-        if (p0.fingerList.length !== 1) {
-          this.ignorePlayerPan("finger-count");
-        } else if (this.isInFullscreenGestureSafeEdge(this.gestureStartX, this.gestureStartY)) {
-          this.ignorePlayerPan("system-safe-edge");
-        }
-        return;
-      }
     }
+    acc = p0.fingerList[0] !== null && p0.fingerList[0] !== undefined ? p0.fingerList[0].localX : undefined;
+    if (acc == null) {
+      acc = 0;
+    }
+    this.gestureStartX = acc - p0.offsetX;
+    acc = p0.fingerList[0] !== null && p0.fingerList[0] !== undefined ? p0.fingerList[0].localY : undefined;
+    if (acc == null) {
+      acc = 0;
+    }
+    this.gestureStartY = acc - p0.offsetY;
+    this.gestureSeekStartTime = this.currentTime;
+    this.gestureSeekTime = this.currentTime;
+    this.panEndTime = this.currentTime;
+    if (!this.showControls) {
+      this.hiddenUiSeekOnly = true;
+      this.gestureMode = local_0_2.PENDING;
+      if (p0.fingerList.length !== 1) {
+        this.ignorePlayerPan("finger-count");
+      }
+      return;
+    }
+    this.beginInteraction(local_0_3.PAN);
+    this.gestureMode = local_0_2.PENDING;
+    if (p0.fingerList.length !== 1) {
+      this.ignorePlayerPan("finger-count");
+    } else if (this.isInFullscreenGestureSafeEdge(this.gestureStartX, this.gestureStartY)) {
+      this.ignorePlayerPan("system-safe-edge");
+    }
+    return;
   }
   lockPlayerPanMode(p0) {
     let v4, v5, v7;
@@ -1933,66 +1924,69 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     v5 = Math.abs(p0.offsetY);
     if (Math.max(v4, v5) < local_0_14 /*GESTURE_LOCK_DISTANCE*/) {
       return;
-    } else if (this.hiddenUiSeekOnly && (v7 = v4, v4 < v5 * local_0_15 /*GESTURE_AXIS_DOMINANCE*/)) {
+    }
+    if (this.hiddenUiSeekOnly && v4 < v5 * local_0_15 /*GESTURE_AXIS_DOMINANCE*/) {
       this.ignorePlayerPan("controls-hidden-vertical");
       return;
-    } else if (v4 >= v5 * local_0_15 /*GESTURE_AXIS_DOMINANCE*/) {
+    }
+    if (v4 >= v5 * local_0_15 /*GESTURE_AXIS_DOMINANCE*/) {
       v7 = this.controller.getPlaybackState();
-      if (!this.playbackConfig.gestureSeekEnabled || this.curSource.isLive || this.durationTime <= 0) {
-        this.ignorePlayerPan(this.playbackConfig.gestureSeekEnabled ? "seek-unavailable" : "seek-disabled");
-        return;
-      } else if (!v7.isSeekable) {
-        this.ignorePlayerPan(this.playbackConfig.gestureSeekEnabled ? "seek-unavailable" : "seek-disabled");
-        return;
-      } else {
+      if (this.playbackConfig.gestureSeekEnabled && !this.curSource.isLive && this.durationTime > 0) {
+        if (!v7.isSeekable) {
+          this.ignorePlayerPan(this.playbackConfig.gestureSeekEnabled ? "seek-unavailable" : "seek-disabled");
+          return;
+        }
         this.gestureMode = local_0_2.SEEK;
         this.isGestureSeek = true;
         Logger.debug(local_0_1 /*TAG*/, "Player pan locked mode=seek");
         return;
       }
-    } else if (v5 < v4 * local_0_15 /*GESTURE_AXIS_DOMINANCE*/) {
-      return;
-    } else {
-      if (this.gestureStartX < this.containerVpWidth / 2) {
-        if (!this.playbackConfig.gestureBrightnessEnabled) {
-          this.ignorePlayerPan("brightness-disabled");
-          return;
-        }
-        try {
-          this.gestureBrightnessValue = this.envService.getBrightnessSync(this.getUIContext().getHostContext());
-        } catch (catchAcc) {
-          Logger.warn(local_0_1 /*TAG*/, "Brightness gesture baseline fallback reason=" + catchAcc + "");
-        }
-        this.gestureInitValue = this.gestureBrightnessValue;
-        this.gestureMode = local_0_2.BRIGHTNESS;
-        this.showBrightnessHint = true;
-        Logger.debug(local_0_1 /*TAG*/, "Player pan locked mode=brightness");
-      } else {
-        if (!this.playbackConfig.gestureVolumeEnabled) {
-          this.ignorePlayerPan("volume-disabled");
-          return;
-        }
-        try {
-          v7 = this.envService.getVolume();
-          this.maxVolume = v7.maxVolume;
-          this.gestureVolumeValue = v7.maxVolume > 0 ? v7.volume / v7.maxVolume : 0;
-        } catch (catchAcc) {
-          Logger.warn(local_0_1 /*TAG*/, "Volume gesture baseline fallback reason=" + catchAcc + "");
-        }
-        this.gestureInitValue = this.gestureVolumeValue;
-        this.gestureMode = local_0_2.VOLUME;
-        this.showVolumeHint = true;
-        Logger.debug(local_0_1 /*TAG*/, "Player pan locked mode=volume");
-      }
+      this.ignorePlayerPan(this.playbackConfig.gestureSeekEnabled ? "seek-unavailable" : "seek-disabled");
       return;
     }
+    if (v5 < v4 * local_0_15 /*GESTURE_AXIS_DOMINANCE*/) {
+      return;
+    }
+    if (this.gestureStartX < this.containerVpWidth / 2) {
+      if (!this.playbackConfig.gestureBrightnessEnabled) {
+        this.ignorePlayerPan("brightness-disabled");
+        return;
+      }
+      try {
+        this.gestureBrightnessValue = this.envService.getBrightnessSync(this.getUIContext().getHostContext());
+      } catch (catchAcc) {
+        Logger.warn(local_0_1 /*TAG*/, "Brightness gesture baseline fallback reason=" + catchAcc + "");
+      }
+      this.gestureInitValue = this.gestureBrightnessValue;
+      this.gestureMode = local_0_2.BRIGHTNESS;
+      this.showBrightnessHint = true;
+      Logger.debug(local_0_1 /*TAG*/, "Player pan locked mode=brightness");
+    } else {
+      if (!this.playbackConfig.gestureVolumeEnabled) {
+        this.ignorePlayerPan("volume-disabled");
+        return;
+      }
+      try {
+        v7 = this.envService.getVolume();
+        this.maxVolume = v7.maxVolume;
+        this.gestureVolumeValue = v7.maxVolume > 0 ? v7.volume / v7.maxVolume : 0;
+      } catch (catchAcc) {
+        Logger.warn(local_0_1 /*TAG*/, "Volume gesture baseline fallback reason=" + catchAcc + "");
+      }
+      this.gestureInitValue = this.gestureVolumeValue;
+      this.gestureMode = local_0_2.VOLUME;
+      this.showVolumeHint = true;
+      Logger.debug(local_0_1 /*TAG*/, "Player pan locked mode=volume");
+    }
+    return;
   }
   onPlayerPanUpdate(p0) {
     let v5, acc;
     if (this.isSliderDragging || this.activeInteraction === local_0_3.SLIDER) {
       this.ignorePlayerPan("slider-dragging-update");
       return;
-    } else if (p0.fingerList.length === 1) {
+    }
+    if (p0.fingerList.length === 1) {
       if (this.gestureMode === local_0_2.PENDING) {
         this.lockPlayerPanMode(p0);
       }
@@ -2046,10 +2040,9 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
           break;
       }
       return;
-    } else {
-      this.ignorePlayerPan("finger-count-update");
-      return;
     }
+    this.ignorePlayerPan("finger-count-update");
+    return;
   }
   onPlayerPanEnd(p0) {
     let v4;
@@ -2110,34 +2103,35 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
   onHoldSpeedStart() {
     if (this.speedBoostActive) {
       return;
-    } else if (!this.playbackConfig.holdSpeedEnabled) {
+    }
+    if (!this.playbackConfig.holdSpeedEnabled) {
       Logger.debug(local_0_1 /*TAG*/, "Hold speed boost ignored reason=disabled");
       return;
-    } else if (this.curSource.isLive || !this.vm.isPlaying || this.isSliderDragging || this.hasError) {
+    }
+    if (this.curSource.isLive || !this.vm.isPlaying || this.isSliderDragging || this.hasError) {
       Logger.debug(local_0_1 /*TAG*/, "Hold speed boost ignored live=" + this.curSource.isLive + " " + ("playing=" + this.vm.isPlaying + " slider=" + this.isSliderDragging + " error=" + this.hasError + ""));
       return;
-    } else if (Math.abs(this.vm.playbackSpeed - this.playbackConfig.holdSpeedValue) < 0.001) {
-      return;
-    } else {
-      this.speedBoostActive = true;
-      this.speedBoostPreviousSpeed = this.vm.playbackSpeed;
-      this.speedBoostTarget = this.playbackConfig.holdSpeedValue;
-      this.controller.setPlaybackSpeed(this.playbackConfig.holdSpeedValue);
-      this.showSpeedBoostHint = true;
-      Logger.debug(local_0_1 /*TAG*/, "Hold speed boost start " + this.speedBoostPreviousSpeed + "x -> " + this.playbackConfig.holdSpeedValue + "x");
+    }
+    if (Math.abs(this.vm.playbackSpeed - this.playbackConfig.holdSpeedValue) < 0.001) {
       return;
     }
+    this.speedBoostActive = true;
+    this.speedBoostPreviousSpeed = this.vm.playbackSpeed;
+    this.speedBoostTarget = this.playbackConfig.holdSpeedValue;
+    this.controller.setPlaybackSpeed(this.playbackConfig.holdSpeedValue);
+    this.showSpeedBoostHint = true;
+    Logger.debug(local_0_1 /*TAG*/, "Hold speed boost start " + this.speedBoostPreviousSpeed + "x -> " + this.playbackConfig.holdSpeedValue + "x");
+    return;
   }
   onHoldSpeedEnd(p0) {
     if (!this.speedBoostActive) {
       return;
-    } else {
-      this.speedBoostActive = false;
-      this.showSpeedBoostHint = false;
-      this.controller.setPlaybackSpeed(this.speedBoostPreviousSpeed);
-      Logger.debug(local_0_1 /*TAG*/, "Hold speed boost end reason=" + p0 + " restored=" + this.speedBoostPreviousSpeed + "x");
-      return;
     }
+    this.speedBoostActive = false;
+    this.showSpeedBoostHint = false;
+    this.controller.setPlaybackSpeed(this.speedBoostPreviousSpeed);
+    Logger.debug(local_0_1 /*TAG*/, "Hold speed boost end reason=" + p0 + " restored=" + this.speedBoostPreviousSpeed + "x");
+    return;
   }
   registerControlActivity() {
     this.beginInteraction(local_0_3.NONE);
@@ -2151,14 +2145,13 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     this.controlMenuDepth = Math.max(0, this.controlMenuDepth - 1);
     if (this.controlMenuDepth > 0) {
       return;
-    } else {
-      if (this.activeInteraction === local_0_3.MENU) {
-        this.activeInteraction = local_0_3.NONE;
-      }
-      this.interactionEpoch = this.interactionEpoch + 1;
-      this.scheduleHideControls();
-      return;
     }
+    if (this.activeInteraction === local_0_3.MENU) {
+      this.activeInteraction = local_0_3.NONE;
+    }
+    this.interactionEpoch = this.interactionEpoch + 1;
+    this.scheduleHideControls();
+    return;
   }
   calculateSurfaceSizeByArea(p0, p1) {
     if (this.curSource.width && this.curSource.height) {
@@ -2177,39 +2170,41 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
   }
   calculateSurfaceSize() {
     let v4, v5, v6, v7;
-    if (this.containerWidthPX > 0 && (v5 = this, v4 = this.containerHeightPX, this.containerHeightPX > 0)) {
-      this.calculateSurfaceSizeByArea(this.containerWidthPX, this.containerHeightPX);
-      return;
-    } else {
-      try {
-        v5 = this.getUIContext().getComponentUtils();
-        v7 = v5;
-        v6 = v5.getRectangleById;
-        v4 = v5.getRectangleById("PlayerContainer");
-        if (v4 && v4.size && (v7 = Number(v4.size.width), v6 = Number(v4.size.height), v7 > 0) && v6 > 0) {
-          this.calculateSurfaceSizeByArea(v7, v6);
-          return;
-        } else {
-          if (this.curSource.width && this.curSource.height) {
-            v5 = AppStorage.get("deviceWidth") || 0;
-            v4 = AppStorage.get("deviceHeight") || 0;
-            if (v5 > 0 && v4 > 0) {
-              this.calculateSurfaceSizeByArea(v5, this.isFullLandscapeScreen ? v4 : v5 / (this.curSource.width / this.curSource.height));
-            }
-          }
-          return;
-        }
-      } catch (catchAcc) {
-        Logger.warn(local_0_1 /*TAG*/, "Failed to get component info via componentUtils");
-        if (this.curSource.width && this.curSource.height) {
-          v5 = AppStorage.get("deviceWidth") || 0;
-          v4 = AppStorage.get("deviceHeight") || 0;
-          if (v5 > 0 && v4 > 0) {
-            this.calculateSurfaceSizeByArea(v5, this.isFullLandscapeScreen ? v4 : v5 / (this.curSource.width / this.curSource.height));
-          }
-        }
+    if (this.containerWidthPX > 0) {
+      v5 = this;
+      v4 = this.containerHeightPX;
+      if (this.containerHeightPX > 0) {
+        this.calculateSurfaceSizeByArea(this.containerWidthPX, this.containerHeightPX);
         return;
       }
+    }
+    try {
+      v5 = this.getUIContext().getComponentUtils();
+      v7 = v5;
+      v6 = v7.getRectangleById;
+      v4 = v7.getRectangleById("PlayerContainer");
+      if (v4 && v4.size && (v7 = Number(v4.size.width), v6 = Number(v4.size.height), v7 > 0) && v6 > 0) {
+        this.calculateSurfaceSizeByArea(v7, v6);
+        return;
+      }
+      if (this.curSource.width && this.curSource.height) {
+        v5 = AppStorage.get("deviceWidth") || 0;
+        v4 = AppStorage.get("deviceHeight") || 0;
+        if (v5 > 0 && v4 > 0) {
+          this.calculateSurfaceSizeByArea(v5, this.isFullLandscapeScreen ? v4 : v5 / (this.curSource.width / this.curSource.height));
+        }
+      }
+      return;
+    } catch (catchAcc) {
+      Logger.warn(local_0_1 /*TAG*/, "Failed to get component info via componentUtils");
+      if (this.curSource.width && this.curSource.height) {
+        v5 = AppStorage.get("deviceWidth") || 0;
+        v4 = AppStorage.get("deviceHeight") || 0;
+        if (v5 > 0 && v4 > 0) {
+          this.calculateSurfaceSizeByArea(v5, this.isFullLandscapeScreen ? v4 : v5 / (this.curSource.width / this.curSource.height));
+        }
+      }
+      return;
     }
   }
   onIndexChange() {
@@ -2222,13 +2217,11 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
   }
   togglePlayback() {
     this.registerControlActivity();
-    if (!this.vm.isReady) {
-      Logger.warn(local_0_1 /*TAG*/, "togglePlayback ignored: isReady=" + this.vm.isReady + ", hasStreams=" + this.hasStreams + "");
-      return;
-    } else if (!this.hasStreams) {
-      Logger.warn(local_0_1 /*TAG*/, "togglePlayback ignored: isReady=" + this.vm.isReady + ", hasStreams=" + this.hasStreams + "");
-      return;
-    } else {
+    if (this.vm.isReady) {
+      if (!this.hasStreams) {
+        Logger.warn(local_0_1 /*TAG*/, "togglePlayback ignored: isReady=" + this.vm.isReady + ", hasStreams=" + this.hasStreams + "");
+        return;
+      }
       if (this.vm.isPlaying) {
         this.controller.syncPause();
       } else {
@@ -2237,37 +2230,36 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       this.syncPlaybackStateFromController();
       return;
     }
+    Logger.warn(local_0_1 /*TAG*/, "togglePlayback ignored: isReady=" + this.vm.isReady + ", hasStreams=" + this.hasStreams + "");
+    return;
   }
   showCenterPlayButton() {
-    let acc;
+    let v4;
     if (!this.uiConfig.showCenterPlayButton) {
       return false;
-    } else {
-      acc = this.vm.isReady && !this.vm.isPlaying && !this.vm.isBuffering && !this.isSliderDragging;
-      return acc && !this.hasError;
     }
+    v4 = this.vm.isReady && !this.vm.isPlaying && !this.vm.isBuffering && !this.isSliderDragging;
+    return v4 && !this.hasError;
   }
   isCenterButtonTap(p0) {
     let v6, v9, acc;
     if (!this.showCenterPlayButton()) {
       return false;
-    } else {
-      acc = p0.fingerList[0] !== null && p0.fingerList[0] !== undefined ? p0.fingerList[0].localX : undefined;
-      if (acc == null) {
-        acc = -1;
-      }
-      v6 = acc;
-      acc = p0.fingerList[0] !== null && p0.fingerList[0] !== undefined ? p0.fingerList[0].localY : undefined;
-      if (acc == null) {
-        acc = -1;
-      }
-      if (v6 < 0 || acc < 0) {
-        return false;
-      } else {
-        v9 = Math.abs(v6 - this.containerVpWidth / 2) <= local_0_18 /*CENTER_PLAY_BUTTON_HIT_RADIUS*/;
-        return v9 && Math.abs(acc - this.containerVpHeight / 2) <= local_0_18 /*CENTER_PLAY_BUTTON_HIT_RADIUS*/;
-      }
     }
+    acc = p0.fingerList[0] !== null && p0.fingerList[0] !== undefined ? p0.fingerList[0].localX : undefined;
+    if (acc == null) {
+      acc = -1;
+    }
+    v6 = acc;
+    acc = p0.fingerList[0] !== null && p0.fingerList[0] !== undefined ? p0.fingerList[0].localY : undefined;
+    if (acc == null) {
+      acc = -1;
+    }
+    if (v6 < 0 || acc < 0) {
+      return false;
+    }
+    v9 = Math.abs(v6 - this.containerVpWidth / 2) <= local_0_18 /*CENTER_PLAY_BUTTON_HIT_RADIUS*/;
+    return v9 && Math.abs(acc - this.containerVpHeight / 2) <= local_0_18 /*CENTER_PLAY_BUTTON_HIT_RADIUS*/;
   }
   SpeedMenu(p0) {
     let local_1_0;
@@ -2732,12 +2724,13 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
         "bundleName": "com.talon.yourpipe",
         "moduleName": "entry"
       }.id) + "";
-    } else {
-      acc = [p0.name, p0.languageCode, p0.kind].filter(function (p0) {
-        return p0 && p0.trim().length > 0;
-      });
-      return acc.join(" · ");
     }
+    acc = [p0.name, p0.languageCode, p0.kind].filter(function (p0) {
+      let v5;
+      v5 = !!p0;
+      return v5 && p0.trim().length > 0;
+    });
+    return acc.join(" · ");
   }
   getAiTranslateLabel() {
     let v3, v4, v5;
@@ -2750,14 +2743,13 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     }.id);
     if (this.aiTranslateProgress.length > 0) {
       return "" + v3 + " " + this.aiTranslateProgress + "";
-    } else {
-      v5 = TranslationService.targetLanguage();
-      v4 = v5;
-      try {
-        v4 = i18n.System.getDisplayLanguage(v5, v5);
-      } catch (catchAcc) {}
-      return "" + v3 + " · " + v4 + "";
     }
+    v5 = TranslationService.targetLanguage();
+    v4 = v5;
+    try {
+      v4 = i18n.System.getDisplayLanguage(v5, v5);
+    } catch (catchAcc) {}
+    return "" + v3 + " · " + v4 + "";
   }
   onAiTranslateClick() {
     let v3, v4, v5, acc;
@@ -2768,49 +2760,48 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       v4.cancel();
       local_1_1.aiTranslateProgress = "";
       return;
-    } else {
-      acc = local_1_1.curSource.videoId === null || local_1_1.curSource.videoId === undefined ? "" : local_1_1.curSource.videoId;
-      v5 = acc;
-      if (acc.length === 0 || local_1_1.vm.subtitleTracks.length === 0) {
+    }
+    acc = local_1_1.curSource.videoId === null || local_1_1.curSource.videoId === undefined ? "" : local_1_1.curSource.videoId;
+    v5 = acc;
+    if (v5.length === 0 || local_1_1.vm.subtitleTracks.length === 0) {
+      return;
+    }
+    v3 = LlmTranslateConfig.get();
+    if (v3.engine === "llm") {
+      if (!v3.isLlmReady()) {
+        local_1_1.getUIContext().getPromptAction().showToast({
+          "message": {
+            "id": 16777297,
+            "type": 10003,
+            "params": [],
+            "bundleName": "com.talon.yourpipe",
+            "moduleName": "entry"
+          },
+          "duration": 2500
+        });
         return;
-      } else {
-        v3 = LlmTranslateConfig.get();
-        if (v3.engine !== "llm") {
-          local_1_0 = TranslationService.targetLanguage();
-          v4.translateAndApply(acc, local_1_1.vm.subtitleTracks, local_1_1.vm.currentSubtitleUrl, local_1_1.controller).then(function (p0) {
-            if (p0.ok) {
-              PreferencesStore.setString("cfg_subtitle_preferred_lang", "ai:" + local_1_0 /*target*/ + "");
-              if (p0.partial) {
-                local_1_1.getUIContext().getPromptAction().showToast({
-                  "message": {
-                    "id": 16777302,
-                    "type": 10003,
-                    "params": [],
-                    "bundleName": "com.talon.yourpipe",
-                    "moduleName": "entry"
-                  },
-                  "duration": 2500
-                });
-              }
-            } else if (!p0.cancelled) {
-              Logger.warn(local_0_1 /*TAG*/, "AI translate failed: " + (p0.error || "-") + "");
-              local_1_1.getUIContext().getPromptAction().showToast({
-                "message": {
-                  "id": 16777296,
-                  "type": 10003,
-                  "params": [],
-                  "bundleName": "com.talon.yourpipe",
-                  "moduleName": "entry"
-                },
-                "duration": 2500
-              });
-            }
-          });
-          return;
-        } else if (!v3.isLlmReady()) {
+      }
+      local_1_0 = TranslationService.targetLanguage();
+      v4.translateAndApply(v5, local_1_1.vm.subtitleTracks, local_1_1.vm.currentSubtitleUrl, local_1_1.controller).then(function (p0) {
+        if (p0.ok) {
+          PreferencesStore.setString("cfg_subtitle_preferred_lang", "ai:" + local_1_0 /*target*/ + "");
+          if (p0.partial) {
+            local_1_1.getUIContext().getPromptAction().showToast({
+              "message": {
+                "id": 16777302,
+                "type": 10003,
+                "params": [],
+                "bundleName": "com.talon.yourpipe",
+                "moduleName": "entry"
+              },
+              "duration": 2500
+            });
+          }
+        } else if (!p0.cancelled) {
+          Logger.warn(local_0_1 /*TAG*/, "AI translate failed: " + (p0.error || "-") + "");
           local_1_1.getUIContext().getPromptAction().showToast({
             "message": {
-              "id": 16777297,
+              "id": 16777296,
               "type": 10003,
               "params": [],
               "bundleName": "com.talon.yourpipe",
@@ -2818,42 +2809,41 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
             },
             "duration": 2500
           });
-          return;
-        } else {
-          local_1_0 = TranslationService.targetLanguage();
-          v4.translateAndApply(v5, local_1_1.vm.subtitleTracks, local_1_1.vm.currentSubtitleUrl, local_1_1.controller).then(function (p0) {
-            if (p0.ok) {
-              PreferencesStore.setString("cfg_subtitle_preferred_lang", "ai:" + local_1_0 /*target*/ + "");
-              if (p0.partial) {
-                local_1_1.getUIContext().getPromptAction().showToast({
-                  "message": {
-                    "id": 16777302,
-                    "type": 10003,
-                    "params": [],
-                    "bundleName": "com.talon.yourpipe",
-                    "moduleName": "entry"
-                  },
-                  "duration": 2500
-                });
-              }
-            } else if (!p0.cancelled) {
-              Logger.warn(local_0_1 /*TAG*/, "AI translate failed: " + (p0.error || "-") + "");
-              local_1_1.getUIContext().getPromptAction().showToast({
-                "message": {
-                  "id": 16777296,
-                  "type": 10003,
-                  "params": [],
-                  "bundleName": "com.talon.yourpipe",
-                  "moduleName": "entry"
-                },
-                "duration": 2500
-              });
-            }
-          });
-          return;
         }
-      }
+      });
+      return;
     }
+    local_1_0 = TranslationService.targetLanguage();
+    v4.translateAndApply(acc, local_1_1.vm.subtitleTracks, local_1_1.vm.currentSubtitleUrl, local_1_1.controller).then(function (p0) {
+      if (p0.ok) {
+        PreferencesStore.setString("cfg_subtitle_preferred_lang", "ai:" + local_1_0 /*target*/ + "");
+        if (p0.partial) {
+          local_1_1.getUIContext().getPromptAction().showToast({
+            "message": {
+              "id": 16777302,
+              "type": 10003,
+              "params": [],
+              "bundleName": "com.talon.yourpipe",
+              "moduleName": "entry"
+            },
+            "duration": 2500
+          });
+        }
+      } else if (!p0.cancelled) {
+        Logger.warn(local_0_1 /*TAG*/, "AI translate failed: " + (p0.error || "-") + "");
+        local_1_1.getUIContext().getPromptAction().showToast({
+          "message": {
+            "id": 16777296,
+            "type": 10003,
+            "params": [],
+            "bundleName": "com.talon.yourpipe",
+            "moduleName": "entry"
+          },
+          "duration": 2500
+        });
+      }
+    });
+    return;
   }
   getAudioLabel(p0) {
     let acc;
@@ -2876,16 +2866,15 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
         "bundleName": "com.talon.yourpipe",
         "moduleName": "entry"
       };
-    } else {
-      v4 = [];
-      if (p0.quality !== null && p0.quality !== undefined ? p0.quality.trim() : undefined) {
-        v4.push(p0.quality);
-      }
-      if (p0.codecs !== null && p0.codecs !== undefined ? p0.codecs.trim() : undefined) {
-        v4.push(p0.codecs);
-      }
-      return v4.join(" · ");
     }
+    v4 = [];
+    if (p0.quality !== null && p0.quality !== undefined ? p0.quality.trim() : undefined) {
+      v4.push(p0.quality);
+    }
+    if (p0.codecs !== null && p0.codecs !== undefined ? p0.codecs.trim() : undefined) {
+      v4.push(p0.codecs);
+    }
+    return v4.join(" · ");
   }
   getSelectedMenuBackground() {
     return ThemeColorUtil.selectedBackground(this.themePrimary);
@@ -2957,32 +2946,31 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     let v3;
     if (!this.isFullLandscapeScreen) {
       return true;
-    } else if (this.containerVpWidth <= 0) {
-      return false;
-    } else {
-      v3 = Math.max(0, this.containerVpWidth - this.getControlLeftPad() - this.getControlRightPad() - local_0_26 /*CONTROL_SLOT_SIZE*/);
-      return this.estimateTopToolsWidthVp() > v3 * local_0_27 /*TOP_TOOLS_HALF_RATIO*/;
     }
+    if (this.containerVpWidth <= 0) {
+      return false;
+    }
+    v3 = Math.max(0, this.containerVpWidth - this.getControlLeftPad() - this.getControlRightPad() - local_0_26 /*CONTROL_SLOT_SIZE*/);
+    return this.estimateTopToolsWidthVp() > v3 * local_0_27 /*TOP_TOOLS_HALF_RATIO*/;
   }
   getTimeLabelWidth() {
     let v3;
     v3 = secondToTime(Math.floor(Math.max(0, this.durationTime)));
     if (v3.length > 8) {
       return 80;
-    } else if (v3.length > 5) {
-      return 64;
-    } else {
-      return 48;
     }
+    if (v3.length > 5) {
+      return 64;
+    }
+    return 48;
   }
   getCombinedTimeLabelWidth() {
     return this.getTimeLabelWidth() * 2 + 12;
   }
   shouldShowTimelineText() {
-    let acc;
-    acc = !this.curSource.isLive;
-    acc = acc && this.containerVpWidth >= local_0_28 /*TIMELINE_TEXT_MIN_WIDTH*/;
-    return acc && this.containerVpHeight >= local_0_29 /*TIMELINE_TEXT_MIN_HEIGHT*/;
+    let v4;
+    v4 = !this.curSource.isLive && this.containerVpWidth >= local_0_28 /*TIMELINE_TEXT_MIN_WIDTH*/;
+    return v4 && this.containerVpHeight >= local_0_29 /*TIMELINE_TEXT_MIN_HEIGHT*/;
   }
   AudioOnlyCoverLayer(p0) {
     let local_1_0;
@@ -3425,40 +3413,36 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
             PanGesture.onActionStart(function () {
               if (!local_1_0.showControls) {
                 return;
-              } else {
-                local_1_0.subtitleDragging = true;
-                local_1_0.subtitleDragStartLiftRatio = local_1_0.subtitleDragLiftRatio;
-                local_1_0.subtitleDragStartOffsetXRatio = local_1_0.subtitleDragOffsetXRatio;
-                local_1_0.clearHideTimer();
-                return;
               }
+              local_1_0.subtitleDragging = true;
+              local_1_0.subtitleDragStartLiftRatio = local_1_0.subtitleDragLiftRatio;
+              local_1_0.subtitleDragStartOffsetXRatio = local_1_0.subtitleDragOffsetXRatio;
+              local_1_0.clearHideTimer();
+              return;
             });
             PanGesture.onActionUpdate(function (p0) {
               if (!local_1_0.subtitleDragging) {
                 return;
-              } else {
-                local_1_0.subtitleDragLiftRatio = Math.min(Math.max(local_1_0.subtitleDragStartLiftRatio - p0.offsetY / Math.max(1, local_1_0.displayLayoutVp().videoHVp), -0.5), local_0_10 /*SUBTITLE_DRAG_MAX_RATIO*/);
-                local_1_0.subtitleDragOffsetXRatio = Math.min(Math.max(local_1_0.subtitleDragStartOffsetXRatio + p0.offsetX / Math.max(1, local_1_0.containerVpWidth), -local_0_30 /*SUBTITLE_DRAG_X_MAX_RATIO*/), local_0_30 /*SUBTITLE_DRAG_X_MAX_RATIO*/);
-                return;
               }
+              local_1_0.subtitleDragLiftRatio = Math.min(Math.max(local_1_0.subtitleDragStartLiftRatio - p0.offsetY / Math.max(1, local_1_0.displayLayoutVp().videoHVp), -0.5), local_0_10 /*SUBTITLE_DRAG_MAX_RATIO*/);
+              local_1_0.subtitleDragOffsetXRatio = Math.min(Math.max(local_1_0.subtitleDragStartOffsetXRatio + p0.offsetX / Math.max(1, local_1_0.containerVpWidth), -local_0_30 /*SUBTITLE_DRAG_X_MAX_RATIO*/), local_0_30 /*SUBTITLE_DRAG_X_MAX_RATIO*/);
+              return;
             });
             PanGesture.onActionEnd(function () {
               if (!local_1_0.subtitleDragging) {
                 return;
-              } else {
-                local_1_0.subtitleDragging = false;
-                local_1_0.scheduleHideControls();
-                return;
               }
+              local_1_0.subtitleDragging = false;
+              local_1_0.scheduleHideControls();
+              return;
             });
             PanGesture.onActionCancel(function () {
               if (!local_1_0.subtitleDragging) {
                 return;
-              } else {
-                local_1_0.subtitleDragging = false;
-                local_1_0.scheduleHideControls();
-                return;
               }
+              local_1_0.subtitleDragging = false;
+              local_1_0.scheduleHideControls();
+              return;
             });
             PanGesture.pop();
             globalThis.Gesture.pop();
@@ -4785,7 +4769,7 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
           }, Canvas);
           Canvas.pop();
           local_1_0.observeComponentCreation2(function (p0, p1) {
-            let v8, acc;
+            let v8;
             v8 = {
               "value": null,
               "max": null,
@@ -4800,8 +4784,7 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
             Slider.trackColor(Color.Transparent);
             Slider.selectedColor(Color.White);
             Slider.trackThickness(local_1_0.trackThicknessSize);
-            acc = local_1_0.vm.isReady && local_1_0.hasStreams;
-            Slider.enabled(acc);
+            Slider.enabled(!!(local_1_0.vm.isReady && local_1_0.hasStreams));
             Slider.onTouch(function (p0) {
               return local_1_0.onSliderTouch(p0);
             });

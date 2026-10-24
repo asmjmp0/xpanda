@@ -66,6 +66,10 @@ export class SimplifyExport {
         //   acc = !(v3 !== undefined); if (v3 !== undefined && (acc = call(), v3 = acc, acc === v2))
         // → if (v3 !== undefined && call() === v2);以及 `A || !(acc = X !== Y, X !== Y)` 的死保存元素
         ConditionSimplify.foldMaterializedTestArtifacts(node);
+        // `if (C) { return/throw/break/continue ... } else { BODY }` 展开成守卫子句。
+        // 放在三目合成之后(两分支都是单条 return 的 if/else 已合成为三目),
+        // 同时让紧随其后的尾部折叠看到连续语句列表(累加器旧值的读取可能跨越 else)。
+        SyntaxRewriteSimplify.flattenElseAfterExit(node);
         // HighLevelGrammarSimplify 的三目合成(`if (C) { X = A } else { X = B }` →
         // `X = C ? A : B`)发生在定点迭代之后,轮内的返回值折叠已经错过;
         // 这里补一轮 `X = E; return X` 折叠,并清理随之失去引用的声明。
