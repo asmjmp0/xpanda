@@ -146,7 +146,7 @@ globalThis.AES.Base64 = {
   "encode": function encode(p0) {
     let v7, v8, v9, v10, v11, v12;
     v7 = 0;
-    for (v8 = ""; v7 < p0.length; v8 += this.characters.charAt(v11)) {
+    for (v8 = ""; v7 < p0.length; v8 = v8 + this.characters.charAt(v12) + this.characters.charAt(v9) + this.characters.charAt(v10) + this.characters.charAt(v11)) {
       v9 = p0.charCodeAt(v7);
       v11 = v7 + 1 + 1;
       v10 = p0.charCodeAt(v7 + 1);
@@ -164,7 +164,6 @@ globalThis.AES.Base64 = {
         v10 = (v10 & 15) << 2 | v11 >> 6;
         v11 &= 63;
       }
-      v8 = v8 + this.characters.charAt(v12) + this.characters.charAt(v9) + this.characters.charAt(v10);
     }
     return v8;
   },

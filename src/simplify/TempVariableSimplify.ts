@@ -259,6 +259,8 @@ export class TempVariableSimplify implements ISimplify {
     private conditionsOnly = false;
     /** true:只折叠 `X = E; return X` 并清理失去引用的声明,其余一律不动 */
     private returnsOnly = false;
+    /** true:只折叠累加器链(`X = E; X = F(X)`),其余一律不动 */
+    private accumulatorOnly = false;
     /** true:只折叠 `X = E; if (X/!X/E/!E) { X = B }` 短路链,其余一律不动 */
     private shortCircuitOnly = false;
 
@@ -350,7 +352,9 @@ export class TempVariableSimplify implements ISimplify {
     }
 
     /**
-     * 只折叠 `X = E; return X`(不做复制传播/条件改写),并清理随之失去引用的声明。
+     * 只折叠 `X = E; return X`,以及尾部才生成的三元赋值留下的别名拷贝 /
+     * 累加器链 / 调用参数末次读取(`X = E; f(X)`),不做复制传播/条件改写,
+     * 并清理随之失去引用的声明。
      * HighLevelGrammarSimplify 在定点迭代结束后把 `if (C) { X = A } else { X = B }`
      * 合成为 `X = C ? A : B`,轮内的返回值折叠此时已经跑完,需要在尾部补一轮。
      */
@@ -358,6 +362,26 @@ export class TempVariableSimplify implements ISimplify {
         const pass = new TempVariableSimplify();
         pass.changed = false;
         pass.returnsOnly = true;
+        traverse(file(node), {
+            Program: (path) => pass.processScope(path),
+            Function: (path) => pass.processScope(path),
+        });
+        return pass.changed;
+    }
+
+    /**
+     * 只折叠累加器链(`X = E; X = F(X)` -> `X = F(E)`),其余一律不动。
+     *
+     * 超过 MAX_PROPAGATED_SIZE 的长右值进不了复制传播环境(define 直接拒收),
+     * 嵌套累加链 `acc = S; acc = acc + E + F > 0` 会原样留到定点迭代结束,
+     * 使 HighLevelGrammarSimplify 的三目合成对
+     * `if (C) { acc = S; acc = acc + E + F > 0 } else { acc = false }`
+     * 匹配失败(它要求分支是单条赋值语句)。这里在合成之前补折一次。
+     */
+    static foldAccumulatorAssignments(node: Program): boolean {
+        const pass = new TempVariableSimplify();
+        pass.changed = false;
+        pass.accumulatorOnly = true;
         traverse(file(node), {
             Program: (path) => pass.processScope(path),
             Function: (path) => pass.processScope(path),
@@ -413,6 +437,10 @@ export class TempVariableSimplify implements ISimplify {
             this.removeUnusedDeclarations(body, ctx);
             return;
         }
+        if (this.accumulatorOnly) {
+            this.foldAccumulatorChainsDeep(body, ctx);
+            return;
+        }
         if (this.shortCircuitOnly) {
             this.foldShortCircuitChains(body, ctx);
             this.removeUnusedDeclarations(body, ctx);
@@ -463,6 +491,11 @@ export class TempVariableSimplify implements ISimplify {
             // `X = E; Y = X`(X 之后已死)-> `Y = E`,同样针对尾部才生成的三元赋值。
             this.foldTempAliasAssignments(stmts, ctx);
             this.foldAccumulatorChains(stmts, ctx);
+            // `X = E; f(X)`(调用参数位置,X 之后已死)-> `f(E)`。
+            // HighLevelGrammarSimplify 的三目合成在定点迭代之后,轮内的复制传播
+            // 来不及处理紧随其后的调用参数(典型:`acc = isPlaying || isBuffering;
+            // envService.setKeepScreenOn(acc)`)。
+            this.foldTempLastUseIntoCallArguments(stmts, ctx);
         }
         let repeat = false;
         do {
@@ -576,22 +609,32 @@ export class TempVariableSimplify implements ISimplify {
         // 闭包里对 X 的延迟读取在两种写法里看到的都是最终值,但立即执行的闭包
         // (IIFE)会读到不同的旧值,保守跳过。
         if (this.hasDeferredSelfReference(a.right, name) || this.hasDeferredSelfReference(b.right, name)) return false;
-        const leftId = isIdentifier(b.right.left) && b.right.left.name === name ? b.right.left : null;
-        const rightId = isIdentifier(b.right.right) && b.right.right.name === name ? b.right.right : null;
-        if (!leftId && !rightId) return false;
+
+        // 定位右值里唯一一次 X 读取。它可能在任意深度(典型:
+        // `acc = S; acc = acc + E + F > 0`,X 嵌在左子树深处),不能只看
+        //二元运算的直接操作数。
+        let id: TYPE.Identifier | null = null;
+        walkNode(b.right, (node, parent) => {
+            if (isFunctionLike(node) || isClassLike(node)) return false;
+            if (isIdentifier(node) && node.name === name && parent && isReferenced(node, parent)) {
+                id = node;
+                return false;
+            }
+            return true;
+        });
+        if (!id) return false;
         const value = a.right;
-        if (rightId) {
-            // X 是右操作数:X = F + X -> X = F + E。
-            // 求值顺序从 E、F 变成 F、E,因此 E 必须无副作用,且 F 的写入不能影响 E 的读取。
+        if (!this.isFirstEvaluatedOccurrence(b.right, id)) {
+            // X 不在最先求值的位置(右子树/深左子树但有更早的兄弟):
+            // 求值顺序会变,只有纯右值且 E 的读取不被 b.right 里的写入命中时才安全。
             if (!isPureExpression(value)) return false;
             const assigned = collectAssignedNames(b.right);
             for (const dep of collectIdentifierNames(value)) {
                 if (dep !== name && assigned.has(dep)) return false;
             }
         }
-        info.refs.delete(leftId ?? rightId!);
-        if (leftId) b.right.left = value;
-        else b.right.right = value;
+        info.refs.delete(id);
+        if (!replaceNodeInTree(b.right, id, value)) return false;
         stmts.splice(i, 1);
         this.changed = true;
         return true;
@@ -643,6 +686,70 @@ export class TempVariableSimplify implements ISimplify {
         if (!liveAfter || liveAfter.has(source)) return false;
         info.refs.delete(b.right);
         b.right = a.right;
+        stmts.splice(i, 1);
+        this.changed = true;
+        return true;
+    }
+
+    /**
+     * 尾部补齐:`X = E; f(...X...)` -> `f(...E...)`(调用参数位置,X 之后已死)。
+     *
+     * HighLevelGrammarSimplify 在定点迭代结束后才把条件物化合成 `acc = C ? A : B`,
+     * 轮内的复制传播来不及处理紧随其后的调用参数,典型形态:
+     *   acc = isPlaying || isBuffering; envService.setKeepScreenOn(acc);
+     * 只在纯右值时折叠,保证搬移不改变副作用顺序;语句内的写入不得命中
+     * 右值读取的名字。X 必须未被捕获、在消费语句之后不再读取;读取位于
+     * callee 位置(`acc = obj.fn; acc()`)时不折叠,那是 AccCallSimplify 的领域。
+     */
+    private foldTempLastUseIntoCallArguments(stmts: TYPE.Statement[], ctx: FunctionContext): void {
+        for (let i = 0; i + 1 < stmts.length; i++) {
+            if (!this.tryFoldTempCallArgument(stmts, i, ctx)) continue;
+            i--;
+        }
+    }
+
+    private tryFoldTempCallArgument(stmts: TYPE.Statement[], i: number, ctx: FunctionContext): boolean {
+        const first = stmts[i];
+        const second = stmts[i + 1];
+        if (!isExpressionStatement(first) || !isAssignmentExpression(first.expression)) return false;
+        const a = first.expression;
+        if (a.operator !== "=" || !isIdentifier(a.left)) return false;
+        const name = a.left.name;
+        if (!isTempName(name) || isDeclarationValue(a.right)) return false;
+        // 右值自引用(`X = F(X)`)是累加器链的形态,交给 foldAccumulatorChains
+        if (collectReadNames(a.right).has(name)) return false;
+        if (!isExpressionStatement(second)) return false;
+        if (!isCallExpression(second.expression) && !isOptionalCallExpression(second.expression)) return false;
+        const info = ctx.infos.get(name);
+        if (!info || info.captured) return false;
+        const consumer = second.expression;
+        // 语句内不得写入 X(如 `f((X = 1))`),否则删掉赋值会改变写入次数
+        if (collectAssignedNames(second).has(name)) return false;
+        if (this.countReadsInNode(consumer, name) !== 1) return false;
+        const liveAfter = ctx.liveAfter.get(second);
+        if (!liveAfter || liveAfter.has(name)) return false;
+
+        let id: TYPE.Identifier | null = null;
+        walkNode(consumer, (node, parent) => {
+            if (isFunctionLike(node) || isClassLike(node)) return false;
+            if (isIdentifier(node) && node.name === name && parent && isReferenced(node, parent)) {
+                id = node;
+                return false;
+            }
+            return true;
+        });
+        if (!id) return false;
+        // callee 位置的读取是方法装载形态,交给 AccCallSimplify
+        if (this.containsNode(consumer.callee, id)) return false;
+        // 纯右值搬进参数位置只可能被语句内先求值的写入影响
+        if (!isPureExpression(a.right)) return false;
+        const assigned = collectAssignedNames(consumer);
+        for (const dep of collectIdentifierNames(a.right)) {
+            if (assigned.has(dep)) return false;
+        }
+
+        info.refs.delete(id);
+        if (!replaceNodeInTree(consumer, id, a.right)) return false;
         stmts.splice(i, 1);
         this.changed = true;
         return true;
@@ -704,6 +811,50 @@ export class TempVariableSimplify implements ISimplify {
                 break;
             case "SwitchStatement":
                 for (const c of stmt.cases) this.foldReturnAssignments(c.consequent, ctx);
+                break;
+            default:
+                break;
+        }
+    }
+
+    /**
+     * foldAccumulatorChains 的递归版:累加链大多位于 if 分支/循环体等嵌套块里。
+     * 先折当前列表,再逐条语句下钻,保证任意深度的嵌套块都被处理。
+     */
+    private foldAccumulatorChainsDeep(stmts: TYPE.Statement[], ctx: FunctionContext): void {
+        this.foldAccumulatorChains(stmts, ctx);
+        for (const stmt of stmts) this.foldAccumulatorChainsInChildren(stmt, ctx);
+    }
+
+    private foldAccumulatorChainsInChildren(stmt: TYPE.Statement, ctx: FunctionContext): void {
+        switch (stmt.type) {
+            case "BlockStatement":
+                this.foldAccumulatorChainsDeep(stmt.body, ctx);
+                break;
+            case "IfStatement":
+                if (isBlockStatement(stmt.consequent)) this.foldAccumulatorChainsDeep(stmt.consequent.body, ctx);
+                else this.foldAccumulatorChainsInChildren(stmt.consequent, ctx);
+                if (stmt.alternate) {
+                    if (isBlockStatement(stmt.alternate)) this.foldAccumulatorChainsDeep(stmt.alternate.body, ctx);
+                    else this.foldAccumulatorChainsInChildren(stmt.alternate, ctx);
+                }
+                break;
+            case "WhileStatement":
+            case "DoWhileStatement":
+            case "ForStatement":
+            case "ForInStatement":
+            case "ForOfStatement":
+            case "LabeledStatement":
+                if (isBlockStatement(stmt.body)) this.foldAccumulatorChainsDeep(stmt.body.body, ctx);
+                else this.foldAccumulatorChainsInChildren(stmt.body, ctx);
+                break;
+            case "TryStatement":
+                if (isBlockStatement(stmt.block)) this.foldAccumulatorChainsDeep(stmt.block.body, ctx);
+                if (stmt.handler) this.foldAccumulatorChainsDeep(stmt.handler.body.body, ctx);
+                if (stmt.finalizer) this.foldAccumulatorChainsDeep(stmt.finalizer.body, ctx);
+                break;
+            case "SwitchStatement":
+                for (const c of stmt.cases) this.foldAccumulatorChainsDeep(c.consequent, ctx);
                 break;
             default:
                 break;
@@ -1268,7 +1419,21 @@ export class TempVariableSimplify implements ISimplify {
                 }
                 return true;
             });
-            if (!ref || !this.isFirstEvaluatedOccurrence(nextRoot, ref)) continue;
+            if (!ref) continue;
+            if (!this.isFirstEvaluatedOccurrence(nextRoot, ref)) {
+                // 成员左值赋值(`this.hasStreams = !acc`)的读取在右值里,但
+                // firstEvaluatedChild 会先走左值(this -> null)而失败。
+                // 旧值是纯表达式时,搬到非首个求值位置不改变副作用顺序,
+                // 只要求语句内的写入不命中右值读取的名字(对齐 canDeferTestValue
+                // 的纯值分支,按整条语句保守判断)。
+                if (!isPureExpression(sourceValue)) continue;
+                const assigned = collectAssignedNames(next);
+                let collides = false;
+                for (const dep of collectIdentifierNames(sourceValue)) {
+                    if (assigned.has(dep)) { collides = true; break; }
+                }
+                if (collides) continue;
+            }
 
             const nextWritesName = isExpressionStatement(next) && isAssignmentExpression(next.expression)
                 && next.expression.operator === "=" && isIdentifier(next.expression.left)
@@ -1319,11 +1484,11 @@ export class TempVariableSimplify implements ISimplify {
             if (isIfStatement(stmt)) {
                 const pattern = this.matchConditionPattern(stmts, i, ctx);
                 if (pattern) {
-                    const { start, expr, testId } = pattern;
+                    const { start, expr, testIds } = pattern;
                     const oldTest = stmt.test;
-                    // 只移除旧 test 里对 X 的那一次读取;test 中其它标识符(E 替换后仍在)
+                    // 只移除旧 test 里对 X 的那些读取;test 中其它标识符(E 替换后仍在)
                     // 的引用必须保留,否则后续声明清理会误删它们。
-                    this.removeRefs(testId, ctx);
+                    for (const testId of testIds) this.removeRefs(testId, ctx);
                     if (i - start > 1) {
                         // 删除整条 `X = !X` 取反链(可能有多条)里的引用
                         for (let j = start + 1; j < i; j++) {
@@ -1334,14 +1499,21 @@ export class TempVariableSimplify implements ISimplify {
                         }
                     }
                     let newTest: TYPE.Expression;
-                    if (oldTest === testId) {
+                    let replaced = true;
+                    if (oldTest === testIds[0]) {
                         newTest = expr;
                     } else {
                         newTest = oldTest;
-                        if (!replaceNodeInTree(newTest, testId, expr)) {
-                            this.cleanupConditionChildren(stmt, ctx);
-                            continue;
+                        for (const testId of testIds) {
+                            if (!replaceNodeInTree(newTest, testId, expr)) {
+                                replaced = false;
+                                break;
+                            }
                         }
+                    }
+                    if (!replaced) {
+                        this.cleanupConditionChildren(stmt, ctx);
+                        continue;
                     }
                     stmt.test = newTest;
                     stmts.splice(start, i - start);
@@ -1394,7 +1566,7 @@ export class TempVariableSimplify implements ISimplify {
         stmts: TYPE.Statement[],
         ifIndex: number,
         ctx: FunctionContext,
-    ): { start: number; name: string; expr: TYPE.Expression; testId: TYPE.Identifier } | null {
+    ): { start: number; name: string; expr: TYPE.Expression; testIds: TYPE.Identifier[] } | null {
         const ifStmt = stmts[ifIndex];
         if (!isIfStatement(ifStmt)) return null;
         const test = ifStmt.test;
@@ -1408,8 +1580,7 @@ export class TempVariableSimplify implements ISimplify {
             name = test.argument.name;
             testId = test.argument;
         } else {
-            // 复合 test(`!X && B` / `X || B`):变量名从前一条赋值获取,
-            // 并要求 test 里只直接读取一次 X,这样把 X 的值搬进 test 不会复制求值。
+            // 复合 test(`!X && B` / `X || B`):变量名从前一条赋值获取。
             const prev = stmts[ifIndex - 1];
             if (!isExpressionStatement(prev) || !isAssignmentExpression(prev.expression)
                 || prev.expression.operator !== "=" || !isIdentifier(prev.expression.left)) {
@@ -1417,20 +1588,26 @@ export class TempVariableSimplify implements ISimplify {
             }
             name = prev.expression.left.name;
             if (this.hasDeferredSelfReference(test, name)) return null;
-            if (this.countReadsInNode(test, name) !== 1) return null;
-            walkNode(test, (node, parent) => {
-                if (isFunctionLike(node) || isClassLike(node)) return false;
-                if (isIdentifier(node) && node.name === name && parent && isReferenced(node, parent)) {
-                    testId = node;
-                    return false;
-                }
-                return true;
-            });
-            if (!testId) return null;
+            if (this.countReadsInNode(test, name) === 0) return null;
         }
         if (!isTempName(name)) return null;
         const info = ctx.infos.get(name);
         if (!info || info.captured) return null;
+
+        // 收集 test 里对 X 的全部读取。多得不只是因为复合条件:编译器会把
+        // `A && (f(), A)` 这类"读取同一物化布尔"的条件 lowering 成
+        // `acc = E; acc = !acc; if (!acc && (f(), acc))`,test 里有两次读取,
+        // 折叠时每一处都要按同一奇偶值替换。
+        const testIds: TYPE.Identifier[] = [];
+        walkNode(test, (node, parent) => {
+            if (isFunctionLike(node) || isClassLike(node)) return false;
+            if (isIdentifier(node) && node.name === name && parent && isReferenced(node, parent)) {
+                testIds.push(node);
+            }
+            return true;
+        });
+        if (testId && !testIds.includes(testId)) testIds.unshift(testId);
+        if (testIds.length === 0) return null;
 
         let start = ifIndex - 1;
         let negations = 0;
@@ -1456,6 +1633,8 @@ export class TempVariableSimplify implements ISimplify {
             return null;
         }
         if (isDeclarationValue(expression.right)) return null;
+        // E 读取 X(`X = X.length; if (X > 0)`)是合法的:start..ifIndex 的赋值
+        // 会被整体删除,test 里的替换值读到的正是删除前的旧 X,语义不变。
 
         // X 只能在当前模式里被读取,不能影响模式之后/之前的代码。
         // 但 acc 是字节码累加器,通常在整个函数里反复复用(模式之外还有大量读写),
@@ -1469,7 +1648,7 @@ export class TempVariableSimplify implements ISimplify {
                 }
             });
         }
-        patternRefs.add(testId);
+        for (const ref of testIds) patternRefs.add(ref);
         for (const ref of patternRefs) if (!info.refs.has(ref)) return null;
         // 复制传播会克隆节点,ctx.infos 里的 referencePaths 可能已经过期,
         // 不能因为“引用数恰好等于模式内的引用数”就跳过下面的安全检查。
@@ -1483,14 +1662,26 @@ export class TempVariableSimplify implements ISimplify {
         if (this.branchReadsNameBeforeWrite(ifStmt.consequent, name)) return null;
         if (ifStmt.alternate && this.branchReadsNameBeforeWrite(ifStmt.alternate, name)) return null;
 
-        // 取反链的奇偶性直接作用在赋给 X 的值上,test 里的 X 按原位置替换即可。
+        // 取反链的奇偶性直接作用在赋给 X 的值上,test 里每处读取都替换成同一个值
+        // (物化后所有读取看到的是同一个 acc 版本)。多次读取只在存在取反链时折叠:
+        // 此时物化值被困在 test 里,不整体消费就消不掉 `X = !X`(典型
+        // `acc = E; acc = !acc; if (!acc && (f(), acc))`)。negations = 0 的多次
+        // 读取(`v2 = E; if (v2 && (..., !v2 ...))`)保持原样——替换会把 E 复制
+        // 多遍,输出反而变差。E 有副作用时同样只允许单读取;且 test 序列里不得
+        // 再赋值 X——`acc = trim(), acc = acc.length, acc === 0` 的两次读取是
+        // 不同版本,不能都替换成模式右值。
         let expr = expression.right;
         if (negations % 2 === 1) expr = this.negateExpression(expr);
+        if (testIds.length > 1) {
+            if (negations === 0) return null;
+            if (!isPureExpression(expression.right)) return null;
+            if (collectAssignedNames(test).has(name)) return null;
+        }
         // 求值时序:把赋值右值搬进 test 会把它的求值推迟到 test 中 X 的位置。
         // 有副作用的右值只有位于 test 最先求值的位置时才安全(如 test 就是 X/!X);
         // 纯右值也要避免越过 test 里先求值的写入(如 `X = Y; if ((Y = 1, X))`)。
         if (!isPureExpression(expr)) {
-            if (!this.isFirstEvaluatedOccurrence(test, testId)) return null;
+            if (testIds.length !== 1 || !this.isFirstEvaluatedOccurrence(test, testIds[0])) return null;
         } else {
             const assigned = collectAssignedNames(test);
             for (const dep of collectIdentifierNames(expr)) {
@@ -1498,7 +1689,7 @@ export class TempVariableSimplify implements ISimplify {
             }
         }
 
-        return { start, name, expr, testId };
+        return { start, name, expr, testIds };
     }
 
     /** 构造 `!expr`,`!!E` 直接还原成 E。 */

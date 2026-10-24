@@ -3185,12 +3185,10 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     local_1_1 = this;
     local_1_0 = p0;
     local_1_1.observeComponentCreation2(function (p0, p1) {
-      let v2;
       Stack.create({
         "alignContent": Alignment.TopStart
       });
-      v2 = local_1_0 ? "answer_prev_horizontal_page" : "answer_next_horizontal_page";
-      Stack.id(v2);
+      Stack.id(local_1_0 ? "answer_prev_horizontal_page" : "answer_next_horizontal_page");
       Stack.width("100%");
       Stack.height("100%");
       Stack.backgroundColor({
@@ -3208,7 +3206,6 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     }, Column);
     local_1_1.horizontalAnswerTitleBar.bind(local_1_1)();
     local_1_1.observeComponentCreation2(function (p0, p1) {
-      let v2;
       Column.create({
         "space": {
           "id": 50331691,
@@ -3220,7 +3217,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       });
       Column.layoutWeight(1);
       Column.width("100%");
-      v2 = {
+      Column.padding({
         "left": {
           "id": 50331674,
           "type": 10002,
@@ -3242,15 +3239,12 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
           "bundleName": "com.github.zhuoyi233.zhplus",
           "moduleName": "entry"
         }
-      };
-      Column.padding(v2);
+      });
       Column.clip(true);
     }, Column);
     local_1_1.observeComponentCreation2(function (p0, p1) {
-      let v2;
       Text.create(local_1_1.currentAnswerQuestionTitle());
-      v2 = local_1_0 ? "answer_prev_horizontal_question" : "answer_next_horizontal_question";
-      Text.id(v2);
+      Text.id(local_1_0 ? "answer_prev_horizontal_question" : "answer_next_horizontal_question");
       Text.fontSize({
         "id": 50331673,
         "type": 10002,
@@ -3496,7 +3490,6 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       Column.hitTestBehavior(HitTestMode.None);
     }, Column);
     local_1_1.observeComponentCreation2(function (p0, p1) {
-      let v2;
       Row.create({
         "space": {
           "id": 50331691,
@@ -3507,7 +3500,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
         }
       });
       Row.width("100%");
-      v2 = {
+      Row.padding({
         "left": {
           "id": 50331674,
           "type": 10002,
@@ -3523,8 +3516,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
           "moduleName": "entry"
         },
         "bottom": Math.max(local_1_1.bottomRectHeightVp, 0)
-      };
-      Row.padding(v2);
+      });
     }, Row);
     local_1_1.observeComponentCreation2(function (p0, p1) {
       let v0 /*GlassCapsule*/, v2;
@@ -4004,7 +3996,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     }, Row);
     local_1_1.observeComponentCreation2(function (p0, p1) {
       let v2;
-      v2 = local_1_0 ? {
+      SymbolGlyph.create(local_1_0 ? {
         "id": 125832671,
         "type": 40000,
         "params": [],
@@ -4016,8 +4008,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
         "params": [],
         "bundleName": "com.github.zhuoyi233.zhplus",
         "moduleName": "entry"
-      };
-      SymbolGlyph.create(v2);
+      });
       SymbolGlyph.fontSize(16);
       v2 = [];
       v2[0] = local_1_1.answerOverscrollTriggered() ? local_1_1.resolvedThemeColor : {
@@ -4090,10 +4081,8 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
         local_1_1.ifElseBranchUpdateFunction(0, function () {
           if (!If.canRetake(local_1_0 ? "answer_prev_preview_avatar" : "answer_next_preview_avatar")) {
             local_1_1.observeComponentCreation2(function (p0, p1) {
-              let v2;
               Image.create(local_1_1.answerPreviewAvatarUrl(local_1_0));
-              v2 = local_1_0 ? "answer_prev_preview_avatar" : "answer_next_preview_avatar";
-              Image.id(v2);
+              Image.id(local_1_0 ? "answer_prev_preview_avatar" : "answer_next_preview_avatar");
               Image.width(28);
               Image.height(28);
               Image.borderRadius(14);
@@ -4141,10 +4130,8 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
         local_1_1.ifElseBranchUpdateFunction(0, function () {
           if (!If.canRetake(local_1_0 ? "answer_prev_preview_author" : "answer_next_preview_author")) {
             local_1_1.observeComponentCreation2(function (p0, p1) {
-              let v2;
               Text.create(local_1_1.answerPreviewAuthorName(local_1_0));
-              v2 = local_1_0 ? "answer_prev_preview_author" : "answer_next_preview_author";
-              Text.id(v2);
+              Text.id(local_1_0 ? "answer_prev_preview_author" : "answer_next_preview_author");
               Text.fontSize({
                 "id": 50331668,
                 "type": 10002,
@@ -4179,10 +4166,8 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
         local_1_1.ifElseBranchUpdateFunction(0, function () {
           if (!If.canRetake(local_1_0 ? "answer_prev_preview_excerpt" : "answer_next_preview_excerpt")) {
             local_1_1.observeComponentCreation2(function (p0, p1) {
-              let v2;
               Text.create(local_1_1.answerPreviewExcerpt(local_1_0));
-              v2 = local_1_0 ? "answer_prev_preview_excerpt" : "answer_next_preview_excerpt";
-              Text.id(v2);
+              Text.id(local_1_0 ? "answer_prev_preview_excerpt" : "answer_next_preview_excerpt");
               Text.fontSize({
                 "id": 50331669,
                 "type": 10002,
@@ -4217,7 +4202,6 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     let local_1_0;
     local_1_0 = this;
     local_1_0.observeComponentCreation2(function (p0, p1) {
-      let v2;
       Button.createWithChild({
         "type": ButtonType.Circle,
         "stateEffect": true
@@ -4249,8 +4233,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
         }
         local_1_0.applySavedAnswerFabPosition();
       });
-      v2 = !local_1_0.navigatorBusy;
-      Button.enabled(v2);
+      Button.enabled(!local_1_0.navigatorBusy);
       Button.accessibilityText("下一个回答");
       globalThis.Gesture.create(GesturePriority.Low);
       PanGesture.create({
@@ -4528,7 +4511,6 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
               local_1_1.ifElseBranchUpdateFunction(0, function () {
                 if (!If.canRetake("" + local_1_0.kind + "_detail_context_title")) {
                   local_1_1.observeComponentCreation2(function (p0, p1) {
-                    let v2;
                     Text.create(contentContextTitle(local_1_0));
                     Text.id("" + local_1_0.kind + "_detail_context_title");
                     Text.fontSize({
@@ -4555,8 +4537,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
                         local_1_1.contentTitleHeightVp = v0;
                       }
                     });
-                    v2 = local_1_0.kind === ContentDetailKind.ANSWER ? "点击查看问题详情" : "";
-                    Text.accessibilityDescription(v2);
+                    Text.accessibilityDescription(local_1_0.kind === ContentDetailKind.ANSWER ? "点击查看问题详情" : "");
                     Text.onClick(function () {
                       if (local_1_0.kind === ContentDetailKind.ANSWER) {
                         local_1_1.navigate({
@@ -4658,7 +4639,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
             If.create();
             if (local_1_0.kind === ContentDetailKind.QUESTION) {
               local_1_1.ifElseBranchUpdateFunction(0, function () {
-                let v0, v1, acc;
+                let v0, v1;
                 if (!If.canRetake("question_detail_statistics")) {
                   v0 = 0;
                   local_1_1.observeComponentCreation2(function (p0, p1) {
@@ -4687,14 +4668,13 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
                     "moduleName": "entry"
                   }, v0);
                   v0 = local_1_1.questionStatItem.bind(local_1_1);
-                  acc = "" + (local_1_1.followController === undefined ? local_1_0.value.followerCount : local_1_1.followerCount);
                   v0({
                     "id": 125831544,
                     "type": 40000,
                     "params": [],
                     "bundleName": "com.github.zhuoyi233.zhplus",
                     "moduleName": "entry"
-                  }, acc + " 关注");
+                  }, "" + (local_1_1.followController === undefined ? local_1_0.value.followerCount : local_1_1.followerCount) + " 关注");
                   local_1_1.questionStatItem.bind(local_1_1)({
                     "id": 125831766,
                     "type": 40000,
@@ -4739,10 +4719,9 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
               local_1_1.ifElseBranchUpdateFunction(1, function () {});
             } else if (((local_1_0.value.topics === null || local_1_0.value.topics === undefined ? undefined : local_1_0.value.topics.length) ?? 0) > 0) {
               local_1_1.ifElseBranchUpdateFunction(0, function () {
-                let v0, v1;
+                let v0;
                 v0 = local_1_1.articleTopicsFlow.bind(local_1_1);
-                v1 = local_1_0.value.topics ?? [];
-                v0(v1);
+                v0(local_1_0.value.topics ?? []);
               });
             } else {
               local_1_1.ifElseBranchUpdateFunction(1, function () {});
@@ -4988,12 +4967,10 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
                 "bottom": 8
               });
               Row.onClick(function () {
-                let v1;
                 if (local_1_0.value.author !== undefined && local_1_0.value.author.id.trim().length > 0) {
-                  v1 = local_1_0.value.author.urlToken ?? local_1_0.value.author.id;
                   local_1_1.navigate({
                     "name": AppDestinationName.PEOPLE,
-                    "id": v1
+                    "id": local_1_0.value.author.urlToken ?? local_1_0.value.author.id
                   });
                 }
               });
@@ -5112,12 +5089,10 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
               Row.id("" + local_1_0.kind + "_detail_header_author_row");
               Row.width("100%");
               Row.onClick(function () {
-                let v1;
                 if (local_1_0.value.author !== undefined && local_1_0.value.author.id.trim().length > 0) {
-                  v1 = local_1_0.value.author.urlToken ?? local_1_0.value.author.id;
                   local_1_1.navigate({
                     "name": AppDestinationName.PEOPLE,
-                    "id": v1
+                    "id": local_1_0.value.author.urlToken ?? local_1_0.value.author.id
                   });
                 }
               });
@@ -5568,12 +5543,10 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     Refresh.pop();
   }
   openVideo(p0) {
-    let v0;
-    v0 = this.kind === ContentDetailKind.ANSWER ? "answer" : this.kind === ContentDetailKind.ARTICLE ? "article" : "question";
     stageVideoPlaybackContext({
       "videoId": p0,
       "contentId": this.activeContentId,
-      "contentType": v0
+      "contentType": this.kind === ContentDetailKind.ANSWER ? "answer" : this.kind === ContentDetailKind.ARTICLE ? "article" : "question"
     });
     this.navigate({
       "name": AppDestinationName.VIDEO,
@@ -5867,7 +5840,6 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       Row.width("100%");
     }, Row);
     local_1_0.observeComponentCreation2(function (p0, p1) {
-      let v2;
       Button.createWithLabel("取消");
       Button.backgroundColor({
         "id": 50331657,
@@ -5884,22 +5856,19 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
         "moduleName": "entry"
       });
       Button.layoutWeight(1);
-      v2 = !local_1_0.blockingBusy;
-      Button.enabled(v2);
+      Button.enabled(!local_1_0.blockingBusy);
       Button.onClick(function () {
         local_1_0.pendingUserBlock = undefined;
       });
     }, Button);
     Button.pop();
     local_1_0.observeComponentCreation2(function (p0, p1) {
-      let v2 /*onThemeColor*/;
       Button.createWithLabel("确定屏蔽");
       Button.backgroundColor(local_1_0.resolvedThemeColor);
       Button.fontColor(onThemeColor(local_1_0.resolvedThemeColor));
       Button.id("" + local_1_0.kind + "_confirm_block_user");
       Button.layoutWeight(1);
-      v2 = !local_1_0.blockingBusy;
-      Button.enabled(v2);
+      Button.enabled(!local_1_0.blockingBusy);
       Button.onClick(function () {
         return local_1_0.confirmUserBlock();
       });
@@ -5980,7 +5949,6 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       Row.width("100%");
     }, Row);
     local_1_0.observeComponentCreation2(function (p0, p1) {
-      let v2;
       Button.createWithLabel("取消");
       Button.backgroundColor({
         "id": 50331657,
@@ -5997,8 +5965,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
         "moduleName": "entry"
       });
       Button.layoutWeight(1);
-      v2 = !local_1_0.blockingBusy;
-      Button.enabled(v2);
+      Button.enabled(!local_1_0.blockingBusy);
       Button.onClick(function () {
         local_1_0.keywordBlockVisible = false;
         local_1_0.keywordBlockInput = "";
@@ -6006,14 +5973,12 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     }, Button);
     Button.pop();
     local_1_0.observeComponentCreation2(function (p0, p1) {
-      let v2 /*onThemeColor*/;
       Button.createWithLabel("确认屏蔽");
       Button.backgroundColor(local_1_0.resolvedThemeColor);
       Button.fontColor(onThemeColor(local_1_0.resolvedThemeColor));
       Button.id("" + local_1_0.kind + "_confirm_block_keyword");
       Button.layoutWeight(1);
-      v2 = !local_1_0.blockingBusy && local_1_0.keywordBlockInput.trim().length > 0;
-      Button.enabled(v2);
+      Button.enabled(!local_1_0.blockingBusy && local_1_0.keywordBlockInput.trim().length > 0);
       Button.onClick(function () {
         return local_1_0.confirmKeywordBlock();
       });
@@ -6094,7 +6059,6 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     }, If);
     If.pop();
     local_1_0.observeComponentCreation2(function (p0, p1) {
-      let v2;
       Row.create({
         "space": {
           "id": 50331691,
@@ -6105,7 +6069,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
         }
       });
       Row.width("100%");
-      v2 = {
+      Row.padding({
         "left": {
           "id": 50331674,
           "type": 10002,
@@ -6121,8 +6085,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
           "moduleName": "entry"
         },
         "bottom": Math.max(local_1_0.bottomRectHeightVp, 0)
-      };
-      Row.padding(v2);
+      });
     }, Row);
     local_1_0.observeComponentCreation2(function (p0, p1) {
       If.create();
@@ -6558,7 +6521,6 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     }, If);
     If.pop();
     local_1_0.observeComponentCreation2(function (p0, p1) {
-      let v2;
       Button.createWithChild({
         "type": ButtonType.Normal,
         "stateEffect": false
@@ -6567,8 +6529,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       Button.width(36);
       Button.height(36);
       Button.backgroundColor(Color.Transparent);
-      v2 = local_1_0.contentFavorited ? "已收藏" : "未收藏";
-      Button.accessibilityText(v2);
+      Button.accessibilityText(local_1_0.contentFavorited ? "已收藏" : "未收藏");
       Button.onClick(function () {
         if (local_1_0.collectionRepository !== undefined && local_1_0.session !== undefined) {
           local_1_0.favoriteDialogShown = true;
@@ -6581,7 +6542,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     }, Button);
     local_1_0.observeComponentCreation2(function (p0, p1) {
       let v2;
-      v2 = local_1_0.contentFavorited ? {
+      SymbolGlyph.create(local_1_0.contentFavorited ? {
         "id": 125831606,
         "type": 40000,
         "params": [],
@@ -6593,8 +6554,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
         "params": [],
         "bundleName": "com.github.zhuoyi233.zhplus",
         "moduleName": "entry"
-      };
-      SymbolGlyph.create(v2);
+      });
       SymbolGlyph.fontSize(20);
       v2 = [];
       v2[0] = local_1_0.contentFavorited ? local_1_0.resolvedThemeColor : {
@@ -6654,10 +6614,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       }]);
     }, SymbolGlyph);
     local_1_0.observeComponentCreation2(function (p0, p1) {
-      let v3;
-      v3 = (local_1_0.content === null || local_1_0.content === undefined ? undefined : local_1_0.content.value.commentCount)
-        ?? 0;
-      Text.create("" + v3 + "");
+      Text.create("" + ((local_1_0.content === null || local_1_0.content === undefined ? undefined : local_1_0.content.value.commentCount) ?? 0) + "");
       Text.fontSize({
         "id": 50331675,
         "type": 10002,
@@ -6760,10 +6717,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       }]);
     }, SymbolGlyph);
     local_1_0.observeComponentCreation2(function (p0, p1) {
-      let v3;
-      v3 = (local_1_0.content === null || local_1_0.content === undefined ? undefined : local_1_0.content.value.commentCount)
-        ?? 0;
-      Text.create("" + v3 + "");
+      Text.create("" + ((local_1_0.content === null || local_1_0.content === undefined ? undefined : local_1_0.content.value.commentCount) ?? 0) + "");
       Text.fontSize({
         "id": 50331675,
         "type": 10002,
@@ -7214,11 +7168,9 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     return v0;
   }
   openComments() {
-    let v0;
-    v0 = this.kind === ContentDetailKind.ARTICLE ? "article" : this.kind === ContentDetailKind.QUESTION ? "question" : "answer";
     this.navigate({
       "name": AppDestinationName.COMMENT,
-      "contentType": v0,
+      "contentType": this.kind === ContentDetailKind.ARTICLE ? "article" : this.kind === ContentDetailKind.QUESTION ? "question" : "answer",
       "contentId": this.activeContentId
     });
   }
@@ -7376,7 +7328,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     }
   }
   onAnswerOverscrollPanUpdate(p0) {
-    let v1 /*ContentDetailKind*/, v2, v3 /*ANSWER_OVERSCROLL_MAX_OFFSET*/, acc;
+    let v1 /*ContentDetailKind*/, v2, acc;
     if (this.kind !== ContentDetailKind.ANSWER || this.answerFabDragging || this.answerSwitchMode === "off") {
       return;
     } else if (this.bodyTextSelectionActive) {
@@ -7396,8 +7348,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
           return;
         } else {
           this.overscrollRawDrag = acc;
-          v3 = this.answerSwitchMode === "horizontal" ? local_0_3 : local_0_4;
-          this.applyOverscrollOffset(local_0_2(this.overscrollRawDrag, v3, local_0_5));
+          this.applyOverscrollOffset(local_0_2(this.overscrollRawDrag, this.answerSwitchMode === "horizontal" ? local_0_3 : local_0_4, local_0_5));
           return;
         }
       }
@@ -7519,7 +7470,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     }
   }
   actionMenuSheet(p0) {
-    let v0, v5;
+    let v0;
     let local_1_0;
     local_1_0 = this;
     local_1_0.observeComponentCreation2(function (p0, p1) {
@@ -7685,11 +7636,9 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
               "bundleName": "com.github.zhuoyi233.zhplus",
               "moduleName": "entry"
             }, "content_" + local_1_0.kind + "_detail_immersive", local_1_0.immersiveReading, function () {
-              let v2;
               local_1_0.actionMenuShown = false;
               local_1_0.immersiveReading = !local_1_0.immersiveReading;
-              v2 = local_1_0.immersiveReading ? "已进入沉浸式，按返回键即可退出" : "已退出沉浸式";
-              local_1_0.showMenuToast(v2);
+              local_1_0.showMenuToast(local_1_0.immersiveReading ? "已进入沉浸式，按返回键即可退出" : "已退出沉浸式");
             });
           });
           break;
@@ -7737,16 +7686,16 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       If.create();
       if (local_1_0.content !== undefined && (v0 = 0, contentAuthorName(local_1_0.content).length > 0)) {
         local_1_0.ifElseBranchUpdateFunction(v0, function () {
-          let v0, v5;
+          let v0;
           v0 = local_1_0.menuSettingRow.bind(local_1_0);
-          v5 = !local_1_0.blockingBusy && local_1_0.blockingAction !== undefined;
           v0("屏蔽作者", {
             "id": 125832135,
             "type": 40000,
             "params": [],
             "bundleName": "com.github.zhuoyi233.zhplus",
             "moduleName": "entry"
-          }, "" + local_1_0.kind + "_block_author", false, v5, function () {
+          }, "" + local_1_0.kind + "_block_author", false, !local_1_0.blockingBusy
+            && local_1_0.blockingAction !== undefined, function () {
             let v0;
             v0 = local_1_0.content === null || local_1_0.content === undefined ? undefined : local_1_0.content.value.author;
             if (v0 !== undefined) {
@@ -7764,14 +7713,14 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     }, If);
     If.pop();
     v0 = local_1_0.menuSettingRow.bind(local_1_0);
-    v5 = !local_1_0.blockingBusy && local_1_0.blockingAction !== undefined;
     v0("屏蔽关键词", {
       "id": 125832272,
       "type": 40000,
       "params": [],
       "bundleName": "com.github.zhuoyi233.zhplus",
       "moduleName": "entry"
-    }, "" + local_1_0.kind + "_block_keyword", false, v5, function () {
+    }, "" + local_1_0.kind + "_block_keyword", false, !local_1_0.blockingBusy
+      && local_1_0.blockingAction !== undefined, function () {
       local_1_0.actionMenuShown = false;
       local_1_0.keywordBlockInput = "";
       local_1_0.keywordBlockVisible = true;
@@ -7821,19 +7770,17 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       Column.width("100%");
     }, Column);
     local_1_5.observeComponentCreation2(function (p0, p1) {
-      let v2;
       Stack.create();
       Stack.width(48);
       Stack.height(48);
       Stack.borderRadius(24);
-      v2 = local_1_3 ? local_1_5.resolvedThemeColor : {
+      Stack.backgroundColor(local_1_3 ? local_1_5.resolvedThemeColor : {
         "id": 50331657,
         "type": 10001,
         "params": [],
         "bundleName": "com.github.zhuoyi233.zhplus",
         "moduleName": "entry"
-      };
-      Stack.backgroundColor(v2);
+      });
     }, Stack);
     local_1_5.observeComponentCreation2(function (p0, p1) {
       let v2;
@@ -8304,9 +8251,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       v4.contentUrl = local_1_0.content.value.url;
       v4.thumbnailUrl = contentShareThumbnailUrl(local_1_0.content);
       acc = createSystemShareService(v1).share(v4).then(function (p0) {
-        let v2 /*ShareOutcome*/;
-        v2 = p0 === ShareOutcome.CANCELLED ? "" : "已打开系统分享面板";
-        local_1_0.showMenuToast(v2);
+        local_1_0.showMenuToast(p0 === ShareOutcome.CANCELLED ? "" : "已打开系统分享面板");
       });
       acc.catch(function () {
         local_1_0.showMenuToast("暂时无法打开分享面板");
@@ -8331,7 +8276,6 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
         let local_2_0;
         local_2_0 = p0;
         local_1_1.observeComponentCreation2(function (p0, p1) {
-          let v2;
           Button.createWithLabel("# " + local_2_0.name + "", {
             "type": ButtonType.Normal,
             "stateEffect": true
@@ -8360,7 +8304,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
             "moduleName": "entry"
           });
           Button.borderRadius(15);
-          v2 = {
+          Button.border({
             "width": 1,
             "color": {
               "id": 50331664,
@@ -8370,8 +8314,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
               "moduleName": "entry"
             },
             "radius": 15
-          };
-          Button.border(v2);
+          });
           Button.margin({
             "right": 8,
             "bottom": 8
@@ -8409,7 +8352,6 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
         let local_2_0;
         local_2_0 = p0;
         local_1_1.observeComponentCreation2(function (p0, p1) {
-          let v2;
           Row.create({
             "space": 4
           });
@@ -8422,7 +8364,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
           });
           Row.borderRadius(16);
           Row.backgroundColor(local_0_8(local_2_0));
-          v2 = {
+          Row.margin({
             "right": {
               "id": 50331691,
               "type": 10002,
@@ -8437,8 +8379,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
               "bundleName": "com.github.zhuoyi233.zhplus",
               "moduleName": "entry"
             }
-          };
-          Row.margin(v2);
+          });
         }, Row);
         local_1_1.observeComponentCreation2(function (p0, p1) {
           If.create();
@@ -8524,7 +8465,6 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     let local_1_0;
     local_1_0 = this;
     local_1_0.observeComponentCreation2(function (p0, p1) {
-      let v2;
       Button.createWithChild({
         "type": ButtonType.Normal,
         "stateEffect": false
@@ -8532,8 +8472,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       Button.id("" + local_1_0.kind + "_vote_up");
       Button.backgroundColor(Color.Transparent);
       Button.lightUpEffect(1);
-      v2 = !local_1_0.interactionPending;
-      Button.enabled(v2);
+      Button.enabled(!local_1_0.interactionPending);
       Button.onClick(function () {
         if (local_1_0.voteController !== null && local_1_0.voteController !== undefined) {
           local_1_0.voteController.toggleVote(true);
@@ -8552,8 +8491,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       });
     }, Row);
     local_1_0.observeComponentCreation2(function (p0, p1) {
-      let v2;
-      v2 = local_1_0.voteState === ContentVoteState.UP ? {
+      SymbolGlyph.create(local_1_0.voteState === ContentVoteState.UP ? {
         "id": 125835553,
         "type": 40000,
         "params": [],
@@ -8565,8 +8503,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
         "params": [],
         "bundleName": "com.github.zhuoyi233.zhplus",
         "moduleName": "entry"
-      };
-      SymbolGlyph.create(v2);
+      });
       SymbolGlyph.fontSize(20);
       SymbolGlyph.fontColor([local_1_0.resolvedThemeColor]);
       SymbolGlyph.rotate({
@@ -8577,7 +8514,6 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       });
     }, SymbolGlyph);
     local_1_0.observeComponentCreation2(function (p0, p1) {
-      let v2;
       Text.create("" + local_1_0.voteupCount + "");
       Text.fontSize({
         "id": 50331675,
@@ -8586,8 +8522,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
         "bundleName": "com.github.zhuoyi233.zhplus",
         "moduleName": "entry"
       });
-      v2 = local_1_0.voteState === ContentVoteState.UP ? FontWeight.Bold : FontWeight.Medium;
-      Text.fontWeight(v2);
+      Text.fontWeight(local_1_0.voteState === ContentVoteState.UP ? FontWeight.Bold : FontWeight.Medium);
       Text.fontColor(local_1_0.resolvedThemeColor);
     }, Text);
     Text.pop();
@@ -8598,7 +8533,6 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     let local_1_0;
     local_1_0 = this;
     local_1_0.observeComponentCreation2(function (p0, p1) {
-      let v2;
       Button.createWithChild({
         "type": ButtonType.Normal,
         "stateEffect": false
@@ -8606,8 +8540,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       Button.id("" + local_1_0.kind + "_vote_down");
       Button.backgroundColor(Color.Transparent);
       Button.lightUpEffect(1);
-      v2 = !local_1_0.interactionPending;
-      Button.enabled(v2);
+      Button.enabled(!local_1_0.interactionPending);
       Button.onClick(function () {
         if (local_1_0.voteController !== null && local_1_0.voteController !== undefined) {
           local_1_0.voteController.toggleVote(false);
@@ -8626,8 +8559,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       });
     }, Row);
     local_1_0.observeComponentCreation2(function (p0, p1) {
-      let v2;
-      v2 = local_1_0.voteState === ContentVoteState.DOWN ? {
+      SymbolGlyph.create(local_1_0.voteState === ContentVoteState.DOWN ? {
         "id": 125835553,
         "type": 40000,
         "params": [],
@@ -8639,8 +8571,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
         "params": [],
         "bundleName": "com.github.zhuoyi233.zhplus",
         "moduleName": "entry"
-      };
-      SymbolGlyph.create(v2);
+      });
       SymbolGlyph.fontSize(20);
       SymbolGlyph.fontColor([local_1_0.resolvedThemeColor]);
       SymbolGlyph.rotate({
@@ -8657,7 +8588,6 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     let local_1_0;
     local_1_0 = this;
     local_1_0.observeComponentCreation2(function (p0, p1) {
-      let v2;
       Button.createWithChild({
         "type": ButtonType.Normal,
         "stateEffect": false
@@ -8665,8 +8595,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       Button.id("question_follow");
       Button.height(36);
       Button.backgroundColor(Color.Transparent);
-      v2 = !local_1_0.interactionPending;
-      Button.enabled(v2);
+      Button.enabled(!local_1_0.interactionPending);
       Button.onClick(function () {
         if (local_1_0.followController !== null && local_1_0.followController !== undefined) {
           local_1_0.followController.toggleFollow();
@@ -8686,7 +8615,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     }, Row);
     local_1_0.observeComponentCreation2(function (p0, p1) {
       let v2;
-      v2 = local_1_0.following ? {
+      SymbolGlyph.create(local_1_0.following ? {
         "id": 125831490,
         "type": 40000,
         "params": [],
@@ -8698,8 +8627,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
         "params": [],
         "bundleName": "com.github.zhuoyi233.zhplus",
         "moduleName": "entry"
-      };
-      SymbolGlyph.create(v2);
+      });
       SymbolGlyph.fontSize(20);
       v2 = [];
       v2[0] = local_1_0.following ? local_1_0.resolvedThemeColor : {
@@ -8712,9 +8640,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       SymbolGlyph.fontColor(v2);
     }, SymbolGlyph);
     local_1_0.observeComponentCreation2(function (p0, p1) {
-      let v2;
-      v2 = local_1_0.following ? "已关注 " + local_1_0.followerCount + "" : "关注问题 " + local_1_0.followerCount + "";
-      Text.create(v2);
+      Text.create(local_1_0.following ? "已关注 " + local_1_0.followerCount + "" : "关注问题 " + local_1_0.followerCount + "");
       Text.fontSize({
         "id": 50331675,
         "type": 10002,
@@ -8723,14 +8649,13 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
         "moduleName": "entry"
       });
       Text.fontWeight(FontWeight.Medium);
-      v2 = local_1_0.following ? local_1_0.resolvedThemeColor : {
+      Text.fontColor(local_1_0.following ? local_1_0.resolvedThemeColor : {
         "id": 50331664,
         "type": 10001,
         "params": [],
         "bundleName": "com.github.zhuoyi233.zhplus",
         "moduleName": "entry"
-      };
-      Text.fontColor(v2);
+      });
     }, Text);
     Text.pop();
     Row.pop();
@@ -8878,7 +8803,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     }
   }
   activateInteraction(p0) {
-    let v0, v2 /*FollowController*/;
+    let v0;
     let local_1_0, local_1_1, local_1_2;
     local_1_2 = this;
     if (p0.kind === ContentDetailKind.QUESTION) {
@@ -8897,8 +8822,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
         return local_1_2.applyFollowState(p0);
       });
       local_1_2.followController.activate();
-      v2 = p0.value.isFollowing ?? false;
-      local_1_2.followController.applyInitial(v2, p0.value.followerCount);
+      local_1_2.followController.applyInitial(p0.value.isFollowing ?? false, p0.value.followerCount);
     } else {
       if (local_1_2.voteController !== undefined || local_1_2.voteRepository === undefined || local_1_2.session === undefined) {
         return;

@@ -47,6 +47,10 @@ export class SimplifyExport {
         for (let round = 0; round < 5; round++) {
             if (!SimplifyExport.simplifyALL(node)) break;
         }
+        // 超过 MAX_PROPAGATED_SIZE 的长右值进不了复制传播环境,嵌套累加链
+        // (`acc = S; acc = acc + E + F > 0`)会原样留到迭代结束,导致
+        // HighLevelGrammarSimplify 的三目合成对多语句分支匹配失败。先补折一次。
+        TempVariableSimplify.foldAccumulatorAssignments(node);
         new HighLevelGrammarSimplify().simplify(node);
         // HighLevelGrammarSimplify 会把 `if (!T) { X = true } else { X = false }`
         // 合成 `X = !T`,这时才出现 `X = E; if (E) { X = !T }`;
