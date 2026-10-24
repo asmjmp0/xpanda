@@ -81,33 +81,26 @@ try {
         v8 = local_0_0 /*MusicSearchService*/.getMusicTextFromFlexColumn(p0.musicResponsiveListItemRenderer.flexColumns, 0)
           || "Untitled";
         v4 = local_0_0 /*MusicSearchService*/.getMusicDescriptionRuns(p0.musicResponsiveListItemRenderer);
-        switch (local_1_0 /*searchType*/) {
-          case "music_songs":
-          case "music_videos":
-            v13 = local_0_0 /*MusicSearchService*/.getMusicVideoId(p0.musicResponsiveListItemRenderer);
-            if (!v13) {
-              return;
-            }
-            v10 = local_0_0 /*MusicSearchService*/.getMusicAuthorFromRuns(v4) || "Unknown";
-            v15 = local_1_0 /*searchType*/ === "music_videos" ? local_0_0 /*MusicSearchService*/.getMusicViewCountFromRuns(v4) : "";
-            v12 = local_0_0 /*MusicSearchService*/.getMusicThumbnailUrl(p0.musicResponsiveListItemRenderer);
-            local_1_2 /*items*/.push(new SearchStreamItem(local_1_1 /*idCounter*/, new VideoItem(local_1_1 /*idCounter*/, v13, v8, v10, v15, v12, false, ThumbnailPlaceholder.pickColor(v13 || v8, local_1_1 /*idCounter*/), "", "", "", "")));
-            local_1_1 += 1;
+        if (local_1_0 /*searchType*/ === "music_songs" || local_1_0 /*searchType*/ === "music_videos") {
+          v13 = local_0_0 /*MusicSearchService*/.getMusicVideoId(p0.musicResponsiveListItemRenderer);
+          if (!v13) {
             return;
-            break;
-          default:
-            switch (local_1_0 /*searchType*/) {
-              case "music_albums":
-              case "music_playlists":
-                v12 = local_0_0 /*MusicSearchService*/.getMusicPlaylistId(p0.musicResponsiveListItemRenderer);
-                v13 = local_0_0 /*MusicSearchService*/.getMusicUploaderFromRuns(v4, local_1_0 /*searchType*/);
-                v10 = local_0_0 /*MusicSearchService*/.getMusicThumbnailUrl(p0.musicResponsiveListItemRenderer);
-                local_1_2 /*items*/.push(new SearchPlaylistItem(local_1_1 /*idCounter*/, v12, v8, v13, "", v10, "", ThumbnailPlaceholder.pickColor(v12 || v8, local_1_1 /*idCounter*/)));
-                local_1_1 += 1;
-                break;
-            }
-            return;
+          }
+          v10 = local_0_0 /*MusicSearchService*/.getMusicAuthorFromRuns(v4) || "Unknown";
+          v15 = local_1_0 /*searchType*/ === "music_videos" ? local_0_0 /*MusicSearchService*/.getMusicViewCountFromRuns(v4) : "";
+          v12 = local_0_0 /*MusicSearchService*/.getMusicThumbnailUrl(p0.musicResponsiveListItemRenderer);
+          local_1_2 /*items*/.push(new SearchStreamItem(local_1_1 /*idCounter*/, new VideoItem(local_1_1 /*idCounter*/, v13, v8, v10, v15, v12, false, ThumbnailPlaceholder.pickColor(v13 || v8, local_1_1 /*idCounter*/), "", "", "", "")));
+          local_1_1 += 1;
+          return;
         }
+        if (local_1_0 /*searchType*/ === "music_albums" || local_1_0 /*searchType*/ === "music_playlists") {
+          v12 = local_0_0 /*MusicSearchService*/.getMusicPlaylistId(p0.musicResponsiveListItemRenderer);
+          v13 = local_0_0 /*MusicSearchService*/.getMusicUploaderFromRuns(v4, local_1_0 /*searchType*/);
+          v10 = local_0_0 /*MusicSearchService*/.getMusicThumbnailUrl(p0.musicResponsiveListItemRenderer);
+          local_1_2 /*items*/.push(new SearchPlaylistItem(local_1_1 /*idCounter*/, v12, v8, v13, "", v10, "", ThumbnailPlaceholder.pickColor(v12 || v8, local_1_1 /*idCounter*/)));
+          local_1_1 += 1;
+        }
+        return;
       });
       return local_1_2 /*items*/;
     }

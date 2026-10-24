@@ -1132,14 +1132,11 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
   }
   _onKeepScreenStateChanged(p0) {
     this.envService.setKeepScreenOn(p0 === PlayerState.PLAYING || p0 === PlayerState.BUFFERING || p0 === PlayerState.READY);
-    switch (p0) {
-      case PlayerState.PLAYING:
-      case PlayerState.BUFFERING:
-        this.scheduleHideControls();
-        break;
-      default:
-        this.clearHideTimer();
-        this.showControls = true;
+    if (p0 === PlayerState.PLAYING || p0 === PlayerState.BUFFERING) {
+      this.scheduleHideControls();
+    } else {
+      this.clearHideTimer();
+      this.showControls = true;
     }
   }
   syncPlaybackStateFromController() {
@@ -1454,37 +1451,36 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     let local_1_0;
     local_1_0 = this;
     local_1_0.registerDoubleTapActivity();
-    switch (local_1_0.playbackConfig.doubleTapAction) {
-      case "off":
-        return;
-      case "playpause":
-        local_1_0.togglePlayback();
-        return;
-      default:
-        v5 = local_1_0.playbackConfig.doubleTapSeekSeconds > 0 ? local_1_0.playbackConfig.doubleTapSeekSeconds : 15;
-        acc = p0.fingerList[0] !== null && p0.fingerList[0] !== undefined ? p0.fingerList[0].localX : undefined;
-        if (acc == null) {
-          acc = 0;
-        }
-        if (acc > local_1_0.containerVpWidth / 2) {
-          Logger.info(local_0_1 /*TAG*/, "Double-tap forward +" + v5 + "s");
-          local_1_0.controller.syncSeek(Math.min(local_1_0.currentTime + v5, local_1_0.durationTime) * 1000);
-          local_1_0.showForwardHint = true;
-          local_1_0.forwardHintTimerId = setTimeout(function () {
-            local_1_0.forwardHintTimerId = -1;
-            local_1_0.showForwardHint = false;
-          }, local_0_6 /*DOUBLE_TAP_HINT_HIDE_DELAY*/);
-        } else {
-          Logger.info(local_0_1 /*TAG*/, "Double-tap backward -" + v5 + "s");
-          local_1_0.controller.syncSeek(Math.max(local_1_0.currentTime - v5, 0) * 1000);
-          local_1_0.showBackwardHint = true;
-          local_1_0.backwardHintTimerId = setTimeout(function () {
-            local_1_0.backwardHintTimerId = -1;
-            local_1_0.showBackwardHint = false;
-          }, local_0_6 /*DOUBLE_TAP_HINT_HIDE_DELAY*/);
-        }
-        return;
+    if (local_1_0.playbackConfig.doubleTapAction === "off") {
+      return;
     }
+    if (local_1_0.playbackConfig.doubleTapAction === "playpause") {
+      local_1_0.togglePlayback();
+      return;
+    }
+    v5 = local_1_0.playbackConfig.doubleTapSeekSeconds > 0 ? local_1_0.playbackConfig.doubleTapSeekSeconds : 15;
+    acc = p0.fingerList[0] !== null && p0.fingerList[0] !== undefined ? p0.fingerList[0].localX : undefined;
+    if (acc == null) {
+      acc = 0;
+    }
+    if (acc > local_1_0.containerVpWidth / 2) {
+      Logger.info(local_0_1 /*TAG*/, "Double-tap forward +" + v5 + "s");
+      local_1_0.controller.syncSeek(Math.min(local_1_0.currentTime + v5, local_1_0.durationTime) * 1000);
+      local_1_0.showForwardHint = true;
+      local_1_0.forwardHintTimerId = setTimeout(function () {
+        local_1_0.forwardHintTimerId = -1;
+        local_1_0.showForwardHint = false;
+      }, local_0_6 /*DOUBLE_TAP_HINT_HIDE_DELAY*/);
+    } else {
+      Logger.info(local_0_1 /*TAG*/, "Double-tap backward -" + v5 + "s");
+      local_1_0.controller.syncSeek(Math.max(local_1_0.currentTime - v5, 0) * 1000);
+      local_1_0.showBackwardHint = true;
+      local_1_0.backwardHintTimerId = setTimeout(function () {
+        local_1_0.backwardHintTimerId = -1;
+        local_1_0.showBackwardHint = false;
+      }, local_0_6 /*DOUBLE_TAP_HINT_HIDE_DELAY*/);
+    }
+    return;
   }
   canAutoHideControls() {
     let v3;
@@ -1616,14 +1612,11 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     v7 = this.videoLayoutVp();
     v8 = 1;
     v9 = 1;
-    switch (this.videoAspectMode) {
-      case "fill":
-        v9 = Math.max(Math.max(1, this.containerVpWidth) / Math.max(1, v7.videoWVp), Math.max(1, this.containerVpHeight) / Math.max(1, v7.videoHVp));
-        break;
-      case "stretch":
-        v8 = Math.max(1, this.containerVpWidth) / Math.max(1, v7.videoWVp);
-        v9 = Math.max(1, this.containerVpHeight) / Math.max(1, v7.videoHVp);
-        break;
+    if (this.videoAspectMode === "fill") {
+      v9 = Math.max(Math.max(1, this.containerVpWidth) / Math.max(1, v7.videoWVp), Math.max(1, this.containerVpHeight) / Math.max(1, v7.videoHVp));
+    } else if (this.videoAspectMode === "stretch") {
+      v8 = Math.max(1, this.containerVpWidth) / Math.max(1, v7.videoWVp);
+      v9 = Math.max(1, this.containerVpHeight) / Math.max(1, v7.videoHVp);
     }
     return {
       "sx": v8 * this.videoPinchScale,
@@ -1824,20 +1817,17 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
             this.pinchGestureMode = "scale";
           }
         }
-        switch (this.pinchGestureMode) {
-          case "scale":
-            v12 = Math.min(Math.max(this.pinchStartScale * (v7 / this.pinchStartDistanceVp), 1), local_0_13 /*VIDEO_PINCH_MAX_SCALE*/);
-            if (Math.abs(v12 - this.pinchAppliedScale) / this.pinchAppliedScale >= 0.01) {
-              this.pinchAppliedScale = v12;
-              this.videoPinchScale = v12;
-              this.clampVideoPan();
-            }
-            break;
-          case "pan":
-            this.videoPanXVp = this.videoPanXVp + ((p0.touches[0].x + p0.touches[1].x) / 2 - this.pinchLastMidXVp);
-            this.videoPanYVp = this.videoPanYVp + ((p0.touches[0].y + p0.touches[1].y) / 2 - this.pinchLastMidYVp);
+        if (this.pinchGestureMode === "scale") {
+          v12 = Math.min(Math.max(this.pinchStartScale * (v7 / this.pinchStartDistanceVp), 1), local_0_13 /*VIDEO_PINCH_MAX_SCALE*/);
+          if (Math.abs(v12 - this.pinchAppliedScale) / this.pinchAppliedScale >= 0.01) {
+            this.pinchAppliedScale = v12;
+            this.videoPinchScale = v12;
             this.clampVideoPan();
-            break;
+          }
+        } else if (this.pinchGestureMode === "pan") {
+          this.videoPanXVp = this.videoPanXVp + ((p0.touches[0].x + p0.touches[1].x) / 2 - this.pinchLastMidXVp);
+          this.videoPanYVp = this.videoPanYVp + ((p0.touches[0].y + p0.touches[1].y) / 2 - this.pinchLastMidYVp);
+          this.clampVideoPan();
         }
         this.pinchLastMidXVp = (p0.touches[0].x + p0.touches[1].x) / 2;
         this.pinchLastMidYVp = (p0.touches[0].y + p0.touches[1].y) / 2;
@@ -4899,22 +4889,19 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     }
   }
   onSliderTouch(p0) {
-    switch (p0.type) {
-      case TouchType.Down:
-        this.sliderTouchCanceled = false;
-        break;
-      case TouchType.Cancel:
-        this.sliderTouchCanceled = true;
-        this.isSliderDragging = false;
-        this.trackThicknessSize = CommonConstants.TRACK_SIZE_MIN;
-        this.sliderStyle = SliderStyle.NONE;
-        this.gestureMode = local_0_2.IDLE;
-        if (this.activeInteraction === local_0_3.SLIDER) {
-          this.activeInteraction = local_0_3.NONE;
-        }
-        Logger.debug(local_0_1 /*TAG*/, "Slider touch canceled");
-        this.scheduleHideControls();
-        break;
+    if (p0.type === TouchType.Down) {
+      this.sliderTouchCanceled = false;
+    } else if (p0.type === TouchType.Cancel) {
+      this.sliderTouchCanceled = true;
+      this.isSliderDragging = false;
+      this.trackThicknessSize = CommonConstants.TRACK_SIZE_MIN;
+      this.sliderStyle = SliderStyle.NONE;
+      this.gestureMode = local_0_2.IDLE;
+      if (this.activeInteraction === local_0_3.SLIDER) {
+        this.activeInteraction = local_0_3.NONE;
+      }
+      Logger.debug(local_0_1 /*TAG*/, "Slider touch canceled");
+      this.scheduleHideControls();
     }
   }
   aboutToDisappear() {

@@ -202,11 +202,12 @@ try {
       if (p0) {
         return false;
       }
-      if (p1 === 2300006 || p1 === 2300007) {
-        return true;
-      }
-      if (p1 === 2300005) {
-        return false;
+      switch (p1) {
+        case 2300006:
+        case 2300007:
+          return true;
+        case 2300005:
+          return false;
       }
       v14 = (p2 || "").toLowerCase();
       return v14.includes.call(v14, "couldn't resolve host")

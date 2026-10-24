@@ -90,35 +90,34 @@ local_0_0 = function (p0, p1) {
     if (!isSafeDecimalContentId(v6[0])) {
       return undefined;
     }
-    if (v5 === "answers") {
-      return {
-        "type": DeepLinkType.ANSWER,
-        "id": v6[0],
-        "query": ""
-      };
+    switch (v5) {
+      case "answers":
+        return {
+          "type": DeepLinkType.ANSWER,
+          "id": v6[0],
+          "query": ""
+        };
+      case "questions":
+        return {
+          "type": DeepLinkType.QUESTION,
+          "id": v6[0],
+          "query": ""
+        };
+      case "articles":
+        return {
+          "type": DeepLinkType.ARTICLE,
+          "id": v6[0],
+          "query": ""
+        };
+      case "pin":
+        return {
+          "type": DeepLinkType.PIN,
+          "id": v6[0],
+          "query": ""
+        };
+      default:
+        return undefined;
     }
-    if (v5 === "questions") {
-      return {
-        "type": DeepLinkType.QUESTION,
-        "id": v6[0],
-        "query": ""
-      };
-    }
-    if (v5 === "articles") {
-      return {
-        "type": DeepLinkType.ARTICLE,
-        "id": v6[0],
-        "query": ""
-      };
-    }
-    if (v5 === "pin") {
-      return {
-        "type": DeepLinkType.PIN,
-        "id": v6[0],
-        "query": ""
-      };
-    }
-    return undefined;
   } else {
     return undefined;
   }

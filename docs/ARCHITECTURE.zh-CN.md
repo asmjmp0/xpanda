@@ -216,7 +216,7 @@ normalizeDeclarations
 - `AccCallSimplify.simplifySequences` 还原只出现在条件 `SequenceExpression` 里的方法装载链;刻意放在复制传播之后,避免中间形态被别名传播误读。
 - `foldConditionAssignments` / `normalizeConditionTests` 跑**两次**:二者互为对方暴露新形态(`normalizeConditionTests` 把布尔三目折成 `X = Y && Z`,暴露新的别名链)。
 - `foldCompoundAssignments` 放在后面,避免提前改写成 `+=` 干扰活跃性 / 复制传播。
-- `simplifyTail` 在**所有**条件折叠之后运行:守卫三目(`x ? x.k : undefined` → `x?.k`)、累加器死枢纽拷贝(`acc = E; v = acc`)、for-of 的 `while (true)` + `break` 形态(含提升的 `it.next` 方法装载归一化)都在此刻才物化。最后以 `removeUnusedTempDeclarations` 清理残留的 `vN` / `acc` 声明。
+- `simplifyTail` 在**所有**条件折叠之后运行:守卫三目(`x ? x.k : undefined` → `x?.k`)、累加器死枢纽拷贝(`acc = E; v = acc`)、for-of 的 `while (true)` + `break` 形态(含提升的 `it.next` 方法装载归一化)、连续 `if (disc === v) { return … }` 守卫链 → `switch`(else-if 形态先由 `flattenElseAfterExit` 展开成守卫子句;要求 case 标签至少 **3** 个,2 个标签的短链保持 `if`;旧的 if/else → switch 路径同阈值,只给 null/undefined 对保留 2 个 case 供 `??` 还原)都在此刻才物化。最后以 `removeUnusedTempDeclarations` 清理残留的 `vN` / `acc` 声明。
 - 收尾清理依次移除常量条件分支、try/finally 与 for-of 收尾残留的哨兵守卫、不可达语句、游离的 `continue`/`break`,以及未使用的词法块槽位。
 
 ### Pass 一览
@@ -234,7 +234,7 @@ normalizeDeclarations
 | `SyntaxRewriteSimplify.ts` | test 化简、if/else 归一化、`.call` 还原、函数表达式提升;以及静态尾部辅助(`foldSequencedTestPrefixes`、`flattenElseAfterExit`、`normalizeConditionTests`、`hoistTestPrefixes`、`foldCompoundAssignments`、`foldConstantConditions`、`foldSentinelGuards`、`removeUnreachableStatements`、`removeOrphanJumps`)。 |
 | `ClassSyntaxSimplify.ts` | 从 `__defineGetter__` 风格赋值还原 getter/setter 与 prototype/static 方法语法,兼容裸对象(`v1.__defineGetter__(…)`)与复制传播内联后的 `acc.prototype.__defineGetter__(…)` 两种形态;单表达式 class 还原。 |
 | `ObjectLiteralSimplify.ts` | 合并 `createobjectwithbuffer` 模板对象与相邻字面量字段赋值(`obj = {k: null}; obj.k = E` → `{k: E}`);要求初值是字面量、字段顺序一致、未被闭包捕获。安全时把 `obj = {…}; return obj` 内联为 `return {…}`。 |
-| `HighLevelGrammarSimplify.ts` | 主遍历:while → for / for-in / for-of、提前 return 的 do-while → for-of、if → 三目(自底向上;return 链保留 `else if`)、if → switch(nullish 合成)、可选链还原;`simplifyTail`(见上)。 |
+| `HighLevelGrammarSimplify.ts` | 主遍历:while → for / for-in / for-of、提前 return 的 do-while → for-of、if → 三目(自底向上;return 链保留 `else if`)、if → switch(nullish 合成)、可选链还原;`simplifyTail`(见上;含连续 if-return 守卫链 → `switch`)。 |
 | `NullishCoalescingSimplify.ts` | 还原 switch 降级的 `??`(`v = obj.k; switch (obj.k) { case null: case undefined: v = d }` → `v = obj.k ?? d`);仅限判别式为纯成员表达式。 |
 | `CallResultSimplify.ts` | 移除 `callIns` 标记、且被下一条 `acc` 写入立即覆盖的调用结果。 |
 | `UnusedCleanupSimplify.ts` | 基于读取集的死代码清理;**当前流水线未注册**(留作安全兜底)。 |

@@ -338,6 +338,16 @@ export class HighLevelGrammarSimplify implements ISimplify {
         return null;
     }
 
+    /** case 标签恰好是 null / undefined 两个(顺序不限):`??` 的 switch lowering。 */
+    private isNullishCasePair(rawSwitchCase:Array<SwitchCaseDesc>):boolean{
+        if (rawSwitchCase.length !== 2) return false;
+        const isNull = (desc:SwitchCaseDesc) => desc.right.isNullLiteral();
+        const isUndefined = (desc:SwitchCaseDesc) =>
+            isIdentifierNode(desc.right.node) && desc.right.node.name === 'undefined';
+        return (isNull(rawSwitchCase[0]) && isUndefined(rawSwitchCase[1]))
+            || (isUndefined(rawSwitchCase[0]) && isNull(rawSwitchCase[1]));
+    }
+
     private checkAndTransformToSwitchCase(value:NodePath<TYPE.IfStatement>):boolean{
         if (value.getStatementParent() !== value) return false;
         const rawSwitchCase:Array<SwitchCaseDesc> = []
@@ -378,6 +388,9 @@ export class HighLevelGrammarSimplify implements ISimplify {
             }else return false;
         }
         if (rawSwitchCase.length < 2) return false;
+        // 至少 3 个 case 标签才合成 switch;只有 null/undefined 对例外——它要
+        // 先合成 switch,再由 NullishCoalescingSimplify 还原成 `??`。
+        if (rawSwitchCase.length < 3 && !this.isNullishCasePair(rawSwitchCase)) return false;
         //check left all same;
         for (let i = 0; i < rawSwitchCase.length - 1; i++) {
             if (!this.nodeEqual(rawSwitchCase[i].left,rawSwitchCase[i+1].left))
@@ -407,6 +420,177 @@ export class HighLevelGrammarSimplify implements ISimplify {
         }
         value.replaceWith(switchStatement);
         return true;
+    }
+
+    /**
+     * 拆分 `disc === value` / `disc === v1 || disc === v2` 形态的 test;
+     * 只接受严格相等,因为 switch 的 case 用 `===` 比较(`==` 会把 `x == 1`
+     * 与字符串 "1" 之类的情况合并,语义不同)。
+     * 返回 false 表示整棵 test 不能完整拆成同一判别式的比较,调用方必须放弃。
+     */
+    private collectStrictEqualityCases(test:TYPE.Expression,arr:Array<[TYPE.Expression,TYPE.Expression]>):boolean{
+        if (isBinaryExpressionNode(test)){
+            if (test.operator !== '===') return false;
+            if (TYPE.isPrivateName(test.left)) return false;
+            arr.push([test.left as TYPE.Expression,test.right]);
+            return true;
+        }
+        if (isLogicalExpression(test) && test.operator === '||'){
+            if (!this.collectStrictEqualityCases(test.left,arr)) return false;
+            return this.collectStrictEqualityCases(test.right,arr);
+        }
+        return false;
+    }
+
+    /**
+     * 分支体能否直接作为 switch case 体:必须以 return/throw 结尾(否则匹配后
+     * 仍会继续检查后面的 if,switch 跳出 switch 的语义不等价);而且不能含
+     * 会绑定到外层循环的裸 break(进了 switch 会被 switch 截获)。
+     */
+    private isTerminatingSwitchCaseBody(statements:TYPE.Statement[]):boolean{
+        if (statements.length === 0) return false;
+        const last = statements[statements.length - 1];
+        if (!isReturnStatementNode(last) && last.type !== 'ThrowStatement') return false;
+        for (const statement of statements){
+            if (this.hasUnboundBreak(statement)) return false;
+        }
+        return true;
+    }
+
+    private hasUnboundBreak(node:TYPE.Node):boolean{
+        let found = false;
+        walkNode(node,(n)=>{
+            if (found) return false;
+            switch (n.type){
+                case 'BreakStatement':
+                    if (!(n as TYPE.BreakStatement).label) found = true;
+                    return false;
+                // 函数/类体与循环/switch 会重新绑定 break,内部的 break 不受影响
+                case 'FunctionDeclaration':
+                case 'FunctionExpression':
+                case 'ArrowFunctionExpression':
+                case 'ClassDeclaration':
+                case 'ClassExpression':
+                case 'ClassMethod':
+                case 'ClassPrivateMethod':
+                case 'ObjectMethod':
+                case 'ForStatement':
+                case 'ForInStatement':
+                case 'ForOfStatement':
+                case 'WhileStatement':
+                case 'DoWhileStatement':
+                case 'SwitchStatement':
+                    return false;
+            }
+            return true;
+        });
+        return found;
+    }
+
+    private getSwitchCaseBody(ifNode:TYPE.IfStatement):TYPE.Statement[]|null{
+        const consequent = ifNode.consequent;
+        if (isBlockStatementNode(consequent)) return consequent.body;
+        if (isReturnStatementNode(consequent) || consequent.type === 'ThrowStatement') return [consequent];
+        return null;
+    }
+
+    /** case 体顶层有块级声明时包一层块,避免多个 case 共享同一作用域重复声明。 */
+    private wrapCaseBody(statements:TYPE.Statement[]):TYPE.Statement[]{
+        const hasLexical = statements.some((statement) =>
+            (isVariableDeclarationNode(statement) && statement.kind !== 'var')
+            || statement.type === 'ClassDeclaration'
+            || statement.type === 'FunctionDeclaration');
+        return hasLexical ? [blockStatementBuilder(statements)] : statements;
+    }
+
+    /**
+     * 把同一语句列表里连续的守卫链还原成 switch:
+     *
+     *   if (p0.name === A || p0.name === B) { return E1; }
+     *   if (p0.name === C) { return E2; }
+     *   return p0.name;
+     *   =>
+     *   switch (p0.name) {
+     *     case A:
+     *     case B:
+     *       return E1;
+     *     case C:
+     *       return E2;
+     *     default:
+     *       return p0.name;
+     *   }
+     *
+     * ArkTS 会把源码 switch 折成逐条没有 else 的守卫(每个分支以 return/throw
+     * 结束),default 变成链尾的 return。与 if/else 链的 checkAndTransformToSwitchCase
+     * 分开处理:这里只认同一个语句列表里连续的 if,case 标签(含 `A || B` 拆出的
+     * fallthrough 标签)至少 3 个才合成 switch,2 个标签的短链保持 if 形式;
+     * 判别式与 case 值都必须无副作用(switch 只求值一次判别式),链尾的
+     * return/throw 折成 default。
+     */
+    private foldIfReturnChainToSwitch(body:TYPE.Statement[]):boolean{
+        let changed = false;
+        let index = 0;
+        while (index < body.length){
+            const folded = this.matchIfReturnChain(body,index);
+            if (folded === null){
+                index++;
+                continue;
+            }
+            body.splice(index,folded.consumed,switchStatementBuilder(folded.discriminant,folded.cases));
+            index++;
+            changed = true;
+        }
+        return changed;
+    }
+
+    private matchIfReturnChain(body:TYPE.Statement[],start:number):{discriminant:TYPE.Expression,cases:TYPE.SwitchCase[],consumed:number}|null{
+        if (start >= body.length) return null;
+        const first = body[start];
+        if (!isIfStatementNode(first) || first.alternate) return null;
+        let discriminant:TYPE.Expression = null;
+        const rawCases:Array<{values:TYPE.Expression[],body:TYPE.Statement[]}> = [];
+        let labelCount = 0;
+        let index = start;
+        while (index < body.length){
+            const current = body[index];
+            if (!isIfStatementNode(current) || current.alternate) break;
+            const comparisons:Array<[TYPE.Expression,TYPE.Expression]> = [];
+            if (!this.collectStrictEqualityCases(current.test,comparisons) || comparisons.length === 0) break;
+            const disc = comparisons[0][0];
+            if (discriminant === null){
+                if (!this.isSideEffectFreeExpression(disc)) return null;
+                discriminant = disc;
+            }
+            let same = true;
+            for (const [left] of comparisons){
+                if (!isNodeEqual(discriminant,left)){
+                    same = false;
+                    break;
+                }
+            }
+            if (!same) break;
+            const caseBody = this.getSwitchCaseBody(current);
+            if (caseBody === null || !this.isTerminatingSwitchCaseBody(caseBody)) break;
+            rawCases.push({values:comparisons.map(([,right]) => right),body:caseBody});
+            labelCount += comparisons.length;
+            index++;
+        }
+        // 单个 if 保持守卫子句;不足 3 个 case 标签的短链(两条各一个值)也保持 if 形式
+        if (rawCases.length < 1 || labelCount < 3) return null;
+        const cases:TYPE.SwitchCase[] = [];
+        for (const rawCase of rawCases){
+            const caseBody = this.wrapCaseBody(rawCase.body);
+            rawCase.values.forEach((value,i) => {
+                cases.push(switchCase(value,i === rawCase.values.length - 1 ? caseBody : []));
+            });
+        }
+        // 紧跟链尾的 return/throw 是源码 switch 的 default
+        const next = body[index];
+        if (next && (isReturnStatementNode(next) || next.type === 'ThrowStatement')){
+            cases.push(switchCase(null,[next]));
+            index++;
+        }
+        return {discriminant,cases,consumed:index - start};
     }
 
     private checkAndTransformToForStatement(value:NodePath<TYPE.WhileStatement>){
@@ -1160,10 +1344,11 @@ export class HighLevelGrammarSimplify implements ISimplify {
     /**
      * 流水线末尾的二次语法还原。定点迭代与尾部条件折叠会把 `if (!T) { X = a }
      * else { X = undefined }` 物化成守卫三目、把累加器枢纽拷贝留在语句序列里,
-     * 这些都发生在 simplify() 只跑一次的主遍历之后。这里只做四类安全且局部的
+     * 这些都发生在 simplify() 只跑一次的主遍历之后。这里只做五类安全且局部的
      * 还原:守卫三目 → 可选链、死枢纽拷贝折叠、while(true)+break 形态的 for-of
-     * 还原(含 `it.next` 被提升为临时方法量的 lowering)、随之失去使用者的
-     * 临时变量声明清理。
+     * 还原(含 `it.next` 被提升为临时方法量的 lowering)、连续 if 守卫链 →
+     * switch(else-if 块已被 flattenElseAfterExit 展开成守卫子句)、随之失去
+     * 使用者的临时变量声明清理。
      * 必须在所有条件折叠之后调用(依赖 `!acc` 物化链已被折回标识符守卫)。
      */
     simplifyTail(node: Program): boolean {
@@ -1179,7 +1364,28 @@ export class HighLevelGrammarSimplify implements ISimplify {
                 if (this.checkAndTransformToForOfStatement(value)) changed = true;
             },
         });
+        // 同一语句列表里的连续 `if (disc === v) { return ...; }` 守卫链是
+        // ArkTS 对源码 switch 的 lowering(else-if 块先由 flattenElseAfterExit
+        // 展开成守卫子句),在流水线末尾按语句列表整体还原。
+        if (this.foldIfReturnChains(node)) changed = true;
         this.removeUnusedTempDeclarations(node);
+        return changed;
+    }
+
+    /** 在 Program/块/case 体的语句列表里还原连续守卫链(见 foldIfReturnChainToSwitch)。 */
+    private foldIfReturnChains(node: Program): boolean {
+        let changed = false;
+        traverse(file(node), {
+            Program:(value)=>{
+                if (this.foldIfReturnChainToSwitch(value.node.body)) changed = true;
+            },
+            BlockStatement:(value)=>{
+                if (this.foldIfReturnChainToSwitch(value.node.body)) changed = true;
+            },
+            SwitchCase:(value)=>{
+                if (this.foldIfReturnChainToSwitch(value.node.consequent)) changed = true;
+            },
+        });
         return changed;
     }
 
@@ -1229,6 +1435,13 @@ export class HighLevelGrammarSimplify implements ISimplify {
                 if (this.tryRestoreOptionalChain(value)) changed = true;
             }
         })
+
+        // 同一语句列表里的连续 `if (disc === v) { return ...; }` 守卫链是
+        // ArkTS 对源码 switch 的 lowering。先于 checkAndTransformToSwitchCase
+        // 处理,避免链首 `if (A || B) { return ... }` 被单独折成只有两个 case
+        // 的 switch、后面的守卫无法再合并;else-if 形态要等 flattenElseAfterExit
+        // 展开后才出现,由 simplifyTail 再补一次。
+        if (this.foldIfReturnChains(node)) changed = true;
 
         traverse(file(node), {
             IfStatement:(value)=>{

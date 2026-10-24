@@ -8,25 +8,29 @@ import { DeepLinkType } from "@normalized:N&&&core/src/main/ets/navigation/DeepL
 import { decodeAppDestination } from "@normalized:N&&&core/src/main/ets/navigation/AppDestination&1.0.0";
 let LatestOperationGuard, StartupDestinationChannel, appDestinationIdentity, findAppDestinationStackIndex, shouldPushAppDestination, startupDestinationChannel, toAppDestination;
 appDestinationIdentity = function (p0) {
-  if (p0.name === AppDestinationName.QUESTION || p0.name === AppDestinationName.ANSWER || p0.name === AppDestinationName.ARTICLE || p0.name === AppDestinationName.VIDEO || p0.name === AppDestinationName.PIN || p0.name === AppDestinationName.PEOPLE || p0.name === AppDestinationName.COLLECTION || p0.name === AppDestinationName.COLLECTIONS) {
-    return "" + p0.name + ":" + encodeURIComponent(p0.id) + "";
+  switch (p0.name) {
+    case AppDestinationName.QUESTION:
+    case AppDestinationName.ANSWER:
+    case AppDestinationName.ARTICLE:
+    case AppDestinationName.VIDEO:
+    case AppDestinationName.PIN:
+    case AppDestinationName.PEOPLE:
+    case AppDestinationName.COLLECTION:
+    case AppDestinationName.COLLECTIONS:
+      return "" + p0.name + ":" + encodeURIComponent(p0.id) + "";
+    case AppDestinationName.WRITE_ANSWER:
+      return "" + p0.name + ":" + encodeURIComponent(p0.questionId) + ":" + encodeURIComponent(p0.answerId ?? "");
+    case AppDestinationName.WRITE_PIN:
+      return "" + p0.name + ":" + encodeURIComponent(p0.draftId) + "";
+    case AppDestinationName.COMMENT:
+      return "" + p0.name + ":" + p0.contentType + ":" + encodeURIComponent(p0.contentId) + ":" + encodeURIComponent(p0.commentId ?? "") + ":" + encodeURIComponent(p0.segmentId ?? "");
+    case AppDestinationName.SEARCH:
+      return "" + p0.name + ":" + encodeURIComponent(p0.query) + "";
+    case AppDestinationName.WHATS_NEW:
+      return "" + p0.name + ":" + encodeURIComponent(p0.version ?? "") + "";
+    default:
+      return p0.name;
   }
-  if (p0.name === AppDestinationName.WRITE_ANSWER) {
-    return "" + p0.name + ":" + encodeURIComponent(p0.questionId) + ":" + encodeURIComponent(p0.answerId ?? "");
-  }
-  if (p0.name === AppDestinationName.WRITE_PIN) {
-    return "" + p0.name + ":" + encodeURIComponent(p0.draftId) + "";
-  }
-  if (p0.name === AppDestinationName.COMMENT) {
-    return "" + p0.name + ":" + p0.contentType + ":" + encodeURIComponent(p0.contentId) + ":" + encodeURIComponent(p0.commentId ?? "") + ":" + encodeURIComponent(p0.segmentId ?? "");
-  }
-  if (p0.name === AppDestinationName.SEARCH) {
-    return "" + p0.name + ":" + encodeURIComponent(p0.query) + "";
-  }
-  if (p0.name === AppDestinationName.WHATS_NEW) {
-    return "" + p0.name + ":" + encodeURIComponent(p0.version ?? "") + "";
-  }
-  return p0.name;
 };
 findAppDestinationStackIndex = function (p0, p1) {
   let v1, v2, v3 /*decodeAppDestination*/;

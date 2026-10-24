@@ -162,35 +162,34 @@ prepareSharePayload = function (p0, p1) {
   let v0, v1, v2, v3, v4;
   v0 = local_0_1(p0.title);
   v1 = local_0_2(p0.summary);
-  switch (p0.kind) {
-    case SharePayloadKind.TEXT:
-      v2 = local_0_3(p0.contentUrl);
-      v3 = p0.thumbnailUrl === undefined ? undefined : local_0_4(p0.thumbnailUrl);
+  if (p0.kind === SharePayloadKind.TEXT) {
+    v2 = local_0_3(p0.contentUrl);
+    v3 = p0.thumbnailUrl === undefined ? undefined : local_0_4(p0.thumbnailUrl);
+    v4 = {
+      "kind": SharePayloadKind.TEXT,
+      "dispatchKind": ShareDispatchKind.TEXT_LINK,
+      "title": v0,
+      "summary": v1,
+      "mimeType": "text/plain",
+      "source": v2
+    };
+    if (v3 !== undefined) {
       v4 = {
-        "kind": SharePayloadKind.TEXT,
-        "dispatchKind": ShareDispatchKind.TEXT_LINK,
-        "title": v0,
-        "summary": v1,
-        "mimeType": "text/plain",
-        "source": v2
+        "kind": v4.kind,
+        "dispatchKind": v4.dispatchKind,
+        "title": v4.title,
+        "summary": v4.summary,
+        "mimeType": v4.mimeType,
+        "source": v4.source,
+        "thumbnailUrl": v3
       };
-      if (v3 !== undefined) {
-        v4 = {
-          "kind": v4.kind,
-          "dispatchKind": v4.dispatchKind,
-          "title": v4.title,
-          "summary": v4.summary,
-          "mimeType": v4.mimeType,
-          "source": v4.source,
-          "thumbnailUrl": v3
-        };
-      }
-      return v4;
-    case SharePayloadKind.IMAGE:
-      return local_0_5(p0, p1, v0, v1);
-    default:
-      return local_0_6(p0, p1, v0, v1);
+    }
+    return v4;
   }
+  if (p0.kind === SharePayloadKind.IMAGE) {
+    return local_0_5(p0, p1, v0, v1);
+  }
+  return local_0_6(p0, p1, v0, v1);
 };
 local_0_0 = function (p0) {
   switch (p0) {

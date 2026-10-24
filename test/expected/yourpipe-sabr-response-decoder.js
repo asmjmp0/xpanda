@@ -70,20 +70,17 @@ local_0_8 = function (p0) {
   v4 = new SabrContextSendingPolicy();
   for (v11 of sabrReadFields(p0)) {
     v14 = [];
-    switch (v11.wireType) {
-      case WIRE_VARINT:
-        v14 = [v11.varint | 0];
-        break;
-      case WIRE_LENGTH_DELIMITED:
-        v15 = v11.getBytes();
-        for (v16 = 0; v16 < v15.length; v16 = v17.next) {
-          v17 = readProtoVarint(v15, v16);
-          if (!v17) {
-            break;
-          }
-          v14.push(v17.value | 0);
+    if (v11.wireType === WIRE_VARINT) {
+      v14 = [v11.varint | 0];
+    } else if (v11.wireType === WIRE_LENGTH_DELIMITED) {
+      v15 = v11.getBytes();
+      for (v16 = 0; v16 < v15.length; v16 = v17.next) {
+        v17 = readProtoVarint(v15, v16);
+        if (!v17) {
+          break;
         }
-        break;
+        v14.push(v17.value | 0);
+      }
     }
     for (v20 of v14) {
       switch (v11.number) {
@@ -141,17 +138,12 @@ local_0_9 = function (p0) {
       v4.videoId = v11.getString();
     } else if (v11.number === 2 && v11.wireType === WIRE_LENGTH_DELIMITED) {
       for (v19 of sabrReadFields(v11.getBytes())) {
-        switch (v19.number) {
-          case 1:
-            v4.itag = v19.varint | 0;
-            break;
-          case 2:
-            v4.lastModified = v19.varint;
-            break;
-          default:
-            if (v19.number === 3 && v19.wireType === WIRE_LENGTH_DELIMITED) {
-              v4.xtags = v19.getString();
-            }
+        if (v19.number === 1) {
+          v4.itag = v19.varint | 0;
+        } else if (v19.number === 2) {
+          v4.lastModified = v19.varint;
+        } else if (v19.number === 3 && v19.wireType === WIRE_LENGTH_DELIMITED) {
+          v4.xtags = v19.getString();
         }
       }
     } else if (v11.number === 3 && v11.wireType === WIRE_VARINT) {

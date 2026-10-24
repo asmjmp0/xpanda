@@ -2106,6 +2106,118 @@ function g(v0) {
 }
 
 /**
+ * 回归:同一语句列表里连续的 `if (disc === v) { return ...; }` 守卫链。
+ * ArkTS 把源码 switch 折成逐条没有 else 的守卫,`flattenElseAfterExit` 展开
+ * else 块之后才形成这种形态,由 simplifyTail 还原成 switch;链尾的 return 是
+ * 源码 switch 的 default。只有 case 标签达到 3 个才转换(2 个标签的短链保持
+ * if 形式),非终止分支与 `==` 比较不转换。
+ */
+function verifyIfReturnChainSwitch(): void {
+    const program = NodeFactory.parse(`
+function f(p0) {
+  if (p0.name === A || p0.name === B) {
+    return "ab";
+  }
+  if (p0.name === C) {
+    return "c";
+  }
+  return p0.name;
+}
+`);
+    SimplifyExport.simplify(program);
+    const code = NodeFactory.generate(program);
+    NodeFactory.parse(code);
+    if (!code.includes("switch (p0.name) {")
+        || !code.includes("case A:\n    case B:\n      return \"ab\";")
+        || !code.includes('case C:\n      return "c";')
+        || !code.includes("default:\n      return p0.name;")) {
+        throw new Error(`simplify: 守卫链未还原成 switch\n${code}`);
+    }
+    if (code.includes("if (p0.name ===")) {
+        throw new Error(`simplify: 守卫链仍残留 if\n${code}`);
+    }
+
+    // 只有两个 case 标签的短链保持 if(避免把两条守卫折成 switch)
+    const twoLabels = NodeFactory.parse(`
+function f(p0) {
+  if (p0.name === A) {
+    return 1;
+  }
+  if (p0.name === B) {
+    return 2;
+  }
+  return 3;
+}
+`);
+    SimplifyExport.simplify(twoLabels);
+    const twoLabelsCode = NodeFactory.generate(twoLabels);
+    if (twoLabelsCode.includes("switch (")) {
+        throw new Error(`simplify: 两个 case 标签的短链被折进 switch\n${twoLabelsCode}`);
+    }
+
+    // 三条各一个值的守卫链达到 3 个标签,应转换
+    const threeLabels = NodeFactory.parse(`
+function f(p0) {
+  if (p0.name === A) {
+    return 1;
+  }
+  if (p0.name === B) {
+    return 2;
+  }
+  if (p0.name === C) {
+    return 3;
+  }
+  return 4;
+}
+`);
+    SimplifyExport.simplify(threeLabels);
+    const threeLabelsCode = NodeFactory.generate(threeLabels);
+    if (!threeLabelsCode.includes("switch (p0.name) {")
+        || !threeLabelsCode.includes("default:\n      return 4;")) {
+        throw new Error(`simplify: 三个 case 标签的守卫链未折进 switch\n${threeLabelsCode}`);
+    }
+
+    // 分支体不终止时不能进 switch(匹配后还要继续检查后面的 if)
+    const nonTerminating = NodeFactory.parse(`
+function g(p0) {
+  if (p0.x === A) {
+    consume();
+  }
+  if (p0.x === B) {
+    return 2;
+  }
+  return 3;
+}
+`);
+    SimplifyExport.simplify(nonTerminating);
+    const nonTerminatingCode = NodeFactory.generate(nonTerminating);
+    if (nonTerminatingCode.includes("switch (")) {
+        throw new Error(`simplify: 非终止分支被折进 switch\n${nonTerminatingCode}`);
+    }
+
+    // switch 的 case 用 === 比较,`==` 条件不能转换
+    const looseEquality = NodeFactory.parse(`
+function h(p0) {
+  if (p0.x == A) {
+    return 1;
+  }
+  if (p0.x == B) {
+    return 2;
+  }
+  if (p0.x == C) {
+    return 3;
+  }
+  return 4;
+}
+`);
+    SimplifyExport.simplify(looseEquality);
+    const looseEqualityCode = NodeFactory.generate(looseEquality);
+    if (looseEqualityCode.includes("switch (")) {
+        throw new Error(`simplify: == 条件被折进 switch\n${looseEqualityCode}`);
+    }
+}
+
+/**
  * 回归:ArkTS 13 的 `hole` 哨兵收尾清理。
  *   - `if (hole == vN) { <正常路径> } else { throw vN; }` → 正常路径;
  *   - `class X extends hole` → `class X`(无 extends);
@@ -2321,6 +2433,10 @@ async function main(): Promise<void> {
 
     console.log("[test] simplify nullish switch fold");
     verifyNullishSwitchFold();
+    console.log("    ok");
+
+    console.log("[test] simplify if-return chain switch");
+    verifyIfReturnChainSwitch();
     console.log("    ok");
 
     console.log("[test] parallel determinism (worker_threads)");

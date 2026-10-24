@@ -145,17 +145,14 @@ contentAuthorName = function (p0) {
 };
 contentBlockingTitle = function (p0) {
   let v0;
-  switch (p0.kind) {
-    case ContentDetailKind.QUESTION:
-    case ContentDetailKind.ARTICLE:
-      return p0.value.title;
-    default:
-      v0 = p0.value.excerpt.trim();
-      if (v0.length <= 0) {
-        v0 = "回答";
-      }
-      return v0;
+  if (p0.kind === ContentDetailKind.QUESTION || p0.kind === ContentDetailKind.ARTICLE) {
+    return p0.value.title;
   }
+  v0 = p0.value.excerpt.trim();
+  if (v0.length <= 0) {
+    v0 = "回答";
+  }
+  return v0;
 };
 contentContextTitle = function (p0) {
   let v0;
@@ -4521,15 +4518,12 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
           If.pop();
           local_1_1.observeComponentCreation2(function (p0, p1) {
             If.create();
-            switch (local_1_0.kind) {
-              case ContentDetailKind.ANSWER:
-              case ContentDetailKind.ARTICLE:
-                local_1_1.ifElseBranchUpdateFunction(0, function () {
-                  local_1_1.contentHeaderAuthorRow.bind(local_1_1)(local_1_0);
-                });
-                break;
-              default:
-                local_1_1.ifElseBranchUpdateFunction(1, function () {});
+            if (local_1_0.kind === ContentDetailKind.ANSWER || local_1_0.kind === ContentDetailKind.ARTICLE) {
+              local_1_1.ifElseBranchUpdateFunction(0, function () {
+                local_1_1.contentHeaderAuthorRow.bind(local_1_1)(local_1_0);
+              });
+            } else {
+              local_1_1.ifElseBranchUpdateFunction(1, function () {});
             }
           }, If);
           If.pop();
@@ -4779,134 +4773,131 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     local_1_0 = p0;
     local_1_1.observeComponentCreation2(function (p0, p1) {
       If.create();
-      switch (local_1_0.kind) {
-        case ContentDetailKind.ANSWER:
-        case ContentDetailKind.ARTICLE:
-          local_1_1.ifElseBranchUpdateFunction(0, function () {
-            local_1_1.observeComponentCreation2(function (p0, p1) {
-              Column.create({
-                "space": {
-                  "id": 50331692,
-                  "type": 10002,
-                  "params": [],
-                  "bundleName": "com.github.zhuoyi233.zhplus",
-                  "moduleName": "entry"
+      if (local_1_0.kind === ContentDetailKind.ANSWER || local_1_0.kind === ContentDetailKind.ARTICLE) {
+        local_1_1.ifElseBranchUpdateFunction(0, function () {
+          local_1_1.observeComponentCreation2(function (p0, p1) {
+            Column.create({
+              "space": {
+                "id": 50331692,
+                "type": 10002,
+                "params": [],
+                "bundleName": "com.github.zhuoyi233.zhplus",
+                "moduleName": "entry"
+              }
+            });
+            Column.width("100%");
+            Column.alignItems(HorizontalAlign.End);
+            Column.padding({
+              "top": {
+                "id": 50331690,
+                "type": 10002,
+                "params": [],
+                "bundleName": "com.github.zhuoyi233.zhplus",
+                "moduleName": "entry"
+              }
+            });
+          }, Column);
+          local_1_1.observeComponentCreation2(function (p0, p1) {
+            let v0;
+            v0 = If;
+            If.create();
+            if (!local_1_1.pinAnswerDate && (v0 = 0, contentCreatedAtText(local_1_0).length > 0)) {
+              local_1_1.ifElseBranchUpdateFunction(v0, function () {
+                if (!If.canRetake("content_footer_" + local_1_0.kind + "_created_at")) {
+                  local_1_1.observeComponentCreation2(function (p0, p1) {
+                    Text.create(contentCreatedAtText(local_1_0));
+                    Text.id("content_footer_" + local_1_0.kind + "_created_at");
+                    Text.fontSize({
+                      "id": 50331669,
+                      "type": 10002,
+                      "params": [],
+                      "bundleName": "com.github.zhuoyi233.zhplus",
+                      "moduleName": "entry"
+                    });
+                    Text.fontColor({
+                      "id": 50331664,
+                      "type": 10001,
+                      "params": [],
+                      "bundleName": "com.github.zhuoyi233.zhplus",
+                      "moduleName": "entry"
+                    });
+                  }, Text);
+                  Text.pop();
                 }
               });
-              Column.width("100%");
-              Column.alignItems(HorizontalAlign.End);
-              Column.padding({
-                "top": {
-                  "id": 50331690,
-                  "type": 10002,
-                  "params": [],
-                  "bundleName": "com.github.zhuoyi233.zhplus",
-                  "moduleName": "entry"
+            } else {
+              local_1_1.ifElseBranchUpdateFunction(1, function () {});
+            }
+          }, If);
+          If.pop();
+          local_1_1.observeComponentCreation2(function (p0, p1) {
+            let v0;
+            v0 = If;
+            If.create();
+            if (!local_1_1.pinAnswerDate && (v0 = 0, contentUpdatedAtText(local_1_0).length > 0)) {
+              local_1_1.ifElseBranchUpdateFunction(v0, function () {
+                if (!If.canRetake("content_footer_" + local_1_0.kind + "_updated_at")) {
+                  local_1_1.observeComponentCreation2(function (p0, p1) {
+                    Text.create(contentUpdatedAtText(local_1_0));
+                    Text.id("content_footer_" + local_1_0.kind + "_updated_at");
+                    Text.fontSize({
+                      "id": 50331669,
+                      "type": 10002,
+                      "params": [],
+                      "bundleName": "com.github.zhuoyi233.zhplus",
+                      "moduleName": "entry"
+                    });
+                    Text.fontColor({
+                      "id": 50331664,
+                      "type": 10001,
+                      "params": [],
+                      "bundleName": "com.github.zhuoyi233.zhplus",
+                      "moduleName": "entry"
+                    });
+                  }, Text);
+                  Text.pop();
                 }
               });
-            }, Column);
-            local_1_1.observeComponentCreation2(function (p0, p1) {
-              let v0;
-              v0 = If;
-              If.create();
-              if (!local_1_1.pinAnswerDate && (v0 = 0, contentCreatedAtText(local_1_0).length > 0)) {
-                local_1_1.ifElseBranchUpdateFunction(v0, function () {
-                  if (!If.canRetake("content_footer_" + local_1_0.kind + "_created_at")) {
-                    local_1_1.observeComponentCreation2(function (p0, p1) {
-                      Text.create(contentCreatedAtText(local_1_0));
-                      Text.id("content_footer_" + local_1_0.kind + "_created_at");
-                      Text.fontSize({
-                        "id": 50331669,
-                        "type": 10002,
-                        "params": [],
-                        "bundleName": "com.github.zhuoyi233.zhplus",
-                        "moduleName": "entry"
-                      });
-                      Text.fontColor({
-                        "id": 50331664,
-                        "type": 10001,
-                        "params": [],
-                        "bundleName": "com.github.zhuoyi233.zhplus",
-                        "moduleName": "entry"
-                      });
-                    }, Text);
-                    Text.pop();
-                  }
-                });
-              } else {
-                local_1_1.ifElseBranchUpdateFunction(1, function () {});
-              }
-            }, If);
-            If.pop();
-            local_1_1.observeComponentCreation2(function (p0, p1) {
-              let v0;
-              v0 = If;
-              If.create();
-              if (!local_1_1.pinAnswerDate && (v0 = 0, contentUpdatedAtText(local_1_0).length > 0)) {
-                local_1_1.ifElseBranchUpdateFunction(v0, function () {
-                  if (!If.canRetake("content_footer_" + local_1_0.kind + "_updated_at")) {
-                    local_1_1.observeComponentCreation2(function (p0, p1) {
-                      Text.create(contentUpdatedAtText(local_1_0));
-                      Text.id("content_footer_" + local_1_0.kind + "_updated_at");
-                      Text.fontSize({
-                        "id": 50331669,
-                        "type": 10002,
-                        "params": [],
-                        "bundleName": "com.github.zhuoyi233.zhplus",
-                        "moduleName": "entry"
-                      });
-                      Text.fontColor({
-                        "id": 50331664,
-                        "type": 10001,
-                        "params": [],
-                        "bundleName": "com.github.zhuoyi233.zhplus",
-                        "moduleName": "entry"
-                      });
-                    }, Text);
-                    Text.pop();
-                  }
-                });
-              } else {
-                local_1_1.ifElseBranchUpdateFunction(1, function () {});
-              }
-            }, If);
-            If.pop();
-            local_1_1.observeComponentCreation2(function (p0, p1) {
-              If.create();
-              if (contentIpInfo(local_1_0).length > 0) {
-                local_1_1.ifElseBranchUpdateFunction(0, function () {
-                  if (!If.canRetake("" + local_1_0.kind + "_detail_ip")) {
-                    local_1_1.observeComponentCreation2(function (p0, p1) {
-                      Text.create("IP属地：" + contentIpInfo(local_1_0) + "");
-                      Text.id("" + local_1_0.kind + "_detail_ip");
-                      Text.fontSize({
-                        "id": 50331669,
-                        "type": 10002,
-                        "params": [],
-                        "bundleName": "com.github.zhuoyi233.zhplus",
-                        "moduleName": "entry"
-                      });
-                      Text.fontColor({
-                        "id": 50331664,
-                        "type": 10001,
-                        "params": [],
-                        "bundleName": "com.github.zhuoyi233.zhplus",
-                        "moduleName": "entry"
-                      });
-                    }, Text);
-                    Text.pop();
-                  }
-                });
-              } else {
-                local_1_1.ifElseBranchUpdateFunction(1, function () {});
-              }
-            }, If);
-            If.pop();
-            Column.pop();
-          });
-          break;
-        default:
-          local_1_1.ifElseBranchUpdateFunction(1, function () {});
+            } else {
+              local_1_1.ifElseBranchUpdateFunction(1, function () {});
+            }
+          }, If);
+          If.pop();
+          local_1_1.observeComponentCreation2(function (p0, p1) {
+            If.create();
+            if (contentIpInfo(local_1_0).length > 0) {
+              local_1_1.ifElseBranchUpdateFunction(0, function () {
+                if (!If.canRetake("" + local_1_0.kind + "_detail_ip")) {
+                  local_1_1.observeComponentCreation2(function (p0, p1) {
+                    Text.create("IP属地：" + contentIpInfo(local_1_0) + "");
+                    Text.id("" + local_1_0.kind + "_detail_ip");
+                    Text.fontSize({
+                      "id": 50331669,
+                      "type": 10002,
+                      "params": [],
+                      "bundleName": "com.github.zhuoyi233.zhplus",
+                      "moduleName": "entry"
+                    });
+                    Text.fontColor({
+                      "id": 50331664,
+                      "type": 10001,
+                      "params": [],
+                      "bundleName": "com.github.zhuoyi233.zhplus",
+                      "moduleName": "entry"
+                    });
+                  }, Text);
+                  Text.pop();
+                }
+              });
+            } else {
+              local_1_1.ifElseBranchUpdateFunction(1, function () {});
+            }
+          }, If);
+          If.pop();
+          Column.pop();
+        });
+      } else {
+        local_1_1.ifElseBranchUpdateFunction(1, function () {});
       }
     }, If);
     If.pop();
@@ -7177,22 +7168,20 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     if (this.phase !== ContentDetailPhase.READY || this.navigatorBusy) {
       return;
     }
-    if (this.answerDoubleTapAction === AnswerDoubleTapAction.NONE) {
-      return;
-    }
-    if (this.answerDoubleTapAction === AnswerDoubleTapAction.OPEN_COMMENTS) {
-      performConfirmHaptic();
-      this.openComments();
-      return;
-    }
-    if (this.answerDoubleTapAction === AnswerDoubleTapAction.TOGGLE_IMMERSIVE) {
-      this.immersiveReading = !this.immersiveReading;
-      return;
-    }
-    if (this.answerDoubleTapAction === AnswerDoubleTapAction.VOTE_UP) {
-      performConfirmHaptic();
-      this.voteUpFromBodyDoubleTap();
-      return;
+    switch (this.answerDoubleTapAction) {
+      case AnswerDoubleTapAction.NONE:
+        return;
+      case AnswerDoubleTapAction.OPEN_COMMENTS:
+        performConfirmHaptic();
+        this.openComments();
+        return;
+      case AnswerDoubleTapAction.TOGGLE_IMMERSIVE:
+        this.immersiveReading = !this.immersiveReading;
+        return;
+      case AnswerDoubleTapAction.VOTE_UP:
+        performConfirmHaptic();
+        this.voteUpFromBodyDoubleTap();
+        return;
     }
     this.doubleTapAskSheetShown = true;
     return;
@@ -7522,28 +7511,25 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     }, Flex);
     local_1_0.observeComponentCreation2(function (p0, p1) {
       If.create();
-      switch (local_1_0.kind) {
-        case ContentDetailKind.ANSWER:
-        case ContentDetailKind.ARTICLE:
-          local_1_0.ifElseBranchUpdateFunction(0, function () {
-            let v0, v1, v5;
-            v0 = local_1_0.menuQuickAction.bind(local_1_0);
-            v1 = local_1_0.isCurrentContentSpeaking() ? "停止朗读" : "朗读";
-            v5 = function () {
-              local_1_0.actionMenuShown = false;
-              local_1_0.toggleSpeechPlayback();
-            };
-            v0(v1, {
-              "id": 125831874,
-              "type": 40000,
-              "params": [],
-              "bundleName": "com.github.zhuoyi233.zhplus",
-              "moduleName": "entry"
-            }, "detail_menu_speech", local_1_0.isCurrentContentSpeaking(), v5);
-          });
-          break;
-        default:
-          local_1_0.ifElseBranchUpdateFunction(1, function () {});
+      if (local_1_0.kind === ContentDetailKind.ANSWER || local_1_0.kind === ContentDetailKind.ARTICLE) {
+        local_1_0.ifElseBranchUpdateFunction(0, function () {
+          let v0, v1, v5;
+          v0 = local_1_0.menuQuickAction.bind(local_1_0);
+          v1 = local_1_0.isCurrentContentSpeaking() ? "停止朗读" : "朗读";
+          v5 = function () {
+            local_1_0.actionMenuShown = false;
+            local_1_0.toggleSpeechPlayback();
+          };
+          v0(v1, {
+            "id": 125831874,
+            "type": 40000,
+            "params": [],
+            "bundleName": "com.github.zhuoyi233.zhplus",
+            "moduleName": "entry"
+          }, "detail_menu_speech", local_1_0.isCurrentContentSpeaking(), v5);
+        });
+      } else {
+        local_1_0.ifElseBranchUpdateFunction(1, function () {});
       }
     }, If);
     If.pop();
@@ -7573,25 +7559,22 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     });
     local_1_0.observeComponentCreation2(function (p0, p1) {
       If.create();
-      switch (local_1_0.kind) {
-        case ContentDetailKind.ANSWER:
-        case ContentDetailKind.ARTICLE:
-          local_1_0.ifElseBranchUpdateFunction(0, function () {
-            local_1_0.menuQuickAction.bind(local_1_0)("沉浸阅读", {
-              "id": 125832700,
-              "type": 40000,
-              "params": [],
-              "bundleName": "com.github.zhuoyi233.zhplus",
-              "moduleName": "entry"
-            }, "content_" + local_1_0.kind + "_detail_immersive", local_1_0.immersiveReading, function () {
-              local_1_0.actionMenuShown = false;
-              local_1_0.immersiveReading = !local_1_0.immersiveReading;
-              local_1_0.showMenuToast(local_1_0.immersiveReading ? "已进入沉浸式，按返回键即可退出" : "已退出沉浸式");
-            });
+      if (local_1_0.kind === ContentDetailKind.ANSWER || local_1_0.kind === ContentDetailKind.ARTICLE) {
+        local_1_0.ifElseBranchUpdateFunction(0, function () {
+          local_1_0.menuQuickAction.bind(local_1_0)("沉浸阅读", {
+            "id": 125832700,
+            "type": 40000,
+            "params": [],
+            "bundleName": "com.github.zhuoyi233.zhplus",
+            "moduleName": "entry"
+          }, "content_" + local_1_0.kind + "_detail_immersive", local_1_0.immersiveReading, function () {
+            local_1_0.actionMenuShown = false;
+            local_1_0.immersiveReading = !local_1_0.immersiveReading;
+            local_1_0.showMenuToast(local_1_0.immersiveReading ? "已进入沉浸式，按返回键即可退出" : "已退出沉浸式");
           });
-          break;
-        default:
-          local_1_0.ifElseBranchUpdateFunction(1, function () {});
+        });
+      } else {
+        local_1_0.ifElseBranchUpdateFunction(1, function () {});
       }
     }, If);
     If.pop();
@@ -8138,12 +8121,9 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     let v0 /*getSpeechPlaybackService*/, v1;
     v0 = getSpeechPlaybackService().getSnapshot();
     v1 = v0.status === SpeechPlaybackStatus.INITIALIZING || v0.status === SpeechPlaybackStatus.SPEAKING;
-    switch (v0.status) {
-      case SpeechPlaybackStatus.INITIALIZING:
-      case SpeechPlaybackStatus.SPEAKING:
-        v0 = v0.contentId;
-        v1 = v0 === this.activeContentId;
-        break;
+    if (v0.status === SpeechPlaybackStatus.INITIALIZING || v0.status === SpeechPlaybackStatus.SPEAKING) {
+      v0 = v0.contentId;
+      v1 = v0 === this.activeContentId;
     }
     return v1;
   }
