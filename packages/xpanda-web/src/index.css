@@ -675,22 +675,7 @@ button:disabled {
     padding-right: 24px;
 }
 
-/* 语法高亮配色(VS Code Dark+ 风格) */
-.tk-com {
-    color: #6a9955;
-}
-
-.tk-str {
-    color: #ce9178;
-}
-
-.tk-num {
-    color: #b5cea8;
-}
-
-.tk-kw {
-    color: #569cd6;
-}
+/* Syntax colors are emitted inline by Shiki (dark-plus theme), see src/highlight.ts */
 
 /* ---------- 拖拽覆盖层 / 解析中 ---------- */
 

@@ -22,7 +22,7 @@ app package and decompile it **entirely in the browser** (pure frontend, nothing
 - Copy / download a single class as `.js`, or pack every decompiled class into a `.zip`
 - The code pane shows how long the selected class took to decompile (first run, per output mode)
 - Output mode toggle: **Optimized** (full simplify pipeline) or **Raw AST** output
-- Lightweight dependency-free syntax highlighting with line numbers
+- Shiki-powered syntax highlighting (VS Code Dark+ theme) with line numbers
 - Topbar shows the `xpanda-core` / `xpanda-web` versions (read from their `package.json`) and links to the GitHub repository
 
 ## Disclaimer / 申明
@@ -54,7 +54,7 @@ npm run preview --workspace xpanda-web
 | Path | Responsibility |
 |---|---|
 | `src/decompiler.ts` | file loading (`.abc` / `.hap`), class indexing, `DecompileService` (cache + single/bulk decompile) |
-| `src/highlight.ts` | zero-dependency line-based JavaScript syntax highlighter |
+| `src/highlight.ts` | Shiki-based line-oriented JavaScript highlighter (lazy singleton, pure-JS regex engine — no WASM) |
 | `src/format.ts` | class demangle (shared rules with cli `io.ts`), clipboard, download helpers |
 | `src/components/` | `Topbar` / `BulkBar` / `Sidebar` / `CodePane` |
 | `src/App.tsx` | state wiring: drag & drop, selection, bulk progress |

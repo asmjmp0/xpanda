@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import type { ClassRef, DecompileMode } from "../decompiler";
-import { highlightLines } from "../highlight";
+import { highlightLines, plainLines } from "../highlight";
 import { copyText, downloadBlob, formatDuration } from "../format";
 
 /**
@@ -20,7 +20,23 @@ interface CodePaneProps {
 
 export function CodePane({ selected, code, elapsedMs, decompiling, mode, onRedecompile }: CodePaneProps) {
     const [copied, setCopied] = useState(false);
-    const lines = useMemo(() => (code !== undefined && code !== "" ? highlightLines(code) : []), [code]);
+    const [lines, setLines] = useState<string[]>([]);
+
+    useEffect(() => {
+        // Render escaped plain text immediately, then swap in Shiki colors once ready.
+        // `cancelled` discards stale results when switching classes quickly; on Shiki
+        // failure the plain fallback stays visible.
+        let cancelled = false;
+        if (code === undefined || code === "") {
+            setLines([]);
+            return;
+        }
+        setLines(plainLines(code));
+        highlightLines(code)
+            .then((colored) => { if (!cancelled) setLines(colored); })
+            .catch(() => { /* keep the plain fallback */ });
+        return () => { cancelled = true; };
+    }, [code]);
 
     if (selected === null) {
         return <div className="codepane-empty">Select a class on the left to decompile it.</div>;
