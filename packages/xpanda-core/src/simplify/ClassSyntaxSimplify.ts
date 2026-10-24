@@ -188,7 +188,7 @@ export class ClassSyntaxSimplify implements ISimplify {
                 gsd.clazz = expression.right;
                 return;
             }
-            if (this.checkAssignLeftRight(expression, "acc", gsd.target.name)) {
+            if (isAssignmentExpression(expression) && this.checkAssignLeftRight(expression, "acc", gsd.target.name)) {
                 continue;
             }
         }
@@ -200,7 +200,7 @@ export class ClassSyntaxSimplify implements ISimplify {
             const expression = pre.node.expression;
             if (isIdentifier(expression.left) && expression.left.name === name
                 && isFunctionExpression(expression.right)) {
-                return pre;
+                return pre as NodePath<TYPE.Statement>;
             }
         }
         return null;

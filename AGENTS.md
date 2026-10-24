@@ -4,7 +4,7 @@ This file provides working guidance for AI coding agents in this repository.
 
 ## What This Project Is
 
-**xpanda** — a HarmonyOS `.abc` (Panda / ArkCompiler bytecode) decompiler, implemented in **pure TypeScript** (Node.js ≥ 18). Supports bytecode version `24.0.0.0` (backward compatible with 13.0.1.0). The repo is an npm workspaces monorepo split into three sub-projects: `xpanda-core` (core library), `xpanda-cli` (command line), and `xpanda-mcp` (MCP Server), all under `packages/`; cli/mcp depend on the core library via the package name `xpanda-core`. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for architecture details.
+**xpanda** — a HarmonyOS `.abc` (Panda / ArkCompiler bytecode) decompiler, implemented in **pure TypeScript** (Node.js ≥ 18). Supports bytecode version `24.0.0.0` (backward compatible with 13.0.1.0). The repo is an npm workspaces monorepo split into four sub-projects: `xpanda-core` (core library), `xpanda-cli` (command line), `xpanda-mcp` (MCP Server), and `xpanda-web` (browser UI, React + Vite, pure frontend), all under `packages/`; cli/mcp/web depend on the core library via the package name `xpanda-core`. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for architecture details.
 
 ## Requirements
 
@@ -42,6 +42,7 @@ Other sub-projects:
 | `packages/xpanda-cli/test/parallel-consistency.test.ts` | serial/parallel byte-exact consistency regression (core samples) |
 | `packages/xpanda-mcp/src/` | MCP Server (`server.ts` stdio entry, `registry.ts` abc/hap session registry, `tools/` ten tools, `io.ts` disk IO), documented in [docs/MCP.md](docs/MCP.md) |
 | `packages/xpanda-mcp/scripts/test-mcp.ts` | MCP Server end-to-end test (subprocess + JSON-RPC) |
+| `packages/xpanda-web/` | browser UI (React + Vite, pure frontend): drag & drop / file picker, per-class and bulk decompile against the browser-safe core entry, zip download; see `packages/xpanda-web/README.md` |
 | `docs/ARCHITECTURE.md` | architecture doc |
 | `docs/MCP.md` | MCP Server doc |
 
@@ -72,6 +73,9 @@ NODE_OPTIONS=--max-old-space-size=4096 \
 # start the MCP Server (stdio) / MCP end-to-end test
 npm run mcp
 npm run test:mcp
+
+# start the web UI dev server (http://localhost:5173, pure frontend decompiling)
+npm run web
 ```
 
 ## Hard Rules

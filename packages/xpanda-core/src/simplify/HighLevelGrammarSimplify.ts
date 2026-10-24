@@ -1331,7 +1331,10 @@ export class HighLevelGrammarSimplify implements ISimplify {
             FunctionExpression: (path) => {
                 if (path.node.body) cleanScope(path.node.body.body);
             },
-            ArrowFunctionExpression: (path) => cleanScope([path.node.body]),
+            ArrowFunctionExpression: (path) => {
+                // 表达式体的箭头函数没有语句列表,只清理块状体(伪语句本就不会命中清理模式,行为等价)
+                if (isBlockStatementNode(path.node.body)) cleanScope(path.node.body.body);
+            },
             ClassMethod: (path) => {
                 if (path.node.body) cleanScope(path.node.body.body);
             },

@@ -6,7 +6,8 @@
   "workspaces": [
     "packages/xpanda-core",
     "packages/xpanda-cli",
-    "packages/xpanda-mcp"
+    "packages/xpanda-mcp",
+    "packages/xpanda-web"
   ],
   "scripts": {
     "gen:opcodes": "npm run gen:opcodes --workspace xpanda-core",
@@ -14,6 +15,7 @@
     "test": "npm run test --workspaces --if-present",
     "test:mcp": "npm run test:mcp --workspace xpanda-mcp",
     "mcp": "npm run mcp --workspace xpanda-mcp",
-    "xpanda": "npm run xpanda --workspace xpanda-cli"
+    "xpanda": "npm run xpanda --workspace xpanda-cli",
+    "web": "npm run dev --workspace xpanda-web"
   }
 }

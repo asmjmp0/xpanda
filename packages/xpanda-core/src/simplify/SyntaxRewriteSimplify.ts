@@ -1021,7 +1021,8 @@ export class SyntaxRewriteSimplify implements ISimplify {
                 }
             },
             ExpressionStatement: (value) => {
-                if (value.node.directive) return;
+                // 新版 @babel/types 的声明不再暴露 deprecated 的 directive 字段(运行时仍在),防止误删 "use strict"
+                if ((value.node as TYPE.ExpressionStatement & { directive?: string }).directive) return;
                 if (this.isDiscardableExpression(value.node.expression)) {
                     value.remove();
                     changed = true;
