@@ -1,193 +1,331 @@
-# xpanda 架构文档
+# xpanda Architecture
 
-> 鸿蒙 HarmonyOS `.abc`(Panda / ArkCompiler 字节码)反编译器,纯 TypeScript 实现(Node.js ≥ 18,零原生依赖)。
->
-> 输入 `.abc` 字节码,输出可读的 JavaScript 源码;内置 AST 优化器负责清理寄存器临时变量、还原函数/类/控制流和模块语法。
+> English | [简体中文](./ARCHITECTURE.zh-CN.md)
 
-## 1. 总览
+A decompiler for HarmonyOS `.abc` (Panda / ArkCompiler bytecode), implemented in pure TypeScript (Node.js ≥ 18, zero native dependencies). Bytecode version **24.0.0.0** is described by the ISA table; output is verified against samples down to **13.0.1.0**.
+
+It takes `.abc` bytecode (or a `.hap` application package) as input and produces readable JavaScript source. A built-in AST optimizer cleans up register temporaries, restores function/class/control-flow syntax, and rebuilds module (import/export) syntax.
+
+## 1. Overview
 
 ```text
-.abc 文件
+.abc file (or .hap → ZipFile → .abc entries)
    │
    ▼
-┌──────────────────────── 反编译流水线(src/)────────────────────────┐
-│ PandaFile        解析 Header / 索引 / 类 / 方法 / 字面量(Adler32) │
-│   → PandaDisAssembler   字节码 → 指令对象(opcode 表)              │
-│   → PandaIRCFG          基本块 CFG + SplitJump/SplitTryCatch       │
-│   → PandaLexical        词法环境与虚寄存器类型推断                  │
-│   → MethodHandler       指令 → Babel AST 节点                      │
-│   → StructureAnalysis   Region 归约 → if/while/try 语句树          │
-│       (失败降级 SimpleAnalysis:线性输出 + goto/label)              │
-│   → CodeGenerator       NodeFactory/NodeUtils 操作 AST             │
-│   → SimplifyExport      优化器流水线                                │
-└──────────────────────────────────────────────────────────────────┘
+┌──────────────────── Decompilation pipeline (src/) ────────────────────┐
+│ PandaFile        parse header / index regions / classes / literals    │
+│                  (Adler32 checksum, offset cache)                     │
+│   → PandaLexical       disassemble + lexical env stacks + register    │
+│                        type inference (per class, lazy per method)    │
+│   → PandaDecompiler.decompileRaw                                      │
+│       → MethodHandler      instruction → Babel AST nodes              │
+│       → StructureAnalysis  region reduction → if/while/try tree       │
+│           (falls back to SimpleAnalysis: linear output + goto/label)  │
+│   → SimplifyExport     optimizer pipeline (fixed-point iteration)     │
+│   → NodeFactory.generate  AST → JavaScript text                       │
+└───────────────────────────────────────────────────────────────────────┘
    │
    ▼
-JavaScript 源码(CLI 落盘 / stdout / 编程 API)
+JavaScript source (files on disk / stdout / library API)
 ```
 
-## 2. 目录结构与模块职责
+The main thread always performs parsing, disassembly, lexical analysis, and AST construction; only the *simplify* stage may be offloaded to worker threads (see §10).
 
-```text
-src/
-  codec/        Leb128 / MUTF8 / Adler32 编解码
-  file/         .abc 文件格式解析
-  disasm/       反汇编:opcode 表、统一指令模型、CFG、词法分析
-  decompiler/   结构化分析、语句树、指令 handle、支配树、降级方案
-  codegen/      CodeGenerator(包装 ast/ 的 NodeFactory/NodeUtils)
-  ast/          Babel AST 构建(NodeFactory/NodeUtils)
-  simplify/     优化器流水线
-  parallel/     按类并行的 worker 调度(worker 内只跑 simplify)
-  PandaDecompiler.ts  对外总入口
-  cli.ts        命令行入口
-scripts/gen-opcodes.ts   isa.yaml → src/disasm/opcodes.ts 生成器
-resources/isa.yaml       ArkCompiler 指令集描述(v24.0.0.0)
-test/                    集成测试、样本与快照
-docs/ARCHITECTURE.md     本文档
-```
+## 2. Repository Layout
 
-依赖方向:`cli / PandaDecompiler → decompiler → disasm → file → codec`;`decompiler / codegen → ast`;`SimplifyExport → simplify`;`parallel → PandaDecompiler / file`。
-
-## 3. 文件格式层 `src/file/`
-
-- `PandaFile.ts`:解析总入口。校验 magic `PANDA\0\0\0` 与 Adler32 → `desc/Header.ts` → lnp 偏移表 → 多个 `desc/IndexHeader.ts`(RegionHeader,含 class/method/field/proto 索引)→ foreign classes。
-- `clazz/PandaClass.ts`:类结构(名称、父类、accessFlags、字段、方法、import/export 模块元数据)。
-- `method/PandaMethod.ts`:方法与指令体、try/catch 描述。
-- `literal/PandaLiteralArray.ts` / `PandaLiteral.ts`:字面量数组(tag + value),供对象/类定义读取初始化数据。
-- `field/PandaField.ts`:字段与静态值;`moduleRecordIdx` 触发模块字面量标记。
-- `desc/PandaString.ts`:MUTF8 字符串(leb128 长度 + NUL 终止)。
-- `desc/PandaProto.ts` / `type/PandaType.ts`:方法 shorty 原型与字段类型。
-- 解析对象按偏移缓存在 `PandaFile.offsets`,避免重复解析。
-
-格式细节:32 位偏移读取后使用 `0x0FFFFFFF` 掩码(28 位),`-1` 表示 `0xffffffff`,Leb128 保持 32 位有符号移位语义。
-
-## 4. 反汇编层 `src/disasm/`
-
-- **`opcodes.ts`(生成文件,勿手改)**:由 `scripts/gen-opcodes.ts` 从 `resources/isa.yaml` 生成,包含指令名称/编码/格式/标志位。前缀指令编码 `(idx << 8) | prefixByte`;反汇编时首字节 `>= 251` 则读第二字节拼前缀。
-- **`PandaInstruction.ts`(统一指令模型)**:一个指令类 + `kind` 语义标签(`mov/load/call/jumpEqual/...`),`kind` 由 `KIND_MAP` 与 flags(`JUMP/CONDITIONAL`)推导。参数解析按格式枚举名(`IMM8_V8` 等)驱动,包括 IMM4/V4 半字节打包、IMM64 读 double,以及 ID 按标志位解析为 String/Method/LiteralArray 引用。
-- **跳转**:全部满足 `destinationPC = pc + 有符号 imm`;`jeq/jne/jstricteq/jnstricteq` 家族构造即抛异常,触发降级。
-- **`PandaIRCFG.ts` / `PandaIRBasicBlock.ts`**:方法级 CFG。边值 `true` 表示跳转方向,`false` 表示顺序方向;`passes.ts` 提供 `SplitJump`(跳转目标切块)与 `SplitTryCatch`(try/handler 边界切块)。
-- **`PandaLexical.ts`**:扫描 NewLexEnv/LoadLex/StoreLex/DefineFunc/DefineClass 等指令,记录词法层级并推断寄存器类型,同时惰性反汇编内嵌方法。
-
-## 5. 反编译层 `src/decompiler/`
-
-- **`MethodHandler.ts`**:指令分发(`HANDLES[kind]`)+ 函数前导(虚寄存器/acc/保留参数声明)+ 内嵌函数递归反编译。
-- **`StructureAnalysis.ts`**:基于 Region 归约的结构化分析。
-  - `RegionGraphBuilder`:CFG → Region 图,识别 for-in / for-of / async / generator 的合成 try-catch,为真实 try-catch 插入 `TryCatchHelperRegion`;
-  - 删除单跳转 Region,合并 `&&` / `||` 短路链;
-  - `reduceAcyclic` 处理 if/then/else、sequence 拼接;`reduceCyclic` 处理 while / do-while / 自环;
-  - 复杂循环通过 `DominatorGraph`、`LoopFinder`、`refineLoop`、`virtualizeIrregularExits` 还原 continue/break/goto;
-  - 不可归约图通过 Tail 复制修复;
-  - `simplifyConditionalSequence` 生成的逻辑条件 Region 必须带 `logicalRegion`;`reduceSequence` 合并这类 Region 时要继续传播该标志,否则后续 `coalesceTailRegion` 只能用 `acc` 生成 test,丢掉 `A || B` 的计算;
-  - `coalesceTailRegion` 判断是否取反时必须看 `edgeValueOrThrow()` 的 true/false 边,不能依赖 `ValueGraph.successors()` 的返回顺序;
-  - `Region.copy()` 用于复制共享 Tail,必须保留 `conditionalExp` / `logicalRegion` / `exceptionLandingPad` / `tryCatchHelperRegion` 标志;
-  - 超过 500 基本块或未处理的控制流会降级到 `SimpleAnalysis`。
-- **`statements.ts`**:语句树(`If/While/DoWhile/Break/Continue/Goto/Label/TryCatch/LogicalExpression`),再回填为 Babel AST。
-- **`SimpleAnalysis.ts`**:结构化失败时的线性降级输出,使用 `decompiler_goto` / label 模拟跳转。
-- **`ValueGraph.ts` / `DominatorGraph.ts`**:稳定的有向图与支配树数据结构,供 Region 归约和循环分析使用。
-
-## 6. 代码生成与优化 `src/codegen` + `src/ast` + `src/simplify`
-
-- `codegen/CodeGenerator.ts`:轻包装,把 `NodeFactory`(Babel AST 构造)、`NodeUtils`(语句插入、序列表达式、async/generator 标记、goto 修复)暴露给反编译层。
-- `ast/NodeFactory.ts`:Program/函数/类/表达式等 AST 节点构造,以及 `parse` / `generate` 工具。
-- `ast/NodeUtils.ts`:AST 插入、序列表达式、goto/label、返回值标记等辅助操作。
-
-### 优化器流水线
-
-`src/simplify/SimplifyExport.ts` 采用**定点迭代**:
-
-```text
-NormalizeDeclarations
-  → CallResultSimplify
-  → [ReservedIdentifierSimplifier → TempVariableSimplify → AccCallSimplify → EnumSimplify → ConditionSimplify → SyntaxRewriteSimplify → ClassSyntaxSimplify] × N
-  → HighLevelGrammarSimplify
-  → TempVariableSimplify.foldReturnAssignments(returnsOnly)
-  → TempVariableSimplify.foldConditionAssignments
-  → normalizeConditionTests
-  → SyntaxRewriteSimplify.hoistTestPrefixes
-  → foldCompoundAssignments
-```
-
-每个 pass 返回 `boolean` 表示是否修改 AST;稳定后立即停止,最多 5 轮。
-
-流水线尾部有四步专门处理“条件/返回值形态”(最后再做 `foldCompoundAssignments`):
-
-- `foldReturnAssignments`(returnsOnly):`HighLevelGrammarSimplify` 的三目合成(`if (C) { X = A } else { X = B }` → `X = C ? A : B`)发生在定点迭代之后,轮内的返回值折叠已经错过;这里补一轮 `X = E; return X` 折叠,并清理随之失去引用的声明;
-- `foldConditionAssignments`:定点迭代结束后,`HighLevelGrammarSimplify` 可能把 `if (!X) { X = true } else { X = false }` 合成为 `X = !X`,与已有的 `X = !X`(`callruntime.isfalse`)形成新的取反链;这一步只做 `X = E; (X = !X)*; if (X/!X)` 折叠,不重新跑复制传播;
-- `normalizeConditionTests`:再归一化 if/三元 test(`!!a`、`!binary`、`!逻辑表达式` 等);
-- `hoistTestPrefixes`:把 `if (A || (v1 = 0, v2 = 2, B))` 里“只给临时变量赋常量字面量”的前缀提到 if 前,要求短路分支直接 return/throw、不读取这些临时变量,且不在带 `finally` 的 try 内。
-
-| 文件 | 职责 |
+| Path | Responsibility |
 |---|---|
-| `AstUtils.ts` | 纯表达式/可复制表达式判定、节点大小、无副作用遍历 |
-| `NormalizeDeclarations.ts` | 归一化重复 `let` / import 声明,避免 Babel scope 冲突 |
-| `ReservedIdentifierSimplifier.ts` | 还原 `panda_jmp0_reserved_*` 保留标识符 |
-| `EnumSimplify.ts` | 还原 ArkTS enum 的惰性初始化字节码模式为对象字面量(`v0 = function...; v1 = E; if (!E) {...}; v0(v1)` → `E = { ... }`) |
-| `TempVariableSimplify.ts` | 临时变量复制传播、死存储消除、序列表达式清理、返回值折叠、函数提升、catch 参数隔离;支持条件取反链按奇偶性折叠、test 序列内死赋值/自取反折叠,并限制非纯表达式只在真正最后一次读取时搬移;`X = E; if (X/!X) { X = B; }` 物化链按值级 last-use 折叠为 `X = E &&/|| B`(连续 if 链经定点迭代合并成一条逻辑链),自取反链头 `X = !X` 留给尾部 `foldConditionAssignments` 按奇偶性处理 |
-| `AccCallSimplify.ts` | 还原 `recv = acc; acc = acc.method; acc.call(recv, ...)` 为 `recv.method(...)`;调用外层的前缀一元运算(如 `v0 = !acc.call(...)`)会剥出后再包回 |
-| `ConditionSimplify.ts` | 提升 if test 中无条件求值的序列表达式、清理条件临时赋值、折叠语句级自取反链、合并 null/undefined 判断 |
-| `SyntaxRewriteSimplify.ts` | if 条件化简、if/else 归一化、`.call` 还原、函数表达式/数组字面量/内置函数优化;末尾提供 `hoistTestPrefixes` |
-| `ClassSyntaxSimplify.ts` | getter/setter、prototype 方法、class 表达式还原 |
-| `HighLevelGrammarSimplify.ts` | if → switch / 三目、while → for / for-of、optional chaining 等 |
-| `CallResultSimplify.ts` | 处理 `callIns` 调用结果被下一条 `acc` 赋值覆盖的情况 |
-| `UnusedCleanupSimplify.ts` | 安全兜底清理(未读取声明/无效果表达式),默认不在主流水线中重复执行 |
+| `src/codec/` | Leb128 / MUTF8 / Adler32 codecs |
+| `src/file/` | `.abc` file format parsing |
+| `src/hap/` | HAP application package adapter: read-only ZIP (`ZipFile.ts`) + `.abc` entries / `module.json` / `resources.index` (`HapFile.ts`) |
+| `src/res/` | `resources.index` parsing (Restool & RestoolV2 formats) into queryable resource items |
+| `src/disasm/` | Disassembly: generated opcode table, unified instruction model, CFG, lexical analysis |
+| `src/decompiler/` | Structure analysis (region reduction), statement tree, instruction handlers, dominator graph, fallback analysis, try/finally restoration |
+| `src/codegen/` | `CodeGenerator` — thin wrapper around `src/ast/` |
+| `src/ast/` | Babel AST construction & text generation (`NodeFactory` / `NodeUtils` / `FormatCode`) |
+| `src/simplify/` | Optimizer pipeline |
+| `src/parallel/` | Per-class parallel simplify worker pool |
+| `src/mcp/` | MCP server exposing the decompiler to AI agents (see [MCP.md](./MCP.md)) |
+| `src/PandaDecompiler.ts` | Public entry point (per-class orchestration) |
+| `src/cli.ts` | CLI entry: `decompile` and `unpack-index` commands |
+| `scripts/gen-opcodes.ts` | Generates `src/disasm/opcodes.ts` from `resources/isa.yaml` |
+| `resources/isa.yaml` | ArkCompiler instruction set description (v24.0.0.0) |
+| `test/` | Integration tests, samples (`*.abc`, `*.hap`), snapshots (`test/expected/*.js`) |
 
-关键约束:
+Dependency direction: `cli / PandaDecompiler → decompiler → disasm → file → codec`; `decompiler / codegen → ast`; `SimplifyExport → simplify`; `parallel → PandaDecompiler / file`; `mcp / hap → res`.
 
-- 复制传播限制表达式大小(默认 24 节点)并设置每函数克隆预算,避免链式表达式指数膨胀;
-- 复制传播、死存储和返回值折叠都经过 liveness 与作用域检查;
-- 非纯表达式(`call` / `new` / 函数/类)只在真正最后一次读取时搬移;`if` 的 test 与分支体都读同一临时变量时必须保留原赋值,否则会把调用复制成两次;
-- test 序列折叠要求被赋值的临时变量在 test 之后已死、test 外无其它读取、分支/序列前缀不会先读后写;循环 test 暂不处理;
-- 函数/类表达式只在安全位置搬移,避免重复执行带副作用的调用;
-- 不在循环内频繁 `scope.crawl()`,大 AST 上保持线性分析。
+## 3. File Format Layer — `src/file/`
 
-## 7. 入口与使用
+### 3.1 Parse flow (`PandaFile.ts`)
 
-- **CLI `src/cli.ts`**:
+1. **Header** (`desc/Header.ts`): magic `PANDA\0\0\0` (8 bytes), 60-byte header with version, file size, foreign class offset/size, class index offset, lnp info, literal arrays, and index section offset.
+2. **Checksum**: Adler32 over bytes `[12, len)`, masked with `0x0fffffff`, compared against `header.checksum`. Mismatch throws `PandaParseException` ("may be encrypted").
+3. **lnp offset table**: `numLnps` × 4-byte entries wrapped in `Offset` objects.
+4. **Index regions** (`desc/IndexHeader.ts`, "RegionHeader"): `numIndexes` × 40-byte headers, each holding start/end offsets and class/method/field/proto index (size + offset). From bytecode **12.0.1.0** the field/proto indexes are invalidated with `0xffffffff` (both become `null`). Also hosts the module-literal set used to mark module-record literal arrays.
+5. **Foreign classes**: sequential walk of the foreign class area; each `PandaClass` records the bytes consumed so it can advance.
+
+All parse products are cached in `PandaFile.offsets` (a `Map<number, unknown>`) via static `create(pandaFile, offset, …)` factories — the same offset always returns the same object instance.
+
+**Offset quirks**: 32-bit values are read as little-endian int32; `-1` means `0xffffffff`, everything else is masked to 28 bits (`& 0x0fffffff`). Leb128 decoding keeps Java `int` semantics (32-bit signed shifts, `count < 5` cap). Note: the resource layer deliberately does **not** reuse the 28-bit mask (resource IDs can reach `0x0300002E`).
+
+### 3.2 Entities
+
+- `clazz/PandaClass.ts`: name, super class, access flags, fields, methods, and module metadata. Resolution is lazy (`resolve()` guarded by a flag): interface/source-lang tags, fields, methods. Annotation data structures **throw** (not needed). A field named `moduleRecordIdx` triggers `PandaClassModuleData` creation.
+  - Module metadata: module paths (`@bundle:` / `@module:` / `@package:` / `@native:` / `@ohos:` / `@hms:` / `@app:` / `@normalized:` prefixes), imports (NAMESPACE / DEFAULT / SPECIFIER / SAME_SPECIFIER), exports (LOCAL / INDIRECT / ALL). The synthetic local name `"*default*"` is renamed to `panda_jmp0_reserved_export_default`.
+- `method/PandaMethod.ts`: tag walk (CODE / SOURCE_LANG / DEBUG_INFO / ANNOTATION), external methods stop after the access flag. `disAssemble()` lazily requires `PandaDisAssembler` to break a circular import. `PandaMethodCode` holds numVregs / numArgs / codeSize / try blocks + raw instruction bytes.
+- `literal/PandaLiteralArray.ts` / `PandaLiteral.ts`: literal arrays (`u32 count` + tag/value pairs). The real pair count is `⌊count / 2⌋`; each tag defines its value width (4B for STRING/METHOD/INTEGER…, 8B for DOUBLE, 1B for BOOL/ACCESSOR/NULLVALUE…, 2B for METHODAFFILIATE). Any `ARRAY_*` tag terminates the loop early. Unknown tags throw.
+- `desc/PandaString.ts`: MUTF-8 strings — leb128 `utf16Size` where bit 0 doubles as an ASCII flag (`isAscii = (utf16Size & 1) === 1`, byte size = `utf16Size >> 1`), NUL-terminated content.
+- `field/PandaField.ts`, `desc/PandaProto.ts`, `type/PandaType.ts`: field/static-value and shorty/proto resolution.
+
+## 4. Container & Resource Layer — `src/hap/` + `src/res/`
+
+- `hap/ZipFile.ts`: minimal **read-only** ZIP reader. Locates the EOCD from the tail, walks the central directory, rejects encrypted entries, supports **store** and **deflate** (via `zlib.inflateRawSync`). No ZIP64, no per-entry cache. `ZipFile.isZip(data)` sniffs the PK signatures — the CLI routes any ZIP container to the HAP flow.
+- `hap/HapFile.ts`: wraps a `ZipFile`; exposes `getAbcEntries()` (non-directory `*.abc` entries in archive order), `getModuleJson()` (parsed or `null`), `getResourcesIndexData()` (raw bytes), and `getResourceEntries()` (entries under `resources/`).
+- `res/ResourceIndexFile.ts`: parses `resources.index` in **both** formats. The header starts with a 128-byte version string; `"Restool …"` selects the legacy layout, anything else (e.g. `"RestoolV2 …"`) the new three-segment layout (KEYS / IDSS / DATA + string pool). Produces `items: ResourceItem[]` — one item per (resource × qualifier config).
+- `res/ResourceItem.ts`: name, numeric id, resource type, qualifier key params, raw data, `limitKey` (qualifier directory name such as `base` / `en_US` / `dark`), `value` (string, or `string[]` for plural/string-array), and `typeName`.
+- `res/ResourceUtils.ts` / `res/ResourceEnums.ts`: little-endian reads (u32 unmasked — see §3.1), NUL-trimmed UTF-8 helpers, qualifier value formatting, and the resource key/type enums.
+
+## 5. Codec Layer — `src/codec/`
+
+- `Leb128.ts`: stateful decoder with Java `int` semantics — 32-bit signed shifts, 5-byte cap, `-1` results exposed as unsigned `0xffffffff`; also static signed/unsigned writers.
+- `MUTF8.ts`: decoder stops at NUL; validates 2-/3-byte forms; encoder covers the BMP subset actually produced by ArkTS.
+- `Adler32.ts`: textbook mod-65521 implementation (`(s2 << 16) | s1`).
+
+## 6. Disassembly Layer — `src/disasm/`
+
+### 6.1 Opcode table (`opcodes.ts`) — generated, do not edit
+
+Generated by `scripts/gen-opcodes.ts` from `resources/isa.yaml` (`npm run gen:opcodes`). Contains `BYTECODE_VERSION`, per-opcode flags (`OPCODE_FLAG`, e.g. JUMP / CONDITIONAL / TYPE_ID / ACC_READ / ACC_WRITE), format parameter sizes, and lookup maps (`OPCODES`, `OPCODE_BY_CODE`). The last instruction code is **251**; prefix instructions are encoded as `(idx << 8) | prefixByte`, so a first byte `>= 251` starts a 2-byte opcode.
+
+### 6.2 Unified instruction model (`PandaInstruction.ts`)
+
+One instruction class instead of ~200 per-opcode subclasses. Every instruction carries:
+
+- `kind` — a semantic label (~50 kinds: `mov`, `load`, `call`, `jumpEqual`, …) derived from `KIND_MAP` (opcode name → kind) and opcode flags (`classifyKind`: JUMP-flagged opcodes map to `jumpDirect` / `jumpEqual` (jeqz) / `jumpNotEqual` (jnez), everything else becomes `jumpPlain`; unmapped names fall back to `unknown`).
+- Parameters parsed by the format name (`IMM8_V8`, …): IMM4/V4 nibble packing, IMM64 read as float64, and ID parameters resolved by opcode flags into String / Method / LiteralArray / Type / Field references.
+- Semantic fields per kind — e.g. calls expose `thisObj` / `callParams`; `defineClassWithBuffer` parses its literal array into method descriptions (including the sendable-class variant).
+- Jump destination: `destinationPC = pc + signed imm` (the last immediate parameter). `ldai` and jump offsets are signed; all other immediates are unsigned.
+- Register parameters: an index `>= numVregs` is a parameter (`p0..pN-3`); the first three slots are `func` / `new.target` / `this` and are printed as reserved names `panda_jmp0_reserved_param_pN`.
+
+**Degradation trigger**: the `jeq` / `jne` / `jstricteq` / `jnstricteq` family (unconditional-jump encodings without a `z` suffix) throw at construction. Methods containing them are skipped during lexical analysis and later emitted as placeholder bodies.
+
+### 6.3 CFG construction (`PandaDisAssembler.ts`, `ir.ts`)
+
+A single pass over the instruction bytes produces terminator-delimited `PandaIRBasicBlock`s (entry block named `entry`, others `label_<pc>`), which feed a `PandaIRCFG` (a `ValueGraph` of blocks). Two normalizing passes then run: `runSplitJumpPass` (split blocks at jump targets that fall mid-block) and `runSplitTryCatchPass` (split at try start/end and handler boundaries, then tag covered blocks with their catch entries). Finally the graph is rebuilt with canonical edge values.
+
+**Edge semantics**: `true` = jump-taken direction, `false` = sequential/fallthrough. All structural polarity decisions must use `edgeValueOrThrow` — `successors()` returns insertion order, not edge polarity (see §7.3).
+
+### 6.4 Lexical analysis (`PandaLexical.ts`)
+
+Per-class analysis seeded from `func_main_0`, recursing into nested functions (definefunc / defineclasswithbuffer / createobject-with-…) with an inherited lexical-environment stack:
+
+- `computeEnvStacks` propagates the environment stack **along CFG edges from the entry block** (a linear pc-order scan mis-computes loops containing `popLexEnv`). Exception handlers are seeded with the stack at the try start; seeding and propagation alternate until fixpoint (handlers may be nested inside handler subgraphs).
+- Environments are named `local_<depth>` / `sendable_<depth>`; multiple environments at the same depth get `_2` / `_3` suffixes so identical names cannot shadow each other (consecutive classes each get their own lexenv).
+- `throw.undefinedifholewithname` (assert) instructions drive register **type inference** (`typeMap`).
+- If disassembly of one method fails, that method is skipped and later decompiled as a placeholder body.
+
+## 7. Decompilation Layer — `src/decompiler/`
+
+### 7.1 Instruction handlers (`MethodHandler.ts`)
+
+`HANDLES: Record<InstructionKind, Handle>` dispatches one kind at a time; a handle returning `true` stops statement absorption (used by `asyncfunctionenter` / `getresumemode`). An unregistered kind throws `PandaDecompileException` — one of the three designed degradation paths.
+
+Responsibilities:
+
+- `insertFunctionPreamble` declares `v0..vN`, `acc`, and the reserved parameters (`panda_jmp0_reserved_param_p2 = this`).
+- Try/finally markers: `handleBlock` consults the `finallyRoles` map (built by `TryFinally`) and inserts marker expressions/statements at start/cleanup/guard/suppress positions — including inside condition `SequenceExpression`s (later hoisted by `applyFinallyPlans`).
+- Nested function literals are decompiled recursively.
+- `reset()` zeroes the generated-name counter; `PandaDecompiler.decompileRaw()` calls it once per class so names (`panda_jmp0_reserved_class_N`, anonymous function names) are independent of processing order — the precondition for byte-identical parallel output.
+
+### 7.2 Statement tree (`statements.ts`)
+
+Statements produced by reduction before being lowered to Babel AST: `LinearPandaStatement` (→ handler output), `IfPandaStatement` (if the test region carries `tryCatchHelperRegion` it is re-interpreted as a `TryCatchPandaStatement`), `WhileStatement` (always emitted as `while (true)` with a head `if (test) break`), `DoWhileStatement`, `BreakStatement` / `ContinueStatement`, `GotoStatement` (`tryFixGoto` converts simple cases into labeled `while (true)` loops, otherwise `xpanda_goto(name)`), `LabelStatement`, `And/OrLogicalExpressionStatement` (render `A || B` as `(A-eval, cond) || (B-eval, cond)` sequences while *not* blindly appending `acc` to nested logical operands), and `TryCatchPandaStatement` (catch parameter is `catchAcc`, never `acc`; the handler starts with `acc = catchAcc` to move the exception back into the accumulator).
+
+### 7.3 Structure analysis (`StructureAnalysis.ts`) — region reduction
+
+Construction: `RegionGraphBuilder` converts the CFG into a Region graph (`RegionType = Linear | Condition | Tail`). Synthetic exception handlers that ArkTS emits for language features — **for-in, for-of, async functions, generators** — are excluded from the region graph; genuine try blocks get a `TryCatchHelperRegion` spliced in front of the try entry (false edge → try body, true edge → handler; the handler region receives `exceptionLandingPad`). Try entries with `codeSize === 0` (empty catch) are skipped. Dead code (in-degree-0 blocks) is pruned iteratively.
+
+Reduction loop over the region graph:
+
+1. `> 500` basic blocks → `PandaDecompileException("too many blocks!")` → falls back to `SimpleAnalysis`.
+2. `reduceAcyclic`: Condition regions → `reduceIfRegion` (if-only / if-else converging / both-tails / **`reduceTryCatchWithDeadBranch`** for try/catch where one branch is a dead out-degree-0 tail); Linear regions → `reduceSequence` (statement concatenation, merging `&&` / `||` short-circuit chains via `simplifyConditionalSequence`, which sets the `logicalRegion` flag — that flag **must be propagated** when such regions merge, otherwise later stages can only generate `acc`-based tests and lose the `A || B` computation).
+3. `reduceCyclic`: self-loops and single-predecessor back edges → while / do-while; anything else is registered as an unresolved cycle.
+4. When progress stalls: refine one unresolved cycle (`LoopFinder` / `refineLoop`), else `coalesceTailRegion` (absorb tail regions), else `fixIrreducibleByTailRegion` — **tail duplication** to make irreducible graphs reducible. If still stuck after `> 3000` iterations → `"can not reduce the graph"` → `SimpleAnalysis`.
+5. `virtualizeIrregularExits`: turns lexical exits out of loops into `continue` / `break` / labeled `goto`. Condition exits emit **exactly one** statement (`if (cond) break`); linear exits an unconditional one. Exits whose target is a dead out-degree-0 Tail (`return` / `throw` only) are "inlined" by copying the tail's statements into the branch via `Region.copy()`.
+
+Critical invariants:
+
+- **Conditional polarity comes from edge values, not successor order**: `conditionalExp` describes the fallthrough (false-edge) condition (`jnez` → false edge is `!acc`, `jeqz` → false edge is `acc`). `coalesceTailRegion` and `virtualizeIrregularExits` must use `edgeValueOrThrow`; folding a tail on the *true* edge requires `expInvert()` — and for `logicalRegion`s (whose expression is already the fallthrough condition) an inverted-branch `IfPandaStatement` instead.
+- `Region.copy()` (tail duplication, inlined exits) must preserve `conditionalExp` / `logicalRegion` / `exceptionLandingPad` / `tryCatchHelperRegion`.
+- After `reduceIfRegion` consumes a try/catch pair, the `tryCatchHelperRegion` flag must be cleared; otherwise the next condition region is misinterpreted as try/catch and the success path ends up inside `catch`.
+
+### 7.4 Fallback analysis (`SimpleAnalysis.ts`)
+
+Linear output: `label_<pc>: { … }` blocks, `decompiler_goto(label_N)` for direct jumps, `if (acc / !acc) decompiler_goto(…)` for conditional jumps, and `decompiler_exception_handled_by` / `acc = decompiler_exception_detail` markers in catch blocks. Ends with `hoistLexicalDeclarations` lifting lexical `let` declarations to the function top. Degraded output is recognizable by the `decompiler_goto` marker.
+
+### 7.5 try/finally restoration (`TryFinally.ts`)
+
+ArkTS 13 compiles `finally` into a state machine (hole sentinel, cleanup block, rethrow guard). `buildFinallyPlans` identifies it **structurally** — not by block sizes: the try-end block writes the hole sentinel and jumps to cleanup; the handler starts with `sta` and does not throw immediately; a later hole-compare block with a throw successor is the guard. PC ordering is strictly validated. Roles (start / cleanup / guard / suppress) become `__xpanda_finally_marker__` strings inserted by `MethodHandler`; `applyFinallyPlans` rewrites three layouts (same statement list / nested list tails / try+real-catch shape) into `try { … } finally { … }`. Any unresolved plan leaves a `/* xpanda: try/finally not restored */` comment; markers are always stripped.
+
+### 7.6 Graph utilities
+
+- `ValueGraph.ts`: insertion-ordered directed graph with boolean edge values; `edgeValueOrThrow`, DFS post-order.
+- `DominatorGraph.ts`: iterative dominator computation (Cooper-Harvey-Kennedy style) with a 100000-iteration safety timeout; `dominatesStrictly`; `LoopFinder` for natural loops.
+
+## 8. AST Construction & Code Generation — `src/ast/` + `src/codegen/`
+
+- `codegen/CodeGenerator.ts`: thin wrapper exposing `NodeFactory` / `NodeUtils` (replaces the Java version's GraalVM JS bridge).
+- `ast/NodeFactory.ts`: Babel node constructors. `parse` uses `sourceType: "module"` with `allowUndeclaredExports`; `generate` runs jsesc-minimal + `FormatCode`. `identifierNode(name, type?)` attaches the type as a trailing block comment (type hints survive as comments). `tryStatementNode` names the catch parameter **`catchAcc`** so it never shadows the accumulator. Async / generator flags ride on `body.extra`.
+- `ast/NodeUtils.ts`: statement insertion (unwrapped into `SequenceExpression` where legal), sequence-expression helpers, async/generator marking, `setReturnTypeCall` (the `callIns` marker consumed by `CallResultSimplify`), `covert2SingleBlock` (popLexEnv folding at the `panda_jmp0_reserved_lex_begin` sentinel), `tryFixGoto`.
+- `ast/FormatCode.ts`: output-only line wrapping. Lines longer than **120 chars** are split at top-level (depth 0) `||` / `&&` / `??`, with the new line starting on the operator (ASI-safe). Lines containing a top-level ternary are never split; template strings, quotes, comments, and regex literals are tracked so their contents stay intact.
+
+## 9. Optimizer Pipeline — `src/simplify/`
+
+`SimplifyExport.simplify()` runs a fixed-point core followed by a fixed tail sequence. Every pass returns `boolean` ("did I change the AST?") and the fixed-point loop stops as soon as a full round changes nothing (max **5** rounds).
+
+```text
+normalizeDeclarations
+  → CallResultSimplify
+  → [ ReservedIdentifierSimplifier → TempVariableSimplify → AccCallSimplify
+      → EnumSimplify → ConditionSimplify → SyntaxRewriteSimplify
+      → ClassSyntaxSimplify → ObjectLiteralSimplify ] × ≤5 (fixed point)
+  → HighLevelGrammarSimplify
+  → TempVariableSimplify.foldShortCircuitAssignments
+  → NullishCoalescingSimplify
+  → AccCallSimplify.simplifySequences
+  → ConditionSimplify.foldMaterializedTestArtifacts
+  → TempVariableSimplify.foldReturnAssignments
+  → TempVariableSimplify.foldConditionAssignments
+  → SyntaxRewriteSimplify.foldSequencedTestPrefixes
+  → SyntaxRewriteSimplify.normalizeConditionTests
+  → TempVariableSimplify.foldConditionAssignments   (2nd pass)
+  → SyntaxRewriteSimplify.normalizeConditionTests   (2nd pass)
+  → SyntaxRewriteSimplify.hoistTestPrefixes
+  → SyntaxRewriteSimplify.foldCompoundAssignments
+  → HighLevelGrammarSimplify.simplifyTail
+  → SyntaxRewriteSimplify.foldConstantConditions
+  → SyntaxRewriteSimplify.foldSentinelGuards
+  → SyntaxRewriteSimplify.removeUnreachableStatements
+  → SyntaxRewriteSimplify.removeOrphanJumps
+  → TempVariableSimplify.removeUnusedLexicalDeclarations
+```
+
+Why the tail is ordered this way:
+
+- `HighLevelGrammarSimplify` synthesizes high-level grammar (ternaries, `switch`, `??`) **after** the fixed point, so the folding passes that consume those shapes must run afterwards (short-circuit assignment folding, nullish restoration, return/condition folding).
+- `AccCallSimplify.simplifySequences` restores method-load chains that only occur inside condition `SequenceExpression`s; it deliberately runs after copy propagation so intermediate forms are not mis-read by alias propagation.
+- `foldConditionAssignments` / `normalizeConditionTests` run **twice**: each exposes new shapes for the other (`normalizeConditionTests` folds boolean ternaries into `X = Y && Z`, which exposes new alias chains).
+- `foldCompoundAssignments` runs late so `+=` rewrites cannot disturb liveness / copy propagation.
+- `simplifyTail` runs after *all* condition folding: guard ternaries (`x ? x.k : undefined` → `x?.k`), dead accumulator hub copies (`acc = E; v = acc`), and the `while (true)` + `break` form of for-of (including normalization of hoisted `it.next` method loads) only materialize at that point. It finishes with `removeUnusedTempDeclarations` for leftover `vN` / `acc` declarations.
+- The final cleanup steps remove constant-condition branches, leftover try/finally & for-of close sentinels, unreachable statements, orphaned `continue`/`break`, and unused lexical block slots.
+
+### Pass reference
+
+| File | Responsibility |
+|---|---|
+| `ISimplify.ts` | Pass interface: `simplify(node): boolean` |
+| `AstUtils.ts` | No-traverse linear AST utilities (temp-name recognition, purity / copyability predicates, node size, read/write collection). Avoids `scope.crawl()` on large ASTs. |
+| `NormalizeDeclarations.ts` | Dedupes duplicate `let` declarations and import/declaration clashes before any Babel traverse (prevents "Duplicate declaration" crashes). |
+| `ReservedIdentifierSimplifier.ts` | Restores `panda_jmp0_reserved_*` names (`param_p0/p1/p2` → `this` / function-or-class name / `new.target`, export defaults, lex sentinels). Entry self-reference statements are only deleted when the statement *is* the assignment. |
+| `TempVariableSimplify.ts` | The heavy pass: copy propagation + dead-store elimination with per-scope liveness. Budgets: propagated expression ≤ **24** nodes, clone budget **120000** per run. Handles `finally` live-out reads, moves non-pure expressions only at their true last use, folds loop-test temporaries (`foldLoopTestTemps`, `foldDoWhileTestAssignments`), self-negation chains by parity, and exposes the static entry points used by the pipeline tail (`foldShortCircuitAssignments`, `foldReturnAssignments`, `foldConditionAssignments`, `removeUnusedLexicalDeclarations`). |
+| `AccCallSimplify.ts` | Restores `recv = acc; acc = acc.m; acc.call(recv, …)` → `recv.m(...)`; `simplifySequences` does the same inside condition sequences. |
+| `EnumSimplify.ts` | Restores ArkTS enum lazy-initialization bytecode patterns into object literals (plus the reverse-mapping object). |
+| `ConditionSimplify.ts` | Hoists unconditionally-evaluated sequence prefixes out of if tests, cleans materialized condition temporaries (`foldMaterializedTestArtifacts`), folds statement-level self-negation chains, merges null/undefined checks. Loops are deliberately excluded. |
+| `SyntaxRewriteSimplify.ts` | Test simplification, if/else normalization, `.call` restoration, function-expression hoisting; plus the static tail helpers (`foldSequencedTestPrefixes`, `normalizeConditionTests`, `hoistTestPrefixes`, `foldCompoundAssignments`, `foldConstantConditions`, `foldSentinelGuards`, `removeUnreachableStatements`, `removeOrphanJumps`). |
+| `ClassSyntaxSimplify.ts` | Restores getter/setter and prototype method syntax from `__defineGetter__`-style assignments; single-expression class restoration. |
+| `ObjectLiteralSimplify.ts` | Merges `createobjectwithbuffer` template objects with adjacent literal-field assignments (`obj = {k: null}; obj.k = E` → `{k: E}`); requires literal initial values, matching field order, and no closure capture. Inlines `obj = {…}; return obj` when safe. |
+| `HighLevelGrammarSimplify.ts` | Main traversal: while → for / for-in / for-of, early-return do-while → for-of, if → ternary (bottom-up; return chains keep `else if`), if → switch (nullish synthesis), optional-chain restoration; `simplifyTail` (see above). |
+| `NullishCoalescingSimplify.ts` | Restores switch-lowered `??` (`v = obj.k; switch (obj.k) { case null: case undefined: v = d }` → `v = obj.k ?? d`); only for pure member-expression discriminators. |
+| `CallResultSimplify.ts` | Removes `callIns`-marked call results that are immediately overwritten by the next `acc` write. |
+| `UnusedCleanupSimplify.ts` | Read-set-based dead-code cleanup; **not registered** in the current pipeline (kept as a safety net). |
+
+### Key constraints
+
+- Copy propagation is size- and clone-budget-limited to avoid exponential blowup (`v2 = v1 + v1; v3 = v2 + v2; …`).
+- Dead stores, sequence cleanup, and return folding all go through liveness and scope checks. **Capture detection must consider both `binding.referencePaths` and `binding.constantViolations`** — write-only closure captures are invisible to read-only checks.
+- Name-level liveness cannot distinguish old/new versions of a temporary: when `X = RHS` and RHS reads `X` exactly once, that read is the *last use of the old value*; non-copyable right-hand sides may only move into a call-receiver position.
+- Non-pure expressions (`call` / `new` / functions / classes) move only at their true last use — except the `definitelyWritesBeforeRead` case where both branches overwrite the variable before reading it, allowing the assignment to sink into the if test.
+- The accumulator `acc` is not a source variable: `acc = !acc` can come from `callruntime.isfalse` *or* from condition materialization; folds handle negation chains by parity, not by deleting one layer.
+- Statements must not be deleted based on stale reference bookkeeping: cloned expressions and deleted-statement bindings require a recount over the current AST (skipping nested functions; closure captures are protected explicitly).
+
+## 10. Parallel Simplification — `src/parallel/`
+
+- Entry: `decompileClassesParallel(decompiler, classes, { jobs, onClassDone, onWarning })`; the CLI enables it with `-j N` (`-j 0` = auto: `max(1, min(4, cpus - 1))`, see `resolveJobs`).
+- **Split**: the main thread parses, disassembles, runs lexical analysis, and builds the AST (`decompileClassAst`); workers receive self-contained AST JSON and only run `SimplifyExport.simplify` + `NodeFactory.generate`. On a large sample this split is roughly 1% vs 99% of total time.
+- **Scheduling**: eligible classes (those with `func_main_0`) are sorted by estimated weight — total method `codeSize` — descending, then dispatched to idle workers (large-first reduces tail latency). Results are written back by class index, so output order is independent of completion order.
+- **Determinism**: `PandaDecompiler.decompileRaw()` resets the generated-name counter per class, therefore single-class output is a pure function of that class — serial and parallel outputs are byte-identical (regression-tested).
+- **Failure handling**: a worker error demotes that class to in-process simplify; **two consecutive worker failures** disable workers for the remaining classes. Worker stdout/stderr are piped so `--quiet` stays quiet.
+- **Memory**: workers default to a 3 GB old-generation cap (`XPANDA_WORKER_HEAP_MB`); a single very large class can peak around 1.4 GB during simplify — more than 4 workers is not recommended.
+
+## 11. Entry Points
+
+### 11.1 `PandaDecompiler.ts`
+
+| Method | Behavior |
+|---|---|
+| `decompile(pandaFile)` | All classes, simplified; returns per-class sections wrapped in banner comments. |
+| `decompileRawAll(pandaFile)` | All classes, no simplify. |
+| `decompileClass(cls)` | One class, raw + in-process simplify. |
+| `decompileClassRaw(cls)` | One class, AST generated directly (no simplify). |
+| `decompileClassAst(cls)` | One class as AST JSON (the split point that lets simplify run in a worker); `""` when there is no `func_main_0` or disassembly failed. |
+| `simplifyInProcess(astJson)` | `JSON.parse` → `SimplifyExport.simplify` → `NodeFactory.generate`; `""` on parse failure. |
+| `saveFile(outDir, cls, content)` (static) | Demangles `Lpkg/Name;` → `pkg/Name.js` (intermediate segments become directories). |
+
+`decompileRaw` assembles a class as: imports (from module metadata) → header comment → export-name `let` declarations → `func_main_0` body (StructureAnalysis, falling back to SimpleAnalysis) → exports.
+
+### 11.2 CLI — `src/cli.ts`
 
 ```bash
-npx tsx src/cli.ts decompile <file.abc> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N]
+npx tsx src/cli.ts decompile <file.abc|file.hap> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N]
+npx tsx src/cli.ts unpack-index <resources.index> [-o outDir] [--stdout]
 ```
 
-按类名(`Lpkg/Name;` → `pkg/Name.js`)落盘。
+- Any ZIP container (detected by `ZipFile.isZip`, not just `.hap`) goes through the HAP flow: print `module.json` summary, decompile every `.abc` entry into `outDir/<entry-path>/`, write `resources.json`, and extract `resources/` files (with a path-traversal guard on entry names).
+- Progress and diagnostics go to **stderr** so `--stdout` stays valid JavaScript; per-class failures are logged and skipped, never fatal.
+- `--quiet` temporarily replaces `console.log` to silence pipeline logs.
 
-- **并行反编译 `src/parallel/`**:
-  - 入口 `decompileClassesParallel(decompiler, classes, { jobs })`,CLI 用 `-j N` 开启(`-j 0` 自动 = CPU-1,上限 4);
-  - 主线程负责解析 `.abc`、反汇编、词法分析与 AST 构建(大样本实测约占总耗时 1%),worker 只接收自包含的 AST JSON 并跑 simplify(单类耗时可占 99%);
-  - 派发按类指令字节数从大到小、worker 空闲即派发,减少尾部等待;结果按类序回填,与完成顺序无关;
-  - `PandaDecompiler.decompileRaw()` 每类复位 `MethodHandler` 生成名计数器(`panda_jmp0_reserved_class_N`),因此单类输出与处理顺序、jobs 数量无关,串行/并行逐字一致;
-  - worker 崩溃时该类自动降级到主线程 simplify,连续失败 2 次后剩余类全部主线程串行;每 worker 默认堆上限 3GB(`XPANDA_WORKER_HEAP_MB`),单个超大类的 simplify 峰值约 1.4GB,并发数不宜超过 4。
+### 11.3 Library API — `src/index.ts`
 
-- **编程 API `src/index.ts`**:`PandaFile`、`PandaDecompiler`(`decompile` / `decompileClass` / `decompileClassRaw` / `decompileClassAst` / `saveFile`)、`decompileClassesParallel` / `resolveJobs`、`PandaLexical`、`PandaDisAssembler`、opcode 表。
-- 实测(约 5.5MB 的大样本):解析约 36ms、串行约 81s、`-j 4` 约 49s(约 1.66x);瓶颈是单类 simplify 的内存/GC 带宽,而非解析或反汇编。
+Exports `PandaFile`, `PandaClass`, `PandaMethod`, `PandaDecompiler`, `decompileClassesParallel` / `resolveJobs`, `PandaLexical`, `PandaDisAssembler`, `PandaIRCFG` / `PandaIRBasicBlock`, the opcode tables, `NodeFactory` / `NodeUtils`, `SimplifyExport`, `ResourceIndexFile` / `ResourceItem` / `ResourceUtils`, `HapFile` / `ZipFile`, and the exception types.
 
-## 8. 验证与测试
+Measured on a ~5.5 MB sample: parsing ≈ 36 ms, serial simplify ≈ 81 s, `-j 4` ≈ 49 s (≈ 1.66×). The bottleneck is per-class simplify memory/GC bandwidth, not parsing or disassembly.
 
-测试入口:`test/decompile.test.ts`。
+## 12. MCP Server — `src/mcp/`
 
-- 反编译 `test/resources/md5.abc`、`test/resources/class.abc`;
-- 与 `test/expected/md5.js`、`test/expected/class.js` 逐字比较;
-- 使用 Babel 再次解析输出;
-- `md5.abc` 输出会实际执行,校验 `md5("admin")` 与 Node `crypto` 一致;
-- `aes.abc` 输出会执行加解密自检,并通过快照覆盖条件极性(`Counter.increment` 必须是 `!== 255`)和 test 序列死赋值清理;
-- `zhihupp0.59.hap` 做 HAP 轻量回归;`AbsoluteUrlParser` / `ZhihuHttpClient` 是逻辑条件传播与取反链折叠的重点样本;
-- 并行一致性回归从 `zhihupp0.59.hap` 里挑小类,比较串行与 worker 输出是否逐字一致。
+Exposes the decompiler to AI agents over stdio (see [MCP.md](./MCP.md) for setup and workflows). Key design points:
+
+- `server.ts` rebinds `console.log/warn/error` to **stderr unconditionally** before any import — any stray stdout would corrupt the JSON-RPC stream.
+- `registry.ts` keeps an LRU pool of at most **8** sessions (`AbcSession` = parsed `.abc`, `HapSession` = opened `.hap`). `fileId` embeds the file name + Adler32 checksum; loading the same path twice returns the cached session.
+- Ten tools: `abc_load` / `abc_close`, `abc_list_classes` / `abc_get_class`, `abc_decompile_class` / `abc_export`, `abc_disassemble_method`, `abc_search_strings`, `hap_read_abc` / `hap_resources`.
+- Large-output protection: single-class decompilation truncates at 50 KB (use `abc_export` instead); disassembly defaults to 1500 instructions (`maxInstructions` up to 5000).
+- Degradation is observable: `abc_decompile_class` reports `degraded=true/false` so agents can switch to `abc_disassemble_method` automatically.
+
+## 13. Verification & Testing
+
+Entry point: `test/decompile.test.ts`.
+
+- Decompiles `test/resources/md5.abc`, `class.abc`, `aes.abc`, `yourpipe0.7.0.abc`, and `zhihupp0.59.hap`; compares against snapshots in `test/expected/`; re-parses all output with Babel.
+- `md5.abc` output is **executed** and `md5("admin")` is checked against Node `crypto`; `aes.abc` output runs an encrypt/decrypt self-check (and its snapshot pins conditional polarity: `Counter.increment` must be `!== 255`).
+- `yourpipe0.7.0.abc` (5.4 MB) covers whole-class snapshots for tricky control flow (nested try/catch in loop bodies, nested-scope for-of, hoisted iterator loads).
+- `zhihupp0.59.hap` (bytecode 13.0.1.0) is the regression set for logical-condition propagation, negation-chain folding, accumulator materialization, and try/finally restoration.
+- A parallel-consistency test compares serial vs `-j` output byte-for-byte on selected classes.
 
 ```bash
 npm test
 npm run typecheck
 ```
 
-修改优化器输出后,需要先确认变化符合预期,再更新 `test/expected/*.js` 快照。
+Before updating snapshots in `test/expected/`, confirm the output change is *expected* — never overwrite snapshots just to make tests pass, and explain the delta in the commit message.
 
-## 9. 约束与注意事项
+## 14. Constraints & Gotchas
 
-1. `src/disasm/opcodes.ts` 是生成文件,改 `resources/isa.yaml` 后运行 `npm run gen:opcodes`,不要手改。
-2. 结构化 500 块上限、`jeq` 家族异常、未注册 handle → 三种降级路径均为设计行为。
-3. 前缀指令占 2 字节;新增指令 kind 映射时使用 isa.yaml 的 `sig` 首词。
-4. 运行时只需 Node.js ≥ 18;`typescript` / `tsx` 仅开发期使用。
-5. 降级输出可能包含 `decompiler_goto`、`break` 作用域问题或 `export ... from` 语法,解析时需要对应的 parser 配置。
-6. **单类输出必须是该类的纯函数**:不要引入跨类的可变状态(全局计数器、按偏移共享的可变缓存等),否则 `-j` 并行结果会与串行不一致。生成名计数器已按类复位。
-7. **条件极性由 CFG 边值决定**:`ValueGraph.successors()` 是插入顺序,不是 true/false 边顺序;`coalesceTailRegion`、`reduceIfRegion` 等必须用 `edgeValueOrThrow()`。
-8. **逻辑条件 Region 的标志必须完整传播**:`reduceSequence` 要传播 `logicalRegion`,`Region.copy()` 要保留全部条件/try-catch 标志,否则 `A || B` 会退化成只读 `acc`。
-9. **删除/搬移临时变量前必须做 liveness 与分支检查**:test 序列折叠、非纯表达式搬移都可能改变 `acc` 的最终值或复制调用;宁可少优化,不能改变语义。
+1. **`src/disasm/opcodes.ts` is generated** — edit `resources/isa.yaml` and run `npm run gen:opcodes`; never hand-edit.
+2. **Degradation paths are by design**, not bugs: a method with > 500 basic blocks, an unregistered instruction kind, or a `jeq`-family instruction all fall back to `SimpleAnalysis` (or a placeholder body) without aborting the class or file.
+3. Prefix instructions occupy 2 bytes (first byte ≥ 251). New opcode kinds register under the first word of the isa.yaml `sig` (e.g. `wide.callrange`).
+4. **Single-class output must be a pure function of that class** — no cross-class mutable state (global counters, offset-keyed mutable caches), or `-j` parallel output diverges from serial. Name counters reset per class.
+5. **Conditional polarity is decided by CFG edge values**; `successors()` order is insertion order, never true/false order.
+6. **Logical-condition flags must be propagated completely** (`logicalRegion` through `reduceSequence`; all four Region flags through `Region.copy()`), or `A || B` degrades to an `acc`-only test.
+7. **Liveness + branch analysis before deleting or moving temporaries** — test-sequence folding and non-pure-expression moves can otherwise duplicate calls or change the final value of `acc`. When in doubt, optimize less rather than change semantics.
+8. The `finally` handler's reads are live at *every* try exit; liveness models without exception edges must merge exit reads into `finalizerReads`, or try-block stores get deleted as dead.
+9. Catch parameters must not be named `acc` (they shadow the accumulator); `NodeFactory.tryStatementNode` uses `catchAcc` and re-materializes `acc = catchAcc` at handler entry.
+10. Runtime requires only Node.js ≥ 18; `typescript` / `tsx` are dev-only. Degraded output may contain `decompiler_goto`, `xpanda_goto`, or `export … from` forms that need matching parser settings to re-parse.
