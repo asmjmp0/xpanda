@@ -31,7 +31,8 @@ import traverse from "@babel/traverse";
  *  13. 校验 yourpipe0.7.0.abc 的 SabrResponseDecoder 在含嵌套作用域的 for-of 还原中不崩;
  *  14. 校验 yourpipe0.7.0.abc 的 HttpDownloader 循环体内嵌套 try/catch 的区域归约与条件极性;
  *  15. 校验 yourpipe0.7.0.abc 的 MusicSearchService 的真值守卫三目到可选链、`it.next` 提升形态
- *      的 for-of 还原与累加器死枢纽拷贝折叠。
+ *      的 for-of 还原与累加器死枢纽拷贝折叠;
+ *  16. 校验 yourpipe0.7.0.abc 的 AVPlayer 资源对象(LiteralTag.ACCESSOR 字面量)不再生成非法 JS。
  */
 
 interface Sample {
@@ -1678,6 +1679,41 @@ function verifyYourpipeMusicSearchService(): void {
 }
 
 /**
+ * 回归:鸿蒙资源对象($r)的模板缓冲里,id 字段是 LiteralTag.ACCESSOR 编译器
+ * 标记(toString() 为 "accessor:0"),由紧随其后的 __defineGetter__("id", ...)
+ * 配合 __getResourceId__ 在运行时解析。createObject/createArray 的兜底分支曾把
+ * 它直接当标识符输出,生成 `"id": accessor:0` 这类非法 JS,整个类无法解析。
+ * 现在兜底只输出能按原样构成表达式的名字,其余标记用 undefined 占位。
+ * 整类快照同时覆盖该类的播放器状态机/模式切换逻辑不被后续改动破坏。
+ */
+function verifyYourpipeAVPlayerResourceObject(): void {
+    const abcPath = path.join(__dirname, "resources", "yourpipe0.7.0.abc");
+    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
+    const clazz = pandaFile.getAllClasses().find((c) =>
+        c.name.content.includes("components/AVPlayer"));
+    if (!clazz) throw new Error("yourpipe: 未找到 AVPlayer");
+
+    const code = new PandaDecompiler().decompileClass(clazz);
+    NodeFactory.parse(code);
+    if (code.includes("accessor")) {
+        throw new Error(`AVPlayer: ACCESSOR 标记残留(非法标识符)\n${code.slice(Math.max(0, code.indexOf("accessor") - 200), code.indexOf("accessor") + 200)}`);
+    }
+    // 资源对象模板 + 运行时 id getter 的形态要保留
+    if (!code.includes('"id": undefined,') || !code.includes('__defineGetter__("id"')) {
+        throw new Error(`AVPlayer: 资源对象 id 字段形态未还原\n${code.slice(Math.max(0, code.indexOf('__defineGetter__') - 300), code.indexOf('__defineGetter__') + 200)}`);
+    }
+    if (!code.includes('"bundleName": "com.talon.yourpipe"')) {
+        throw new Error(`AVPlayer: 资源对象字段丢失\n${code}`);
+    }
+
+    const expectedPath = path.join(__dirname, "expected", "yourpipe-av-player.js");
+    const expected = fs.readFileSync(expectedPath, "utf-8");
+    if (code !== expected) {
+        throw new Error(`AVPlayer: 输出与快照不一致\n${firstDifference(expected, code)}`);
+    }
+}
+
+/**
  * 校验输出里所有 `local_X_Y[_Z]` / `sendable_X_Y[_Z]` 引用都能在作用域链上找到声明。
  * 词法环境槽位是按层级命名的,同层级多个环境实例撞名时会生成未声明变量。
  */
@@ -2184,6 +2220,10 @@ async function main(): Promise<void> {
 
     console.log("[test] yourpipe MusicSearchService (yourpipe0.7.0.abc)");
     verifyYourpipeMusicSearchService();
+    console.log("    ok");
+
+    console.log("[test] yourpipe AVPlayer resource object (yourpipe0.7.0.abc)");
+    verifyYourpipeAVPlayerResourceObject();
     console.log("    ok");
 
     console.log("[test] yourpipe HttpDownloader retry try/catch (yourpipe0.7.0.abc)");

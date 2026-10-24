@@ -144,7 +144,7 @@ npm run test:mcp
 | `test/resources/md5.abc` | 小样本,测试中还会执行输出并校验 MD5 结果 |
 | `test/resources/class.abc` | 类/访问器/原型方法还原样本 |
 | `test/resources/aes.abc` | AES 加解密样本,测试中还会执行输出并校验加解密自检结果为 `true`;快照覆盖条件极性(`Counter.increment` 必须是 `!== 255`)和 test 序列死赋值清理 |
-| `test/resources/yourpipe0.7.0.abc` | 5.4MB 应用字节码样本,测试反编译 `SabrResponseDecoder`(其 for-of 循环体含 switch/嵌套循环,用于覆盖“脱离 AST 的 blockStatement 单独 traverse 导致 scope 链断裂”的回归)、`MpvPlayerView`(单跳转区域)、`HttpDownloader`(循环体内嵌套 try/catch,整类快照 `test/expected/yourpipe-http-downloader.js`)、`MusicSearchService`(真值守卫三目→可选链、`it.next` 方法量提升的 for-of 还原、死枢纽拷贝折叠,整类快照 `test/expected/yourpipe-music-search-service.js`) |
+| `test/resources/yourpipe0.7.0.abc` | 5.4MB 应用字节码样本,测试反编译 `SabrResponseDecoder`(其 for-of 循环体含 switch/嵌套循环,用于覆盖“脱离 AST 的 blockStatement 单独 traverse 导致 scope 链断裂”的回归)、`MpvPlayerView`(单跳转区域)、`HttpDownloader`(循环体内嵌套 try/catch,整类快照 `test/expected/yourpipe-http-downloader.js`)、`MusicSearchService`(真值守卫三目→可选链、`it.next` 方法量提升的 for-of 还原、死枢纽拷贝折叠,整类快照 `test/expected/yourpipe-music-search-service.js`)、`AVPlayer`(资源对象 `LiteralTag.ACCESSOR` 字面量的兜底输出,覆盖非法标识符回归,整类快照 `test/expected/yourpipe-av-player.js`) |
 | `test/resources/zhihupp0.59.hap` | HAP 应用包样本(字节码版本 13.0.1.0,含 `callruntime.supercallforwardallargs`),完整反编译约 1 分钟,测试只做重点类校验;`AbsoluteUrlParser` / `ZhihuHttpClient` 是逻辑条件与取反链的重点回归类,`DeepLinkResolver` 是累加器物化、重复调用消除、test 序列死赋值与跨变量布尔物化折叠(`acc = A; v1 = A; if (acc) { v1 = B }` → `v1 = A && B`)的重点回归类 |
 
 更新快照前先确认输出变化是预期的;不要为了通过测试而直接覆盖快照。

@@ -18,6 +18,7 @@ import { PandaDecompileException } from "../PandaParseException";
 import { ENTRY_FUNCTION_MAIN } from "../file/PandaFile";
 import type { PandaMethod } from "../file/method/PandaMethod";
 import { PandaString } from "../file/desc/PandaString";
+import { Offset } from "../file/desc/Offset";
 import { PandaLiteral } from "../file/literal/PandaLiteral";
 import { PandaMethod as PandaMethodClass } from "../file/method/PandaMethod";
 import { LiteralTag } from "../file/desc/enums";
@@ -176,6 +177,22 @@ function assignAcc(methodHandler: PandaDecompilerMethodHandler, right: any, node
     const utils = methodHandler.getCodeGenerator().getNodeUtils();
     const assignment = factory.assignmentExpressionNode("=", left === "acc" ? factory.identifierNode("acc") as any : left, right);
     utils.insertNodeToBody(factory.expressionStatementNode(assignment as any) as any, node);
+}
+
+/**
+ * 对象/数组缓冲区兜底字面量转表达式。缓冲区里除数值/字符串/布尔外还可能有
+ * 编译器标记:鸿蒙资源对象($r)的 id 字段是 LiteralTag.ACCESSOR,toString()
+ * 为 "accessor:0",直接当标识符输出会生成非法 JS(id 由紧随其后的
+ * __defineGetter__("id", ...) 配合 __getResourceId__ 在运行时解析)。
+ * 只有 toString() 能按原样构成合法表达式(null/true/false 或合法标识符)时
+ * 才输出标识符,否则输出 undefined 占位。
+ */
+function fallbackLiteralExpression(factory: ReturnType<CodeGenerator["getNodeFactory"]>, value: Offset): any {
+    const name = value.toString();
+    if (/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name)) {
+        return factory.identifierNode(name);
+    }
+    return factory.identifierNode("undefined");
 }
 
 // ---------------------------------------------------------------------------
@@ -411,12 +428,12 @@ const HANDLES: Record<string, Handle> = {
                 } else if (value.toString() === "true" || value.toString() === "false") {
                     codeGenerator.addToArray(props, factory.objectPropertyNode(factory.stringLiteralNode(key) as any, factory.booleanLiteralNode(value.toString() === "true") as any));
                 } else {
-                    codeGenerator.addToArray(props, factory.objectPropertyNode(factory.stringLiteralNode(key) as any, factory.identifierNode(value.toString()) as any));
+                    codeGenerator.addToArray(props, factory.objectPropertyNode(factory.stringLiteralNode(key) as any, fallbackLiteralExpression(factory, value)));
                 }
             } else if (value instanceof PandaMethodClass) {
                 codeGenerator.addToArray(props, factory.objectPropertyNode(factory.stringLiteralNode(key) as any, mh.decompileFunction(value, l)));
             } else {
-                codeGenerator.addToArray(props, factory.objectPropertyNode(factory.stringLiteralNode(key) as any, factory.identifierNode(value.toString()) as any));
+                codeGenerator.addToArray(props, factory.objectPropertyNode(factory.stringLiteralNode(key) as any, fallbackLiteralExpression(factory, value)));
             }
         }
         const objNode = factory.objectExpressionNode(props as any);
@@ -436,12 +453,12 @@ const HANDLES: Record<string, Handle> = {
                     } else if (tag === LiteralTag.STRING) {
                         codeGenerator.addToArray(arrayObject, factory.stringLiteralNode(offset.toString()));
                     } else {
-                        codeGenerator.addToArray(arrayObject, factory.identifierNode(offset.toString()));
+                        codeGenerator.addToArray(arrayObject, fallbackLiteralExpression(factory, offset));
                     }
                 } else if (offset instanceof PandaString) {
                     codeGenerator.addToArray(arrayObject, factory.stringLiteralNode(offset.content));
                 } else {
-                    codeGenerator.addToArray(arrayObject, factory.identifierNode(offset.toString()));
+                    codeGenerator.addToArray(arrayObject, fallbackLiteralExpression(factory, offset));
                 }
             }
         }
