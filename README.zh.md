@@ -2,6 +2,8 @@
 
 **简体中文** | [English](README.md)
 
+**反编译网页:** <https://tencent.jmp0.top/xpanda>
+
 > 卧槽，然后他看了以后啊，就怔住了说，说这么好的**鸿蒙反编译器**，你咋不，你怎么不早点告诉我。
 
 鸿蒙 HarmonyOS `.abc`(Panda / ArkCompiler 字节码)反编译器,**纯 TypeScript** 实现,Node.js ≥ 18,零原生依赖。

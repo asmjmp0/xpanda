@@ -2,6 +2,8 @@
 
 **English** | [简体中文](README.zh.md)
 
+**Web decompiler:** <https://tencent.jmp0.top/xpanda>
+
 > "Holy crap — when he read it, he froze and said: with a **HarmonyOS decompiler** this good, why on earth didn't you tell me sooner?"
 
 A decompiler for HarmonyOS `.abc` files (Panda / ArkCompiler bytecode), written in **pure TypeScript**. Node.js ≥ 18, zero native dependencies.
