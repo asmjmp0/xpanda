@@ -1,7 +1,7 @@
 import { Program } from "@babel/types";
 import { ISimplify } from "./ISimplify";
 import * as TYPE from "@babel/types";
-import { isFunctionLike, isPureExpression, isTempName, scanCapturedRead, walkNode, walkStatementSkipFunctions } from "./AstUtils";
+import { addPatternNames, isFunctionLike, isPureExpression, isTempName, scanCapturedRead, walkNode, walkStatementSkipFunctions } from "./AstUtils";
 
 
 const {
@@ -130,6 +130,16 @@ interface PendingUndefDelete {
     patternStmt: TYPE.Statement;
 }
 
+/**
+ * 嵌套块结束之后仍会执行的语句列表。
+ * enum 初始化可能在模块初始化的 try 块里,判断临时变量能否删除时要把
+ * 外层块(由内到外)后续的读取也算进去。
+ */
+interface ScopeTail {
+    stmts: TYPE.Statement[];
+    from: number;
+}
+
 /** undefined / null / hole 都能让 `if (!E)` 走创建分支 */
 function isFalsyInitValue(expr: TYPE.Expression): boolean {
     if (isIdentifier(expr)) return expr.name === "undefined" || expr.name === "hole";
@@ -146,7 +156,10 @@ function isDeletableUndefined(expr: TYPE.Expression): boolean {
 
 export class EnumSimplify implements ISimplify {
     simplify(node: Program): boolean {
-        let changed = this.processScope(node);
+        // Program 和每个函数体是"顶层作用域",嵌套块(try/if)在 processScope
+        // 内部递归处理:ArkTS 的模块初始化整体包在 try/catch 里,enum 初始化
+        // 往往不在 Program 的直接语句列表里。
+        let changed = this.processScope(node, new Set(), node, [], []);
         const functions: TYPE.Function[] = [];
         walkNode(node, (n) => {
             if (isFunctionLike(n)) functions.push(n as TYPE.Function);
@@ -155,14 +168,33 @@ export class EnumSimplify implements ISimplify {
         });
         for (const fn of functions) {
             if (isBlockStatement(fn.body)) {
-                changed = this.processScope(fn.body) || changed;
+                // 函数体重新开始可见性:与旧行为一致,只认函数体内自己的声明
+                changed = this.processScope(fn.body, new Set(), fn.body, [], []) || changed;
             }
         }
         return changed;
     }
 
-    private processScope(scope: TYPE.Program | TYPE.BlockStatement): boolean {
+    /**
+     * 处理一个语句列表(Program / 函数体 / try、if 等嵌套块)。
+     *
+     * @param visibleNames 外层(同一函数内)已经声明的名字,用于确认 enumName
+     *                     不是隐式全局变量;函数体边界会把它重置。
+     * @param functionScope 最近的 Program / 函数体,捕获读取与嵌套写入检查的范围。
+     * @param tails 本块结束之后仍会执行的语句(由内到外)。
+     * @param outerPrefix 本块开始之前已经执行过的外层语句/表达式(用于确认
+     *                    enumName 在进入本块前没有被读或写坏)。
+     */
+    private processScope(
+        scope: TYPE.Program | TYPE.BlockStatement,
+        visibleNames: Set<string>,
+        functionScope: TYPE.Program | TYPE.BlockStatement,
+        tails: ScopeTail[],
+        outerPrefix: TYPE.Node[],
+    ): boolean {
         const stmts = scope.body;
+        const declared = new Set(visibleNames);
+        this.collectDeclaredNames(stmts, declared);
         // 预扫描:先找出所有结构匹配的模式,它们的填充调用(fnTemp(v))是纯操作,
         // 后续安全检查与死初始化删除可以放心豁免这些调用。
         // 下界 stmts.length - 3:最短形态(填充函数 + if/else + 调用)占 3 条语句。
@@ -179,7 +211,9 @@ export class EnumSimplify implements ISimplify {
         // 从后往前匹配:连续多个 enum 模式共享同一组临时变量(v0/v1/acc),
         // 先处理后面的模式,前面模式的"之后无读取"检查才不会被后面的调用挡住。
         for (let i = stmts.length - 3; i >= 0; i--) {
-            if (this.tryRewrite(stmts, i, scope, fillerCalls, pendingDeletes)) changed = true;
+            if (this.tryRewrite(stmts, i, functionScope, fillerCalls, pendingDeletes, declared, tails, outerPrefix)) {
+                changed = true;
+            }
         }
         for (const pending of pendingDeletes) {
             const list = pending.list;
@@ -189,7 +223,73 @@ export class EnumSimplify implements ISimplify {
             if (this.hasUnknownInvocationBetween(list, undefIndex + 1, patternIndex, fillerCalls)) continue;
             list.splice(undefIndex, 1);
         }
+        // 继续处理本块内嵌的 try/if 等块(模式可能在模块初始化的 try 里)
+        for (let k = 0; k < stmts.length; k++) {
+            const prefix = [...outerPrefix, ...stmts.slice(0, k)];
+            if (this.processNestedBlocks(stmts[k], { stmts, from: k + 1 }, declared, functionScope, tails, prefix)) {
+                changed = true;
+            }
+        }
         return changed;
+    }
+
+    /** 收集语句列表顶层的 let/const/var 声明名(供嵌套块确认 enumName 已声明) */
+    private collectDeclaredNames(stmts: TYPE.Statement[], out: Set<string>): void {
+        for (const stmt of stmts) {
+            if (!isVariableDeclaration(stmt)) continue;
+            for (const d of stmt.declarations) addPatternNames(d.id, out);
+        }
+    }
+
+    /**
+     * 递归处理语句里的嵌套块:
+     *   - try 的 block/finalizer 顺序执行,可以继续向外传播 tail;
+     *   - if 的两条分支互斥,分支结束后都汇合到外层 tail,test 作为前置表达式;
+     *   - 普通 block 顺序执行;
+     *   - 循环/switch/label 的控制流更复杂(回边、fallthrough),保守跳过。
+     * 函数体由 simplify() 单独处理,这里不再下探。
+     */
+    private processNestedBlocks(
+        stmt: TYPE.Statement,
+        next: ScopeTail,
+        visibleNames: Set<string>,
+        functionScope: TYPE.Program | TYPE.BlockStatement,
+        outerTails: ScopeTail[],
+        outerPrefix: TYPE.Node[],
+    ): boolean {
+        const tails = [next, ...outerTails];
+        const runBlock = (
+            block: TYPE.Statement | null | undefined,
+            prefix: TYPE.Node[],
+        ): boolean => {
+            if (!block || !isBlockStatement(block)) return false;
+            return this.processScope(block, visibleNames, functionScope, tails, prefix);
+        };
+        if (isTryStatement(stmt)) {
+            let changed = runBlock(stmt.block, outerPrefix);
+            // finalizer 一定执行;block 内的语句可能在异常点之前只执行了一部分,
+            // 所以把整个 block 当作 finalizer 的前置(保守)
+            if (stmt.finalizer) {
+                changed = runBlock(stmt.finalizer, [...outerPrefix, ...stmt.block.body]) || changed;
+            }
+            // handler 是异常路径,且异常可能发生在 block 的任意位置:不处理
+            return changed;
+        }
+        if (isIfStatement(stmt)) {
+            const prefix = [...outerPrefix, stmt.test];
+            let changed = runBlock(stmt.consequent, prefix);
+            if (stmt.alternate) {
+                // else-if 链继续按 if 递归,普通 else 块直接处理
+                changed = (isIfStatement(stmt.alternate)
+                    ? this.processNestedBlocks(stmt.alternate as TYPE.Statement, next, visibleNames, functionScope, outerTails, prefix)
+                    : runBlock(stmt.alternate, prefix)) || changed;
+            }
+            return changed;
+        }
+        if (isBlockStatement(stmt)) {
+            return runBlock(stmt, outerPrefix);
+        }
+        return false;
     }
 
     // ---------------------------------------------------------------- 模式匹配
@@ -275,11 +375,14 @@ export class EnumSimplify implements ISimplify {
         scope: TYPE.Program | TYPE.BlockStatement,
         fillerCalls: Set<TYPE.Statement>,
         pendingDeletes: PendingUndefDelete[],
+        declared: Set<string>,
+        tails: ScopeTail[],
+        outerPrefix: TYPE.Node[],
     ): boolean {
         const match = this.matchPattern(stmts, i);
         if (!match) return false;
-        // E 必须在本语句列表顶层声明过,排除被其他模块赋真值的隐式全局变量
-        if (!this.isDeclaredInList(stmts, match.enumName)) return false;
+        // E 必须在当前或外层(同一函数内)语句列表里声明过,排除隐式全局变量
+        if (!declared.has(match.enumName)) return false;
 
         // 模式删除后值会改变的名字:函数、装载别名 v1/v5、分支里所有被赋值的名字。
         // EnumName 本身不算 —— 它的赋值被对象字面量在同位置等价替换,
@@ -289,9 +392,9 @@ export class EnumSimplify implements ISimplify {
         if (match.postLoad) involved.add(match.postLoad.left);
         involved.delete(match.enumName);
 
-        const region = this.analyzeEnumRegion(stmts, i, match.enumName, scope, fillerCalls);
+        const region = this.analyzeEnumRegion(stmts, i, match.enumName, scope, fillerCalls, outerPrefix);
         if (!region) return false;
-        if (!this.tempsUnusedAfter(stmts, i, involved, scope, match.length)) return false;
+        if (!this.tempsUnusedAfter(stmts, i, involved, scope, match.length, tails)) return false;
 
         // 模式语句 -> 一条对象字面量赋值(成员值节点直接搬移,表达式纯且不引用会变的变量)
         const object = objectExpression(match.filler.members.map((m) => {
@@ -371,17 +474,6 @@ export class EnumSimplify implements ISimplify {
             members.push({ key, value: a.right });
         }
         return { fnTemp: assign.left.name, members };
-    }
-
-    /** enumName 必须在本语句列表顶层的 let/var 声明里出现过,排除隐式全局变量 */
-    private isDeclaredInList(stmts: TYPE.Statement[], name: string): boolean {
-        for (const stmt of stmts) {
-            if (!isVariableDeclaration(stmt)) continue;
-            for (const d of stmt.declarations) {
-                if (isIdentifier(d.id) && d.id.name === name) return true;
-            }
-        }
-        return false;
     }
 
     private matchSimpleAssign(stmt: TYPE.Statement): { left: string; right: TYPE.Expression } | null {
@@ -527,26 +619,38 @@ export class EnumSimplify implements ISimplify {
         enumName: string,
         scope: TYPE.Program | TYPE.BlockStatement,
         fillerCalls: Set<TYPE.Statement>,
+        outerPrefix: TYPE.Node[],
     ): { lastUndefIndex: number } | null {
         let hasRead = false;
         let hasBadWrite = false;
         let hasUnknownInvocation = false;
         let lastUndefIndex = -1;
-        for (let j = 0; j < i; j++) {
-            const stmt = stmts[j];
-            walkStatementSkipFunctions(stmt, (node, parent) => {
-                if (isIdentifier(node) && node.name === enumName
-                    && parent && isReferenced(node, parent)) {
+        const scan = (node: TYPE.Node, undefIndex: number, isFillerCall: boolean) => {
+            // 根节点不在 walkStatementSkipFunctions 的 parent 判定里:
+            // 外层前缀可能是裸表达式(如 if 的 test 就是 E 本身)
+            if (isIdentifier(node) && node.name === enumName) hasRead = true;
+            walkStatementSkipFunctions(node, (inner, parent) => {
+                if (isIdentifier(inner) && inner.name === enumName
+                    && parent && isReferenced(inner, parent)) {
                     hasRead = true;
                 }
-                if (!fillerCalls.has(stmt) && this.isInvocation(node)) hasUnknownInvocation = true;
-                if (this.isUnsafeWriteTo(node, enumName, true)) hasBadWrite = true;
-                if (isAssignmentExpression(node) && node.operator === "="
-                    && isIdentifier(node.left) && node.left.name === enumName
-                    && isDeletableUndefined(node.right)) {
-                    lastUndefIndex = j;
+                if (!isFillerCall && this.isInvocation(inner)) hasUnknownInvocation = true;
+                if (this.isUnsafeWriteTo(inner, enumName, true)) hasBadWrite = true;
+                if (undefIndex >= 0 && isAssignmentExpression(inner) && inner.operator === "="
+                    && isIdentifier(inner.left) && inner.left.name === enumName
+                    && isDeletableUndefined(inner.right)) {
+                    lastUndefIndex = undefIndex;
                 }
             });
+        };
+        for (let j = 0; j < i; j++) {
+            scan(stmts[j], j, fillerCalls.has(stmts[j]));
+            if (hasRead || hasBadWrite) return null;
+        }
+        // 嵌套块:外层在进入本块之前已经执行的语句(含 if 的 test)同样要满足
+        // "E 只被赋过假值、没有被读";其中出现的调用一律按未知调用保守处理。
+        for (const node of outerPrefix) {
+            scan(node, -1, false);
             if (hasRead || hasBadWrite) return null;
         }
         if (hasUnknownInvocation && this.hasNestedEnumWrite(scope, enumName)) return null;
@@ -568,12 +672,17 @@ export class EnumSimplify implements ISimplify {
         involved: Set<string>,
         scope: TYPE.Program | TYPE.BlockStatement,
         patternLength: number,
+        tails: ScopeTail[],
     ): boolean {
         if (scanCapturedRead(scope, null, involved, new Set(), false)) return false;
 
         for (const name of involved) {
-            if (this.sequenceFlowUnsafe(stmts, i + patternLength, name, { killed: false, shadowed: false })) {
-                return false;
+            const state = { killed: false, shadowed: false };
+            if (this.sequenceFlowUnsafe(stmts, i + patternLength, name, state)) return false;
+            // 嵌套块结束后继续检查外层后续语句:临时变量可能在那里被读取
+            for (const tail of tails) {
+                if (state.shadowed) break;
+                if (this.sequenceFlowUnsafe(tail.stmts, tail.from, name, state)) return false;
             }
         }
         return true;

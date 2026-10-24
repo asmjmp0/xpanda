@@ -8,7 +8,7 @@ import { YTCoreLogger } from "@normalized:N&&&youtube_core/src/main/ets/common/Y
 import deviceInfo from "@ohos:deviceInfo";
 import http from "@ohos:net.http";
 let HttpAbortToken, HttpDownloader, HttpError, HttpErrorType, Request;
-let v7, acc;
+let acc;
 let local_0_0, local_0_1, local_0_2, local_0_3, local_0_4, local_0_5;
 HttpErrorType = undefined;
 local_0_0 = function (p0) {
@@ -234,28 +234,21 @@ try {
       } catch (catchAcc) {}
     }
   };
-  v7 = function (p0) {
-    p0.NETWORK_ERROR = "NETWORK_ERROR";
-    p0.INFORMATIONAL = "INFORMATIONAL";
-    p0.BAD_REQUEST = "BAD_REQUEST";
-    p0.FORBIDDEN = "FORBIDDEN";
-    p0.NOT_FOUND = "NOT_FOUND";
-    p0.PROXY_AUTH_REQUIRED = "PROXY_AUTH_REQUIRED";
-    p0.TIMEOUT = "TIMEOUT";
-    p0.RANGE_NOT_SATISFIABLE = "RANGE_NOT_SATISFIABLE";
-    p0.TOO_MANY_REQUESTS = "TOO_MANY_REQUESTS";
-    p0.CLIENT_ERROR = "CLIENT_ERROR";
-    p0.SERVER_ERROR = "SERVER_ERROR";
-    p0.SERVICE_UNAVAILABLE = "SERVICE_UNAVAILABLE";
-    p0.UNKNOWN = "UNKNOWN";
+  HttpErrorType = {
+    NETWORK_ERROR: "NETWORK_ERROR",
+    INFORMATIONAL: "INFORMATIONAL",
+    BAD_REQUEST: "BAD_REQUEST",
+    FORBIDDEN: "FORBIDDEN",
+    NOT_FOUND: "NOT_FOUND",
+    PROXY_AUTH_REQUIRED: "PROXY_AUTH_REQUIRED",
+    TIMEOUT: "TIMEOUT",
+    RANGE_NOT_SATISFIABLE: "RANGE_NOT_SATISFIABLE",
+    TOO_MANY_REQUESTS: "TOO_MANY_REQUESTS",
+    CLIENT_ERROR: "CLIENT_ERROR",
+    SERVER_ERROR: "SERVER_ERROR",
+    SERVICE_UNAVAILABLE: "SERVICE_UNAVAILABLE",
+    UNKNOWN: "UNKNOWN"
   };
-  if (!HttpErrorType) {
-    acc = {};
-    HttpErrorType = acc;
-  } else {
-    acc = HttpErrorType;
-  }
-  v7(acc);
   Request = class panda_jmp0_reserved_anonymous_4 {
     constructor(p0, p1, p2, p3, p4) {
       this.method = p0;
