@@ -182,20 +182,27 @@ export class SyntaxRewriteSimplify implements ISimplify {
      */
     public static removeUnreachableStatements(node: Program): boolean {
         let changed = false;
+        const prune = (body: TYPE.Statement[]): boolean => {
+            for (let i = 0; i < body.length - 1; i++) {
+                if (!SyntaxRewriteSimplify.terminates(body[i])) continue;
+                const tail = body.slice(i + 1);
+                if (tail.some((statement) => isVariableDeclaration(statement)
+                    || isFunctionDeclaration(statement)
+                    || isClassDeclaration(statement))) return false;
+                body.splice(i + 1);
+                return true;
+            }
+            return false;
+        };
         traverse(file(node), {
             noScope: true,
             BlockStatement: (path) => {
-                const body = path.node.body;
-                for (let i = 0; i < body.length - 1; i++) {
-                    if (!SyntaxRewriteSimplify.terminates(body[i])) continue;
-                    const tail = body.slice(i + 1);
-                    if (tail.some((statement) => isVariableDeclaration(statement)
-                        || isFunctionDeclaration(statement)
-                        || isClassDeclaration(statement))) break;
-                    body.splice(i + 1);
-                    changed = true;
-                    break;
-                }
+                if (prune(path.node.body)) changed = true;
+            },
+            // switch 的 case 体不是 BlockStatement:restoreGotoLoops 把 goto 换成 continue 后,
+            // 守卫链合成 switch 时留下的 `break;` 也成了不可达语句
+            SwitchCase: (path) => {
+                if (prune(path.node.consequent)) changed = true;
             },
         });
         return changed;

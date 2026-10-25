@@ -34,7 +34,11 @@ import traverse from "@babel/traverse";
  *      的 for-of 还原与累加器死枢纽拷贝折叠;
  *  16. 校验 yourpipe0.7.0.abc 的 AVPlayer 资源对象(LiteralTag.ACCESSOR 字面量)不再生成非法 JS;
  *  17. 校验 yourpipe0.7.0.abc 的 ChannelInfoService 共享返回尾块收敛为一份、
- *      预装载寄存器的死赋值与测试序列物化残渣清零。
+ *      预装载寄存器的死赋值与测试序列物化残渣清零;
+ *  18. 校验 yourpipe0.7.0.abc 的 SabrOfflineDownloader 里 findFollowLatch 兜底的
+ *      `label + xpanda_goto` 还原成 while (true) 循环,停顿计数器不再被常量传播;
+ *  19. 校验 yourpipe0.7.0.abc 的 YoutubePageAttestationBootstrap 里 switch case 体
+ *      的不可达 break 被清掉(case 体裁剪同时服务于还原出来的循环)。
  */
 
 interface Sample {
@@ -1750,6 +1754,101 @@ function verifyYourpipeMpvPlayerView(): void {
 }
 
 /**
+ * 回归:findFollowLatch 兜底(goto)产生的 `label_x: ;` + `xpanda_goto(label_x)`。
+ *
+ * SabrOfflineDownloader.dumpDualTrack 是 `while (true)` 循环:循环头(`if (!videoDone)`)
+ * 的两条出边都在循环体内,回边也只回到循环头,所有退出路径都是 return/throw。
+ * determineFollowLatch 找不到 follow/latch,只能给回边插 goto,而 goto 落在深层
+ * if 分支里,生成 AST 时的 tryFixGoto 只会在同一语句块里找 label,于是输出
+ * `xpanda_goto(...)`(不可执行)。GotoLoopRestore 在 simplify 开头把它还原成
+ * `while (true)` + `continue`;循环被看见后,停顿计数器也能正好还原
+ * (`v11 += 1; if (v11 >= 6)`,否则被常量传播成 `0 + 1 >= 6`)。整类输出有快照。
+ */
+function verifyYourpipeSabrOfflineDownloader(): void {
+    const abcPath = path.join(__dirname, "resources", "yourpipe0.7.0.abc");
+    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
+    const clazz = pandaFile.getAllClasses().find((c) =>
+        c.name.content.includes("sabr/SabrOfflineDownloader"));
+    if (!clazz) throw new Error("yourpipe: 未找到 SabrOfflineDownloader");
+
+    const code = new PandaDecompiler().decompileClass(clazz);
+    NodeFactory.parse(code);
+    if (code.includes("created by SimpleAnalysis") || code.includes("decompiler_")) {
+        throw new Error(`SabrOfflineDownloader: 反编译降级或残留伪语句\n${code}`);
+    }
+    if (code.includes("xpanda_goto") || /\blabel_\d+\b/.test(code)) {
+        throw new Error(`SabrOfflineDownloader: 仍残留 goto/label 兜底\n${code}`);
+    }
+    const start = code.indexOf("static async dumpDualTrack");
+    const end = code.indexOf("static async tryWriteNext", start);
+    if (start < 0 || end < 0) throw new Error(`SabrOfflineDownloader: 未找到 dumpDualTrack\n${code}`);
+    const body = code.slice(start, end);
+    if (!body.includes("while (true) {") || !body.includes("continue;")) {
+        throw new Error(`SabrOfflineDownloader.dumpDualTrack: while(true) 循环未还原\n${body}`);
+    }
+    if (!body.includes("v11 += 1;") || !body.includes("if (v11 >= 6) {")) {
+        throw new Error(`SabrOfflineDownloader.dumpDualTrack: 停顿计数器未还原\n${body}`);
+    }
+    if (body.includes("0 + 1 >= 6")) {
+        throw new Error(`SabrOfflineDownloader.dumpDualTrack: 计数器仍被常量传播\n${body}`);
+    }
+
+    const expectedPath = path.join(__dirname, "expected", "yourpipe-sabr-offline-downloader.js");
+    const expected = fs.readFileSync(expectedPath, "utf-8");
+    if (code !== expected) {
+        throw new Error(`SabrOfflineDownloader: 输出与快照不一致\n${firstDifference(expected, code)}`);
+    }
+}
+
+/**
+ * 回归:`removeUnreachableStatements` 也要裁剪 switch 的 case 体。
+ *
+ * `SwitchCase.consequent` 不是 BlockStatement,旧实现只扫 BlockStatement,于是
+ * simplifyTail 把守卫链合成 switch 之后、每个分支末尾 `continue;` 后面那条不可达的
+ * `break;` 一直留在输出里(YoutubePageAttestationBootstrap 的 parseJsString 有 8 处)。
+ * 这条 case 体裁剪同时服务于 GotoLoopRestore 还原出来的循环(continue 后面的 break)。
+ * 整类输出有快照。
+ */
+function verifyYourpipeYoutubePageAttestationBootstrap(): void {
+    const abcPath = path.join(__dirname, "resources", "yourpipe0.7.0.abc");
+    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
+    const clazz = pandaFile.getAllClasses().find((c) =>
+        c.name.content.includes("features/player/YoutubePageAttestationBootstrap"));
+    if (!clazz) throw new Error("yourpipe: 未找到 YoutubePageAttestationBootstrap");
+
+    const code = new PandaDecompiler().decompileClass(clazz);
+    NodeFactory.parse(code);
+    if (code.includes("created by SimpleAnalysis") || code.includes("decompiler_")) {
+        throw new Error(`YoutubePageAttestationBootstrap: 反编译降级或残留伪语句\n${code}`);
+    }
+    if (code.includes("xpanda_goto") || /\blabel_\d+\b/.test(code)) {
+        throw new Error(`YoutubePageAttestationBootstrap: 仍残留 goto/label 兜底\n${code}`);
+    }
+    // switch 的 case 体里 `continue;` 之后的 break 不可达,必须清掉
+    if (/continue;\n\s*break;/.test(code)) {
+        throw new Error(`YoutubePageAttestationBootstrap: case 体里仍有不可达的 break\n${code}`);
+    }
+    const start = code.indexOf("local_0_8 = function");
+    const end = code.indexOf("local_0_0 = function", start);
+    if (start < 0 || end < 0) throw new Error(`YoutubePageAttestationBootstrap: 未找到 parseJsString\n${code}`);
+    const body = code.slice(start, end);
+    // 转义解析:for 循环的累加更新 + 8 个 case 的 switch(每支 continue 跳出 switch 继续 for)
+    if (!body.includes("for (v6 = p1; v6 < p0.length; v7 += v9) {")
+        || !body.includes('case "x":') || !body.includes('case "u":')) {
+        throw new Error(`YoutubePageAttestationBootstrap.parseJsString: for/switch 未还原\n${body}`);
+    }
+    if ((body.match(/continue;/g) ?? []).length < 8) {
+        throw new Error(`YoutubePageAttestationBootstrap.parseJsString: case 分支的 continue 缺失\n${body}`);
+    }
+
+    const expectedPath = path.join(__dirname, "expected", "yourpipe-youtube-page-attestation-bootstrap.js");
+    const expected = fs.readFileSync(expectedPath, "utf-8");
+    if (code !== expected) {
+        throw new Error(`YoutubePageAttestationBootstrap: 输出与快照不一致\n${firstDifference(expected, code)}`);
+    }
+}
+
+/**
  * 回归:ArkTS 对 `?.` 的真值 lowering(`v14 ? v14.tabs : undefined`)与把 `it.next`
  * 提升成临时方法量的 for-of lowering(`v21 = it; v20 = it.next; while (true)
  * { v22 = v20.call(v21); ... }`)都要在流水线末尾的 simplifyTail() 还原:
@@ -2937,6 +3036,14 @@ async function main(): Promise<void> {
 
     console.log("[test] yourpipe MpvPlayerView (yourpipe0.7.0.abc)");
     verifyYourpipeMpvPlayerView();
+    console.log("    ok");
+
+    console.log("[test] yourpipe SabrOfflineDownloader goto loop (yourpipe0.7.0.abc)");
+    verifyYourpipeSabrOfflineDownloader();
+    console.log("    ok");
+
+    console.log("[test] yourpipe YoutubePageAttestationBootstrap switch case prune (yourpipe0.7.0.abc)");
+    verifyYourpipeYoutubePageAttestationBootstrap();
     console.log("    ok");
 
     console.log("[test] yourpipe MusicSearchService (yourpipe0.7.0.abc)");

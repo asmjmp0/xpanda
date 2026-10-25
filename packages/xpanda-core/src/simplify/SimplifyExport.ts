@@ -13,6 +13,7 @@ import { CallResultSimplify } from "./CallResultSimplify";
 import { AccCallSimplify } from "./AccCallSimplify";
 import { TailMergeSimplify } from "./TailMergeSimplify";
 import { normalizeDeclarations } from "./NormalizeDeclarations";
+import { restoreGotoLoops } from "./GotoLoopRestore";
 
 export class SimplifyExport {
     private static simplifyALL(node: TYPE.Program): boolean {
@@ -39,6 +40,10 @@ export class SimplifyExport {
 
     public static simplify(node: TYPE.Program): void {
         normalizeDeclarations(node);
+        // 结构化分析兜底留下的 `label_x: ;` + `xpanda_goto(label_x)`:先把回边还原成
+        // while (true) + continue,后面的活跃性分析才能看到真实的循环结构
+        // (否则循环体内的计数器/死存储会被当成直线代码处理)。
+        restoreGotoLoops(node);
         new CallResultSimplify().simplify(node);
         // 定点迭代:大多数类 1~2 轮就稳定;上限 5 轮防止个别 pass 反复改写不收敛
         for (let round = 0; round < 5; round++) {
