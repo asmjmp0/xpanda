@@ -40,7 +40,7 @@ import traverse from "@babel/traverse";
  *  19. 校验 yourpipe0.7.0.abc 的 YoutubePageAttestationBootstrap 里 switch case 体
  *      的不可达 break 被清掉(case 体裁剪同时服务于还原出来的循环);
  *  20. 校验 amcl1.0.6.abc 的 i8 类 do-while 出口扫描不越界(旧实现无限增长 OOM)
- *      与 z12 类共享后继指数展开的结构上限降级。
+ *      与 z12 类的共享后继指数展开在结构分析里收敛成线性结构。
  */
 
 interface Sample {
@@ -2685,8 +2685,10 @@ function verifyYourpipeChannelInfoService(): void {
  *
  * 2) `L&gamecontrol/src/main/ets/z12&1.0.0;` 的 #*#w1359 / #*#t1359 在区域归约
  *    里把共享后继按引用指数展开(39.3 万 / 7.5 万条语句,283MB / 63MB AST,
- *    simplify 需要 10GB+ 内存且跑几分钟)。超过 MAX_STRUCTURED_STATEMENTS 的
- *    方法按设计降级到 SimpleAnalysis,整个类必须快速产出且可被 Babel 解析。
+ *    simplify 需要 10GB+ 内存且跑几分钟)。结构分析在按展开规模判定超限时会先做
+ *    区域级共享尾块消除(把 `if (C) { ...; if (D) { X } else { NEXT } } else { NEXT }`
+ *    收敛成 `if (C) { ...; if (D) { X } } NEXT`),两个方法现在正常结构化输出;
+ *    超过 MAX_STRUCTURED_STATEMENTS 的方法仍按设计降级到 SimpleAnalysis。
  *
  * 两个类的完整输出分别锁定在 expected/amcl-i8.js / expected/amcl-z12.js。
  */
@@ -2734,21 +2736,21 @@ function verifyAmclStructureMemory(): void {
     if (!expandedClass) throw new Error("amcl: 未找到 L&gamecontrol/src/main/ets/z12&1.0.0;");
     const expandedCode = decompiler.decompileClass(expandedClass);
     NodeFactory.parse(expandedCode);
-    // 两个指数展开的方法降级;标记挂在函数表达式上,其他方法仍保持结构化输出
-    const degraded = expandedCode.match(/created by SimpleAnalysis/g) ?? [];
-    if (degraded.length !== 2) {
-        throw new Error(`amcl z12: 期望 2 个方法降级,实际 ${degraded.length}\n${expandedCode}`);
+    // 共享后继的指数展开由结构分析里的区域级共享尾块消除收敛成线性结构
+    // (StructureAnalysis.pruneRedundantTailBranches):w1359 / t1359 不再降级。
+    if (expandedCode.includes("created by SimpleAnalysis") || expandedCode.includes("decompiler_goto")) {
+        throw new Error(`amcl z12: 仍有方法降级或残留伪语句\n${expandedCode.slice(0, 500)}`);
     }
-    for (const name of ["w1359 = function", "local_0_18 = function"]) {
-        const line = expandedCode.split("\n").find((l) => l.includes(name));
-        if (!line || !line.includes("created by SimpleAnalysis")) {
-            throw new Error(`amcl z12: ${name} 未按展开规模上限降级\n${expandedCode}`);
-        }
-    }
-    // while(true)+break 的 for-of lowering:`hole` 哨兵守卫清理后才露出标准 close 形态,
-    // 由 SimplifyExport 末尾补跑的 restoreIteratorLoops 还原,提前 return 分支里内联的
-    // iterator close(`if (v2.return != undefined) v2.return();`)一并删除。
     for (const fragment of [
+        "local_0_18 = function (p0, p1, p2, p3) {",
+        'return local_0_10(p2, p3, "depth");',
+        "v3 = local_0_18(p0.children[v1], p1 + 1, p2, p3 + \".children[\" + v1.toString() + \"]\");",
+        "w1359 = function (p0) {",
+        "if (p0.profileId !== undefined) {",
+        'return local_0_19("profile.identity");',
+        // while(true)+break 的 for-of lowering:`hole` 哨兵守卫清理后才露出标准 close 形态,
+        // 由 SimplifyExport 末尾补跑的 restoreIteratorLoops 还原,提前 return 分支里内联的
+        // iterator close(`if (v2.return != undefined) v2.return();`)一并删除。
         "for (v5 of p0.requiredCapabilities) {",
         'return "groups.capability";',
     ]) {
@@ -2759,6 +2761,7 @@ function verifyAmclStructureMemory(): void {
     for (const leftover of [
         "v2 = p0.requiredCapabilities[Symbol.iterator]();",
         "if (v2.return != undefined)",
+        "local_0_18 = function (p0, p1, p2, p3) //The function was created by SimpleAnalysis",
     ]) {
         if (expandedCode.includes(leftover)) {
             throw new Error(`amcl z12: 迭代器 lowering 残留 ${JSON.stringify(leftover)}\n${expandedCode}`);

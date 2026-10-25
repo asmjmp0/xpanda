@@ -460,6 +460,7 @@ packages/xpanda-core/test/expected/aes.js
 
 - 以下情况会降级为 `SimpleAnalysis` 线性输出(带 `decompiler_goto` 模拟):
   - 单方法超过 500 个基本块;
+  - 区域级共享尾块消除后结构化展开规模仍超过 `MAX_STRUCTURED_STATEMENTS`(见 `docs/ARCHITECTURE.zh-CN.md` §7.3);
   - `jeq/jne/jstricteq/jnstricteq` 指令;
   - 指令 kind 未注册 handle。
 - 降级输出会把词法环境声明提升到函数顶部,以支持跨 `label` 访问;但仍可能包含裸 `break` 作用域问题,或使用 `export ... from` 语法,需要对应的 parser 插件才能解析。

@@ -155,6 +155,7 @@ JavaScript 源码(落盘 / stdout / 编程 API)
 3. `reduceCyclic`:自环与单前驱回边 → while / do-while;其余登记为未解决环。
 4. 停滞时:先用 `LoopFinder` / `refineLoop` 精化一个未解决环,否则 `coalesceTailRegion`(吸收 Tail 区域),否则 `fixIrreducibleByTailRegion` —— **Tail 复制**,把不可归约图变为可归约。迭代 `> 3000` 轮仍卡住 → `"can not reduce the graph"` → `SimpleAnalysis`。
 5. `virtualizeIrregularExits`:把循环体内的词法出口转成 `continue` / `break` / 带 label 的 `goto`。条件出口只生成**一条**语句(`if (cond) break`);线性出口生成无条件语句。出口目标为死的出度 0 Tail(只有 `return` / `throw`)时视为"内联",经 `Region.copy()` 把 Tail 语句复制进该分支。
+6. `estimateStructuredStatements`:估算 `decompile()` 会展开出多少条语句(共享 `Region` 按引用逐次展开,所以是树规模而不是 DAG 规模)。超过 `MAX_STRUCTURED_STATEMENTS`(3 万)的方法先做 `pruneRedundantTailBranches`:`if (C) { …; if (D) { X } else { NEXT } } else { NEXT }` → `if (C) { …; if (D) { X } } NEXT`。这是 ArkTS 可选字段校验的 lowering 形态,否则会展开成 2^N 条语句(amcl1.0.6.abc z12 的 `#*#w1359` 39.3 万 / `#*#t1359` 7.5 万,消除后 310 / 451)。改写要求内层 `then` 分支一定离开当前结构(`branchAlwaysExits`:`return` / `throw` / `break` / `continue` / `goto`,或两个分支都如此的 `if`),否则原本从内层 `then` 落空的路径会多执行一次被提出来的尾块。被改写的节点必须是单引用(`countEmittedReferences`),而且只在方法已经超限时运行,普通方法输出不变。仍超限 → `"structured output too large"` → `SimpleAnalysis`。
 
 关键不变量:
 
@@ -340,7 +341,7 @@ npm run typecheck
 ## 15. 约束与注意事项
 
 1. **`src/disasm/opcodes.ts` 是生成文件** —— 改 `resources/isa.yaml` 后运行 `npm run gen:opcodes`,不要手改。
-2. **降级路径是设计行为**,不是 bug:单方法 > 500 基本块、指令 kind 未注册、`jeq` 家族指令,三者都降级到 `SimpleAnalysis`(或占位函数体),不会中断整个类或文件。
+2. **降级路径是设计行为**,不是 bug:单方法 > 500 基本块、指令 kind 未注册、`jeq` 家族指令,三者都降级到 `SimpleAnalysis`(或占位函数体),不会中断整个类或文件。结构展开规模超过 `MAX_STRUCTURED_STATEMENTS` 时先做 §7.3 步骤 6 的区域级共享尾块消除,仍超限才降级。
 3. 前缀指令占 2 字节(首字节 ≥ 251)。新增指令 kind 用 isa.yaml `sig` 的首词登记(如 `wide.callrange`)。
 4. **单类输出必须是该类的纯函数** —— 不要引入跨类的可变状态(全局计数器、按偏移共享的可变缓存),否则 `-j` 并行结果与串行不一致。生成名计数器按类复位。
 5. **条件极性由 CFG 边值决定**;`successors()` 顺序是插入顺序,不代表 true/false 边顺序。

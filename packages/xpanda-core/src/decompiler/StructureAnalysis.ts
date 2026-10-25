@@ -13,6 +13,7 @@ import {
     GotoStatement,
     IfPandaStatement,
     LabelStatement,
+    LinearPandaStatement,
     LogicalExpressionStatement,
     OrLogicalExpressionStatement,
     TryCatchPandaStatement,
@@ -31,6 +32,11 @@ import type { PandaDecompilerMethodHandler } from "./MethodHandler";
  * SimpleAnalysis 线性输出,避免单类拖垮整个文件。
  */
 const MAX_STRUCTURED_STATEMENTS = 30_000;
+
+/**
+ * 共享尾块消除的最大收敛轮数(实际嵌套深度远小于此值)。
+ */
+const MAX_TAIL_PRUNE_ROUNDS = 64;
 
 /**
  * 基于 Region 归约的结构化分析(移植自 Java StructureAnalysis,701 行核心算法)
@@ -283,12 +289,188 @@ export class StructureAnalysis {
             }
             this.doms = new DominatorGraph(this.regionGraph, this.entryRegion);
         }
-        const structuredStatements = this.estimateStructuredStatements(this.regionGraph.nodes()[0], MAX_STRUCTURED_STATEMENTS);
+        const root = this.regionGraph.nodes()[0];
+        // 只在按引用展开会超过规模上限时才做共享尾块消除:普通方法保持原有结构
+        // (AST 级 TailMergeSimplify 已经能处理常见形状),避免改变正常输出。
+        if (this.estimateStructuredStatements(root, MAX_STRUCTURED_STATEMENTS) > MAX_STRUCTURED_STATEMENTS) {
+            this.pruneRedundantTailBranches(root);
+        }
+        const structuredStatements = this.estimateStructuredStatements(root, MAX_STRUCTURED_STATEMENTS);
         if (structuredStatements > MAX_STRUCTURED_STATEMENTS) {
             throw new PandaDecompileException(
                 this.pandaIRCFG.getPandaMethod().name.content + " structured output too large");
         }
-        this.regionGraph.nodes()[0].decompile(methodHandler, pandaLexical, astNode);
+        root.decompile(methodHandler, pandaLexical, astNode);
+    }
+
+    /**
+     * 共享尾块消除(区域级,decompile 之前)。
+     *
+     * ArkTS 把“可选字段校验”lower 成多条跳向同一个 next 标签的条件跳转,归约后
+     * 每个字段检查都会变成同一个形状:
+     *
+     *   if (字段存在) { ...; if (校验失败) { return err; } else { NEXT } } else { NEXT }
+     *
+     * NEXT 是区域图里共享的 Tail,两条 else 指向同一个 Region 对象。`Region.decompile()`
+     * 按引用展开,每层都把这个共享尾再输出一遍,几十层就是 2^N 条语句
+     * (amcl1.0.6.abc 的 z12 类 w1359 / t1359:205 / 264 个基本块 → 39.3 万 / 7.5 万条
+     * 语句、283MB / 63MB AST)。而这段代码在源码里本来就是“if (…) { … } NEXT”:
+     * 两个 else 都只是落空,可以提到 if 之后只保留一份:
+     *
+     *   if (字段存在) { ...; if (校验失败) { return err; } } NEXT
+     *
+     * 变换与后续语句无关:尾块放在同一条语句列表里紧跟 if 之后,原来走 else 的路径
+     * 和从分支末尾落空的路径都仍然只执行一次,acc 的取值也相同,所以循环体、嵌套
+     * 分支里都成立。只在区域归约完成之后、estimate/decompile 之前做,避免展开成
+     * 天文数字的 AST;估计阶段不需要它也能算对,但已经来不及回收内存。
+     */
+    private pruneRedundantTailBranches(root: Region): void {
+        const refCount = this.countEmittedReferences(root);
+        for (let round = 0; round < MAX_TAIL_PRUNE_ROUNDS; round++) {
+            if (!this.pruneTailInNode(root, refCount, new Set<Region>())) break;
+        }
+    }
+
+    /**
+     * 统计展开树里每个节点的直接引用次数。只按唯一节点向下走(共享 Region 的
+     * 子树只统计一次),用来保证被改写的语句/分支确实只在一处出现,避免同一份
+     * IfPandaStatement 在别的落空位置被一起改掉。
+     */
+    private countEmittedReferences(root: Region): Map<object, number> {
+        const refCount = new Map<object, number>();
+        const visited = new Set<object>();
+        const count = (node: IPandaDecompileAble | null): void => {
+            if (!node) return;
+            refCount.set(node, (refCount.get(node) ?? 0) + 1);
+            if (visited.has(node)) return;
+            visited.add(node);
+            for (const child of this.emittedChildren(node)) count(child);
+        };
+        count(root);
+        return refCount;
+    }
+
+    private emittedChildren(node: IPandaDecompileAble): IPandaDecompileAble[] {
+        if (node instanceof Region) return node.getStatements();
+        if (node instanceof IfPandaStatement) {
+            return [
+                (node as any).consequent,
+                (node as any).alternate,
+                (node as any).tryCatchPandaStatement,
+            ].filter(Boolean);
+        }
+        if (node instanceof WhileStatement) {
+            return [...((node as any).headStms ?? []), ...((node as any).bodyStms ?? [])];
+        }
+        if (node instanceof DoWhileStatement) return [...((node as any).bodyStms ?? [])];
+        if (node instanceof TryCatchPandaStatement) {
+            return [(node as any).tryBody, (node as any).catchBody].filter(Boolean);
+        }
+        return [];
+    }
+
+    /** 自底向上处理:先收掉分支深处的重复尾,外层 if 才能看到变成单分支的分支末尾。 */
+    private pruneTailInNode(node: IPandaDecompileAble, refCount: Map<object, number>, visited: Set<Region>): boolean {
+        if (node instanceof Region) {
+            if (visited.has(node)) return false;
+            visited.add(node);
+            return this.pruneTailInList(node.getStatements(), refCount, visited);
+        }
+        if (node instanceof IfPandaStatement) {
+            if ((node as any).tryCatchPandaStatement) return false;
+            let changed = false;
+            const consequent = (node as any).consequent;
+            const alternate = (node as any).alternate;
+            if (consequent instanceof Region) changed = this.pruneTailInNode(consequent, refCount, visited) || changed;
+            if (alternate instanceof Region) changed = this.pruneTailInNode(alternate, refCount, visited) || changed;
+            return changed;
+        }
+        if (node instanceof WhileStatement) {
+            let changed = this.pruneTailInList((node as any).headStms ?? [], refCount, visited);
+            changed = this.pruneTailInList((node as any).bodyStms ?? [], refCount, visited) || changed;
+            return changed;
+        }
+        if (node instanceof DoWhileStatement) {
+            return this.pruneTailInList((node as any).bodyStms ?? [], refCount, visited);
+        }
+        return false;
+    }
+
+    private pruneTailInList(list: IPandaDecompileAble[], refCount: Map<object, number>, visited: Set<Region>): boolean {
+        let changed = false;
+        for (const statement of list) {
+            if (statement instanceof Region || statement instanceof IfPandaStatement
+                || statement instanceof WhileStatement || statement instanceof DoWhileStatement) {
+                changed = this.pruneTailInNode(statement, refCount, visited) || changed;
+            }
+        }
+        for (let index = 0; index < list.length; index++) {
+            if (this.pruneSharedTailOfIf(list, index, refCount)) changed = true;
+        }
+        return changed;
+    }
+
+    /**
+     * `if (C) { ...; if (D) { X } else { NEXT } } else { NEXT }` → `if (C) { ...; if (D) { X } } NEXT`。
+     * 分支末尾的重复尾有两种形态:内层 if 的 else 指向 NEXT,或分支列表最后一项就是
+     * NEXT 这个 Region(上一层刚提上来的)。
+     */
+    private pruneSharedTailOfIf(list: IPandaDecompileAble[], index: number, refCount: Map<object, number>): boolean {
+        const statement = list[index];
+        if (!(statement instanceof IfPandaStatement)) return false;
+        if ((statement as any).tryCatchPandaStatement) return false;
+        const consequent = (statement as any).consequent;
+        const alternate = (statement as any).alternate;
+        if (!(consequent instanceof Region) || !(alternate instanceof Region)) return false;
+        if (consequent === alternate) return false;
+        if (alternate.isTryCatchHelperRegion()) return false;
+        if ((refCount.get(statement) ?? 0) !== 1 || (refCount.get(consequent) ?? 0) !== 1) return false;
+        const tail = consequent.getStatements();
+        if (tail.length === 0) return false;
+        const last = tail[tail.length - 1];
+        if (last instanceof IfPandaStatement) {
+            if ((last as any).tryCatchPandaStatement) return false;
+            if ((last as any).alternate !== alternate) return false;
+            if ((refCount.get(last) ?? 0) !== 1) return false;
+            // 只有“失败分支一定离开当前结构”时才能把 else 提到 if 之后:
+            // 否则原本从内层 then 落空会继续执行分支之后的代码,提上去之后就会
+            // 多执行一次尾块(zhihu ContentDetailPages 的三元赋值就是这么被改坏的)。
+            if (!this.branchAlwaysExits((last as any).consequent)) return false;
+            (last as any).alternate = null;
+        } else if (last === alternate) {
+            tail.pop();
+        } else {
+            return false;
+        }
+        (statement as any).alternate = null;
+        list.splice(index + 1, 0, alternate);
+        return true;
+    }
+
+    /**
+     * 分支是否一定在自身内部离开当前结构(return/throw/break/continue/goto,
+     * 或两个分支都如此的 if)。区域按最后一条语句判断:能走到末尾时一定会离开。
+     */
+    private branchAlwaysExits(node: IPandaDecompileAble | null): boolean {
+        if (!node) return false;
+        if (node instanceof Region) {
+            const statements = node.getStatements();
+            if (statements.length === 0) return false;
+            return this.branchAlwaysExits(statements[statements.length - 1]);
+        }
+        if (node instanceof IfPandaStatement) {
+            if ((node as any).tryCatchPandaStatement) return false;
+            return this.branchAlwaysExits((node as any).consequent)
+                && this.branchAlwaysExits((node as any).alternate);
+        }
+        if (node instanceof BreakStatement || node instanceof ContinueStatement || node instanceof GotoStatement) {
+            return true;
+        }
+        if (node instanceof LinearPandaStatement) {
+            const terminator = (node as any).block?.getTerminator?.();
+            return terminator?.kind === "return" || terminator?.kind === "throw";
+        }
+        return false;
     }
 
     private reduceAcyclic(region: Region): boolean {

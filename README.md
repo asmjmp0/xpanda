@@ -463,6 +463,7 @@ The output for `md5.abc` is executed, and `md5("admin")` is checked against Node
 
 - The following cases degrade to the `SimpleAnalysis` linear output (emulated with `decompiler_goto`):
   - a single method with more than 500 basic blocks;
+  - an estimated structured expansion above `MAX_STRUCTURED_STATEMENTS` even after the region-level shared-tail pruning (see `docs/ARCHITECTURE.md` §7.3);
   - the `jeq/jne/jstricteq/jnstricteq` instructions;
   - an instruction kind with no registered handle.
 - Degraded output hoists lexical-environment declarations to the function top so later labels can access them; it may still contain bare-`break` scoping issues or use `export ... from` syntax that requires the matching parser plugin.

@@ -1057,684 +1057,257 @@ s421 = function (p0, p1) {
   }
   return v3;
 };
-local_0_18 = function (p0, p1, p2, p3) //The function was created by SimpleAnalysis,because StructureAnalysis failed.
-{
-  let v2, v3, v8;
-  entry: {
-    if (p0) decompiler_goto(label_10);
-  }
-  label_7: {
-    decompiler_goto(label_11);
-  }
-  label_10: {}
-  label_11: {
-    decompiler_goto(label_33);
-  }
-  label_16: {
+local_0_18 = function (p0, p1, p2, p3) {
+  let v1, v2, v3, v4, v5, v6, v7, v8, v9, acc;
+  if (!p0) {
     return local_0_10(p2, p3, "not-object");
   }
-  label_33: {
-    if (p1 <= 8) decompiler_goto(label_60);
-  }
-  label_43: {
+  if (p1 > 8) {
     return local_0_10(p2, p3, "depth");
   }
-  label_60: {
-    if (p2.count < 256) decompiler_goto(label_100);
-  }
-  label_83: {
+  if (p2.count >= 256) {
     return local_0_10(p2, p3, "count");
   }
-  label_100: {
-    if (typeof p0.id !== "string") decompiler_goto(label_154);
-  }
-  label_123: {
-    if (p0.id.length !== 0) decompiler_goto(label_171);
-  }
-  label_154: {
+  v1 = 0;
+  if (typeof p0.id !== "string" || p0.id.length === 0) {
     return local_0_10(p2, p3, "id-missing");
   }
-  label_171: {
-    if (l50(p0.id) <= 23) decompiler_goto(label_222);
-  }
-  label_205: {
+  if (l50(p0.id) > 23) {
     return local_0_10(p2, p3, "id-length");
   }
-  label_222: {
-    if (!p2.usedIds.has(p0.id)) decompiler_goto(label_275);
-  }
-  label_258: {
+  if (p2.usedIds.has(p0.id)) {
     return local_0_10(p2, p3, "id-duplicate");
   }
-  label_275: {
-    if (typeof p0.label !== "string") decompiler_goto(label_328);
-  }
-  label_298: {
-    if (l50(p0.label) <= local_0_10) decompiler_goto(label_345);
-  }
-  label_328: {
+  if (typeof p0.label !== "string" || (acc = l50(p0.label), (typeof p0.label !== "string") > 256)) {
     return local_0_10(p2, p3, "label");
   }
-  label_345: {
-    if (local_0_11(p0.type)) decompiler_goto(label_371);
-  }
-  label_368: {
-    decompiler_goto(label_372);
-  }
-  label_371: {}
-  label_372: {
-    decompiler_goto(label_394);
-  }
-  label_377: {
+  if (!local_0_11(p0.type)) {
     return local_0_10(p2, p3, "type");
   }
-  label_394: {
-    if (local_0_12(p0.keyOrMouse)) decompiler_goto(label_420);
-  }
-  label_417: {
-    decompiler_goto(label_421);
-  }
-  label_420: {}
-  label_421: {
-    decompiler_goto(label_443);
-  }
-  label_426: {
+  if (!local_0_12(p0.keyOrMouse)) {
     return local_0_10(p2, p3, "keyOrMouse");
   }
-  label_443: {
-    if (local_0_13(p0.xPct, "keyOrMouse", 1)) decompiler_goto(label_478);
-  }
-  label_475: {
-    decompiler_goto(label_479);
-  }
-  label_478: {}
-  label_479: {}
-  label_484: {
-    if (local_0_13(p0.yPct, "keyOrMouse", 1)) decompiler_goto(label_512);
-  }
-  label_509: {
-    decompiler_goto(label_513);
-  }
-  label_512: {}
-  label_513: {
-    decompiler_goto(label_535);
-  }
-  label_518: {
-    return local_0_10(p2, p3, "position");
-  }
-  label_535: {
-    if (local_0_13(p0.baseWidth, local_0_10, 4096)) decompiler_goto(label_570);
-  }
-  label_567: {
-    decompiler_goto(label_571);
-  }
-  label_570: {}
-  label_571: {}
-  label_576: {
-    if (local_0_13(p0.baseHeight, local_0_10, 4096)) decompiler_goto(label_604);
-  }
-  label_601: {
-    decompiler_goto(label_605);
-  }
-  label_604: {}
-  label_605: {
-    decompiler_goto(label_627);
-  }
-  label_610: {
+  if (local_0_13(p0.xPct, v1, 1)) {
+    if (!local_0_13(p0.yPct, v1, 1)) {
+      return local_0_10(p2, p3, "position");
+    }
+    if (local_0_13(p0.baseWidth, 1, 4096)) {
+      if (!local_0_13(p0.baseHeight, 1, 4096)) {
+        return local_0_10(p2, p3, "size");
+      }
+      if (p0.itemScale !== undefined) {
+        if (!local_0_13(p0.itemScale, 0.1, 10)) {
+          return local_0_10(p2, p3, "itemScale");
+        }
+      }
+      if (typeof p0.isCircle === "boolean") {
+        if (p0.trigger !== undefined) {
+          if (!local_0_14(p0.trigger)) {
+            return local_0_10(p2, p3, "trigger");
+          }
+        }
+        if (p0.alignGroup !== undefined) {
+          if (!local_0_15(p0.alignGroup)) {
+            return local_0_10(p2, p3, "alignGroup");
+          }
+        }
+        if (p0.alignIndex !== undefined) {
+          if (!local_0_8(p0.alignIndex, v1, 255)) {
+            return local_0_10(p2, p3, "alignIndex");
+          }
+        }
+        if (p0.grabbedOnly !== undefined && typeof p0.grabbedOnly !== "boolean") {
+          return local_0_10(p2, p3, "grabbedOnly");
+        }
+        v4 = p0.trigger ?? "press";
+        v5 = p0.alignGroup ?? p301.NONE;
+        v6 = p0.alignIndex ?? v1;
+        v7 = p0.grabbedOnly ?? false;
+        v8 = !local_0_16(p0.menuOnly) || !local_0_16(p0.hidden) || !local_0_16(p0.locked);
+        if (!v8) {
+          if (!local_0_16(p0.dragLook)) {
+            return local_0_10(p2, p3, "flags");
+          }
+          if (p0.keys !== undefined) {
+            if (!Array.isArray(p0.keys) || p0.keys.length > 6) {
+              return local_0_10(p2, p3, "keys");
+            }
+            for (v8 = v1; v8 < p0.keys.length; v8 += 1) {
+              if (!local_0_9(p0.keys[v8])) {
+                return local_0_10(p2, p3, "keys");
+              }
+            }
+          }
+          if (p0.systemAction !== undefined && p0.systemAction !== "input" && p0.systemAction !== "edit" && p0.systemAction !== "visibility" && p0.systemAction !== "mouse") {
+            return local_0_10(p2, p3, "systemAction");
+          }
+          v8 = p0.type === o301.BUTTON && p0.systemAction === undefined;
+          if (p0.type === o301.BUTTON && p0.systemAction === undefined) {
+            v8 = !p0.keys || p0.keys.length === v1;
+          }
+          if (v8) {
+            v8 = !local_0_9(p0.keyOrMouse);
+          }
+          if (v8) {
+            if (p0.keys === undefined || p0.keys.length !== v1 || p0.keyOrMouse !== v1) {
+              return local_0_10(p2, p3, "no-output");
+            }
+          }
+          if (p0.modifiers !== undefined) {
+            if (!local_0_8(p0.modifiers, v1, 65535)) {
+              return local_0_10(p2, p3, "modifiers");
+            }
+          }
+          if (p0.swipeGroup !== undefined) {
+            v8 = typeof p0.swipeGroup !== "string";
+            if (typeof p0.swipeGroup === "string") {
+              v8 = l50(p0.swipeGroup) > 23;
+            }
+            if (!v8) {
+              v8 = p0.swipeGroup.length > v1;
+              if (p0.swipeGroup.length > v1) {
+                v8 = p0.type !== o301.BUTTON || v4 !== "press" || p0.dragLook === true || p0.systemAction !== undefined;
+              }
+            }
+            if (v8) {
+              return local_0_10(p2, p3, "swipeGroup");
+            }
+          }
+          if (p0.visibilityOverride !== undefined && p0.visibilityOverride !== "auto" && p0.visibilityOverride !== "force_show" && p0.visibilityOverride !== "force_hide") {
+            return local_0_10(p2, p3, "visibilityOverride");
+          }
+          if (p0.hideOnInput !== undefined) {
+            if (!Array.isArray(p0.hideOnInput) || p0.hideOnInput.length > 3) {
+              return local_0_10(p2, p3, "hideOnInput");
+            }
+            for (v2 = v1; v2 < p0.hideOnInput.length; v2 += 1) {
+              if (p0.hideOnInput[v2] !== "mouse" && p0.hideOnInput[v2] !== "keyboard" && p0.hideOnInput[v2] !== "mouse_and_keyboard") {
+                return local_0_10(p2, p3, "hideOnInput");
+              }
+            }
+          }
+          if (p0.style === undefined) {
+            if (p0.children !== undefined) {
+              if (!Array.isArray(p0.children)) {
+                return local_0_10(p2, p3, "children");
+              }
+            }
+            if (p0.hotbarUserPlaced !== undefined && typeof p0.hotbarUserPlaced !== "boolean") {
+              return local_0_10(p2, p3, "hotbarUserPlaced");
+            }
+            p2.usedIds.add(p0.id);
+            p2.count = p2.count + 1;
+            v2 = local_0_1(p0, undefined);
+            v2.itemScale = p0.itemScale ?? 1;
+            v2.trigger = v4;
+            v2.alignGroup = v5;
+            v2.alignIndex = v6;
+            v2.grabbedOnly = v7;
+            if (local_0_17(v2.label)) {
+              v2.label = "";
+            }
+            if (v2.hideOnInput === undefined) {
+              v2.hideOnInput = b1360(v2);
+            }
+            if (v2.id === "joystick" && v2.hideOnInput.length === v1) {
+              v2.hideOnInput = b1360(v2);
+            }
+            if (p0.children) {
+              for (v2.children = []; v1 < p0.children.length; v1 += 1) {
+                v3 = local_0_18(p0.children[v1], p1 + 1, p2, p3 + ".children[" + v1.toString() + "]");
+                if (!v3) {
+                  return null;
+                }
+                v2.children.push(v3);
+              }
+            }
+            return v2;
+          }
+          if (!p0.style || typeof p0.style !== "object") {
+            return local_0_10(p2, p3, "style");
+          }
+          v9 = p0.style.bg !== undefined;
+          if (p0.style.bg !== undefined) {
+            v9 = typeof p0.style.bg !== "string";
+            if (typeof p0.style.bg === "string") {
+              v9 = p0.style.bg.length > 64;
+            }
+          }
+          if (!v9 && (v9 = p0.style.bgPressed !== undefined, p0.style.bgPressed !== undefined)) {
+            v9 = typeof p0.style.bgPressed !== "string";
+            if (typeof p0.style.bgPressed === "string") {
+              v9 = p0.style.bgPressed.length > 64;
+            }
+          }
+          if (!v9) {
+            v9 = p0.style.fg !== undefined;
+            if (p0.style.fg !== undefined) {
+              v9 = typeof p0.style.fg !== "string";
+              if (typeof p0.style.fg === "string") {
+                v9 = p0.style.fg.length > 64;
+              }
+            }
+            if (v9) {
+              return local_0_10(p2, p3, "style");
+            }
+            if (p0.style.opacity !== undefined) {
+              if (!local_0_13(p0.style.opacity, 0.1, 1)) {
+                return local_0_10(p2, p3, "style");
+              }
+            }
+            if (p0.style.cornerRadius !== undefined) {
+              if (!local_0_13(p0.style.cornerRadius, v1, 1)) {
+                return local_0_10(p2, p3, "style");
+              }
+            }
+            if (p0.style.shape !== undefined && p0.style.shape !== "circle" && p0.style.shape !== "square" && p0.style.shape !== "rounded" && p0.style.shape !== "diamond") {
+              return local_0_10(p2, p3, "style");
+            }
+            if (p0.children !== undefined) {
+              if (!Array.isArray(p0.children)) {
+                return local_0_10(p2, p3, "children");
+              }
+            }
+            if (p0.hotbarUserPlaced !== undefined && typeof p0.hotbarUserPlaced !== "boolean") {
+              return local_0_10(p2, p3, "hotbarUserPlaced");
+            }
+            p2.usedIds.add(p0.id);
+            p2.count = p2.count + 1;
+            v2 = local_0_1(p0, undefined);
+            v2.itemScale = p0.itemScale ?? 1;
+            v2.trigger = v4;
+            v2.alignGroup = v5;
+            v2.alignIndex = v6;
+            v2.grabbedOnly = v7;
+            if (local_0_17(v2.label)) {
+              v2.label = "";
+            }
+            if (v2.hideOnInput === undefined) {
+              v2.hideOnInput = b1360(v2);
+            }
+            if (v2.id === "joystick" && v2.hideOnInput.length === v1) {
+              v2.hideOnInput = b1360(v2);
+            }
+            if (p0.children) {
+              for (v2.children = []; v1 < p0.children.length; v1 += 1) {
+                v3 = local_0_18(p0.children[v1], p1 + 1, p2, p3 + ".children[" + v1.toString() + "]");
+                if (!v3) {
+                  return null;
+                }
+                v2.children.push(v3);
+              }
+            }
+            return v2;
+          }
+          return local_0_10(p2, p3, "style");
+        }
+        return local_0_10(p2, p3, "flags");
+      }
+      return local_0_10(p2, p3, "isCircle");
+    }
     return local_0_10(p2, p3, "size");
   }
-  label_627: {
-    if (p0.itemScale === undefined) decompiler_goto(label_714);
-  }
-  label_645: {
-    if (local_0_13(p0.itemScale, 0.1, 10)) decompiler_goto(label_691);
-  }
-  label_688: {
-    decompiler_goto(label_692);
-  }
-  label_691: {}
-  label_692: {
-    decompiler_goto(label_714);
-  }
-  label_697: {
-    return local_0_10(p2, p3, "itemScale");
-  }
-  label_714: {
-    if (typeof p0.isCircle === "boolean") decompiler_goto(label_751);
-  }
-  label_734: {
-    return local_0_10(p2, p3, "isCircle");
-  }
-  label_751: {
-    if (p0.trigger === undefined) decompiler_goto(label_818);
-  }
-  label_769: {
-    if (local_0_14(p0.trigger)) decompiler_goto(label_795);
-  }
-  label_792: {
-    decompiler_goto(label_796);
-  }
-  label_795: {}
-  label_796: {
-    decompiler_goto(label_818);
-  }
-  label_801: {
-    return local_0_10(p2, p3, "trigger");
-  }
-  label_818: {
-    if (p0.alignGroup === undefined) decompiler_goto(label_885);
-  }
-  label_836: {
-    if (local_0_15(p0.alignGroup)) decompiler_goto(label_862);
-  }
-  label_859: {
-    decompiler_goto(label_863);
-  }
-  label_862: {}
-  label_863: {
-    decompiler_goto(label_885);
-  }
-  label_868: {
-    return local_0_10(p2, p3, "alignGroup");
-  }
-  label_885: {
-    if (p0.alignIndex === undefined) decompiler_goto(label_961);
-  }
-  label_903: {
-    if (local_0_8(p0.alignIndex, "alignGroup", 255)) decompiler_goto(label_938);
-  }
-  label_935: {
-    decompiler_goto(label_939);
-  }
-  label_938: {}
-  label_939: {
-    decompiler_goto(label_961);
-  }
-  label_944: {
-    return local_0_10(p2, p3, "alignIndex");
-  }
-  label_961: {
-    if (p0.grabbedOnly === undefined) decompiler_goto(label_1019);
-  }
-  label_979: {
-    if (typeof p0.grabbedOnly === "boolean") decompiler_goto(label_1019);
-  }
-  label_1002: {
-    return local_0_10(p2, p3, "grabbedOnly");
-  }
-  label_1019: {
-    if (p0.trigger === null) decompiler_goto(label_1040);
-  }
-  label_1034: {
-    if (p0.trigger !== undefined) decompiler_goto(label_1045);
-  }
-  label_1040: {}
-  label_1045: {
-    if (p0.alignGroup === null) decompiler_goto(label_1066);
-  }
-  label_1060: {
-    if (p0.alignGroup !== undefined) decompiler_goto(label_1075);
-  }
-  label_1066: {}
-  label_1075: {
-    if (p0.alignIndex === null) decompiler_goto(label_1100);
-  }
-  label_1090: {
-    if (p0.alignIndex !== undefined) decompiler_goto(label_1102);
-  }
-  label_1096: {
-    decompiler_goto(label_1102);
-  }
-  label_1100: {}
-  label_1102: {
-    if (p0.grabbedOnly === null) decompiler_goto(label_1123);
-  }
-  label_1117: {
-    if (p0.grabbedOnly !== undefined) decompiler_goto(label_1126);
-  }
-  label_1123: {}
-  label_1126: {
-    if (local_0_16(p0.menuOnly)) decompiler_goto(label_1155);
-  }
-  label_1150: {
-    decompiler_goto(label_1158);
-  }
-  label_1155: {}
-  label_1158: {}
-  label_1165: {
-    if (local_0_16(p0.hidden)) decompiler_goto(label_1194);
-  }
-  label_1189: {
-    decompiler_goto(label_1197);
-  }
-  label_1194: {}
-  label_1197: {}
-  label_1204: {
-    if (local_0_16(p0.locked)) decompiler_goto(label_1233);
-  }
-  label_1228: {
-    decompiler_goto(label_1236);
-  }
-  label_1233: {}
-  label_1236: {}
-  label_1243: {
-    if (local_0_16(p0.dragLook)) decompiler_goto(label_1270);
-  }
-  label_1267: {
-    decompiler_goto(label_1271);
-  }
-  label_1270: {}
-  label_1271: {
-    decompiler_goto(label_1293);
-  }
-  label_1276: {
-    return local_0_10(p2, p3, "flags");
-  }
-  label_1293: {
-    if (p0.keys === undefined) decompiler_goto(label_1482);
-  }
-  label_1309: {
-    if (Array.isArray(p0.keys)) decompiler_goto(label_1346);
-  }
-  label_1343: {
-    decompiler_goto(label_1347);
-  }
-  label_1346: {}
-  label_1347: {}
-  label_1352: {
-    if (p0.keys.length <= 6) decompiler_goto(label_1396);
-  }
-  label_1379: {
-    return local_0_10(p2, p3, "keys");
-  }
-  label_1396: {}
-  label_1398: {
-    if ("keys" >= p0.keys.length) decompiler_goto(label_1482);
-  }
-  label_1415: {
-    if (local_0_9(p0.keys.keys)) decompiler_goto(label_1449);
-  }
-  label_1446: {
-    decompiler_goto(label_1450);
-  }
-  label_1449: {}
-  label_1450: {
-    decompiler_goto(label_1472);
-  }
-  label_1455: {
-    return local_0_10(p2, p3, "keys");
-  }
-  label_1472: {
-    decompiler_goto(label_1398);
-  }
-  label_1482: {
-    if (p0.systemAction === undefined) decompiler_goto(label_1519);
-  }
-  label_1502: {}
-  label_1519: {
-    if (p0.systemAction === "input") decompiler_goto(label_1543);
-  }
-  label_1526: {}
-  label_1543: {
-    if (p0.systemAction === "edit") decompiler_goto(label_1567);
-  }
-  label_1550: {}
-  label_1567: {
-    if (p0.systemAction === "visibility") decompiler_goto(label_1611);
-  }
-  label_1574: {
-    if (p0.systemAction === "mouse") decompiler_goto(label_1611);
-  }
-  label_1594: {
-    return local_0_10(p2, p3, "systemAction");
-  }
-  label_1611: {
-    if (p0.type !== o301.BUTTON) decompiler_goto(label_1652);
-  }
-  label_1637: {}
-  label_1652: {
-    if (p0.systemAction !== undefined) decompiler_goto(label_1707);
-  }
-  label_1659: {
-    if (p0.keys) decompiler_goto(label_1676);
-  }
-  label_1671: {
-    decompiler_goto(label_1679);
-  }
-  label_1676: {}
-  label_1679: {}
-  label_1686: {}
-  label_1707: {
-    if (p0.keys.length !== "systemAction") decompiler_goto(label_1745);
-  }
-  label_1714: {
-    if (local_0_9(p0.keyOrMouse)) decompiler_goto(label_1742);
-  }
-  label_1737: {
-    decompiler_goto(label_1745);
-  }
-  label_1742: {}
-  label_1745: {
-    decompiler_goto(label_1849);
-  }
-  label_1752: {
-    if (p0.keys === undefined) decompiler_goto(label_1793);
-  }
-  label_1772: {}
-  label_1793: {
-    if (p0.keys.length !== "systemAction") decompiler_goto(label_1816);
-  }
-  label_1800: {}
-  label_1816: {
-    if (p0.keyOrMouse === "systemAction") decompiler_goto(label_1826);
-  }
-  label_1823: {
-    decompiler_goto(label_1827);
-  }
-  label_1826: {}
-  label_1827: {
-    decompiler_goto(label_1849);
-  }
-  label_1832: {
-    return local_0_10(p2, p3, "no-output");
-  }
-  label_1849: {
-    if (p0.modifiers === undefined) decompiler_goto(label_1925);
-  }
-  label_1867: {
-    if (local_0_8(p0.modifiers, "no-output", 65535)) decompiler_goto(label_1902);
-  }
-  label_1899: {
-    decompiler_goto(label_1903);
-  }
-  label_1902: {}
-  label_1903: {
-    decompiler_goto(label_1925);
-  }
-  label_1908: {
-    return local_0_10(p2, p3, "modifiers");
-  }
-  label_1925: {
-    if (p0.swipeGroup === undefined) decompiler_goto(label_2131);
-  }
-  label_1944: {
-    if (typeof p0.swipeGroup !== "string") decompiler_goto(label_1996);
-  }
-  label_1969: {
-    v8 = l50(p0.swipeGroup) > 23;
-  }
-  label_1996: {
-    if (v8) decompiler_goto(label_2107);
-  }
-  label_2003: {
-    if (p0.swipeGroup.length <= "modifiers") decompiler_goto(label_2107);
-  }
-  label_2029: {
-    if (p0.type !== o301.BUTTON) decompiler_goto(label_2063);
-  }
-  label_2055: {}
-  label_2063: {}
-  label_2070: {}
-  label_2085: {
-    if (p0.dragLook === true) decompiler_goto(label_2107);
-  }
-  label_2092: {}
-  label_2107: {
-    if (p0.systemAction === undefined) decompiler_goto(label_2131);
-  }
-  label_2114: {
-    return local_0_10(p2, p3, "swipeGroup");
-  }
-  label_2131: {
-    if (p0.visibilityOverride === undefined) decompiler_goto(label_2168);
-  }
-  label_2151: {}
-  label_2168: {
-    if (p0.visibilityOverride === "auto") decompiler_goto(label_2192);
-  }
-  label_2175: {}
-  label_2192: {
-    if (p0.visibilityOverride === "force_show") decompiler_goto(label_2236);
-  }
-  label_2199: {
-    if (p0.visibilityOverride === "force_hide") decompiler_goto(label_2236);
-  }
-  label_2219: {
-    return local_0_10(p2, p3, "visibilityOverride");
-  }
-  label_2236: {
-    if (p0.hideOnInput === undefined) decompiler_goto(label_2441);
-  }
-  label_2252: {
-    if (Array.isArray(p0.hideOnInput)) decompiler_goto(label_2289);
-  }
-  label_2286: {
-    decompiler_goto(label_2290);
-  }
-  label_2289: {}
-  label_2290: {}
-  label_2295: {
-    if (p0.hideOnInput.length <= 3) decompiler_goto(label_2339);
-  }
-  label_2322: {
-    return local_0_10(p2, p3, "hideOnInput");
-  }
-  label_2339: {}
-  label_2341: {
-    if ("hideOnInput" >= p0.hideOnInput.length) decompiler_goto(label_2441);
-  }
-  label_2358: {
-    if (p0.hideOnInput.hideOnInput === "mouse") decompiler_goto(label_2396);
-  }
-  label_2388: {}
-  label_2396: {
-    if (p0.hideOnInput.hideOnInput === "keyboard") decompiler_goto(label_2431);
-  }
-  label_2403: {
-    if (p0.hideOnInput.hideOnInput === "mouse_and_keyboard") decompiler_goto(label_2431);
-  }
-  label_2414: {
-    return local_0_10(p2, p3, "hideOnInput");
-  }
-  label_2431: {
-    decompiler_goto(label_2341);
-  }
-  label_2441: {
-    if (p0.style === undefined) decompiler_goto(label_3046);
-  }
-  label_2457: {
-    if (p0.style) decompiler_goto(label_2472);
-  }
-  label_2469: {
-    decompiler_goto(label_2473);
-  }
-  label_2472: {}
-  label_2473: {}
-  label_2478: {
-    if (typeof p0.style === "object") decompiler_goto(label_2518);
-  }
-  label_2501: {
-    return local_0_10(p2, p3, "style");
-  }
-  label_2518: {
-    if (p0.style.bg === undefined) decompiler_goto(label_2598);
-  }
-  label_2552: {
-    if (typeof p0.style.bg !== "string") decompiler_goto(label_2598);
-  }
-  label_2577: {}
-  label_2598: {
-    if (p0.style.bg.length > 64) decompiler_goto(label_2671);
-  }
-  label_2605: {
-    if (p0.style.bgPressed === undefined) decompiler_goto(label_2671);
-  }
-  label_2625: {
-    if (typeof p0.style.bgPressed !== "string") decompiler_goto(label_2671);
-  }
-  label_2650: {}
-  label_2671: {
-    if (p0.style.bgPressed.length > 64) decompiler_goto(label_2751);
-  }
-  label_2678: {
-    if (p0.style.fg === undefined) decompiler_goto(label_2744);
-  }
-  label_2698: {
-    if (typeof p0.style.fg !== "string") decompiler_goto(label_2744);
-  }
-  label_2723: {}
-  label_2744: {
-    if (p0.style.fg.length <= 64) decompiler_goto(label_2768);
-  }
-  label_2751: {
-    return local_0_10(p2, p3, "style");
-  }
-  label_2768: {
-    if (p0.style.opacity === undefined) decompiler_goto(label_2848);
-  }
-  label_2786: {
-    if (local_0_13(p0.style.opacity, 0.1, local_0_10)) decompiler_goto(label_2825);
-  }
-  label_2822: {
-    decompiler_goto(label_2826);
-  }
-  label_2825: {}
-  label_2826: {
-    decompiler_goto(label_2848);
-  }
-  label_2831: {
-    return local_0_10(p2, p3, "style");
-  }
-  label_2848: {
-    if (p0.style.cornerRadius === undefined) decompiler_goto(label_2917);
-  }
-  label_2866: {
-    if (local_0_13(p0.style.cornerRadius, "style", local_0_10)) decompiler_goto(label_2894);
-  }
-  label_2891: {
-    decompiler_goto(label_2895);
-  }
-  label_2894: {}
-  label_2895: {
-    decompiler_goto(label_2917);
-  }
-  label_2900: {
-    return local_0_10(p2, p3, "style");
-  }
-  label_2917: {
-    if (p0.style.shape === undefined) decompiler_goto(label_2954);
-  }
-  label_2937: {}
-  label_2954: {
-    if (p0.style.shape === "circle") decompiler_goto(label_2978);
-  }
-  label_2961: {}
-  label_2978: {
-    if (p0.style.shape === "square") decompiler_goto(label_3002);
-  }
-  label_2985: {}
-  label_3002: {
-    if (p0.style.shape === "rounded") decompiler_goto(label_3046);
-  }
-  label_3009: {
-    if (p0.style.shape === "diamond") decompiler_goto(label_3046);
-  }
-  label_3029: {
-    return local_0_10(p2, p3, "style");
-  }
-  label_3046: {
-    if (p0.children === undefined) decompiler_goto(label_3124);
-  }
-  label_3064: {
-    if (Array.isArray(p0.children)) decompiler_goto(label_3101);
-  }
-  label_3098: {
-    decompiler_goto(label_3102);
-  }
-  label_3101: {}
-  label_3102: {
-    decompiler_goto(label_3124);
-  }
-  label_3107: {
-    return local_0_10(p2, p3, "children");
-  }
-  label_3124: {
-    if (p0.hotbarUserPlaced === undefined) decompiler_goto(label_3182);
-  }
-  label_3142: {
-    if (typeof p0.hotbarUserPlaced === "boolean") decompiler_goto(label_3182);
-  }
-  label_3165: {
-    return local_0_10(p2, p3, "hotbarUserPlaced");
-  }
-  label_3182: {
-    p2.usedIds.add(p0.id);
-    p2.count = p2.count + 1;
-    v2 = local_0_1(p0, undefined);
-    if (p0.itemScale === null) decompiler_goto(label_3270);
-  }
-  label_3260: {
-    if (p0.itemScale !== undefined) decompiler_goto(label_3272);
-  }
-  label_3266: {
-    decompiler_goto(label_3272);
-  }
-  label_3270: {}
-  label_3272: {
-    v2.itemScale = local_0_10;
-    v2.trigger = "press";
-    v2.alignGroup = p301.NONE;
-    v2.alignIndex = "grabbedOnly";
-    v2.grabbedOnly = false;
-    if (!local_0_17(v2.label)) decompiler_goto(label_3345);
-  }
-  label_3336: {
-    v2.label = "";
-  }
-  label_3345: {
-    if (v2.hideOnInput !== undefined) decompiler_goto(label_3371);
-  }
-  label_3360: {
-    v2.hideOnInput = b1360(v2);
-  }
-  label_3371: {
-    if (v2.id !== "joystick") decompiler_goto(label_3426);
-  }
-  label_3391: {
-    if (v2.hideOnInput.length !== "hotbarUserPlaced") decompiler_goto(label_3426);
-  }
-  label_3415: {
-    v2.hideOnInput = b1360(v2);
-  }
-  label_3426: {
-    if (!p0.children) decompiler_goto(label_3588);
-  }
-  label_3439: {
-    v2.children = [];
-  }
-  label_3448: {
-    if ("hotbarUserPlaced" >= p0.children.length) decompiler_goto(label_3588);
-  }
-  label_3466: {
-    if (local_0_18(p0.children.hotbarUserPlaced, p1 + local_0_10, p2, p3 + ".children[" + "hotbarUserPlaced".toString() + "]")) decompiler_goto(label_3551);
-  }
-  label_3548: {
-    decompiler_goto(label_3552);
-  }
-  label_3551: {}
-  label_3552: {
-    decompiler_goto(label_3559);
-  }
-  label_3557: {
-    return null;
-  }
-  label_3559: {
-    v2.children.push(v3);
-    decompiler_goto(label_3448);
-  }
-  label_3588: {
-    return v2;
-  }
+  return local_0_10(p2, p3, "position");
 };
 t301 = function (p0) {
   if (p0.keys && p0.keys.length > 0) {
@@ -1842,542 +1415,150 @@ local_0_19 = function (p0) {
     "reason": p0
   };
 };
-w1359 = function (p0) //The function was created by SimpleAnalysis,because StructureAnalysis failed.
-{
-  let v0 /*d285*/, v3, v4 /*s374*/, v5 /*b422*/;
-  entry: {
-    if (p0) decompiler_goto(label_10);
-  }
-  label_7: {
-    decompiler_goto(label_11);
-  }
-  label_10: {}
-  label_11: {
-    decompiler_goto(label_32);
-  }
-  label_16: {
+w1359 = function (p0) {
+  let v0 /*d285*/, v2, v3, v4 /*s374*/, v5 /*b422*/, v10, v11, v12, v13, v14, v15, acc;
+  if (!p0) {
     return local_0_19("profile.not-object");
   }
-  label_32: {
-    if (p0.profileId === undefined) decompiler_goto(label_158);
+  if (p0.profileId !== undefined) {
+    v0 = typeof p0.profileId !== "string";
+    if (typeof p0.profileId === "string") {
+      v0 = !new RegExp("^[a-zA-Z0-9_-]{1,64}$").test(p0.profileId);
+    }
+    if (v0) {
+      return local_0_19("profile.identity");
+    }
   }
-  label_50: {
-    if (typeof p0.profileId !== "string") decompiler_goto(label_135);
+  if (p0.profileRevision !== undefined) {
+    if (!Number.isSafeInteger(p0.profileRevision) || p0.profileRevision < 1) {
+      return local_0_19("profile.revision");
+    }
   }
-  label_75: {
-    if (new RegExp("^[a-zA-Z0-9_-]{1,64}$").test(p0.profileId)) decompiler_goto(label_132);
+  v2 = typeof p0.name !== "string";
+  if (typeof p0.name === "string") {
+    v2 = p0.name.length === 0;
   }
-  label_127: {
-    decompiler_goto(label_135);
-  }
-  label_132: {}
-  label_135: {
-    decompiler_goto(label_158);
-  }
-  label_142: {
-    return local_0_19("profile.identity");
-  }
-  label_158: {
-    if (p0.profileRevision === undefined) decompiler_goto(label_271);
-  }
-  label_183: {
-    if (Number.isSafeInteger(p0.profileRevision)) decompiler_goto(label_222);
-  }
-  label_217: {
-    decompiler_goto(label_225);
-  }
-  label_222: {}
-  label_225: {}
-  label_232: {}
-  label_248: {
-    if (p0.profileRevision >= 1) decompiler_goto(label_271);
-  }
-  label_255: {
-    return local_0_19("profile.revision");
-  }
-  label_271: {
-    if (typeof p0.name !== "string") decompiler_goto(label_324);
-  }
-  label_303: {}
-  label_324: {
-    if (p0.name.length === 0) decompiler_goto(label_368);
-  }
-  label_331: {
-    if (l50(p0.name) <= 256) decompiler_goto(label_384);
-  }
-  label_368: {
+  if (v2 || (v2 = 256, l50(p0.name) > 256)) {
     return local_0_19("profile.name");
   }
-  label_384: {
-    if (Array.isArray(p0.controls)) decompiler_goto(label_421);
-  }
-  label_418: {
-    decompiler_goto(label_422);
-  }
-  label_421: {}
-  label_422: {
-    decompiler_goto(label_443);
-  }
-  label_427: {
+  if (!Array.isArray(p0.controls)) {
     return local_0_19("profile.controls");
   }
-  label_443: {
-    if (p0.version === undefined) decompiler_goto(label_519);
+  if (p0.version !== undefined) {
+    if (!local_0_8(p0.version, 1, b422)) {
+      return local_0_19("profile.version");
+    }
   }
-  label_461: {
-    if (local_0_8(p0.version, local_0_19, b422)) decompiler_goto(label_497);
+  if (p0.lookPolicies !== undefined) {
+    if (p0.version !== 4 && p0.version !== b422 || s374(p0.lookPolicies) === undefined) {
+      return local_0_19("profile.lookPolicies");
+    }
   }
-  label_494: {
-    decompiler_goto(label_498);
-  }
-  label_497: {}
-  label_498: {
-    decompiler_goto(label_519);
-  }
-  label_503: {
-    return local_0_19("profile.version");
-  }
-  label_519: {
-    if (p0.lookPolicies === undefined) decompiler_goto(label_649);
-  }
-  label_544: {
-    if (p0.version === 4) decompiler_goto(label_589);
-  }
-  label_565: {}
-  label_589: {
-    if (p0.version !== b422) decompiler_goto(label_626);
-  }
-  label_596: {
-    v4 = s374(p0.lookPolicies) === undefined;
-  }
-  label_626: {
-    if (!v4) decompiler_goto(label_649);
-  }
-  label_633: {
-    return local_0_19("profile.lookPolicies");
-  }
-  label_649: {
-    if (p0.version !== 4) decompiler_goto(label_702);
-  }
-  label_668: {
-    if (p0.lookPolicies !== undefined) decompiler_goto(label_702);
-  }
-  label_686: {
+  if (p0.version === 4 && p0.lookPolicies === undefined) {
     return local_0_19("profile.lookPolicies.missing");
   }
-  label_702: {
-    v3 = local_0_20(p0);
-    if (v3.length <= "profile.lookPolicies.missing") decompiler_goto(label_747);
-  }
-  label_724: {
+  v3 = local_0_20(p0);
+  if (v3.length > 0) {
     return local_0_19("profile." + v3);
   }
-  label_747: {
-    if (p0.globalScale === undefined) decompiler_goto(label_833);
-  }
-  label_772: {
-    if (local_0_13(p0.globalScale, 0.5, 2)) decompiler_goto(label_811);
-  }
-  label_808: {
-    decompiler_goto(label_812);
-  }
-  label_811: {}
-  label_812: {
-    decompiler_goto(label_833);
-  }
-  label_817: {
-    return local_0_19("profile.globalScale");
-  }
-  label_833: {
-    if (p0.lookSensitivity === undefined) decompiler_goto(label_919);
-  }
-  label_858: {
-    if (local_0_13(p0.lookSensitivity, 0.3, 3)) decompiler_goto(label_897);
-  }
-  label_894: {
-    decompiler_goto(label_898);
-  }
-  label_897: {}
-  label_898: {
-    decompiler_goto(label_919);
-  }
-  label_903: {
-    return local_0_19("profile.lookSensitivity");
-  }
-  label_919: {
-    if (p0.lookSmoothing === undefined) decompiler_goto(label_998);
-  }
-  label_937: {
-    if (local_0_13(p0.lookSmoothing, 0.1, local_0_19)) decompiler_goto(label_976);
-  }
-  label_973: {
-    decompiler_goto(label_977);
-  }
-  label_976: {}
-  label_977: {
-    decompiler_goto(label_998);
-  }
-  label_982: {
-    return local_0_19("profile.lookSmoothing");
-  }
-  label_998: {
-    if (p0.lookAccel === undefined) decompiler_goto(label_1066);
-  }
-  label_1016: {
-    if (local_0_13(p0.lookAccel, "profile.lookSmoothing", local_0_19)) decompiler_goto(label_1044);
-  }
-  label_1041: {
-    decompiler_goto(label_1045);
-  }
-  label_1044: {}
-  label_1045: {
-    decompiler_goto(label_1066);
-  }
-  label_1050: {
-    return local_0_19("profile.lookAccel");
-  }
-  label_1066: {
-    if (p0.joystickDeadZone === undefined) decompiler_goto(label_1156);
-  }
-  label_1084: {
-    if (local_0_13(p0.joystickDeadZone, 0.01, 0.95)) decompiler_goto(label_1134);
-  }
-  label_1131: {
-    decompiler_goto(label_1135);
-  }
-  label_1134: {}
-  label_1135: {
-    decompiler_goto(label_1156);
-  }
-  label_1140: {
-    return local_0_19("profile.joystickDeadZone");
-  }
-  label_1156: {
-    if (p0.globalOpacity === undefined) decompiler_goto(label_1235);
-  }
-  label_1174: {
-    if (local_0_13(p0.globalOpacity, 0.1, local_0_19)) decompiler_goto(label_1213);
-  }
-  label_1210: {
-    decompiler_goto(label_1214);
-  }
-  label_1213: {}
-  label_1214: {
-    decompiler_goto(label_1235);
-  }
-  label_1219: {
-    return local_0_19("profile.globalOpacity");
-  }
-  label_1235: {
-    if (p0.globalScale === null) decompiler_goto(label_1260);
-  }
-  label_1250: {
-    if (p0.globalScale !== undefined) decompiler_goto(label_1262);
-  }
-  label_1256: {
-    decompiler_goto(label_1262);
-  }
-  label_1260: {}
-  label_1262: {
-    if (p0.lookSensitivity === null) decompiler_goto(label_1287);
-  }
-  label_1277: {
-    if (p0.lookSensitivity !== undefined) decompiler_goto(label_1289);
-  }
-  label_1283: {
-    decompiler_goto(label_1289);
-  }
-  label_1287: {}
-  label_1289: {
-    if (p0.lookSmoothing === null) decompiler_goto(label_1310);
-  }
-  label_1304: {
-    if (p0.lookSmoothing !== undefined) decompiler_goto(label_1321);
-  }
-  label_1310: {}
-  label_1321: {
-    if (p0.lookAccel === null) decompiler_goto(label_1346);
-  }
-  label_1336: {
-    if (p0.lookAccel !== undefined) decompiler_goto(label_1348);
-  }
-  label_1342: {
-    decompiler_goto(label_1348);
-  }
-  label_1346: {}
-  label_1348: {
-    if (p0.joystickDeadZone === null) decompiler_goto(label_1369);
-  }
-  label_1363: {
-    if (p0.joystickDeadZone !== undefined) decompiler_goto(label_1380);
-  }
-  label_1369: {}
-  label_1380: {
-    if (p0.globalOpacity === null) decompiler_goto(label_1405);
-  }
-  label_1395: {
-    if (p0.globalOpacity !== undefined) decompiler_goto(label_1407);
-  }
-  label_1401: {
-    decompiler_goto(label_1407);
-  }
-  label_1405: {}
-  label_1407: {
-    if (local_0_13(local_0_19, 0.5, 2)) decompiler_goto(label_1439);
-  }
-  label_1434: {
-    decompiler_goto(label_1442);
-  }
-  label_1439: {}
-  label_1442: {}
-  label_1449: {
-    if (local_0_13(local_0_19, 0.3, 3)) decompiler_goto(label_1481);
-  }
-  label_1476: {
-    decompiler_goto(label_1484);
-  }
-  label_1481: {}
-  label_1484: {}
-  label_1491: {
-    if (local_0_13(0.6, 0.1, local_0_19)) decompiler_goto(label_1523);
-  }
-  label_1518: {
-    decompiler_goto(label_1526);
-  }
-  label_1523: {}
-  label_1526: {}
-  label_1533: {
-    if (local_0_13("profile.globalOpacity", "profile.globalOpacity", local_0_19)) decompiler_goto(label_1550);
-  }
-  label_1545: {
-    decompiler_goto(label_1553);
-  }
-  label_1550: {}
-  label_1553: {}
-  label_1560: {
-    if (local_0_13(0.18, 0.01, 0.95)) decompiler_goto(label_1603);
-  }
-  label_1598: {
-    decompiler_goto(label_1606);
-  }
-  label_1603: {}
-  label_1606: {}
-  label_1613: {
-    if (local_0_13(local_0_19, 0.1, local_0_19)) decompiler_goto(label_1643);
-  }
-  label_1640: {
-    decompiler_goto(label_1644);
-  }
-  label_1643: {}
-  label_1644: {
-    decompiler_goto(label_1665);
-  }
-  label_1649: {
-    return local_0_19("profile.defaults");
-  }
-  label_1665: {
-    if (local_0_16(p0.invertY)) decompiler_goto(label_1694);
-  }
-  label_1689: {
-    decompiler_goto(label_1697);
-  }
-  label_1694: {}
-  label_1697: {}
-  label_1704: {
-    if (local_0_16(p0.haptic)) decompiler_goto(label_1733);
-  }
-  label_1728: {
-    decompiler_goto(label_1736);
-  }
-  label_1733: {}
-  label_1736: {}
-  label_1743: {
-    if (local_0_16(p0.isPreset)) decompiler_goto(label_1772);
-  }
-  label_1767: {
-    decompiler_goto(label_1775);
-  }
-  label_1772: {}
-  label_1775: {}
-  label_1782: {
-    if (local_0_16(p0.hotbarAutoAdded)) decompiler_goto(label_1811);
-  }
-  label_1806: {
-    decompiler_goto(label_1814);
-  }
-  label_1811: {}
-  label_1814: {}
-  label_1821: {
-    if (local_0_16(p0.snapEnabled)) decompiler_goto(label_1848);
-  }
-  label_1845: {
-    decompiler_goto(label_1849);
-  }
-  label_1848: {}
-  label_1849: {
-    decompiler_goto(label_1870);
-  }
-  label_1854: {
+  if (p0.globalScale !== undefined) {
+    if (!local_0_13(p0.globalScale, 0.5, 2)) {
+      return local_0_19("profile.globalScale");
+    }
+  }
+  if (p0.lookSensitivity !== undefined) {
+    if (!local_0_13(p0.lookSensitivity, 0.3, 3)) {
+      return local_0_19("profile.lookSensitivity");
+    }
+  }
+  if (p0.lookSmoothing !== undefined) {
+    if (!local_0_13(p0.lookSmoothing, 0.1, 1)) {
+      return local_0_19("profile.lookSmoothing");
+    }
+  }
+  if (p0.lookAccel !== undefined) {
+    if (!local_0_13(p0.lookAccel, 0, 1)) {
+      return local_0_19("profile.lookAccel");
+    }
+  }
+  if (p0.joystickDeadZone !== undefined) {
+    if (!local_0_13(p0.joystickDeadZone, 0.01, 0.95)) {
+      return local_0_19("profile.joystickDeadZone");
+    }
+  }
+  if (p0.globalOpacity !== undefined) {
+    if (!local_0_13(p0.globalOpacity, 0.1, 1)) {
+      return local_0_19("profile.globalOpacity");
+    }
+  }
+  v10 = p0.globalScale ?? 1;
+  v11 = p0.lookSensitivity ?? 1;
+  v12 = p0.lookSmoothing ?? 0.6;
+  v13 = p0.lookAccel ?? 0;
+  v14 = p0.joystickDeadZone ?? 0.18;
+  v15 = p0.globalOpacity ?? 1;
+  if (local_0_13(v10, 0.5, 2) && local_0_13(v11, 0.3, 3) && local_0_13(v12, 0.1, 1) && local_0_13(v13, 0, 1) && local_0_13(v14, 0.01, 0.95)) {
+    if (!local_0_13(v15, 0.1, 1)) {
+      return local_0_19("profile.defaults");
+    }
+    if (local_0_16(p0.invertY) && local_0_16(p0.haptic) && local_0_16(p0.isPreset) && local_0_16(p0.hotbarAutoAdded)) {
+      if (!local_0_16(p0.snapEnabled)) {
+        return local_0_19("profile.flags");
+      }
+      if (p0.snapGap !== undefined) {
+        if (!local_0_13(p0.snapGap, 0, 400)) {
+          return local_0_19("profile.snapGap");
+        }
+      }
+      if (p0.snapStrength !== undefined) {
+        if (!local_0_13(p0.snapStrength, 1, 60)) {
+          return local_0_19("profile.snapStrength");
+        }
+      }
+      if (p0.targetDevice !== undefined && p0.targetDevice !== "phone" && p0.targetDevice !== "tablet" && p0.targetDevice !== "foldable" && p0.targetDevice !== "any") {
+        return local_0_19("profile.targetDevice");
+      }
+      if (!local_0_21(p0.gamepad)) {
+        return local_0_19("profile.gamepad");
+      }
+      if (d285(p0.touch) === undefined) {
+        return local_0_19("profile.touch");
+      }
+      v0 = {
+        "usedIds": new Set(),
+        "count": 0,
+        "reason": ""
+      };
+      v3 = [];
+      for (v4 = 0; v4 < p0.controls.length; v4 += 1) {
+        v5 = local_0_18(p0.controls[v4], 0, v0, "control[" + v4.toString() + "]");
+        if (!v5) {
+          v0 = v0.reason.length > 0 ? v0.reason : "control[" + v4.toString() + "].invalid";
+          return local_0_19(v0);
+        }
+        v3.push(v5);
+      }
+      v0 = r301(p0);
+      v0.version = c1359(p0);
+      v0.globalScale = v10;
+      v0.lookSensitivity = v11;
+      v0.invertY = p0.invertY ?? o374;
+      v0.lookSmoothing = v12;
+      v0.lookAccel = v13;
+      v0.joystickDeadZone = v14;
+      v0.haptic = p0.haptic ?? true;
+      v0.globalOpacity = v15;
+      v0.targetDevice = p0.targetDevice ?? "any";
+      v0.deviceModel = typeof p0.deviceModel === "string" && (v4 = p0.deviceModel, acc = l50(p0.deviceModel), acc <= v2) ? p0.deviceModel : undefined;
+      v0.controls = v3;
+      return {
+        "profile": v0,
+        "reason": ""
+      };
+    }
     return local_0_19("profile.flags");
   }
-  label_1870: {
-    if (p0.snapGap === undefined) decompiler_goto(label_1945);
-  }
-  label_1888: {
-    if (local_0_13(p0.snapGap, "profile.flags", 400)) decompiler_goto(label_1923);
-  }
-  label_1920: {
-    decompiler_goto(label_1924);
-  }
-  label_1923: {}
-  label_1924: {
-    decompiler_goto(label_1945);
-  }
-  label_1929: {
-    return local_0_19("profile.snapGap");
-  }
-  label_1945: {
-    if (p0.snapStrength === undefined) decompiler_goto(label_2020);
-  }
-  label_1963: {
-    if (local_0_13(p0.snapStrength, local_0_19, 60)) decompiler_goto(label_1998);
-  }
-  label_1995: {
-    decompiler_goto(label_1999);
-  }
-  label_1998: {}
-  label_1999: {
-    decompiler_goto(label_2020);
-  }
-  label_2004: {
-    return local_0_19("profile.snapStrength");
-  }
-  label_2020: {
-    if (p0.targetDevice === undefined) decompiler_goto(label_2057);
-  }
-  label_2040: {}
-  label_2057: {
-    if (p0.targetDevice === "phone") decompiler_goto(label_2081);
-  }
-  label_2064: {}
-  label_2081: {
-    if (p0.targetDevice === "tablet") decompiler_goto(label_2105);
-  }
-  label_2088: {}
-  label_2105: {
-    if (p0.targetDevice === "foldable") decompiler_goto(label_2148);
-  }
-  label_2112: {
-    if (p0.targetDevice === "any") decompiler_goto(label_2148);
-  }
-  label_2132: {
-    return local_0_19("profile.targetDevice");
-  }
-  label_2148: {
-    if (local_0_21(p0.gamepad)) decompiler_goto(label_2175);
-  }
-  label_2172: {
-    decompiler_goto(label_2176);
-  }
-  label_2175: {}
-  label_2176: {
-    decompiler_goto(label_2197);
-  }
-  label_2181: {
-    return local_0_19("profile.gamepad");
-  }
-  label_2197: {
-    if (d285(p0.touch) !== undefined) decompiler_goto(label_2243);
-  }
-  label_2227: {
-    return local_0_19("profile.touch");
-  }
-  label_2243: {
-    v0 = {
-      "usedIds": new Set(),
-      "count": 0,
-      "reason": ""
-    };
-  }
-  label_2277: {
-    if ("profile.touch" >= p0.controls.length) decompiler_goto(label_2472);
-  }
-  label_2295: {
-    if (local_0_18(p0.controls["profile.touch"], "profile.touch", v0, "control[" + "profile.touch".toString() + "]")) decompiler_goto(label_2373);
-  }
-  label_2370: {
-    decompiler_goto(label_2374);
-  }
-  label_2373: {}
-  label_2374: {
-    decompiler_goto(label_2450);
-  }
-  label_2379: {
-    if (v0.reason.length <= "profile.touch") decompiler_goto(label_2416);
-  }
-  label_2405: {
-    decompiler_goto(label_2444);
-  }
-  label_2416: {
-    v0 = "control[" + "profile.touch".toString() + "].invalid";
-  }
-  label_2444: {
-    return local_0_19(v0);
-  }
-  label_2450: {
-    v3.push(v5);
-    decompiler_goto(label_2277);
-  }
-  label_2472: {
-    v0 = r301(p0);
-    v0.version = c1359(p0);
-    v0.globalScale = local_0_19;
-    v0.lookSensitivity = local_0_19;
-    if (p0.invertY === null) decompiler_goto(label_2527);
-  }
-  label_2521: {
-    if (p0.invertY !== undefined) decompiler_goto(label_2535);
-  }
-  label_2527: {}
-  label_2535: {
-    v0.invertY = o374;
-    v0.lookSmoothing = 0.6;
-    v0.lookAccel = "profile.globalOpacity";
-    v0.joystickDeadZone = 0.18;
-    if (p0.haptic === null) decompiler_goto(label_2588);
-  }
-  label_2582: {
-    if (p0.haptic !== undefined) decompiler_goto(label_2591);
-  }
-  label_2588: {}
-  label_2591: {
-    v0.haptic = true;
-    v0.globalOpacity = local_0_19;
-    if (p0.targetDevice === null) decompiler_goto(label_2628);
-  }
-  label_2622: {
-    if (p0.targetDevice !== undefined) decompiler_goto(label_2633);
-  }
-  label_2628: {}
-  label_2633: {
-    v0.targetDevice = "any";
-    if (typeof p0.deviceModel !== "string") decompiler_goto(label_2703);
-  }
-  label_2664: {
-    if (l50(p0.deviceModel) > local_0_19) decompiler_goto(label_2703);
-  }
-  label_2694: {
-    decompiler_goto(label_2704);
-  }
-  label_2703: {}
-  label_2704: {
-    v0.deviceModel = undefined;
-    v0.controls = v3;
-    return {
-      "profile": v0,
-      "reason": ""
-    };
-  }
+  return local_0_19("profile.defaults");
 };
 w301 = function (p0) {
   let v0 /*e421*/;
