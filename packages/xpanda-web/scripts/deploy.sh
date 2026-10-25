@@ -2,7 +2,7 @@
 #
 # xpanda-web deploy script (local static hosting):
 #   1) remove packages/xpanda-web/dist
-#   2) empty /var/www/xpanda (the directory itself is kept, hidden files included)
+#   2) empty /var/www/xpanda (rm -rf of non-hidden entries; the directory itself is kept)
 #   3) build with vite (npm run build)
 #   4) copy dist contents into /var/www/xpanda
 #
@@ -19,12 +19,8 @@ echo "==> Cleaning $DIST_DIR"
 rm -rf "$DIST_DIR"
 
 echo "==> Cleaning $DEST_DIR"
-if [ -d "$DEST_DIR" ]; then
-    # -mindepth 1 keeps the directory itself (owner/permissions untouched)
-    find "$DEST_DIR" -mindepth 1 -delete
-else
-    mkdir -p "$DEST_DIR"
-fi
+rm -rf "$DEST_DIR"/*
+mkdir -p "$DEST_DIR"
 
 echo "==> Building xpanda-web"
 (cd "$PKG_DIR" && npm run build)
