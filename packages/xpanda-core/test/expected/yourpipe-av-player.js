@@ -1439,7 +1439,7 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     return;
   }
   performDoubleTap(p0) {
-    let v5, acc;
+    let v5;
     let local_1_0;
     local_1_0 = this;
     local_1_0.registerDoubleTapActivity();
@@ -1451,11 +1451,7 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       return;
     }
     v5 = local_1_0.playbackConfig.doubleTapSeekSeconds > 0 ? local_1_0.playbackConfig.doubleTapSeekSeconds : 15;
-    acc = p0.fingerList[0] !== null && p0.fingerList[0] !== undefined ? p0.fingerList[0].localX : undefined;
-    if (acc == null) {
-      acc = 0;
-    }
-    if (acc > local_1_0.containerVpWidth / 2) {
+    if (((p0.fingerList[0] !== null && p0.fingerList[0] !== undefined ? p0.fingerList[0].localX : undefined) ?? 0) > local_1_0.containerVpWidth / 2) {
       Logger.info(local_0_1 /*TAG*/, "Double-tap forward +" + v5 + "s");
       local_1_0.controller.syncSeek(Math.min(local_1_0.currentTime + v5, local_1_0.durationTime) * 1000);
       local_1_0.showForwardHint = true;
@@ -1867,15 +1863,9 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       Logger.debug(local_0_1 /*TAG*/, "Player pan ignored reason=slider-dragging-start");
       return;
     }
-    acc = p0.fingerList[0] !== null && p0.fingerList[0] !== undefined ? p0.fingerList[0].localX : undefined;
-    if (acc == null) {
-      acc = 0;
-    }
+    acc = (p0.fingerList[0] !== null && p0.fingerList[0] !== undefined ? p0.fingerList[0].localX : undefined) ?? 0;
     this.gestureStartX = acc - p0.offsetX;
-    acc = p0.fingerList[0] !== null && p0.fingerList[0] !== undefined ? p0.fingerList[0].localY : undefined;
-    if (acc == null) {
-      acc = 0;
-    }
+    acc = (p0.fingerList[0] !== null && p0.fingerList[0] !== undefined ? p0.fingerList[0].localY : undefined) ?? 0;
     this.gestureStartY = acc - p0.offsetY;
     this.gestureSeekStartTime = this.currentTime;
     this.gestureSeekTime = this.currentTime;
@@ -2222,15 +2212,8 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     if (!this.showCenterPlayButton()) {
       return false;
     }
-    acc = p0.fingerList[0] !== null && p0.fingerList[0] !== undefined ? p0.fingerList[0].localX : undefined;
-    if (acc == null) {
-      acc = -1;
-    }
-    v6 = acc;
-    acc = p0.fingerList[0] !== null && p0.fingerList[0] !== undefined ? p0.fingerList[0].localY : undefined;
-    if (acc == null) {
-      acc = -1;
-    }
+    v6 = (p0.fingerList[0] !== null && p0.fingerList[0] !== undefined ? p0.fingerList[0].localX : undefined) ?? -1;
+    acc = (p0.fingerList[0] !== null && p0.fingerList[0] !== undefined ? p0.fingerList[0].localY : undefined) ?? -1;
     if (v6 < 0 || acc < 0) {
       return false;
     }
@@ -2585,7 +2568,7 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
         MenuItem.pop();
       };
       v12 = function (p0, p1) {
-        return "" + (p0.itag === null || p0.itag === undefined ? "" : p0.itag) + "_" + (p0.audioTrackId || "") + "_" + (p0.sourceClient || "") + "_" + p1 + "";
+        return "" + (p0.itag ?? "") + "_" + (p0.audioTrackId || "") + "_" + (p0.sourceClient || "") + "_" + p1 + "";
       };
       local_1_0.forEachUpdateFunction(p0, local_1_0.controller.getAudioStreamList(), v5, v12, true, true);
     }, ForEach);
@@ -2667,7 +2650,7 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
         MenuItem.pop();
       };
       v12 = function (p0, p1) {
-        return "" + (p0.stream.itag === null || p0.stream.itag === undefined ? "" : p0.stream.itag) + "_" + (p0.stream.audioTrackId || "") + "_" + (p0.stream.sourceClient || "") + "_" + p1 + "";
+        return "" + (p0.stream.itag ?? "") + "_" + (p0.stream.audioTrackId || "") + "_" + (p0.stream.sourceClient || "") + "_" + p1 + "";
       };
       local_1_0.forEachUpdateFunction(p0, local_1_0.controller.getMergedVideoList(), v5, v12, true, true);
     }, ForEach);
@@ -2737,7 +2720,7 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       local_1_1.aiTranslateProgress = "";
       return;
     }
-    acc = local_1_1.curSource.videoId === null || local_1_1.curSource.videoId === undefined ? "" : local_1_1.curSource.videoId;
+    acc = local_1_1.curSource.videoId ?? "";
     v5 = acc;
     if (v5.length === 0 || local_1_1.vm.subtitleTracks.length === 0) {
       return;

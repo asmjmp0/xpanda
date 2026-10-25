@@ -77,10 +77,7 @@ local_0_0 = function (p0, p1) {
       "query": ""
     };
   } else if (v5 === "search" && v6.length === 0) {
-    v0 = v2.params.get("q");
-    if (v0 == null) {
-      v0 = "";
-    }
+    v0 = v2.params.get("q") ?? "";
     return isSafeSearchDestinationQuery(v0) ? {
       "type": DeepLinkType.SEARCH,
       "id": "",
@@ -195,10 +192,7 @@ local_0_0 = function (p0, p1) {
       return undefined;
     }
   } else if (v6.length === 1 && v6[0] === "search") {
-    v0 = v2.params.get("q");
-    if (v0 == null) {
-      v0 = "";
-    }
+    v0 = v2.params.get("q") ?? "";
     return isSafeSearchDestinationQuery(v0) ? {
       "type": DeepLinkType.SEARCH,
       "id": "",

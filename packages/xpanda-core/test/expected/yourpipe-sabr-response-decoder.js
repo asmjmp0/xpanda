@@ -295,19 +295,14 @@ sabrDecodeParts = function (p0) {
   return v4.finish();
 };
 local_0_4 = function (p0, p1) {
-  let v7, v13, acc;
+  let v7, v13;
   try {
     v7 = [];
     for (v13 of sabrReadFields(p0)) {
       if (v13.wireType === WIRE_VARINT) {
         v7.push("" + v13.number + "=" + v13.varint + "");
       } else {
-        acc = v13.bytes !== null && v13.bytes !== undefined ? v13.bytes.length : undefined;
-        if (acc == null) {
-          acc = 0;
-        }
-        acc = "" + v13.number + "=bytes(" + acc;
-        v7.push(acc + ")");
+        v7.push("" + v13.number + "=bytes(" + ((v13.bytes !== null && v13.bytes !== undefined ? v13.bytes.length : undefined) ?? 0) + ")");
       }
     }
     return "" + p1 + ":{" + v7.join(",") + "}";
@@ -409,10 +404,7 @@ SabrPartProcessor = class panda_jmp0_reserved_anonymous_3 {
         }
       } else if (p0.data.length > 0) {
         v8 = p0.data.subarray(1);
-        acc = this.mediaBytesByHeaderId.get(p0.data[0]);
-        if (acc == null) {
-          acc = 0;
-        }
+        acc = this.mediaBytesByHeaderId.get(p0.data[0]) ?? 0;
         this.mediaBytesByHeaderId.set(p0.data[0], acc + v8.length);
         v6 = this.open.get(p0.data[0]);
         if (v6) {

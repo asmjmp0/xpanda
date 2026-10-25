@@ -105,10 +105,8 @@ local_0_0 = function (p0) {
 };
 contentAuthorAvatarUrl = function (p0) {
   let v0;
-  v0 = p0.value.author === null || p0.value.author === undefined ? undefined : p0.value.author.avatarUrl === null || p0.value.author.avatarUrl === undefined ? undefined : p0.value.author.avatarUrl.trim();
-  if (v0 == null) {
-    v0 = "";
-  }
+  v0 = (p0.value.author === null || p0.value.author === undefined ? undefined : p0.value.author.avatarUrl === null || p0.value.author.avatarUrl === undefined ? undefined : p0.value.author.avatarUrl.trim())
+    ?? "";
   if (v0.startsWith("http://")) {
     v0 = "https://" + v0.substring(7) + "";
   }
@@ -128,20 +126,11 @@ contentAuthorBadge = function (p0) {
   } : undefined;
 };
 contentAuthorHeadline = function (p0) {
-  let v0;
-  v0 = p0.value.author === null || p0.value.author === undefined ? undefined : p0.value.author.headline === null || p0.value.author.headline === undefined ? undefined : p0.value.author.headline.trim();
-  if (v0 == null) {
-    v0 = "";
-  }
-  return v0;
+  return (p0.value.author === null || p0.value.author === undefined ? undefined : p0.value.author.headline === null || p0.value.author.headline === undefined ? undefined : p0.value.author.headline.trim())
+    ?? "";
 };
 contentAuthorName = function (p0) {
-  let v0;
-  v0 = p0.value.author === null || p0.value.author === undefined ? undefined : p0.value.author.name;
-  if (v0 == null) {
-    v0 = "";
-  }
-  return v0;
+  return (p0.value.author === null || p0.value.author === undefined ? undefined : p0.value.author.name) ?? "";
 };
 contentBlockingTitle = function (p0) {
   let v0;
@@ -155,13 +144,9 @@ contentBlockingTitle = function (p0) {
   return v0;
 };
 contentContextTitle = function (p0) {
-  let v0;
   if (p0.kind === ContentDetailKind.ANSWER) {
-    v0 = p0.value.questionTitle === null || p0.value.questionTitle === undefined ? undefined : p0.value.questionTitle.trim();
-    if (v0 == null) {
-      v0 = "";
-    }
-    return v0;
+    return (p0.value.questionTitle === null || p0.value.questionTitle === undefined ? undefined : p0.value.questionTitle.trim())
+      ?? "";
   }
   return contentTitle(p0).trim();
 };
@@ -360,11 +345,7 @@ local_0_9 = function (p0) {
   if (v0.startsWith("GBK") || v0.startsWith("GBL") || v0.startsWith("GRD") || v0.startsWith("GYL")) {
     return local_0_11(v0);
   }
-  v0 = AppStorage.get("resolvedThemeColor");
-  if (v0 == null) {
-    v0 = DEFAULT_THEME_COLOR;
-  }
-  return v0;
+  return AppStorage.get("resolvedThemeColor") ?? DEFAULT_THEME_COLOR;
 };
 formatContentDateTime = function (p0) {
   let v0, v1, v2, v3;
@@ -623,10 +604,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       local_1_0.snapAnswerFabToHand();
       return;
     };
-    v3 = AppStorage.get("resolvedThemeColor");
-    if (v3 == null) {
-      v3 = DEFAULT_THEME_COLOR;
-    }
+    v3 = AppStorage.get("resolvedThemeColor") ?? DEFAULT_THEME_COLOR;
     local_1_0.__answersSortOptions = new ObservedPropertyObjectPU(local_0_0(v3), local_1_0, "answersSortOptions");
     local_1_0.setInitiallyProvidedValue(p1);
     local_1_0.declareWatch("refreshingAnswers", local_1_0.syncAnswerRefreshIndicator);
@@ -2113,7 +2091,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     }
   }
   async refreshQuestion() {
-    let v8, v9;
+    let v8;
     this.refreshingAnswers = true;
     if (this.followController !== null && this.followController !== undefined) {
       this.followController.deactivate();
@@ -2121,16 +2099,10 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     this.followController = undefined;
     try {
       v8 = [];
-      v9 = this.controller === null || this.controller === undefined ? undefined : this.controller.load(this.kind, this.activeContentId);
-      if (v9 == null) {
-        v9 = Promise.resolve();
-      }
-      v8[0] = v9;
-      v9 = this.answersController === null || this.answersController === undefined ? undefined : this.answersController.refresh();
-      if (v9 == null) {
-        v9 = Promise.resolve();
-      }
-      v8[1] = v9;
+      v8[0] = (this.controller === null || this.controller === undefined ? undefined : this.controller.load(this.kind, this.activeContentId))
+        ?? Promise.resolve();
+      v8[1] = (this.answersController === null || this.answersController === undefined ? undefined : this.answersController.refresh())
+        ?? Promise.resolve();
       await Promise.all(v8);
     } finally {
       this.refreshingAnswers = false;
@@ -5148,10 +5120,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
                   if (!If.canRetake("" + local_1_0.kind + "_detail_header_author_badge")) {
                     local_1_1.observeComponentCreation2(function (p0, p1) {
                       let v2;
-                      v2 = contentAuthorBadge(local_1_0)?.iconUrl;
-                      if (v2 == null) {
-                        v2 = "";
-                      }
+                      v2 = contentAuthorBadge(local_1_0)?.iconUrl ?? "";
                       Image.create(v2);
                       Image.id("" + local_1_0.kind + "_detail_header_author_badge");
                       Image.width(18);
@@ -5225,7 +5194,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
             "duration": 220,
             "curve": Curve.EaseInOut
           }, function () {
-            let v1, v2 /*scrolled*/;
+            let v1;
             v1 = {
               "id": local_1_2.contentId,
               "questionTitle": contentContextTitle(local_1_0),
@@ -5234,11 +5203,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
               "authorBadgeIconUrl": null,
               "scrolled": null
             };
-            v2 = contentAuthorBadge(local_1_0)?.iconUrl;
-            if (v2 == null) {
-              v2 = "";
-            }
-            v1.authorBadgeIconUrl = v2;
+            v1.authorBadgeIconUrl = contentAuthorBadge(local_1_0)?.iconUrl ?? "";
             v1.scrolled = local_1_1;
             publishAnswerTitle(v1);
           });
@@ -5284,7 +5249,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
             "duration": 220,
             "curve": Curve.EaseInOut
           }, function () {
-            let v1, v2 /*scrolled*/;
+            let v1;
             v1 = {
               "id": local_1_2.contentId,
               "title": contentContextTitle(local_1_0),
@@ -5293,11 +5258,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
               "authorBadgeIconUrl": null,
               "scrolled": null
             };
-            v2 = contentAuthorBadge(local_1_0)?.iconUrl;
-            if (v2 == null) {
-              v2 = "";
-            }
-            v1.authorBadgeIconUrl = v2;
+            v1.authorBadgeIconUrl = contentAuthorBadge(local_1_0)?.iconUrl ?? "";
             v1.scrolled = local_1_1;
             publishArticleTitle(v1);
           });
@@ -5730,12 +5691,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       });
     }, Column);
     local_1_0.observeComponentCreation2(function (p0, p1) {
-      let v3;
-      v3 = local_1_0.pendingUserBlock === null || local_1_0.pendingUserBlock === undefined ? undefined : local_1_0.pendingUserBlock.userName;
-      if (v3 == null) {
-        v3 = "";
-      }
-      Text.create("确定要屏蔽用户「" + v3 + "」吗？");
+      Text.create("确定要屏蔽用户「" + ((local_1_0.pendingUserBlock === null || local_1_0.pendingUserBlock === undefined ? undefined : local_1_0.pendingUserBlock.userName) ?? "") + "」吗？");
       Text.fontSize({
         "id": 50331668,
         "type": 10002,
@@ -7084,10 +7040,8 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     let v0;
     v0 = this.navigatorRevision >= 0;
     if (this.navigatorRevision >= 0) {
-      v0 = this.answerNavigator === null || this.answerNavigator === undefined ? undefined : this.answerNavigator.hasPrevious();
-      if (v0 == null) {
-        v0 = false;
-      }
+      v0 = (this.answerNavigator === null || this.answerNavigator === undefined ? undefined : this.answerNavigator.hasPrevious())
+        ?? false;
     }
     return v0;
   }
@@ -7095,10 +7049,8 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     let v0;
     v0 = this.navigatorRevision >= 0;
     if (this.navigatorRevision >= 0) {
-      v0 = this.answerNavigator === null || this.answerNavigator === undefined ? undefined : this.answerNavigator.hasNext();
-      if (v0 == null) {
-        v0 = false;
-      }
+      v0 = (this.answerNavigator === null || this.answerNavigator === undefined ? undefined : this.answerNavigator.hasNext())
+        ?? false;
     }
     return v0;
   }
@@ -7223,10 +7175,8 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
         return undefined;
       }
       if (v0 === undefined) {
-        v6 = this.answerNavigator === null || this.answerNavigator === undefined ? undefined : this.answerNavigator.errorMessage();
-        if (v6 == null) {
-          v6 = "";
-        }
+        v6 = (this.answerNavigator === null || this.answerNavigator === undefined ? undefined : this.answerNavigator.errorMessage())
+          ?? "";
         v7 = this.getUIContext().getPromptAction();
         v10 = {
           "message": null
@@ -7322,20 +7272,10 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     return p0 ? this.answerNavigator === null || this.answerNavigator === undefined ? undefined : this.answerNavigator.previousAnswerPreview() : this.answerNavigator === null || this.answerNavigator === undefined ? undefined : this.answerNavigator.nextAnswerPreview();
   }
   answerPreviewAuthorName(p0) {
-    let v0;
-    v0 = this.answerPreviewData(p0)?.authorName;
-    if (v0 == null) {
-      v0 = "";
-    }
-    return v0;
+    return this.answerPreviewData(p0)?.authorName ?? "";
   }
   answerPreviewAvatarUrl(p0) {
-    let v0;
-    v0 = this.answerPreviewData(p0)?.authorAvatarUrl;
-    if (v0 == null) {
-      v0 = "";
-    }
-    return v0;
+    return this.answerPreviewData(p0)?.authorAvatarUrl ?? "";
   }
   answerPreviewExcerpt(p0) {
     let v0;
@@ -7346,12 +7286,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     return v0.detailLoaded ? v0.excerpt : "";
   }
   answerPreviewAuthorHeadline(p0) {
-    let v0;
-    v0 = this.answerPreviewData(p0)?.authorHeadline;
-    if (v0 == null) {
-      v0 = "";
-    }
-    return v0;
+    return this.answerPreviewData(p0)?.authorHeadline ?? "";
   }
   answerPreviewVoteupCount(p0) {
     return this.answerPreviewData(p0)?.voteupCount ?? 0;
@@ -8641,7 +8576,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     Row.pop();
   }
   applyState(p0) {
-    let v1 /*ContentDetailKind*/, v2;
+    let v1 /*ContentDetailKind*/;
     this.phase = p0.phase;
     this.content = p0.content;
     this.segmentInfos = this.extractSegmentInfos(p0.content);
@@ -8667,11 +8602,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
           "authorBadgeIconUrl": null,
           "scrolled": null
         };
-        v2 = contentAuthorBadge(p0.content)?.iconUrl;
-        if (v2 == null) {
-          v2 = "";
-        }
-        v1.authorBadgeIconUrl = v2;
+        v1.authorBadgeIconUrl = contentAuthorBadge(p0.content)?.iconUrl ?? "";
         v1.scrolled = this.answerQuestionScrolled;
         publishAnswerTitle(v1);
       }
@@ -8684,11 +8615,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
           "authorBadgeIconUrl": null,
           "scrolled": null
         };
-        v2 = contentAuthorBadge(p0.content)?.iconUrl;
-        if (v2 == null) {
-          v2 = "";
-        }
-        v1.authorBadgeIconUrl = v2;
+        v1.authorBadgeIconUrl = contentAuthorBadge(p0.content)?.iconUrl ?? "";
         v1.scrolled = this.articleTitleScrolled;
         publishArticleTitle(v1);
       }

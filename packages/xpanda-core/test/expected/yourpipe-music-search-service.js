@@ -113,17 +113,13 @@ try {
       return getTextFromRuns(v6?.text);
     }
     static getMusicDescriptionRuns(p0) {
-      let v6, v8, acc;
+      let v6, v8;
       if (!p0.flexColumns || p0.flexColumns.length < 2) {
         return [];
       }
       v6 = p0.flexColumns[1]?.musicResponsiveListItemFlexColumnRenderer;
       v8 = v6?.text;
-      acc = v8?.runs;
-      if (acc == null) {
-        acc = [];
-      }
-      return acc;
+      return v8?.runs ?? [];
     }
     static getMusicAuthorFromRuns(p0) {
       let v4;
@@ -153,31 +149,17 @@ try {
       return p0.playlistItemData ? p0.playlistItemData.videoId || "" : "";
     }
     static getMusicPlaylistId(p0) {
-      let v4, v5, v8, v10, v11, v12, v18, v19, v22, v23, v24, v26, acc;
+      let v4, v5, v8, v10, v11, v12, v19, v22, v23, v24, v26, acc;
       v8 = p0.menu?.menuRenderer;
       acc = v8?.items;
       if (acc) {
-        v18 = acc[Symbol.iterator]();
-        do {
-          v19 = v18.next();
-          if (v19.done) {
-            v11 = p0.overlay?.musicItemThumbnailOverlayRenderer;
-            v4 = v11?.content;
-            v10 = v4?.musicPlayButtonRenderer;
-            v5 = v10?.playNavigationEndpoint;
-            v12 = v5?.watchPlaylistEndpoint;
-            return v12 ? v12.playlistId || "" : "";
-          }
-          v26 = v19.value.toggleMenuServiceItemRenderer?.toggledServiceEndpoint;
+        for (v19 of acc) {
+          v26 = v19.toggleMenuServiceItemRenderer?.toggledServiceEndpoint;
           v22 = v26?.likeEndpoint;
           v24 = v22?.target;
           v23 = v24 ? v24.playlistId : "";
-          acc = !v23;
-        } while (acc);
-        if (v18.return != undefined) {
-          v18.return();
+          if (v23) return v23;
         }
-        return v23;
       }
       v11 = p0.overlay?.musicItemThumbnailOverlayRenderer;
       v4 = v11?.content;

@@ -243,7 +243,6 @@ ChannelInfoService = class panda_jmp0_reserved_anonymous_3 {
     if (v4) {
       v7 = ["c4TabbedHeaderRenderer", "interactiveTabbedHeaderRenderer", "carouselHeaderRenderer"];
       for (v9 = 0; v9 < v7.length; v9 += 1) {
-        v16 = v9;
         v10 = this.asRecord(v4[v7[v9]]);
         if (v10) {
           v11 = this.asRecord(v10.subscriberCountText);
@@ -251,10 +250,8 @@ ChannelInfoService = class panda_jmp0_reserved_anonymous_3 {
           if (acc) {
             return acc;
           }
-          v16 = this;
           v12 = this.asRecord(v10.subtitle);
           if (v12) {
-            v16 = this;
             acc = this.readContent(v12);
           } else {
             acc = "";
@@ -269,44 +266,23 @@ ChannelInfoService = class panda_jmp0_reserved_anonymous_3 {
       v6 = this.asRecord(v4.pageHeaderRenderer);
       if (v6) {
         v8 = this.readHeaderMetadataParts(v6);
-        v13 = v8[Symbol.iterator]();
-        v12 = v13.next;
-        acc = false;
-        do {
-          v14 = v12.call(v13);
-          if (v14.done) {
-            v13 = v8[Symbol.iterator]();
-            acc = false;
-            do {
-              v14 = v13.next();
-              if (v14.done) {
-                return "";
-              }
-              v16 = v14.value;
-              acc = !v14.value.hasLabel;
-              if (!v14.value.hasLabel) {
-                continue;
-              }
-              acc = !!v14.value.content.startsWith("@");
-            } while (acc);
-            if (v13.return != undefined) {
-              v13.return();
-            }
-            return v16.content;
-          }
-          v16 = v14.value;
-          acc = !v14.value.content.toLowerCase().includes("subscriber");
-        } while (acc);
-        if (v13.return != undefined) {
-          v13.return();
+        for (v14 of v8) {
+          v16 = v14;
+          if (v14.content.toLowerCase().includes("subscriber")) return v16.content;
         }
-        return v16.content;
+        for (v14 of v8) {
+          v16 = v14;
+          if (!v14.hasLabel) {
+            continue;
+          }
+          if (!v14.content.startsWith("@")) return v16.content;
+        }
       }
     }
     return "";
   }
   extractVideoCountText(p0) {
-    let v4, v6, v7, v8, v9, v10, v11, v12, v15, v16, v18, acc;
+    let v4, v6, v7, v8, v9, v10, v11, v12, v16, v18, acc;
     v4 = this.asRecord(p0.header);
     if (v4) {
       v7 = ["c4TabbedHeaderRenderer"];
@@ -323,32 +299,22 @@ ChannelInfoService = class panda_jmp0_reserved_anonymous_3 {
       v6 = this.asRecord(v4.pageHeaderRenderer);
       if (v6) {
         v9 = this.readHeaderMetadataParts(v6);
-        v15 = v9[Symbol.iterator]();
-        acc = false;
-        do {
-          v16 = v15.next();
-          if (v16.done) {
-            v8 = v9.filter(function (p0) {
-              return p0.content.length <= 0 ? p0.content.length > 0 : !p0.content.startsWith("@");
-            });
-            acc = v8.filter(function (p0) {
-              return !p0.hasLabel;
-            });
-            if (acc.length > 0) {
-              return acc[0].content;
-            }
-            if (v8.length > 1) {
-              return v8[1].content;
-            }
-            return "";
-          }
-          v18 = v16.value;
-          acc = !v16.value.content.toLowerCase().includes("video");
-        } while (acc);
-        if (v15.return != undefined) {
-          v15.return();
+        for (v16 of v9) {
+          v18 = v16;
+          if (v16.content.toLowerCase().includes("video")) return v18.content;
         }
-        return v18.content;
+        v8 = v9.filter(function (p0) {
+          return p0.content.length <= 0 ? p0.content.length > 0 : !p0.content.startsWith("@");
+        });
+        acc = v8.filter(function (p0) {
+          return !p0.hasLabel;
+        });
+        if (acc.length > 0) {
+          return acc[0].content;
+        }
+        if (v8.length > 1) {
+          return v8[1].content;
+        }
       }
     }
     return "";

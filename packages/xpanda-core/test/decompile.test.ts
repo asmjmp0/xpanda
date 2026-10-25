@@ -6,6 +6,7 @@ import { PandaFile, ENTRY_FUNCTION_MAIN } from "../src/file/PandaFile";
 import { PandaDecompiler } from "../src/PandaDecompiler";
 import { NodeFactory } from "../src/ast/NodeFactory";
 import { SimplifyExport } from "../src/simplify/SimplifyExport";
+import { NullishCoalescingSimplify } from "../src/simplify/NullishCoalescingSimplify";
 import { SyntaxRewriteSimplify } from "../src/simplify/SyntaxRewriteSimplify";
 import { HapFile } from "../src/hap/HapFile";
 import { ResourceIndexFile } from "../src/res/ResourceIndexFile";
@@ -854,6 +855,92 @@ function g(p0) {
     }
     if (!negativeCode.includes("while (true)") || !negativeCode.includes("v0.return")) {
         throw new Error(`for...of 还原: 负例输出被破坏\n${negativeCode}`);
+    }
+
+    // 提前 return 的 for...of 的另一形态是 do-while:done 分支是循环耗尽后的代码,
+    // 循环后的 return 是 test 为假的提前退出路径,test 在 body 末尾物化。
+    // 需要:done 分支搬到 for-of 之后、`acc = false` 初值清掉、continue 守卫
+    // (`acc = !x; if (!x) continue`)保证 continue 时 test 为真。
+    const earlyReturn = NodeFactory.parse(`
+function k(p0) {
+  let it, vv, src, acc;
+  it = p0[Symbol.iterator]();
+  acc = false;
+  do {
+    vv = it.next();
+    if (vv.done) {
+      return "";
+    }
+    src = vv.value;
+    acc = !vv.value.flag;
+    if (!vv.value.flag) {
+      continue;
+    }
+    acc = !vv.value.name;
+    acc = !acc;
+  } while (!!acc);
+  if (it.return != undefined) {
+    it.return();
+  }
+  return src.name;
+}
+`);
+    SimplifyExport.simplify(earlyReturn);
+    const earlyCode = NodeFactory.generate(earlyReturn);
+    if (!earlyCode.includes("for (vv of p0)")) {
+        throw new Error(`for...of 还原: do-while 形态没有生成 for-of\n${earlyCode}`);
+    }
+    if (earlyCode.includes("[Symbol.iterator]") || earlyCode.includes("do {") || earlyCode.includes("acc = false")) {
+        throw new Error(`for...of 还原: do-while 形态残留迭代器/test 初值\n${earlyCode}`);
+    }
+    if (!earlyCode.includes("return \"\";") || !earlyCode.includes("if (!vv.name) return src.name;")) {
+        throw new Error(`for...of 还原: done 分支或提前退出路径位置不对\n${earlyCode}`);
+    }
+
+    // 嵌套形态:done 分支里还有内层迭代器循环。外层先还原,内层随 done 分支
+    // 搬到循环之后,需要重新扫描才能一并还原。
+    const nested = NodeFactory.parse(`
+function n(p0) {
+  let a, b, c, d, acc;
+  a = p0[Symbol.iterator]();
+  acc = false;
+  do {
+    b = a.next();
+    if (b.done) {
+      c = p0[Symbol.iterator]();
+      acc = false;
+      do {
+        d = c.next();
+        if (d.done) {
+          return "";
+        }
+        d = d.value;
+        acc = !d.flag;
+        acc = !acc;
+      } while (!!acc);
+      if (c.return != undefined) {
+        c.return();
+      }
+      return d.name;
+    }
+    d = b.value;
+    acc = !b.value.flag;
+    acc = !acc;
+  } while (!!acc);
+  if (a.return != undefined) {
+    a.return();
+  }
+  return d.name;
+}
+`);
+    SimplifyExport.simplify(nested);
+    const nestedCode = NodeFactory.generate(nested);
+    const nestedForOf = nestedCode.match(/for \(\w+ of p0\)/g)?.length ?? 0;
+    if (nestedForOf !== 2) {
+        throw new Error(`for...of 还原: 嵌套 do-while 形态只还原了 ${nestedForOf} 层\n${nestedCode}`);
+    }
+    if (nestedCode.includes("[Symbol.iterator]") || nestedCode.includes("do {")) {
+        throw new Error(`for...of 还原: 嵌套 do-while 形态残留迭代器\n${nestedCode}`);
     }
 }
 
@@ -1723,6 +1810,18 @@ function verifyYourpipeMusicSearchService(): void {
     if (!code.includes("acc = p0.continuationContents?.musicShelfContinuation;")) {
         throw new Error(`MusicSearchService: 成员守卫可选链未还原\n${code}`);
     }
+    // 提前 return 的 for...of 还有 do-while lowering 形态:
+    //   it = x[Symbol.iterator](); acc = false;
+    //   do { v = it.next(); if (v.done) { DONE } ...; acc = ... } while (acc);
+    //   close(it); return E;
+    // getMusicPlaylistId 必须还原成 for...of;test 物化的常量初值(`acc = false`)
+    // 要清掉,它会在 for-of 头部之前执行并覆盖头部仍要读取的迭代器表达式。
+    if (!code.includes("for (v19 of acc) {")) {
+        throw new Error(`MusicSearchService: do-while 形态的 for...of 未还原\n${code}`);
+    }
+    if (code.includes("[Symbol.iterator]") || /\bdo \{/.test(code)) {
+        throw new Error(`MusicSearchService: 迭代器/do-while lowering 残留\n${code}`);
+    }
 
     const expectedPath = path.join(__dirname, "expected", "yourpipe-music-search-service.js");
     const expected = fs.readFileSync(expectedPath, "utf-8");
@@ -2174,6 +2273,20 @@ function verifyYourpipeChannelInfoService(): void {
         throw new Error(`ChannelInfoService: 反编译降级或残留伪语句\n${code}`);
     }
 
+    // 提前 return 的 for...of 还有 do-while lowering 形态:
+    //   it = x[Symbol.iterator](); acc = false;
+    //   do { v = it.next(); if (v.done) { DONE } ...; acc = ... } while (acc);
+    //   close(it); return E;
+    // extractSubscriberText(两层循环)与 extractVideoCountText 都要还原成 for...of:
+    // done 分支的代码落在 for-of 之后,`it.next` 提升的临时方法量先归一化,
+    // test 的常量初值(`acc = false`)与迭代器/收尾残留清零。
+    if (!code.includes("for (v14 of v8) {") || !code.includes("for (v16 of v9) {")) {
+        throw new Error(`ChannelInfoService: do-while 形态的 for...of 未还原\n${code}`);
+    }
+    if (code.includes("[Symbol.iterator]") || /\bdo \{/.test(code) || code.includes(".next")) {
+        throw new Error(`ChannelInfoService: 迭代器/do-while lowering 残留\n${code}`);
+    }
+
     const start = code.indexOf("extractAvatarUrl(p0) {");
     const end = code.indexOf("extractSubscriberText(p0) {", start);
     if (start < 0 || end < 0) throw new Error(`ChannelInfoService: 未找到 extractAvatarUrl\n${code}`);
@@ -2285,10 +2398,12 @@ function f(v0, v2) {
 }
 
 /**
- * 回归:nullish coalescing 的 switch lowering。
+ * 回归:nullish coalescing 的 lowering 还原。
  *   v8 = item.content.contentId;
  *   switch (item.content.contentId) { case null: case undefined: v8 = ""; }
  * 应还原成 `item.content.contentId ?? ""`;判别式是纯成员表达式，只求值一次。
+ * 另外两种不带 switch 的形态(`X = E; if (X == null) X = D; return X` 与
+ * `X == null ? D : X`)也要还原成 `X = E ?? D` / `X ?? D`,见各段断言。
  */
 function verifyNullishSwitchFold(): void {
     const program = NodeFactory.parse(`
@@ -2332,6 +2447,80 @@ function g(v0) {
     const twoCaseCode = NodeFactory.generate(twoCase);
     if (!twoCaseCode.includes("return v0?.count ?? 0;")) {
         throw new Error(`simplify: 双 case nullish switch 未还原成 ??\n${twoCaseCode}`);
+    }
+
+    // 判别式留在临时量上的形态(右值是不可复制的可选链,复制传播不会把它换进
+    // test,switch 合成也因此不成立):`acc = v8?.runs; if (acc == null) acc = [];
+    // return acc;` → `return v8?.runs ?? [];`。
+    const expected = "return v8?.runs ?? [];";
+    const guards = [
+        `if (acc == null) { acc = []; }`,
+        `if (acc === null || acc === undefined) { acc = []; }`,
+        `if (acc != null) {} else { acc = []; }`,
+        `if (acc == null) { acc = []; } else { acc = acc; }`,
+    ];
+    for (const guard of guards) {
+        const program = NodeFactory.parse(`
+function h(v8) {
+  let acc;
+  acc = v8?.runs;
+  ${guard}
+  return acc;
+}
+`);
+        SimplifyExport.simplify(program);
+        const code = NodeFactory.generate(program);
+        if (!code.includes(expected)) {
+            throw new Error(`simplify: if 形态 nullish 未还原成 ??(${guard})\n${code}`);
+        }
+    }
+
+    // 三目形态:`X == null ? D : X` → `X ?? D`。
+    const ternary = NodeFactory.parse(`
+function k(v0) {
+  return v0 == null ? "" : v0;
+}
+`);
+    SimplifyExport.simplify(ternary);
+    const ternaryCode = NodeFactory.generate(ternary);
+    if (!ternaryCode.includes('return v0 ?? "";')) {
+        throw new Error(`simplify: 三目 nullish 未还原成 ??\n${ternaryCode}`);
+    }
+
+    // 右值读取被赋值的变量:在 `X = E ?? D` 里 D 求值时 X 还没有被赋值,
+    // 读到的不是 E 的值,不能合并(直接对 pass 断言,避免被后续复制传播改写)。
+    const readsTarget = NodeFactory.parse(`
+function m(v8) {
+  let acc;
+  acc = v8?.runs;
+  if (acc == null) {
+    acc = acc.foo;
+  }
+  return acc;
+}
+`);
+    new NullishCoalescingSimplify().simplify(readsTarget);
+    const readsTargetCode = NodeFactory.generate(readsTarget);
+    if (readsTargetCode.includes("??")) {
+        throw new Error(`simplify: 右值读取被赋值变量的 nullish 合并不应执行\n${readsTargetCode}`);
+    }
+
+    // 分支里还有其它语句时不能合并(否则会丢掉 sideEffect())。
+    const multiStatement = NodeFactory.parse(`
+function m(v8) {
+  let acc;
+  acc = v8?.runs;
+  if (acc == null) {
+    sideEffect();
+    acc = [];
+  }
+  return acc;
+}
+`);
+    SimplifyExport.simplify(multiStatement);
+    const multiStatementCode = NodeFactory.generate(multiStatement);
+    if (multiStatementCode.includes("??")) {
+        throw new Error(`simplify: 多语句分支的 nullish 合并不应执行\n${multiStatementCode}`);
     }
 }
 
