@@ -1588,7 +1588,8 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     v8 = 1;
     v9 = 1;
     if (this.videoAspectMode === "fill") {
-      v9 = Math.max(Math.max(1, this.containerVpWidth) / Math.max(1, v7.videoWVp), Math.max(1, this.containerVpHeight) / Math.max(1, v7.videoHVp));
+      v8 = Math.max(Math.max(1, this.containerVpWidth) / Math.max(1, v7.videoWVp), Math.max(1, this.containerVpHeight) / Math.max(1, v7.videoHVp));
+      v9 = v8;
     } else if (this.videoAspectMode === "stretch") {
       v8 = Math.max(1, this.containerVpWidth) / Math.max(1, v7.videoWVp);
       v9 = Math.max(1, this.containerVpHeight) / Math.max(1, v7.videoHVp);
@@ -2128,8 +2129,7 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     }
     try {
       v5 = this.getUIContext().getComponentUtils();
-      v7 = v5;
-      v4 = v7.getRectangleById("PlayerContainer");
+      v4 = v5.getRectangleById("PlayerContainer");
       if (v4 && v4.size && (v7 = Number(v4.size.width), v6 = Number(v4.size.height), v7 > 0) && v6 > 0) {
         this.calculateSurfaceSizeByArea(v7, v6);
         return;
@@ -2676,7 +2676,7 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     }
     acc = local_1_1.curSource.videoId ?? "";
     v5 = acc;
-    if (v5.length === 0 || local_1_1.vm.subtitleTracks.length === 0) {
+    if (acc.length === 0 || local_1_1.vm.subtitleTracks.length === 0) {
       return;
     }
     v3 = LlmTranslateConfig.get();

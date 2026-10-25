@@ -205,8 +205,10 @@ export class PandaClassModuleData extends Offset {
         }
         const indirectExportNum = PandaFileUtils.bytes2UnsignedInteger(data, this.offsetValue + this.index); this.index += 4;
         for (let i = 0; i < indirectExportNum; i++) {
-            const localName = PandaString.create(pandaFile, PandaFileUtils.bytes2UnsignedInteger(data, this.offsetValue + this.index)); this.index += 4;
+            // 间接导出(export {a as b} from "path")的序列化顺序是 export_name、local_name,
+            // 与本地导出(export_name 在后)相反;local_name 是目标模块里的导出名(常见为 default)。
             const exportName = PandaString.create(pandaFile, PandaFileUtils.bytes2UnsignedInteger(data, this.offsetValue + this.index)); this.index += 4;
+            const localName = PandaString.create(pandaFile, PandaFileUtils.bytes2UnsignedInteger(data, this.offsetValue + this.index)); this.index += 4;
             const off = PandaFileUtils.bytes2Uint16(data, this.offsetValue + this.index); this.index += 2;
             exports.push(new PandaClassExportModule(this.requestedModules![off].toString(), localName.content, exportName.content, ExportType.INDIRECT));
         }

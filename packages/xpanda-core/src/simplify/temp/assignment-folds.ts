@@ -68,7 +68,7 @@ export class AssignmentFolds extends TempVariablePass {
      * 只处理函数体/Program 顶层的赋值,避免影响块级作用域语义。
      */
     /** X = E; return X; -> return E; */
-    foldReturnAssignments(stmts: TYPE.Statement[], ctx: FunctionContext): void {
+    foldReturnAssignments(stmts: TYPE.Statement[], ctx: FunctionContext, loopHeadWrites?: Set<string>): void {
         // 先折累加器链:X = E; X = X + F -> X = E + F。
         // HighLevelGrammarSimplify 在定点迭代之后才把条件物化合成三元赋值,
         // 轮内已经跑过的复制传播来不及处理 acc = C ? A : B; acc = v0 + acc。
@@ -79,7 +79,7 @@ export class AssignmentFolds extends TempVariablePass {
             // 反过来会留下无人的 `acc = C ? A : B` 死存储。
             this.foldAccumulatorChains(stmts, ctx);
             // `X = E; Y = X`(X 之后已死)-> `Y = E`,同样针对尾部才生成的三元赋值。
-            this.foldTempAliasAssignments(stmts, ctx);
+            this.foldTempAliasAssignments(stmts, ctx, loopHeadWrites);
             // `X = E; f(X)`(调用参数位置,X 之后已死)-> `f(E)`。
             // HighLevelGrammarSimplify 的三目合成在定点迭代之后,轮内的复制传播
             // 来不及处理紧随其后的调用参数(典型:`acc = isPlaying || isBuffering;
@@ -100,7 +100,7 @@ export class AssignmentFolds extends TempVariablePass {
         // 递归处理嵌套块(else 分支、循环体等):流水线尾部的三元合成
         // (`acc = C ? A : B` + `return acc`)大多发生在嵌套块里,
         // 只扫顶层会让 `acc = ...; return acc;` 残留到输出。
-        for (const stmt of stmts) this.foldReturnAssignmentsInChildren(stmt, ctx);
+        for (const stmt of stmts) this.foldReturnAssignmentsInChildren(stmt, ctx, loopHeadWrites);
     }
     /**
      * 尝试折叠 stmts[i] / stmts[i + 1] 这一对(赋值 + return)。
@@ -236,15 +236,17 @@ export class AssignmentFolds extends TempVariablePass {
      * Y 允许被闭包捕获(写入点和求值顺序都不变);X 必须未被捕获且之后不再读取,
      * 否则删掉赋值会改变其后续读取到的值。
      */
-    private foldTempAliasAssignments(stmts: TYPE.Statement[], ctx: FunctionContext): void {
+    private foldTempAliasAssignments(stmts: TYPE.Statement[], ctx: FunctionContext, loopHeadWrites?: Set<string>): void {
         for (let i = 0; i + 1 < stmts.length; i++) {
             // 合并后的 Y = E 仍可能继续作为下一条 `Z = Y` 的来源
-            while (i + 1 < stmts.length && this.tryFoldTempAlias(stmts, i, ctx)) {
+            while (i + 1 < stmts.length && this.tryFoldTempAlias(stmts, i, ctx, loopHeadWrites)) {
                 // retry same index
             }
         }
     }
-    private tryFoldTempAlias(stmts: TYPE.Statement[], i: number, ctx: FunctionContext): boolean {
+    private tryFoldTempAlias(
+        stmts: TYPE.Statement[], i: number, ctx: FunctionContext, loopHeadWrites?: Set<string>,
+    ): boolean {
         const first = stmts[i];
         const second = stmts[i + 1];
         if (!isExpressionStatement(first) || !isAssignmentExpression(first.expression)) return false;
@@ -279,7 +281,7 @@ export class AssignmentFolds extends TempVariablePass {
         const liveAfter = ctx.liveAfter.get(second);
         if (!liveAfter || liveAfter.has(source)) {
             if (!targetName) return false;
-            if (!this.redirectReadsUntilWrite(stmts, i + 2, source, targetName)) return false;
+            if (!this.redirectReadsUntilWrite(stmts, i + 2, source, targetName, ctx, loopHeadWrites)) return false;
         }
         info.refs.delete(b.right);
         b.right = a.right;
@@ -300,7 +302,12 @@ export class AssignmentFolds extends TempVariablePass {
      */
     private redirectReadsUntilWrite(
         list: TYPE.Statement[], start: number, source: string, targetName: string,
+        ctx: FunctionContext, loopHeadWrites?: Set<string>,
     ): boolean {
+        // 先只做检查、收集需要改写的节点:中途放弃时不能留下改了一半的 AST
+        // (否则读取被改成 target、写入却被保留,两边的值都对不上)。
+        const pending: TYPE.Node[] = [];
+        let stopped = false;
         for (let k = start; k < list.length; k++) {
             const statement = list[k];
             const unconditional = isExpressionStatement(statement) && (
@@ -313,14 +320,29 @@ export class AssignmentFolds extends TempVariablePass {
                 if (isAssignmentExpression(expression)) {
                     const rhs = expression.right;
                     if (collectAssignedNames(rhs).has(source) || collectAssignedNames(rhs).has(targetName)) return false;
-                    this.rewriteReadsInNode(rhs, source, targetName);
+                    pending.push(rhs);
                 }
-                return true;
+                stopped = true;
+                break;
             }
             const assigned = collectAssignedNames(statement);
             if (assigned.has(source) || assigned.has(targetName)) return false;
-            this.rewriteReadsInNode(statement, source, targetName);
+            pending.push(statement);
         }
+        if (!stopped) {
+            // 本列表内始终没有对 source 的写入:source 的旧值可能在本列表之外仍被读取,
+            // 那些读取不在当前列表里,改不到 target。此时搬移会让 source 丢掉唯一的赋值
+            // (`{ acc = class ...; local = acc; } X = acc;` 是旧版字节码定义类的常见形态),
+            // 输出里 `X = acc` 就只剩一个从未赋值过的 acc,所以放弃本次折叠。
+            // 例外:列表是循环体时,循环头在下一轮进入 body 前必定重写循环变量
+            // (`for (v13 of xs) { v13 = f(v13); acc = v13 }`),这类活跃性来自回边,
+            // 不算“列表之外的读取”。
+            const last = list[list.length - 1];
+            const liveOut = last ? ctx.liveAfter.get(last) : undefined;
+            if (!liveOut) return false;
+            if (liveOut.has(source) && !loopHeadWrites?.has(source)) return false;
+        }
+        for (const node of pending) this.rewriteReadsInNode(node, source, targetName);
         return true;
     }
     /** 把 node 子树上对 source 的读取(标识符引用)改名为 target;跳过嵌套函数/类 */
@@ -611,17 +633,17 @@ export class AssignmentFolds extends TempVariablePass {
         }
     }
 
-    private foldReturnAssignmentsInChildren(stmt: TYPE.Statement, ctx: FunctionContext): void {
+    private foldReturnAssignmentsInChildren(stmt: TYPE.Statement, ctx: FunctionContext, loopHeadWrites?: Set<string>): void {
         switch (stmt.type) {
             case "BlockStatement":
-                this.foldReturnAssignments(stmt.body, ctx);
+                this.foldReturnAssignments(stmt.body, ctx, loopHeadWrites);
                 break;
             case "IfStatement":
-                if (isBlockStatement(stmt.consequent)) this.foldReturnAssignments(stmt.consequent.body, ctx);
-                else this.foldReturnAssignmentsInChildren(stmt.consequent, ctx);
+                if (isBlockStatement(stmt.consequent)) this.foldReturnAssignments(stmt.consequent.body, ctx, loopHeadWrites);
+                else this.foldReturnAssignmentsInChildren(stmt.consequent, ctx, loopHeadWrites);
                 if (stmt.alternate) {
-                    if (isBlockStatement(stmt.alternate)) this.foldReturnAssignments(stmt.alternate.body, ctx);
-                    else this.foldReturnAssignmentsInChildren(stmt.alternate, ctx);
+                    if (isBlockStatement(stmt.alternate)) this.foldReturnAssignments(stmt.alternate.body, ctx, loopHeadWrites);
+                    else this.foldReturnAssignmentsInChildren(stmt.alternate, ctx, loopHeadWrites);
                 }
                 break;
             case "WhileStatement":
@@ -629,17 +651,20 @@ export class AssignmentFolds extends TempVariablePass {
             case "ForStatement":
             case "ForInStatement":
             case "ForOfStatement":
+                if (isBlockStatement(stmt.body)) this.foldReturnAssignments(stmt.body.body, ctx, loopHeadWritesOf(stmt));
+                else this.foldReturnAssignmentsInChildren(stmt.body, ctx, loopHeadWritesOf(stmt));
+                break;
             case "LabeledStatement":
-                if (isBlockStatement(stmt.body)) this.foldReturnAssignments(stmt.body.body, ctx);
-                else this.foldReturnAssignmentsInChildren(stmt.body, ctx);
+                if (isBlockStatement(stmt.body)) this.foldReturnAssignments(stmt.body.body, ctx, loopHeadWrites);
+                else this.foldReturnAssignmentsInChildren(stmt.body, ctx, loopHeadWrites);
                 break;
             case "TryStatement":
-                if (isBlockStatement(stmt.block)) this.foldReturnAssignments(stmt.block.body, ctx);
-                if (stmt.handler) this.foldReturnAssignments(stmt.handler.body.body, ctx);
-                if (stmt.finalizer) this.foldReturnAssignments(stmt.finalizer.body, ctx);
+                if (isBlockStatement(stmt.block)) this.foldReturnAssignments(stmt.block.body, ctx, loopHeadWrites);
+                if (stmt.handler) this.foldReturnAssignments(stmt.handler.body.body, ctx, loopHeadWrites);
+                if (stmt.finalizer) this.foldReturnAssignments(stmt.finalizer.body, ctx, loopHeadWrites);
                 break;
             case "SwitchStatement":
-                for (const c of stmt.cases) this.foldReturnAssignments(c.consequent, ctx);
+                for (const c of stmt.cases) this.foldReturnAssignments(c.consequent, ctx, loopHeadWrites);
                 break;
             default:
                 break;
@@ -827,4 +852,66 @@ export class AssignmentFolds extends TempVariablePass {
             else stmt.declarations = kept;
         }
     }
+}
+
+/**
+ * 循环头在“下一轮进入 body 之前”必定写入的名字。
+ *
+ * 列表走到底仍没有对 X 的写入时,`redirectReadsUntilWrite` 会把列表末尾的活跃集当作
+ * “列表之外仍会读取 X”的证据而放弃折叠;但循环体末尾的活跃集含回边上的读取
+ * (`for (v13 of xs) { v13 = f(v13); acc = v13 }` 里 v13 在 body 开头被读),
+ * 循环头其实会在下一轮重写这些名字,删掉 body 里的写入依然安全。
+ */
+function loopHeadWritesOf(stmt: TYPE.Statement): Set<string> {
+    const writes = new Set<string>();
+    const addPattern = (node: TYPE.Node | null | undefined): void => {
+        if (!node) return;
+        switch (node.type) {
+            case "Identifier":
+                writes.add(node.name);
+                break;
+            case "ObjectPattern":
+                for (const property of node.properties) {
+                    addPattern(property.type === "RestElement" ? property.argument : property.value);
+                }
+                break;
+            case "ArrayPattern":
+                for (const element of node.elements) addPattern(element);
+                break;
+            case "AssignmentPattern":
+                addPattern(node.left);
+                break;
+            case "RestElement":
+                addPattern(node.argument);
+                break;
+            default:
+                break;
+        }
+    };
+    switch (stmt.type) {
+        case "ForOfStatement":
+        case "ForInStatement": {
+            const left = (stmt as TYPE.ForOfStatement).left;
+            if (left.type === "VariableDeclaration") {
+                for (const declarator of left.declarations) addPattern(declarator.id);
+            } else {
+                addPattern(left);
+            }
+            break;
+        }
+        case "ForStatement": {
+            const update = (stmt as TYPE.ForStatement).update;
+            if (update) for (const name of collectAssignedNames(update)) writes.add(name);
+            break;
+        }
+        case "WhileStatement":
+            for (const name of collectAssignedNames((stmt as TYPE.WhileStatement).test)) writes.add(name);
+            break;
+        case "DoWhileStatement":
+            for (const name of collectAssignedNames((stmt as TYPE.DoWhileStatement).test)) writes.add(name);
+            break;
+        default:
+            break;
+    }
+    return writes;
 }

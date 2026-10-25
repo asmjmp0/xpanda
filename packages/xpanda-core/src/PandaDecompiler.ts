@@ -71,7 +71,8 @@ export class PandaDecompiler {
         if (pandaClass.pandaClassModuleData) {
             const nameSet = new Set<string>();
             for (const exp of pandaClass.pandaClassModuleData.exports) {
-                if (exp.localName !== null) nameSet.add(exp.localName);
+                // 只有本地导出才引入模块级绑定;间接导出(export {a} from "path")没有本地变量
+                if (exp.type === ExportType.LOCAL && exp.localName !== null) nameSet.add(exp.localName);
             }
             if (nameSet.size > 0) {
                 const arrayObject = this.codeGenerator.arrayObject();

@@ -2,7 +2,7 @@
 
 > [English](./ARCHITECTURE.md) | 简体中文
 
-鸿蒙 HarmonyOS `.abc`(Panda / ArkCompiler 字节码)反编译器,纯 TypeScript 实现(Node.js ≥ 18,零原生依赖)。指令集描述对应字节码版本 **24.0.0.0**;输出在低至 **13.0.1.0** 的样本上验证通过。
+鸿蒙 HarmonyOS `.abc`(Panda / ArkCompiler 字节码)反编译器,纯 TypeScript 实现(Node.js ≥ 18,零原生依赖)。指令集描述对应字节码版本 **24.0.0.0**;输出在低至 **13.0.1.0** 的样本上验证通过,ArkTS 12 应用包(`12.0.2.0`)也能反编译。
 
 输入 `.abc` 字节码(或 `.hap` 应用包),输出可读的 JavaScript 源码。内置 AST 优化器负责清理寄存器临时变量、还原函数/类/控制流语法和模块(import/export)语法。
 

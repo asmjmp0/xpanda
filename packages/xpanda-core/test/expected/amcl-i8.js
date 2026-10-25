@@ -41,10 +41,10 @@ b763 = async function (p0, p1, p2, p3) {
   try {
     v0 = await g50.stat(v4.fd);
     v14 = v0;
-    v16 = v14.size;
-    l763(v14.size);
-    local_0_9(v14.size >= 98);
-    v17 = new DataView((await local_0_10(v4.fd, v14.size - 98, 98, p2)).buffer);
+    v16 = v0.size;
+    l763(v0.size);
+    local_0_9(v0.size >= 98);
+    v17 = new DataView((await local_0_10(v4.fd, v0.size - 98, 98, p2)).buffer);
     v21 = v17.getUint32(0, true) === 101075792
       && m763(v17, 4) === 44
       && v17.getUint16(12, true) === 45
@@ -56,10 +56,10 @@ b763 = async function (p0, p1, p2, p3) {
     local_0_9(v21);
     v18 = m763(v17, 40);
     v21 = m763(v17, 48);
-    v30 = v21 + v18 === v14.size - 98
+    v30 = v21 + v18 === v0.size - 98
       && v17.getUint32(56, true) === 117853008
       && v17.getUint32(60, true) === 0
-      && m763(v17, 64) === v14.size - 98
+      && m763(v17, 64) === v0.size - 98
       && v17.getUint32(72, true) === 1
       && v17.getUint32(76, true) === 101010256
       && v17.getUint32(80, true) === 0
@@ -385,10 +385,10 @@ local_0_4 = async function (p0, p1, p2, p3, p4) {
   }
   v0 = await g50.stat(p0.fd);
   v3 = v0;
-  if (!v3.isFile()) {
+  if (!v0.isFile()) {
     throw new Error("摘要输入不是普通文件");
   }
-  l763(v3.size);
+  l763(v0.size);
   if (p1.indexOf("://") < 0) {
     v0 = await f763(p0.fd, v0.size, p3, p2, p4);
     if (v0 === undefined) {
@@ -561,8 +561,8 @@ z762 = async function (p0, p1, p2, p3, p4, p5) {
         v32 = await local_0_3(v30);
         v0 = await g50.stat(v32.fd);
         v74 = v0;
-        acc = !v74.isFile();
-        if (acc || v74.size !== v23.size) {
+        acc = !v0.isFile();
+        if (acc || v0.size !== v23.size) {
           throw new Error("导出快照大小变化");
         }
         v75 = cryptoFramework.createMd("SHA256");

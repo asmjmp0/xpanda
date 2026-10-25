@@ -12,6 +12,7 @@ import { restoreGotoLoops } from "../src/simplify/GotoLoopRestore";
 import { HapFile } from "../src/hap/HapFile";
 import { ResourceIndexFile } from "../src/res/ResourceIndexFile";
 import { formatLongLogicalChains } from "../src/ast/FormatCode";
+import { KIND_MAP } from "../src/disasm/PandaInstruction";
 import * as TYPE from "@babel/types";
 import traverse from "@babel/traverse";
 
@@ -3993,6 +3994,107 @@ function pickSwitch(p0) {
 }
 
 /**
+ * 回归:hub 别名折叠不能搬走 X 的唯一一次赋值,而把读取留在别的语句列表里。
+ *
+ * ArkTS 12(bytecode 12.0.2.0)定义模块级类时在 try 块里留下一个没人用的
+ * `ldobjbyname "prototype"`:
+ *   { acc = class ...; v1 = acc; local_1_0 = acc; acc = v1; acc = acc.prototype; }
+ *   acc = v1; X = acc;
+ * 定点迭代把那两个寄存器恢复删掉后,块里只剩 `acc = class ...; local_1_0 = acc`。
+ * `X = E; Y = X` 的别名折叠把 E 搬进 local_1_0 并删掉 `acc = E` 时,`X = acc`
+ * 在块外、改不到 target,于是 X 拿到了一个从未赋过值的 acc(整个模块的类变成
+ * undefined)。同一条规则也不能过度保守:循环体末尾的活跃性来自回边,循环头
+ * 一定会重写循环变量,`for (v of xs) { v = v + total; total = v }` 仍要折成
+ * `total += v`。
+ */
+function verifyHubAliasKeepsSourceValue(): void {
+    const program = NodeFactory.parse(`
+function makeClass() {
+  let acc, v1, holder;
+  {
+    let local_1_0;
+    acc = class Defined { static self() { return local_1_0; } };
+    v1 = acc;
+    local_1_0 = acc;
+    acc = acc["prototype"];
+  }
+  acc = v1;
+  holder = acc;
+  return holder;
+}
+function accumulate(xs) {
+  let total = 0, acc, v1;
+  for (v1 of xs) {
+    acc = total + v1;
+    total = acc;
+  }
+  return total;
+}
+`);
+    SimplifyExport.simplify(program);
+    const code = NodeFactory.generate(program);
+    NodeFactory.parse(code);
+    const sandbox: Record<string, unknown> = {};
+    sandbox.globalThis = sandbox;
+    vm.runInNewContext(`${code}\nresult = makeClass(); total = accumulate([1, 2, 3]);`, sandbox, { timeout: 5000 });
+    if (typeof sandbox.result !== "function" || (sandbox.result as { name: string }).name !== "Defined") {
+        throw new Error(`simplify: 块外读取的类表达式丢失(acc 唯一赋值被搬走)\n${code}`);
+    }
+    if (sandbox.total !== 6) {
+        throw new Error(`simplify: 循环体别名折叠被过度保守地放弃 (total=${String(sandbox.total)})\n${code}`);
+    }
+    if (!code.includes("total += v1;")) {
+        throw new Error(`simplify: 循环体 X = E; total = X 未折成累加赋值\n${code}`);
+    }
+}
+
+/**
+ * 回归:间接导出(`export {a as b} from "path"`)的序列化顺序是 export_name、local_name,
+ * 与本地导出相反。旧实现按本地导出的顺序读,把 `export {resolveFeedTopics as
+ * resolveHomeFeedTopics}` 输出成反过来的 `export {resolveHomeFeedTopics as
+ * resolveFeedTopics}`,还会把间接导出的名字塞进模块级 `let` 声明
+ * (flutter 的 barrel 里是 69 个 `default`,直接生成非法 JS `let default;`)。
+ */
+function verifyIndirectExportNameOrder(): void {
+    const hapPath = path.join(__dirname, "resources", "zhihupp0.59.hap");
+    const hap = new HapFile(new Uint8Array(fs.readFileSync(hapPath)));
+    const pandaFile = new PandaFile(hap.readEntry("ets/modules.abc")!);
+    const clazz = pandaFile.getAllClasses().find((c) => c.name.content.includes("HomeFeedMenuState"));
+    if (!clazz) throw new Error("hap: 未找到 HomeFeedMenuState");
+
+    const code = new PandaDecompiler().decompileClass(clazz);
+    NodeFactory.parse(code);
+    const expected = 'export { resolveFeedTopics as resolveHomeFeedTopics } from "@normalized:N&&&data/Index&1.0.0";';
+    if (!code.includes(expected)) {
+        throw new Error(`hap: 间接导出的 local/export 名字顺序错误\n${code.slice(code.lastIndexOf("export {"))}`);
+    }
+    for (const line of code.split("\n")) {
+        if (!line.startsWith("let ")) continue;
+        if (/\bdefault\b/.test(line)) {
+            throw new Error(`hap: 间接导出的名字被当成模块级绑定声明\n${line}`);
+        }
+    }
+}
+
+/**
+ * 回归:bytecode 12.0.2.0(ArkTS 12)用 `definefieldbyname imm, string_id, v` 定义
+ * 类字段(静态字段的 static_initializer、ArkUI 组件的状态字段)。没有注册 kind 时
+ * 整个类直接抛 `definefieldbyname not handled!`,旧版应用包没法反编译。
+ */
+function verifyDefineFieldByNameKind(): void {
+    const kind = KIND_MAP.get("definefieldbyname");
+    if (kind !== "storeObject") {
+        throw new Error(`definefieldbyname 未映射为 storeObject(实际: ${String(kind)})`);
+    }
+    // 同一族的其它字段定义指令必须保持同样的处理方式(成员赋值)
+    for (const name of ["definefieldname", "definepropertybyname"]) {
+        if (KIND_MAP.get(name) !== "storeObject") {
+            throw new Error(`${name} 未映射为 storeObject(实际: ${String(KIND_MAP.get(name))})`);
+        }
+    }
+}
+
+/**
  * 回归:超长逻辑链的输出折行。
  *   - 超过 120 字符的行在顶层 `||` / `&&` / `??` 前折行,新行以操作符开头;
  *   - 字符串里的 `||`、顶层三目都不参与折行。
@@ -4095,6 +4197,10 @@ async function main(): Promise<void> {
 
     console.log("[test] simplify tail temp alias fold");
     verifyTailTempAliasFold();
+    console.log("    ok");
+
+    console.log("[test] simplify hub alias keeps source value");
+    verifyHubAliasKeepsSourceValue();
     console.log("    ok");
 
     console.log("[test] simplify closure written variable");
@@ -4295,6 +4401,14 @@ async function main(): Promise<void> {
 
     console.log("[test] output logical chain formatting");
     verifyLogicalChainFormatting();
+    console.log("    ok");
+
+    console.log("[test] aged bytecode definefieldbyname kind");
+    verifyDefineFieldByNameKind();
+    console.log("    ok");
+
+    console.log("[test] indirect export name order");
+    verifyIndirectExportNameOrder();
     console.log("    ok");
 
     console.log("[test] core entry stays browser-safe");

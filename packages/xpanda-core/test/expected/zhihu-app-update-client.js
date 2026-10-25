@@ -38,7 +38,7 @@ local_0_1 = "zhuoyi233/zhihu-plus-plus-HMOS";
 local_0_5 = 4000;
 {
   let local_1_0;
-  local_1_0 = class panda_jmp0_reserved_anonymous_0 {
+  acc = class panda_jmp0_reserved_anonymous_0 {
     constructor() {
       this.requestHandle = http.createHttp();
     }
@@ -245,6 +245,7 @@ local_0_5 = 4000;
       }
     }
   };
+  local_1_0 = acc;
   (function () {
     this.latestJson = "";
     this.latestFetchedAt = 0;
@@ -252,7 +253,7 @@ local_0_5 = 4000;
     this.releasesFetchedAt = 0;
     this.bundledLatestJson = "";
     this.bundledReleasesJson = "";
-  }).call(local_1_0);
+  }).call(acc);
 }
 AppUpdateClient = acc;
 export { AppUpdateClient };

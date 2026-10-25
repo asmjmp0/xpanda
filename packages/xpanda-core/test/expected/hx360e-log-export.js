@@ -14,7 +14,7 @@ local_0_0 = 0;
 local_0_1 = "HX360E";
 {
   let local_1_0;
-  local_1_0 = class panda_jmp0_reserved_anonymous_0 {
+  acc = class panda_jmp0_reserved_anonymous_0 {
     constructor() {}
     static readLogTail(p0, p1) {
       let v1 /*hilog*/, v5, v6 /*fs*/, v7, v8 /*util*/, v10, v11, v12, v13, v14, v18, acc;
@@ -76,6 +76,7 @@ local_0_1 = "HX360E";
       }
     }
   };
+  local_1_0 = acc;
 }
 LogExport = acc;
 export { LogExport };

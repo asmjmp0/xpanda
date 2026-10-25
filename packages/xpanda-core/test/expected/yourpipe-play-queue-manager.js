@@ -141,9 +141,9 @@ local_1_0 = class panda_jmp0_reserved_anonymous_1 {
       v23 = FeedServiceProvider.getInstance().getPlaylistService();
       v18 = await v23.fetchPlaylistInitial(p0, 1);
       v22 = v18;
-      v20 = v22.items ? v22.items.slice() : [];
-      v21 = v22.nextPageToken;
-      v24 = v22.visitorData || "";
+      v20 = v18.items ? v18.items.slice() : [];
+      v21 = v18.nextPageToken;
+      v24 = v18.visitorData || "";
       v19 = -1;
       for (v26 = 0; v26 < v20.length; v26 += 1) {
         if (v20[v26].videoId === p1) {

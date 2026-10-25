@@ -223,7 +223,7 @@ function buildKindMap(): Map<string, InstructionKind> {
         "stobjbyvalue", "stobjbyname", "stobjbyindex",
         "stownbyvalue", "stownbyname", "stownbyvaluewithnameset",
         "stglobalvar", "trystglobalbyname",
-        "definefieldname", "definepropertybyname",
+        "definefieldname", "definefieldbyname", "definepropertybyname",
         "callruntime.definefieldbyindex", "callruntime.definefieldbyvalue");
     put("storeByIndex", "stownbyindex", "wide.stownbyindex");
     put("storeArraySpread", "starrayspread");
@@ -747,7 +747,7 @@ export class PandaInstruction {
     private initStoreObject(opcode: OpcodeInfo): void {
         const name = opcode.name;
         if (name === "stobjbyname" || name === "stownbyname"
-            || name === "definefieldname" || name === "definepropertybyname"
+            || name === "definefieldname" || name === "definefieldbyname" || name === "definepropertybyname"
             || name === "callruntime.definefieldbyindex" || name === "callruntime.definefieldbyvalue") {
             (this as any).storeKeyObj = this.params[2];
             (this as any).storeKey = this.params[1];

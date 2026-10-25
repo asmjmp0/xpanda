@@ -2,7 +2,7 @@
 
 > English | [简体中文](./ARCHITECTURE.zh-CN.md)
 
-A decompiler for HarmonyOS `.abc` (Panda / ArkCompiler bytecode), implemented in pure TypeScript (Node.js ≥ 18, zero native dependencies). Bytecode version **24.0.0.0** is described by the ISA table; output is verified against samples down to **13.0.1.0**.
+A decompiler for HarmonyOS `.abc` (Panda / ArkCompiler bytecode), implemented in pure TypeScript (Node.js ≥ 18, zero native dependencies). Bytecode version **24.0.0.0** is described by the ISA table; output is verified against samples down to **13.0.1.0**, and ArkTS 12 packages (`12.0.2.0`) decompile as well.
 
 It takes `.abc` bytecode (or a `.hap` application package) as input and produces readable JavaScript source. A built-in AST optimizer cleans up register temporaries, restores function/class/control-flow syntax, and rebuilds module (import/export) syntax.
 
@@ -111,6 +111,8 @@ One instruction class instead of ~200 per-opcode subclasses. Every instruction c
 - Register parameters: an index `>= numVregs` is a parameter (`p0..pN-3`); the first three slots are `func` / `new.target` / `this` and are printed as reserved names `panda_jmp0_reserved_param_pN`.
 
 **Degradation trigger**: the `jeq` / `jne` / `jstricteq` / `jnstricteq` family (unconditional-jump encodings without a `z` suffix) throw at construction. Methods containing them are skipped during lexical analysis and later emitted as placeholder bodies.
+
+**ArkTS 12 field definitions**: bytecode `12.0.2.0` defines class fields with `definefieldbyname imm, string_id, v` (later toolchains dropped it in favour of `definefieldname`). It is mapped to the `storeObject` kind, so `static_initializer` / ArkUI state fields are emitted as `obj.field = acc` like `definepropertybyname` — without the mapping every class that declares a field throws `definefieldbyname not handled!` and the whole class is lost.
 
 ### 6.3 CFG construction (`PandaDisAssembler.ts`, `ir.ts`)
 

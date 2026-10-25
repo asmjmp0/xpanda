@@ -214,7 +214,7 @@ let local_1_0;
     }
   };
   local_1_0 = acc;
-  HttpError = local_1_0;
+  HttpError = acc;
   HttpAbortToken = class panda_jmp0_reserved_anonymous_3 {
     constructor() {
       this.aborted = false;

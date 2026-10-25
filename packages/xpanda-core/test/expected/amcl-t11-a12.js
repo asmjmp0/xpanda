@@ -3,7 +3,7 @@
 * Source code created from a .abc file.
 * powered by xpanda decompiler, author: jmp0
 */
-import "@normalized:N&&&commons/Index&1.0.0";
+import { a104 } from "@normalized:N&&&commons/Index&1.0.0";
 import { a32 } from "@normalized:N&&&commons/Index&1.0.0";
 import { c771 } from "@normalized:N&&&feature_core/src/main/ets/t11/w11&1.0.0";
 import { d32 } from "@normalized:N&&&commons/Index&1.0.0";
@@ -19,7 +19,7 @@ import { p1205 } from "@normalized:N&&&feature_core/src/main/ets/t11/w11&1.0.0";
 import { q36 } from "@normalized:N&&&commons/Index&1.0.0";
 import { y } from "@normalized:N&&&commons/Index&1.0.0";
 import zlib from "@ohos:zlib";
-let b1268, c1268, d1268, e1268, e771, f1268, m1268, n1268, r1267, s1267, t1267, u1267, v1267, a104;
+let b1268, c1268, d1268, e1268, e771, f1268, m1268, n1268, r1267, s1267, t1267, u1267, v1267;
 let local_0_0, local_0_1, local_0_4, local_0_5, local_0_6, local_0_7, local_0_8, local_0_9, local_0_10, local_0_11, local_0_12;
 local_0_9 = function (p0) {
   return p0.downloads
