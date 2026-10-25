@@ -12,6 +12,8 @@ It turns `.abc` files back into readable JavaScript: classes, methods, functions
 
 Supported bytecode versions: `24.0.0.0` (backward compatible with `13.0.1.0`).
 
+![xpanda web UI — decompiling a HarmonyOS app package entirely in the browser](assets/web-ui.png)
+
 ## Features
 
 - **Pure TypeScript, zero native dependencies**: parses `.abc` files and emits readable JavaScript that can run as-is;
@@ -22,217 +24,9 @@ Supported bytecode versions: `24.0.0.0` (backward compatible with `13.0.1.0`).
 - **MCP Server**: lets AI clients such as Claude Code, OpenCode and Cursor analyze `.abc` files on demand;
 - **Web UI**: drag & drop a `.abc` / `.hap` file in the browser and decompile it entirely client-side — nothing is uploaded.
 
-## Decompilation results
-
-Everything below comes straight from the project's test snapshots — nothing was hand-edited.
-
-### `packages/xpanda-core/test/expected/class.js`
-
-```js
-/*
-* class name:L_GLOBAL;
-* Source code created from a .abc file.
-* powered by xpanda decompiler, author: jmp0
-*/
-let Test = class panda_jmp0_reserved_class_0 {
-  c = 10;
-  get c() {
-    return "10";
-  }
-  test() {
-    console.log("123");
-  }
-};
-new Test().test();
-```
-
-### `packages/xpanda-core/test/expected/md5.js`
-
-The full result is in [`test/expected/md5.js`](packages/xpanda-core/test/expected/md5.js).
-
-<details>
-<summary>Expand to view the actual decompiled output</summary>
-
-```js
-/*
-* class name:L_GLOBAL;
-* Source code created from a .abc file.
-* powered by xpanda decompiler, author: jmp0
-*/
-(function () {
-  function add32(p0, p1) {
-    return p0 + p1 & 4294967295;
-  }
-  function rhex(p0) {
-    let v3, v4;
-    v3 = 0;
-    for (v4 = ""; v3 < 4; v3 += 1) {
-      v4 += "0123456789abcdef"[p0 >> v3 * 8 + 4 & 15] + "0123456789abcdef"[p0 >> v3 * 8 & 15];
-    }
-    return v4;
-  }
-  function gg(p0, p1, p2, p3, p4, p5, p6) {
-    return cmn(p1 & p3 | p2 & ~p3, p0, p1, p4, p5, p6);
-  }
-  function md5blk(p0) {
-    let v8, v9, v11;
-    v8 = 0;
-    for (v9 = []; v8 < 64; v8 += 4) {
-      v11 = p0.charCodeAt(v8) + (p0.charCodeAt(v8 + 1) << 8) + (p0.charCodeAt(v8 + 2) << 16);
-      v9[v8 >> 2] = v11 + (p0.charCodeAt(v8 + 3) << 24);
-    }
-    return v9;
-  }
-  function md51(p0) {
-    let v0, v2, v3, v4, v8;
-    if (new RegExp("[\\x80-\\xFF]").test(p0)) {
-      p0 = unescape(encodeURI(p0));
-    }
-    globalThis.txt = "";
-    v2 = [1732584193, -271733879, -1732584194, 271733878];
-    for (v3 = 64; v3 <= p0.length; v3 += 64) {
-      md5cycle(v2, md5blk(p0.substring(v3 - 64, v3)));
-    }
-    v0 = p0.substring(v3 - 64);
-    v3 = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-    for (v8 = 0; v8 < v0.length; v8 += 1) {
-      v3[v8 >> 2] = v3[v8 >> 2] | v0.charCodeAt(v8) << (v8 % 4 << 3);
-    }
-    v3[v8 >> 2] = v3[v8 >> 2] | 128 << (v8 % 4 << 3);
-    if (v8 > 55) {
-      md5cycle(v2, v3);
-      for (v4 = 0; v4 < 16; v4 += 1) {
-        v3[v4] = 0;
-      }
-    }
-    v3[14] = p0.length * 8;
-    md5cycle(v2, v3);
-    return v2;
-  }
-  function ff(p0, p1, p2, p3, p4, p5, p6) {
-    return cmn(p1 & p2 | ~p1 & p3, p0, p1, p4, p5, p6);
-  }
-  function hex(p0) {
-    let v0;
-    for (v0 = 0; v0 < p0.length; v0 += 1) {
-      p0[v0] = rhex(p0[v0]);
-    }
-    return p0.join("");
-  }
-  function ii(p0, p1, p2, p3, p4, p5, p6) {
-    return cmn(p2 ^ (p1 | ~p3), p0, p1, p4, p5, p6);
-  }
-  function hh(p0, p1, p2, p3, p4, p5, p6) {
-    return cmn(p1 ^ p2 ^ p3, p0, p1, p4, p5, p6);
-  }
-  function md5cycle(p0, p1) {
-    let v1, v3, v5, v7;
-    v1 = ff(p0[0], p0[1], p0[2], p0[3], p1[0], 7, -680876936);
-    v7 = ff(p0[3], v1, p0[1], p0[2], p1[1], 12, -389564586);
-    v5 = ff(p0[2], v7, v1, p0[1], p1[2], 17, 606105819);
-    v3 = ff(p0[1], v5, v7, v1, p1[3], 22, -1044525330);
-    v1 = ff(v1, v3, v5, v7, p1[4], 7, -176418897);
-    v7 = ff(v7, v1, v3, v5, p1[5], 12, 1200080426);
-    v5 = ff(v5, v7, v1, v3, p1[6], 17, -1473231341);
-    v3 = ff(v3, v5, v7, v1, p1[7], 22, -45705983);
-    v1 = ff(v1, v3, v5, v7, p1[8], 7, 1770035416);
-    v7 = ff(v7, v1, v3, v5, p1[9], 12, -1958414417);
-    v5 = ff(v5, v7, v1, v3, p1[10], 17, -42063);
-    v3 = ff(v3, v5, v7, v1, p1[11], 22, -1990404162);
-    v1 = ff(v1, v3, v5, v7, p1[12], 7, 1804603682);
-    v7 = ff(v7, v1, v3, v5, p1[13], 12, -40341101);
-    v5 = ff(v5, v7, v1, v3, p1[14], 17, -1502002290);
-    v3 = ff(v3, v5, v7, v1, p1[15], 22, 1236535329);
-    v1 = gg(v1, v3, v5, v7, p1[1], 5, -165796510);
-    v7 = gg(v7, v1, v3, v5, p1[6], 9, -1069501632);
-    v5 = gg(v5, v7, v1, v3, p1[11], 14, 643717713);
-    v3 = gg(v3, v5, v7, v1, p1[0], 20, -373897302);
-    v1 = gg(v1, v3, v5, v7, p1[5], 5, -701558691);
-    v7 = gg(v7, v1, v3, v5, p1[10], 9, 38016083);
-    v5 = gg(v5, v7, v1, v3, p1[15], 14, -660478335);
-    v3 = gg(v3, v5, v7, v1, p1[4], 20, -405537848);
-    v1 = gg(v1, v3, v5, v7, p1[9], 5, 568446438);
-    v7 = gg(v7, v1, v3, v5, p1[14], 9, -1019803690);
-    v5 = gg(v5, v7, v1, v3, p1[3], 14, -187363961);
-    v3 = gg(v3, v5, v7, v1, p1[8], 20, 1163531501);
-    v1 = gg(v1, v3, v5, v7, p1[13], 5, -1444681467);
-    v7 = gg(v7, v1, v3, v5, p1[2], 9, -51403784);
-    v5 = gg(v5, v7, v1, v3, p1[7], 14, 1735328473);
-    v3 = gg(v3, v5, v7, v1, p1[12], 20, -1926607734);
-    v1 = hh(v1, v3, v5, v7, p1[5], 4, -378558);
-    v7 = hh(v7, v1, v3, v5, p1[8], 11, -2022574463);
-    v5 = hh(v5, v7, v1, v3, p1[11], 16, 1839030562);
-    v3 = hh(v3, v5, v7, v1, p1[14], 23, -35309556);
-    v1 = hh(v1, v3, v5, v7, p1[1], 4, -1530992060);
-    v7 = hh(v7, v1, v3, v5, p1[4], 11, 1272893353);
-    v5 = hh(v5, v7, v1, v3, p1[7], 16, -155497632);
-    v3 = hh(v3, v5, v7, v1, p1[10], 23, -1094730640);
-    v1 = hh(v1, v3, v5, v7, p1[13], 4, 681279174);
-    v7 = hh(v7, v1, v3, v5, p1[0], 11, -358537222);
-    v5 = hh(v5, v7, v1, v3, p1[3], 16, -722521979);
-    v3 = hh(v3, v5, v7, v1, p1[6], 23, 76029189);
-    v1 = hh(v1, v3, v5, v7, p1[9], 4, -640364487);
-    v7 = hh(v7, v1, v3, v5, p1[12], 11, -421815835);
-    v5 = hh(v5, v7, v1, v3, p1[15], 16, 530742520);
-    v3 = hh(v3, v5, v7, v1, p1[2], 23, -995338651);
-    v1 = ii(v1, v3, v5, v7, p1[0], 6, -198630844);
-    v7 = ii(v7, v1, v3, v5, p1[7], 10, 1126891415);
-    v5 = ii(v5, v7, v1, v3, p1[14], 15, -1416354905);
-    v3 = ii(v3, v5, v7, v1, p1[5], 21, -57434055);
-    v1 = ii(v1, v3, v5, v7, p1[12], 6, 1700485571);
-    v7 = ii(v7, v1, v3, v5, p1[3], 10, -1894986606);
-    v5 = ii(v5, v7, v1, v3, p1[10], 15, -1051523);
-    v3 = ii(v3, v5, v7, v1, p1[1], 21, -2054922799);
-    v1 = ii(v1, v3, v5, v7, p1[8], 6, 1873313359);
-    v7 = ii(v7, v1, v3, v5, p1[15], 10, -30611744);
-    v5 = ii(v5, v7, v1, v3, p1[6], 15, -1560198380);
-    v3 = ii(v3, v5, v7, v1, p1[13], 21, 1309151649);
-    v1 = ii(v1, v3, v5, v7, p1[4], 6, -145523070);
-    v7 = ii(v7, v1, v3, v5, p1[11], 10, -1120210379);
-    v5 = ii(v5, v7, v1, v3, p1[2], 15, 718787259);
-    v3 = ii(v3, v5, v7, v1, p1[9], 21, -343485551);
-    p0[0] = add32(v1, p0[0]);
-    p0[1] = add32(v3, p0[1]);
-    p0[2] = add32(v5, p0[2]);
-    p0[3] = add32(v7, p0[3]);
-  }
-  function cmn(p0, p1, p2, p3, p4, p5) {
-    let v0;
-    v0 = add32(add32(p1, p0), add32(p3, p5));
-    v0 = v0 << p4 | v0 >>> 32 - p4;
-    return add32(v0, p2);
-  }
-  globalThis.md5 = function md5(p0) {
-    let v1;
-    v1 = md51(p0);
-    return hex(v1);
-  };
-  console.log("md5 of admin is ", md5("admin"));
-})();
-```
-
-</details>
-
-### `packages/xpanda-core/test/expected/aes.js`
-
-The full result is in [`test/expected/aes.js`](packages/xpanda-core/test/expected/aes.js). The optimizer folds the `acc` accumulation chain into compound assignments:
-
-```js
-v9 <<= 2;
-v9 |= v10 >> 4;
-v10 &= 15;
-v10 <<= 4;
-v10 |= v11 >> 2;
-v7 += String.fromCharCode(v9);
-if (v11 !== 64) {
-  v7 += String.fromCharCode(v10);
-}
-```
-
 ## Requirements
 
 - Node.js ≥ 18
-- Development dependencies: `typescript`, `tsx` (core additionally uses `@babel/*` and `fflate` — a pure-JS, browser-compatible inflate; the opcode generator uses `js-yaml`)
 
 ## Monorepo layout
 
@@ -296,8 +90,6 @@ NODE_OPTIONS=--max-old-space-size=4096 \
   npx tsx packages/xpanda-cli/src/cli.ts decompile app.abc -o out -j 4 --quiet
 ```
 
-`-j` only parallelizes simplify (>99% of per-class time); parsing and disassembly stay on the main thread. A single huge class peaks at ~1.4GB during simplify; workers default to a 3GB heap limit, configurable via `XPANDA_WORKER_HEAP_MB`.
-
 ## Programmatic API
 
 ```ts
@@ -312,8 +104,6 @@ for (const cls of pandaFile.getAllClasses()) {
     // const js = decompiler.decompileClassRaw(cls); // without simplify
 }
 ```
-
-The core is browser-compatible and does no disk IO: `src/index.ts` is the single entry (shared by Node and browsers) whose import closure contains no Node built-ins and no workers. The `-j` parallel simplify worker pool ships with `xpanda-cli` (`src/parallel/`), and reading/writing files is implemented by the `xpanda-cli` and `xpanda-mcp` packages.
 
 ## MCP Server
 
@@ -360,11 +150,11 @@ Generic JSON config (Claude Desktop / Cursor, etc.):
 }
 ```
 
-See [docs/MCP.md](docs/MCP.md) for the full tool reference and design notes (session registry, output truncation, degradation flag).
+See [docs/MCP.md](docs/MCP.md) for the full tool reference.
 
 ## Web UI
 
-xpanda also ships a browser UI that decompiles `.abc` files and `.hap` app packages **entirely in the browser** — the same browser-safe core entry powers it, so nothing is ever uploaded.
+xpanda also ships a browser UI that decompiles `.abc` files and `.hap` app packages **entirely in the browser** — nothing is ever uploaded.
 
 ```bash
 npm run web          # vite dev server → http://localhost:5173
@@ -375,99 +165,7 @@ npm run web          # vite dev server → http://localhost:5173
 - Copy / download single classes, or pack every result into a `.zip`; output mode toggle **Optimized** / **Raw AST**;
 - Zero-dependency syntax highlighting with line numbers.
 
-See [packages/xpanda-web/README.md](packages/xpanda-web/README.md) and [docs/ARCHITECTURE.md §13](docs/ARCHITECTURE.md) for details.
-
-## Directory layout
-
-```text
-packages/
-  xpanda-core/
-    src/
-      codec/        Leb128 / MUTF8 / Adler32 codecs
-      file/         .abc format parsing (header / indexes / classes / methods / literals / module metadata)
-      disasm/       disassembly: generated opcodes.ts, unified instruction model, CFG, lexical analysis
-      decompiler/   Region-based structural analysis, statement tree, instruction handles, dominator tree, fallback
-      codegen/      CodeGenerator (wraps ast/ NodeFactory & NodeUtils)
-      ast/          Babel AST construction and utilities
-      simplify/     optimizer pipeline (AST cleanup and syntax recovery)
-      parallel/     per-class parallel simplify (worker_threads)
-      hap/          HAP app package (ZIP) adapter
-      res/          resources.index parsing
-      PandaDecompiler.ts  public entry point
-      index.ts      single entry (Node & browsers; no Node built-ins, no disk IO, no workers)
-    resources/isa.yaml    ArkCompiler instruction set description (v24.0.0.0, compatible with v13.0.1.0)
-    scripts/gen-opcodes.ts  isa.yaml → src/disasm/opcodes.ts
-    test/                 integration tests, sample files and snapshots
-  xpanda-cli/
-    src/cli.ts            command line interface
-    src/io.ts             file IO: write decompiled classes to disk
-    src/parallel/         per-class parallel simplify worker pool (worker_threads)
-    test/                 serial vs parallel consistency regression
-  xpanda-mcp/
-    src/                  MCP server (stdio, for AI client integration)
-    src/io.ts             file IO: read .abc from disk, write decompiled classes
-    scripts/test-mcp.ts   end-to-end test
-  xpanda-web/
-    src/decompiler.ts     file loading (.abc/.hap), class indexing, decompile service (cache + single/bulk)
-    src/components/       Topbar / BulkBar / Sidebar / CodePane
-    src/highlight.ts      zero-dependency JavaScript syntax highlighter
-docs/                     architecture documentation, MCP documentation
-```
-
-## Decompilation pipeline
-
-```text
-.abc file
-  → PandaFile (parse header / indexes / classes / methods / literals, verify Adler32)
-  → PandaDisAssembler (bytecode → instruction objects)
-  → PandaIRCFG (basic-block CFG + SplitJump / SplitTryCatch)
-  → PandaLexical (lexical environment / register type inference)
-  → MethodHandler (instructions → Babel AST nodes)
-  → StructureAnalysis (Region reduction → if/while/try statement tree; falls back to SimpleAnalysis)
-  → NodeFactory.generate (Babel AST → JavaScript)
-  → SimplifyExport (optimizer pipeline)
-  → JavaScript output
-```
-
-## Optimizer
-
-`SimplifyExport` runs to a fixed point until the AST stops changing (at most 5 rounds). It mainly:
-
-- removes `panda_jmp0_reserved_*` placeholders, accumulator temps and dead code;
-- recovers functions/classes, if/switch, loops and module syntax;
-- rewrites call forms and folds compound assignments, logical conditions and common expressions.
-
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the pass order, condition-polarity rules and regression samples.
-
-`PandaLexical` first resolves each method's lexical environments: a closure starts at the depth of its definition site, and `newlexenv` / `stlexvar` / `ldlexvar` are normalized to absolute depths. The optimizer then uses those depths to recover `local_L_i` / `sendable_L_i` variables.
-
-## Tests
-
-```bash
-npm test           # decompile md5.abc / class.abc / aes.abc: snapshot diff, Babel re-parse, runtime checks
-npm run test:mcp   # MCP server end-to-end test (child process + JSON-RPC)
-npm run typecheck  # tsc --noEmit
-```
-
-Snapshots live in:
-
-```text
-packages/xpanda-core/test/expected/md5.js
-packages/xpanda-core/test/expected/class.js
-packages/xpanda-core/test/expected/aes.js
-```
-
-The output for `md5.abc` is executed, and `md5("admin")` is checked against Node's `crypto`. The `aes.abc` output also runs an encrypt/decrypt self-check.
-
-## Known limitations
-
-- The following cases degrade to the `SimpleAnalysis` linear output (emulated with `decompiler_goto`):
-  - a single method with more than 2000 basic blocks;
-  - an estimated structured expansion above `MAX_STRUCTURED_STATEMENTS` even after the region-level shared-tail pruning (see `docs/ARCHITECTURE.md` §7.3);
-  - the `jeq/jne/jstricteq/jnstricteq` instructions;
-  - an instruction kind with no registered handle.
-- Degraded output hoists lexical-environment declarations to the function top so later labels can access them; it may still contain bare-`break` scoping issues or use `export ... from` syntax that requires the matching parser plugin.
-- The optimizer targets semantic equivalence and readability.
+See [packages/xpanda-web/README.md](packages/xpanda-web/README.md) for details.
 
 ## References
 
