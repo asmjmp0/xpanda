@@ -12,14 +12,8 @@ let local_0_0;
 ChannelDetails = class panda_jmp0_reserved_anonymous_0 {
   constructor(p0, p1) {
     let v3, v4;
-    v3 = p0;
-    v4 = p1;
-    if (p0 === undefined) {
-      v3 = "";
-    }
-    if (p1 === undefined) {
-      v4 = "";
-    }
+    v3 = p0 === undefined ? "" : p0;
+    v4 = p1 === undefined ? "" : p1;
     this.description = v3;
     this.bannerUrl = v4;
   }
@@ -27,34 +21,13 @@ ChannelDetails = class panda_jmp0_reserved_anonymous_0 {
 ChannelProfile = class panda_jmp0_reserved_anonymous_1 {
   constructor(p0, p1, p2, p3, p4, p5, p6) {
     let v3, v4, v5, v6, v7, v8, v9;
-    v3 = p0;
-    v4 = p1;
-    v5 = p2;
-    v6 = p3;
-    v7 = p4;
-    v8 = p5;
-    v9 = p6;
-    if (p0 === undefined) {
-      v3 = "";
-    }
-    if (p1 === undefined) {
-      v4 = "";
-    }
-    if (p2 === undefined) {
-      v5 = "";
-    }
-    if (p3 === undefined) {
-      v6 = "";
-    }
-    if (p4 === undefined) {
-      v7 = "";
-    }
-    if (p5 === undefined) {
-      v8 = "";
-    }
-    if (p6 === undefined) {
-      v9 = "";
-    }
+    v3 = p0 === undefined ? "" : p0;
+    v4 = p1 === undefined ? "" : p1;
+    v5 = p2 === undefined ? "" : p2;
+    v6 = p3 === undefined ? "" : p3;
+    v7 = p4 === undefined ? "" : p4;
+    v8 = p5 === undefined ? "" : p5;
+    v9 = p6 === undefined ? "" : p6;
     this.name = v3;
     this.description = v4;
     this.bannerUrl = v5;
@@ -300,7 +273,7 @@ ChannelInfoService = class panda_jmp0_reserved_anonymous_3 {
     return "";
   }
   readHeaderMetadataParts(p0) {
-    let v6, v7, v9, v12, v13, v16, v17, v18, v22, acc;
+    let v6, v7, v9, v12, v13, v16, v17, v18, acc;
     v9 = [];
     v7 = this.asRecord(p0.content);
     acc = this.asRecord(v7?.pageHeaderViewModel)?.metadata;
@@ -318,12 +291,10 @@ ChannelInfoService = class panda_jmp0_reserved_anonymous_3 {
           v18 = this.asRecord(v13[v16]);
           v17 = this.asString(this.asRecord(v18?.text)?.content);
           if (v17) {
-            v22 = {
+            v9.push({
               "content": v17,
-              "hasLabel": null
-            };
-            v22.hasLabel = !!v18?.accessibilityLabel;
-            v9.push(v22);
+              "hasLabel": !!v18?.accessibilityLabel
+            });
           }
         }
       }

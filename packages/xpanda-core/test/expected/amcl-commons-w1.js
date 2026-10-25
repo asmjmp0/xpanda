@@ -82,7 +82,7 @@ local_0_1 = async function (p0, p1, p2) {
   throw new Error("单行日志超过 8 MiB，无法安全预览和脱敏");
 };
 w91 = async function (p0, p1, p2, p3) {
-  let v0, v3, v4, v5, v6, v7, v21, v22, v23, v25, v31, v34, v35, v36, v44, v45, v47, v50, v54, acc;
+  let v0, v3, v4, v5, v6, v7, v21, v22, v23, v25, v31, v34, v35, v36, v44, v45, v50, v54, acc;
   v3 = p2.selectedFileIds.slice();
   v5 = {
     "activityId": p2.activityId,
@@ -125,14 +125,12 @@ w91 = async function (p0, p1, p2, p3) {
             g50.closeSync(v44);
             throw new Error("证据不是普通文件");
           }
-          v47 = {
+          v6.push({
             "record": v25,
             "file": v44,
             "size": v45.size,
-            "inode": null
-          };
-          v47.inode = String(v45.ino);
-          v6.push(v47);
+            "inode": String(v45.ino)
+          });
           continue;
         }
       }
@@ -251,7 +249,7 @@ w91 = async function (p0, p1, p2, p3) {
   throw new Error("所选证据已消失或不属于本次启动，请刷新文件清单");
 };
 x89 = function (p0) {
-  let v0, acc;
+  let v0;
   p0.digest = b52(l92 + "\n" + k92 + "\n" + p0.files.map(function (p0) {
     return p0.name + ":" + p0.digest;
   }).join("\n"));
@@ -261,33 +259,26 @@ x89 = function (p0) {
     "createdAt": p0.createdAt,
     "digest": p0.digest,
     "redactionVersion": p0.redactionVersion,
-    "files": null
+    "files": p0.files.map(function (p0) {
+      return {
+        "name": p0.name,
+        "role": p0.role,
+        "bytes": p0.bytes,
+        "sourceBytes": p0.sourceBytes,
+        "sha256": p0.digest,
+        "lines": p0.lines,
+        "state": p0.state,
+        "reason": p0.reason ?? "",
+        "rawSha256": p0.rawSha256 ?? "",
+        "captureMode": p0.captureMode ?? "legacy",
+        "verification": p0.verification ?? "unverified"
+      };
+    })
   };
-  v0.files = p0.files.map(function (p0) {
-    let acc;
-    acc = {
-      "name": p0.name,
-      "role": p0.role,
-      "bytes": p0.bytes,
-      "sourceBytes": p0.sourceBytes,
-      "sha256": p0.digest,
-      "lines": p0.lines,
-      "state": p0.state,
-      "reason": null,
-      "rawSha256": null,
-      "captureMode": null,
-      "verification": null
-    };
-    acc.reason = p0.reason ?? "";
-    acc.rawSha256 = p0.rawSha256 ?? "";
-    acc.captureMode = p0.captureMode ?? "legacy";
-    acc.verification = p0.verification ?? "unverified";
-    return acc;
-  });
   v0 = JSON.stringify(v0, null, 2);
   h50(p0.directory + "/_amcl");
   n51(p0.directory + "/" + "_amcl/evidence-manifest.json", v0);
-  acc = {
+  p0.files.push({
     "name": "_amcl/evidence-manifest.json",
     "path": p0.directory + "/" + "_amcl/evidence-manifest.json",
     "role": "public-summary",
@@ -296,14 +287,12 @@ x89 = function (p0) {
     "digest": b52(v0),
     "lines": v0.split("\n").length,
     "state": "complete"
-  };
-  p0.files.push(acc);
+  });
 };
 local_0_2 = function (p0, p1, p2) {
-  let acc;
   h50(p0.directory + "/_amcl");
   n51(p0.directory + "/" + p1, p2);
-  acc = {
+  p0.files.push({
     "name": p1,
     "path": p0.directory + "/" + p1,
     "role": "public-summary",
@@ -314,8 +303,7 @@ local_0_2 = function (p0, p1, p2) {
     "state": "complete",
     "captureMode": "derived",
     "verification": "snapshot-verified"
-  };
-  p0.files.push(acc);
+  });
 };
 y91 = async function (p0, p1, p2) {
   let v0, v3, v4, v7, v8;

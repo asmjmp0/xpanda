@@ -111,6 +111,11 @@ export class SimplifyExport {
         // 尾块消除。必须放在 simplifyTail 之后:守卫链→switch 需要分支体保留
         // 末尾的 return,提前删掉会让 switch 合成失去形态。
         new TailMergeSimplify().simplify(node);
+        // 重复尾块消除之后,再把尾部才成型的三目字段值(`topInsetVp: v0` 前面的
+        // `v0 = C ? A : B` 被 foldNextReadAssignments 折进属性赋值)合并进对象字面量。
+        // 必须在 TailMergeSimplify 之后:否则共享尾块的两份副本会被合并得不一样,
+        // 重复尾块就无法再识别(amcl i8 的整段摘要逻辑会重复输出)。
+        new ObjectLiteralSimplify().simplify(node);
         // 静态可判定的 if 条件(如 finally 收尾被常量传播后的 `undefined == undefined`)
         SyntaxRewriteSimplify.foldConstantConditions(node);
         // ArkTS 13 try/finally / for...of 收尾残留的 `hole` 哨兵守卫
@@ -125,8 +130,9 @@ export class SimplifyExport {
         new HighLevelGrammarSimplify().restoreIteratorLoops(node);
         // newLexEnv 预留但从未读写的块级槽,以及随之变空的块
         TempVariableSimplify.removeUnusedLexicalDeclarations(node);
-        // 所有结构改写(尾块合并/守卫三目/常量折叠)结束后,测试序列里的取反物化
-        // 残渣可能才最终成形,最后清一遍。
+        // 所有结构改写(尾块合并/守卫三目/常量折叠)结束后,三目 test 里可能残留
+        // `!!!x` 这类重复取反;这里只归一化表达式,不再调整 if 的分支结构。
+        SyntaxRewriteSimplify.foldConditionalTestNegations(node);
         ConditionSimplify.foldMaterializedTestArtifacts(node);
         // 尾块消除/结构展开后,前面已经稳定的死存储可能重新变成死代码,补一轮清理。
         TempVariableSimplify.cleanupDeadStores(node);

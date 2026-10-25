@@ -12,14 +12,8 @@ try {
   local_0_0 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     constructor(p0, p1, p2, p3, p4, p5) {
       let v2, v6, v7;
-      v6 = p3;
-      v7 = p4;
-      if (p3 === undefined) {
-        v6 = -1;
-      }
-      if (p4 === undefined) {
-        v7 = undefined;
-      }
+      v6 = p3 === undefined ? -1 : p3;
+      v7 = p4 === undefined ? undefined : p4;
       v2 = super(p0, p2, v6, p5);
       if (typeof v7 === "function") {
         v2.paramsGenerator_ = v7;
@@ -514,7 +508,6 @@ try {
         if (local_1_0.requiresMembership) {
           local_1_0.ifElseBranchUpdateFunction(0, function () {
             local_1_0.observeComponentCreation2(function (p0, p1) {
-              let v8;
               Text.create({
                 "id": 16777749,
                 "type": 10003,
@@ -541,12 +534,10 @@ try {
                 "topLeft": 4,
                 "bottomRight": 6
               });
-              v8 = {
+              Text.position({
                 "x": 0,
-                "y": null
-              };
-              v8.y = local_1_0.isPremium ? 20 : 0;
-              Text.position(v8);
+                "y": local_1_0.isPremium ? 20 : 0
+              });
             }, Text);
             Text.pop();
           });

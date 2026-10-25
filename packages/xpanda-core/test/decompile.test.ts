@@ -139,6 +139,16 @@ function verifyAes(code: string): void {
     if (!logs.some((line) => line === "true")) {
         throw new Error(`aes 执行结果不正确,期望输出 true,实际输出:\n${logs.join("\n")}`);
     }
+    // 对象方法(函数属性)也要并进对象字面量;方法体内的同名局部变量不能算作
+    // 对外层对象的引用(否则 cipher/subBytes 等都会留在 v0.xxx = ... 形式)。
+    for (const fragment of ['"cipher": function cipher(', '"subBytes": function subBytes(', '"generateKey": function generateKey(']) {
+        if (!code.includes(fragment)) {
+            throw new Error(`aes: 对象方法未并进字面量,缺少 ${fragment}\n${code.slice(0, 500)}`);
+        }
+    }
+    if (code.includes("v0.cipher =") || code.includes("v0.generateKey =")) {
+        throw new Error(`aes: 对象方法仍以属性赋值形式输出\n${code.slice(0, 500)}`);
+    }
 }
 
 /**
@@ -1002,6 +1012,10 @@ function verifyZhihuContentDetailPages(): void {
     const refreshBody = code.slice(refreshStart, code.indexOf("\n  }\n", refreshStart));
     if (!/\} finally \{\s*this\.refreshingAnswers = false;\s*\}/.test(refreshBody)) {
         throw new Error(`refreshQuestion: finally 未还原 refreshingAnswers 复位\n${refreshBody}`);
+    }
+    // 对象字段的 `v0 = 0; if (!immersive) v0 = OFFSET` 先折成三目,再并进对象字面量
+    if (!code.includes('"topInsetVp": local_1_1.immersiveReading ? 0 : FLOATING_TITLE_BAR_OFFSET,')) {
+        throw new Error(`ContentDetailPages: topInsetVp 未并进对象字面量\n${code}`);
     }
 
     const expectedPath = path.join(__dirname, "expected", "zhihu-content-detail-pages.js");
@@ -2881,6 +2895,8 @@ function verifyAmclStructuredCycleGuard(): void {
         'v24 = this.live.pending.indexOf("\\n");',
         "v24 = this.live.parser.feed(v25, v27);",
         "this.live.events.push(v24);",
+        // 分支里的索引自更新(v7 += 1)要折进唯一一次读取,三目才能合成
+        'p0.pending = v7 >= 0 ? p0.pending.substring(v7 + 1) : "";',
     ]) {
         if (!code.includes(fragment)) {
             throw new Error(`amcl r2/l3: 缺少 ${JSON.stringify(fragment)}\n${code}`);

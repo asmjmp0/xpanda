@@ -34,79 +34,46 @@ import { x421 } from "@normalized:N&&&gamecontrol/src/main/ets/a13&1.0.0";
 let a421, a422, b1360, b1361, b421, b474, c1359, c1360, c1361, c421, d1359, d1360, d1361, d421, e1360, e421, f1360, f421, g1359, g421, h1359, h421, i421, l50, n374, o301, o374, p301, p374, q301, q374, r301, r374, r421, s301, s421, t301, t421, u301, v301, v421, w1359, w1360, w301, w374, w412, w421, x1358, x1359, x301, x374, y1358, y301, y374, y420, y421, y473, z1359, z374, z420, z421;
 let local_0_0, local_0_1, local_0_2, local_0_3, local_0_4, local_0_5, local_0_6, local_0_7, local_0_8, local_0_9, local_0_10, local_0_11, local_0_12, local_0_13, local_0_14, local_0_15, local_0_16, local_0_17, local_0_18, local_0_19, local_0_20, local_0_21, local_0_22;
 local_0_1 = function (p0, p1) {
-  let v0;
-  v0 = {
-    "id": null,
-    "label": null,
-    "type": null,
-    "keyOrMouse": null,
-    "keys": null,
-    "modifiers": null,
-    "trigger": null,
-    "xPct": null,
-    "yPct": null,
-    "baseWidth": null,
-    "baseHeight": null,
-    "itemScale": null,
-    "isCircle": null,
-    "style": null,
-    "alignGroup": null,
-    "alignIndex": null,
-    "grabbedOnly": null,
-    "menuOnly": null,
-    "hidden": null,
-    "locked": null,
-    "visibilityOverride": null,
-    "hideOnInput": null,
-    "dragLook": null,
-    "swipeGroup": null,
-    "controlGroupId": null,
-    "groupActions": null,
-    "phaseBindings": null,
-    "gesturePolicy": null,
-    "hotbarUserPlaced": null,
-    "systemAction": null,
-    "children": null
+  return {
+    "id": p0.id,
+    "label": p0.label,
+    "type": p0.type,
+    "keyOrMouse": p0.keyOrMouse,
+    "keys": p0.keys ? p0.keys.slice() : undefined,
+    "modifiers": p0.modifiers,
+    "trigger": p0.trigger,
+    "xPct": p0.xPct,
+    "yPct": p0.yPct,
+    "baseWidth": p0.baseWidth,
+    "baseHeight": p0.baseHeight,
+    "itemScale": p0.itemScale,
+    "isCircle": p0.isCircle,
+    "style": p0.style ? {
+      "bg": p0.style.bg,
+      "bgPressed": p0.style.bgPressed,
+      "fg": p0.style.fg,
+      "opacity": p0.style.opacity,
+      "shape": p0.style.shape,
+      "cornerRadius": p0.style.cornerRadius
+    } : undefined,
+    "alignGroup": p0.alignGroup,
+    "alignIndex": p0.alignIndex,
+    "grabbedOnly": p0.grabbedOnly,
+    "menuOnly": p0.menuOnly,
+    "hidden": p0.hidden,
+    "locked": p0.locked,
+    "visibilityOverride": p0.visibilityOverride,
+    "hideOnInput": p0.hideOnInput ? p0.hideOnInput.slice() : undefined,
+    "dragLook": p0.dragLook,
+    "swipeGroup": p0.swipeGroup,
+    "controlGroupId": p0.controlGroupId,
+    "groupActions": o1357(p0.groupActions),
+    "phaseBindings": p1357(p0.phaseBindings),
+    "gesturePolicy": p0.gesturePolicy,
+    "hotbarUserPlaced": p0.hotbarUserPlaced,
+    "systemAction": p0.systemAction,
+    "children": p1
   };
-  v0.id = p0.id;
-  v0.label = p0.label;
-  v0.type = p0.type;
-  v0.keyOrMouse = p0.keyOrMouse;
-  v0.keys = p0.keys ? p0.keys.slice() : undefined;
-  v0.modifiers = p0.modifiers;
-  v0.trigger = p0.trigger;
-  v0.xPct = p0.xPct;
-  v0.yPct = p0.yPct;
-  v0.baseWidth = p0.baseWidth;
-  v0.baseHeight = p0.baseHeight;
-  v0.itemScale = p0.itemScale;
-  v0.isCircle = p0.isCircle;
-  v0.style = p0.style ? {
-    "bg": p0.style.bg,
-    "bgPressed": p0.style.bgPressed,
-    "fg": p0.style.fg,
-    "opacity": p0.style.opacity,
-    "shape": p0.style.shape,
-    "cornerRadius": p0.style.cornerRadius
-  } : undefined;
-  v0.alignGroup = p0.alignGroup;
-  v0.alignIndex = p0.alignIndex;
-  v0.grabbedOnly = p0.grabbedOnly;
-  v0.menuOnly = p0.menuOnly;
-  v0.hidden = p0.hidden;
-  v0.locked = p0.locked;
-  v0.visibilityOverride = p0.visibilityOverride;
-  v0.hideOnInput = p0.hideOnInput ? p0.hideOnInput.slice() : undefined;
-  v0.dragLook = p0.dragLook;
-  v0.swipeGroup = p0.swipeGroup;
-  v0.controlGroupId = p0.controlGroupId;
-  v0.groupActions = o1357(p0.groupActions);
-  v0.phaseBindings = p1357(p0.phaseBindings);
-  v0.gesturePolicy = p0.gesturePolicy;
-  v0.hotbarUserPlaced = p0.hotbarUserPlaced;
-  v0.systemAction = p0.systemAction;
-  v0.children = p1;
-  return v0;
 };
 local_0_17 = function (p0) {
   return p0 === "⚔" || p0 === "🛡" || p0 === "▲" || p0 === "▼";
@@ -671,45 +638,26 @@ local_0_20 = function (p0) {
   return acc;
 };
 e1360 = function (p0, p1, p2, p3) {
-  let v1 /*c421*/, v2 /*e421*/, acc;
-  acc = {
+  return {
     "id": d1360(p0),
-    "label": null,
-    "type": null,
-    "systemAction": null,
-    "keyOrMouse": null,
-    "xPct": null,
-    "yPct": null,
-    "baseWidth": null,
-    "baseHeight": null,
+    "label": p0 === "input" ? "输入" : p0 === "edit" ? "设置" : p0 === "mouse" ? "鼠标" : "显示",
+    "type": o301.BUTTON,
+    "systemAction": p0,
+    "keyOrMouse": p0 === "input" ? i1360 : 0,
+    "xPct": p1,
+    "yPct": p2,
+    "baseWidth": c421,
+    "baseHeight": c421,
     "itemScale": 1,
     "isCircle": false,
-    "style": null,
-    "alignGroup": null,
-    "alignIndex": null,
-    "grabbedOnly": null,
+    "style": {
+      "cornerRadius": e421
+    },
+    "alignGroup": p301.FUNC_TOP_RIGHT,
+    "alignIndex": p3,
+    "grabbedOnly": p0 === "visibility",
     "menuOnly": false
   };
-  v1 = p0 === "input" ? "输入" : p0 === "edit" ? "设置" : p0 === "mouse" ? "鼠标" : "显示";
-  v2 = 0;
-  acc.label = v1;
-  acc.type = o301.BUTTON;
-  acc.systemAction = p0;
-  if (p0 === "input") {
-    v2 = i1360;
-  }
-  acc.keyOrMouse = v2;
-  acc.xPct = p1;
-  acc.yPct = p2;
-  acc.baseWidth = c421;
-  acc.baseHeight = c421;
-  acc.style = {
-    "cornerRadius": e421
-  };
-  acc.alignGroup = p301.FUNC_TOP_RIGHT;
-  acc.alignIndex = p3;
-  acc.grabbedOnly = p0 === "visibility";
-  return acc;
 };
 local_0_3 = function (p0, p1) {
   let v1, v3;

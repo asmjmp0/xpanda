@@ -645,6 +645,22 @@ export class SyntaxRewriteSimplify implements ISimplify {
         return changed;
     }
 
+    /**
+     * 流水线末尾只归一化三元 test:结构改写完成后,三目 test 里可能残留
+     * `!!!x` 这类重复取反。这里只做表达式级归一化,不调用 `transformIfOnce`
+     * (那会重新调整 if 的分支结构)。
+     */
+    public static foldConditionalTestNegations(node: Program): void {
+        const pass = new SyntaxRewriteSimplify();
+        traverse(file(node), {
+            noScope: true,
+            ConditionalExpression: (path) => {
+                const test = pass.simplifyTestNode(path.node.test);
+                if (test !== path.node.test) path.node.test = test;
+            },
+        });
+    }
+
     /** 供流水线末尾调用:HighLevelGrammarSimplify 可能新生成 if/三元,需要再归一化一次 test。 */
     public static normalizeConditionTests(node: Program): void {
         const pass = new SyntaxRewriteSimplify();

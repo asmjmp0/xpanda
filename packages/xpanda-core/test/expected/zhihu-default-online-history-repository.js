@@ -73,16 +73,10 @@ onlineHistoryDeletePairOf = function (p0) {
   throw new OnlineHistoryRepositoryFailure(OnlineHistoryRepositoryFailureKind.INVALID_CONTENT_KEY);
 };
 onlineHistoryOffsetOf = function (p0) {
-  let v0 /*OnlineHistoryRepositoryFailure*/, v1;
   if (!isOnlineHistoryCursorUrl(p0)) {
     throw new OnlineHistoryRepositoryFailure(OnlineHistoryRepositoryFailureKind.INVALID_CURSOR);
   }
-  v0 = 0;
-  v1 = local_0_0(p0.substring(p0.indexOf("?") + 1).split("&"), "offset");
-  if (v1 != null) {
-    v0 = v1;
-  }
-  return v0;
+  return local_0_0(p0.substring(p0.indexOf("?") + 1).split("&"), "offset") ?? 0;
 };
 local_0_0 = function (p0, p1) {
   let v0, v2, v5, v9, v10;
@@ -107,8 +101,7 @@ local_0_0 = function (p0, p1) {
       return undefined;
     }
     v10 = v5.substring(0, v9);
-    v9 += 1;
-    v5 = v5.substring(v9);
+    v5 = v5.substring(v9 + 1);
     v10 = v10.replace(new RegExp("\\+", "g"), "%20");
     v9 = decodeURIComponent(v10);
     v5 = v5.replace(new RegExp("\\+", "g"), "%20");
@@ -127,18 +120,15 @@ local_0_0 = function (p0, p1) {
   return v0;
 };
 local_0_2 = function (p0) {
-  let v0;
-  v0 = {
+  return {
     "items": p0.items,
-    "cursor": null
+    "cursor": {
+      "isEnd": true,
+      "isStart": p0.cursor.isStart,
+      "page": p0.cursor.page,
+      "total": p0.cursor.total
+    }
   };
-  v0.cursor = {
-    "isEnd": true,
-    "isStart": p0.cursor.isStart,
-    "page": p0.cursor.page,
-    "total": p0.cursor.total
-  };
-  return v0;
 };
 ONLINE_HISTORY_BASE_URL = "https://www.zhihu.com/api/v4/unify-consumption/read_history";
 ONLINE_HISTORY_BATCH_DEL_URL = "https://api.zhihu.com/read_history/batch_del";
@@ -213,12 +203,7 @@ DefaultOnlineHistoryRepository = class panda_jmp0_reserved_anonymous_1 {
           local_1_1.push(p0);
           return;
         });
-        if (!v3.cursor.isEnd && local_1_1.length > 0) {
-          v4 += 10;
-          v2 = buildOnlineHistoryUrl(v4);
-        } else {
-          v2 = undefined;
-        }
+        v2 = !v3.cursor.isEnd && local_1_1.length > 0 ? buildOnlineHistoryUrl(v4 + 10) : undefined;
         v4 = v2 === undefined ? undefined : canonicalOnlineHistoryCursorKey(v2);
         v7 = v2 === undefined && !v3.cursor.isEnd || v4 === v6;
         if (!v7 && (v7 = v4 !== undefined, v4 !== undefined)) {
@@ -228,14 +213,13 @@ DefaultOnlineHistoryRepository = class panda_jmp0_reserved_anonymous_1 {
         this.deliveredIdentities = local_1_0;
         v4 = {
           "items": local_1_1,
-          "cursor": null
-        };
-        v4.cursor = {
-          "isEnd": v3.cursor.isEnd,
-          "isStart": v3.cursor.isStart,
-          "next": v2,
-          "page": v3.cursor.page,
-          "total": v3.cursor.total
+          "cursor": {
+            "isEnd": v3.cursor.isEnd,
+            "isStart": v3.cursor.isStart,
+            "next": v2,
+            "page": v3.cursor.page,
+            "total": v3.cursor.total
+          }
         };
         if (v7) {
           v4 = local_0_2(v4);
@@ -273,12 +257,7 @@ DefaultOnlineHistoryRepository = class panda_jmp0_reserved_anonymous_1 {
         local_1_1.push(p0);
         return;
       });
-      if (!v3.cursor.isEnd && local_1_1.length > 0) {
-        v4 += 10;
-        v2 = buildOnlineHistoryUrl(v4);
-      } else {
-        v2 = undefined;
-      }
+      v2 = !v3.cursor.isEnd && local_1_1.length > 0 ? buildOnlineHistoryUrl(v4 + 10) : undefined;
       v4 = v2 === undefined ? undefined : canonicalOnlineHistoryCursorKey(v2);
       v7 = v2 === undefined && !v3.cursor.isEnd || v4 === v6;
       if (!v7 && (v7 = v4 !== undefined, v4 !== undefined)) {
@@ -288,14 +267,13 @@ DefaultOnlineHistoryRepository = class panda_jmp0_reserved_anonymous_1 {
       this.deliveredIdentities = local_1_0;
       v4 = {
         "items": local_1_1,
-        "cursor": null
-      };
-      v4.cursor = {
-        "isEnd": v3.cursor.isEnd,
-        "isStart": v3.cursor.isStart,
-        "next": v2,
-        "page": v3.cursor.page,
-        "total": v3.cursor.total
+        "cursor": {
+          "isEnd": v3.cursor.isEnd,
+          "isStart": v3.cursor.isStart,
+          "next": v2,
+          "page": v3.cursor.page,
+          "total": v3.cursor.total
+        }
       };
       if (v7) {
         v4 = local_0_2(v4);
@@ -328,12 +306,11 @@ DefaultOnlineHistoryRepository = class panda_jmp0_reserved_anonymous_1 {
     v6 = {
       "url": ONLINE_HISTORY_BATCH_DEL_URL,
       "method": ZhihuHttpMethod.POST,
-      "body": null,
+      "body": buildBatchDelBody([onlineHistoryDeletePairOf(p0)], false),
       "accept": "application/json",
       "useSession": true,
       "signWithZse": true
     };
-    v6.body = buildBatchDelBody([onlineHistoryDeletePairOf(p0)], false);
     await this.httpClient.execute(v6);
     if (this.generation === this.generation) {
       return undefined;

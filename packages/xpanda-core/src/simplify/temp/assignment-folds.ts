@@ -2,6 +2,7 @@ import * as TYPE from "@babel/types";
 import {
     functionDeclaration,
     isAssignmentExpression,
+    isBinaryExpression,
     isBlockStatement,
     isCallExpression,
     isExpressionStatement,
@@ -50,6 +51,7 @@ import { refreshBindingInfos } from "./context";
  * 尾部/语句级赋值折叠:
  *   - `X = E; return X` -> `return E`
  *   - 累加器链 `X = E; X = F(X)` -> `X = F(E)`
+ *   - 自更新 + 单次读取 `X = F(X); Y = <读 X 一次>` -> `Y = <F 代进读取位置>`
  *   - hub 别名 `X = E; Y = X` -> `Y = E`
  *   - 调用参数末次读取 `X = E; f(X)` -> `f(E)`
  *   - 命名函数表达式提升、字符串 split 数组还原
@@ -330,6 +332,109 @@ export class AssignmentFolds extends TempVariablePass {
             }
             return true;
         });
+    }
+    /**
+     * `X = F(X); Y = <只读一次 X 的表达式>` -> `Y = <F 代进读取位置>`。
+     *
+     * 条件三目 lowering 常在分支里留下“先把索引/计数更新一步,再用新值取一次”的
+     * 形态:
+     *   if (nl >= 0) { nl = nl + 1; acc = pending.substring(nl); } else { acc = "" }
+     * 更新值只被下一条语句读取一次且之后 X 已死,把 `nl + 1` 直接代进读取位置,
+     * 分支就只剩一条赋值,后续三目合成才能还原 `pending.substring(nl + 1)`。
+     * 只处理纯右值;F 的其它依赖不能在消费语句里被改写。
+     */
+    foldSelfUpdateIntoNextRead(stmts: TYPE.Statement[], ctx: FunctionContext): void {
+        for (let i = 0; i + 1 < stmts.length; i++) {
+            if (this.tryFoldSelfUpdateIntoNextRead(stmts, i, ctx)) i--;
+        }
+        for (const stmt of stmts) this.foldSelfUpdateIntoNextReadChildren(stmt, ctx);
+    }
+    private tryFoldSelfUpdateIntoNextRead(stmts: TYPE.Statement[], i: number, ctx: FunctionContext): boolean {
+        const first = stmts[i];
+        const second = stmts[i + 1];
+        if (!isExpressionStatement(first) || !isAssignmentExpression(first.expression)) return false;
+        if (!isExpressionStatement(second)) return false;
+        const a = first.expression;
+        if (a.operator !== "=" || !isIdentifier(a.left)) return false;
+        const name = a.left.name;
+        if (!isTempName(name) || isDeclarationValue(a.right)) return false;
+        // 累加器有专门的条件物化/方法装载折叠,这里不要抢先改写它的形态
+        if (name === "acc") return false;
+        // 前一条语句还在写同一个变量时属于累加链(X = E; X = X + F),留给累加链折叠
+        if (i > 0 && collectAssignedNames(stmts[i - 1]).has(name)) return false;
+        const info = ctx.infos.get(name);
+        if (!info || info.captured) return false;
+        // 右值必须只读一次旧值,否则搬进消费位置后旧值会被读到多次
+        if (countReadsInNode(a.right, name) !== 1) return false;
+        if (collectAssignedNames(a.right).has(name)) return false;
+        // 只处理算术/位运算/一元取反这类自更新。成员装载 `X = X.method` 是
+        // AccCallSimplify 依赖的方法装载中间形态,不能提前代进下一条语句;
+        // `X = X.prop` 由 foldSelfReadChains 处理。
+        if (!isBinaryExpression(a.right) && !isUnaryExpression(a.right)) return false;
+        if (!isPureExpression(a.right)) return false;
+        const consumer = second.expression;
+        if (collectAssignedNames(consumer).has(name)) return false;
+        if (countReadsInNode(consumer, name) !== 1) return false;
+        const liveAfter = ctx.liveAfter.get(second);
+        if (!liveAfter || liveAfter.has(name)) return false;
+        // 右值依赖的其它名字不能在消费语句里被改写
+        const assigned = collectAssignedNames(consumer);
+        for (const dep of collectIdentifierNames(a.right)) {
+            if (dep !== name && assigned.has(dep)) return false;
+        }
+        let id: TYPE.Identifier | null = null;
+        walkNode(consumer, (node, parent) => {
+            if (isFunctionLike(node) || isClassLike(node)) return false;
+            if (isIdentifier(node) && node.name === name && parent && isReferenced(node, parent)) {
+                id = node;
+                return false;
+            }
+            return true;
+        });
+        if (!id) return false;
+        // callee 位置属于方法装载形态,交给 AccCallSimplify
+        if ((isCallExpression(consumer) || isOptionalCallExpression(consumer))
+            && containsNode(consumer.callee, id)) return false;
+        if (!canDeferTestValue(a.right, consumer, id)) return false;
+        info.refs.delete(id);
+        if (!replaceNodeInTree(consumer, id, a.right)) return false;
+        stmts.splice(i, 1);
+        this.changed = true;
+        return true;
+    }
+    private foldSelfUpdateIntoNextReadChildren(stmt: TYPE.Statement, ctx: FunctionContext): void {
+        switch (stmt.type) {
+            case "BlockStatement":
+                this.foldSelfUpdateIntoNextRead(stmt.body, ctx);
+                break;
+            case "IfStatement":
+                if (isBlockStatement(stmt.consequent)) this.foldSelfUpdateIntoNextRead(stmt.consequent.body, ctx);
+                else this.foldSelfUpdateIntoNextReadChildren(stmt.consequent, ctx);
+                if (stmt.alternate) {
+                    if (isBlockStatement(stmt.alternate)) this.foldSelfUpdateIntoNextRead(stmt.alternate.body, ctx);
+                    else this.foldSelfUpdateIntoNextReadChildren(stmt.alternate, ctx);
+                }
+                break;
+            case "WhileStatement":
+            case "DoWhileStatement":
+            case "ForStatement":
+            case "ForInStatement":
+            case "ForOfStatement":
+            case "LabeledStatement":
+                if (isBlockStatement(stmt.body)) this.foldSelfUpdateIntoNextRead(stmt.body.body, ctx);
+                else this.foldSelfUpdateIntoNextReadChildren(stmt.body, ctx);
+                break;
+            case "TryStatement":
+                if (isBlockStatement(stmt.block)) this.foldSelfUpdateIntoNextRead(stmt.block.body, ctx);
+                if (stmt.handler) this.foldSelfUpdateIntoNextRead(stmt.handler.body.body, ctx);
+                if (stmt.finalizer) this.foldSelfUpdateIntoNextRead(stmt.finalizer.body, ctx);
+                break;
+            case "SwitchStatement":
+                for (const c of stmt.cases) this.foldSelfUpdateIntoNextRead(c.consequent, ctx);
+                break;
+            default:
+                break;
+        }
     }
     /**
      * 尾部补齐:`X = E; f(...X...)` -> `f(...E...)`(调用参数位置,X 之后已死)。

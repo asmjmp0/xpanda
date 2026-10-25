@@ -192,7 +192,7 @@ e190 = class panda_jmp0_reserved_anonymous_2 {
     this.applyVisibility_();
   }
   appendEvent_(p0, p1, p2, p3) {
-    let v9, v11, v12, v13, acc;
+    let v9, v11, v12, v13;
     for (v9 of p1.lines) {
       for (v11 = 0; v11 < Math.max(1, v9.text.length); v11 = Math.max(v11 + 1, v12)) {
         v12 = Math.min(v9.text.length, v11 + 2048);
@@ -200,7 +200,7 @@ e190 = class panda_jmp0_reserved_anonymous_2 {
         if (v12 < v9.text.length && v13 >= 55296 && v13 <= 56319) {
           v12 -= 1;
         }
-        acc = {
+        p0.push({
           "key": p0.length,
           "lineNumber": v9.number,
           "continuation": v11 > 0,
@@ -211,19 +211,15 @@ e190 = class panda_jmp0_reserved_anonymous_2 {
           "level": p1.level,
           "event": p1,
           "eventId": p2 + "#" + p1.startLine,
-          "eventStart": null,
-          "matches": null,
-          "matchKeyword": null
-        };
-        acc.eventStart = v9.number === p1.startLine && v11 === 0;
-        acc.matches = local_0_1(v9.text, p3, v11, v12);
-        acc.matchKeyword = p3;
-        p0.push(acc);
+          "eventStart": v9.number === p1.startLine && v11 === 0,
+          "matches": local_0_1(v9.text, p3, v11, v12),
+          "matchKeyword": p3
+        });
       }
     }
   }
   async nextEvent_(p0, p1) {
-    let v0, v7, v8, acc;
+    let v0, v7, v8;
     if (p0.cursor === undefined) {
       return undefined;
     }
@@ -253,13 +249,7 @@ e190 = class panda_jmp0_reserved_anonymous_2 {
       }
       v7 = p0.pending.indexOf("\n");
       v8 = v7 >= 0 ? p0.pending.substring(0, v7) : p0.pending;
-      if (v7 >= 0) {
-        v7 += 1;
-        acc = p0.pending.substring(v7);
-      } else {
-        acc = "";
-      }
-      p0.pending = acc;
+      p0.pending = v7 >= 0 ? p0.pending.substring(v7 + 1) : "";
       if (v8.endsWith("\r")) {
         v8 = v8.substring(0, v8.length - 1);
       }
@@ -477,8 +467,7 @@ e190 = class panda_jmp0_reserved_anonymous_2 {
     while (true) {
       if (v24 >= v4) {
         v25 = this.live.pending.substring(v4, v24);
-        v24 += 1;
-        this.live.pending = this.live.pending.substring(v24);
+        this.live.pending = this.live.pending.substring(v24 + 1);
         if (v25.endsWith("\r")) {
           v25 = v25.substring(v4, v25.length - 1);
         }
@@ -616,10 +605,7 @@ e190 = class panda_jmp0_reserved_anonymous_2 {
         v10 = p0.length;
       }
       acc = p0.substring(v8, v10);
-      v8 = acc;
-      if (acc.endsWith("\r")) {
-        v8 = acc.substring(0, acc.length - 1);
-      }
+      v8 = acc.endsWith("\r") ? acc.substring(0, acc.length - 1) : acc;
       v9 += 1;
       v8 = v6.feed(v8, v9);
       if (v8 !== undefined) {

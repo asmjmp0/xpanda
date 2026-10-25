@@ -151,8 +151,7 @@ b763 = async function (p0, p1, p2, p3) {
       local_0_9(v58);
       v58 = local_0_2((await v61.digest()).data);
       if (!v51.directory) {
-        v51 = v58 === v51.sha256;
-        local_0_9(v51);
+        local_0_9(v58 === v51.sha256);
       }
       v51 = new DataView((await local_0_10(v4.fd, v50 + v62, 24, p2)).buffer);
       v61 = v51.getUint32(0, true) === 134695760 && v51.getUint32(4, true) === v63 && m763(v51, 8) === v62;
@@ -218,10 +217,9 @@ c763 = async function (p0, p1, p2, p3) {
       await g50.close(v14);
       v14 = {
         "size": v17,
-        "sha256": null,
+        "sha256": local_0_2((await v15.digest()).data),
         "readbackVerified": false
       };
-      v14.sha256 = local_0_2((await v15.digest()).data);
       try {} finally {
         await g50.close(v4);
       }
@@ -249,12 +247,7 @@ local_0_2 = function (p0) {
   return v0;
 };
 local_0_3 = async function (p0) {
-  let v2 /*g50*/;
-  v2 = 0;
-  if (p0.indexOf("://") < 0) {
-    v2 = g50.OpenMode.NOFOLLOW;
-  }
-  return g50.open(p0, g50.OpenMode.READ_ONLY | v2);
+  return g50.open(p0, g50.OpenMode.READ_ONLY | (p0.indexOf("://") < 0 ? g50.OpenMode.NOFOLLOW : 0));
 };
 local_0_8 = async function (p0, p1, p2) {
   let v0, v4, v5;
@@ -418,11 +411,9 @@ local_0_4 = async function (p0, p1, p2, p3, p4) {
       if (local_0_1(v3) === local_0_1(await g50.stat(p1))) {
         v3 = {
           "size": v7,
-          "sha1": null,
-          "sha256": null
+          "sha1": v5 === undefined ? "" : local_0_2((await v5.digest()).data),
+          "sha256": v6 === undefined ? "" : local_0_2((await v6.digest()).data)
         };
-        v3.sha1 = v5 === undefined ? "" : local_0_2((await v5.digest()).data);
-        v3.sha256 = v6 === undefined ? "" : local_0_2((await v6.digest()).data);
         return v3;
       }
       throw new Error("摘要读取期间文件发生变化");
@@ -468,14 +459,11 @@ local_0_4 = async function (p0, p1, p2, p3, p4) {
     throw new Error("摘要读取期间文件发生变化");
   }
   if (local_0_1(v3) === local_0_1(await g50.stat(p1))) {
-    v3 = {
+    return {
       "size": v7,
-      "sha1": null,
-      "sha256": null
+      "sha1": v5 === undefined ? "" : local_0_2((await v5.digest()).data),
+      "sha256": v6 === undefined ? "" : local_0_2((await v6.digest()).data)
     };
-    v3.sha1 = v5 === undefined ? "" : local_0_2((await v5.digest()).data);
-    v3.sha256 = v6 === undefined ? "" : local_0_2((await v6.digest()).data);
-    return v3;
   }
   throw new Error("摘要读取期间文件发生变化");
 };

@@ -23,8 +23,7 @@ parseAbsoluteUrl = function (p0) {
   v7 = v6 >= v1;
   if (v6 >= v1) {
     v4 = v2.slice(v1, v6);
-    v6 += 1;
-    v2 = v2.slice(v6);
+    v2 = v2.slice(v6 + 1);
     v5 = v4.indexOf(":");
     v6 = v5 >= v1 ? v4.slice(v1, v5) : v4;
     if (v5 < v1) {
@@ -42,8 +41,7 @@ parseAbsoluteUrl = function (p0) {
   v8 = v2.lastIndexOf(":");
   if (v8 >= v1) {
     v9 = v2.slice(v1, v8);
-    v8 += 1;
-    v6 = v2.slice(v8);
+    v6 = v2.slice(v8 + 1);
     if (v6.length === v1) {
       return undefined;
     }
@@ -77,12 +75,7 @@ local_0_1 = function (p0) {
   for (v4 = 0; v4 < v3.length; v4 += 1) {
     v6 = v3[v4].indexOf("=");
     v7 = v6 >= 0 ? v3[v4].slice(0, v6) : v3[v4];
-    if (v6 < 0) {
-      v5 = "";
-    } else {
-      v6 += 1;
-      v5 = v3[v4].slice(v6);
-    }
+    v5 = v6 < 0 ? "" : v3[v4].slice(v6 + 1);
     v6 = local_0_0(v7);
     v5 = local_0_0(v5);
     if (v6 === undefined || v5 === undefined) {

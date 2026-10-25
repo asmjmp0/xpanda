@@ -1,11 +1,13 @@
 import * as TYPE from "@babel/types";
 import {
     expressionStatement,
+    isArrayExpression,
     isAssignmentExpression,
     isBlockStatement,
     isCallExpression,
     isExpressionStatement,
     isIdentifier,
+    isObjectExpression,
     isStatement as isStatementNode,
 } from "@babel/types";
 import { isDeclarationValue, isPureExpression, isTempName, writesOnTakenPath } from "../AstUtils";
@@ -354,6 +356,9 @@ export class LivenessAnalyzer extends TempVariablePass {
             removeRefs(rhs, ctx);
             return { replace: null, remainingReads: new Set() };
         }
+        // 对象/数组字面量的求值仍然需要保留,但裸字面量语句(`({...});` / `[...];`)
+        // 没有可读性:保留死赋值本身(local 变量写入不可观察),把字面量留给上下文。
+        if (isObjectExpression(rhs) || isArrayExpression(rhs)) return null;
         // 调用等有副作用:保留表达式本身
         return { replace: expressionStatement(rhs), remainingReads: reads };
     }

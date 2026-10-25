@@ -2,7 +2,8 @@ import { Program } from "@babel/types";
 import { ISimplify } from "./ISimplify";
 import traverse from "@babel/traverse";
 import * as TYPE from "@babel/types";
-import { isTempName, walkNode } from "./AstUtils";
+import { isClassLike, isFunctionLike, isTempName, replaceNodeInTree, walkNode } from "./AstUtils";
+import { canDeferTestValue, countReadsInNode } from "./temp/queries";
 
 
 const {
@@ -21,6 +22,7 @@ const {
     isRegExpLiteral,
     isReturnStatement,
     isStringLiteral,
+    objectExpression,
     objectProperty,
     returnStatement,
 } = TYPE;
@@ -38,8 +40,10 @@ const {
  *
  * 编译器先用 `createobjectwithbuffer` 建一个所有字段为 null 的模板对象，再用
  * `definepropertybyname` 逐个填值。简化为对象字面量后，属性求值顺序保持不变
- * （要求赋值顺序与模板字段顺序一致）；如果紧接 `return obj` 且对象没有在模式外
- * 被读取，则直接内联成 `return { ... }`。
+ * （要求赋值顺序与模板字段顺序一致）；如果紧接 `return obj` 或 `f(obj)` 且对象没有
+ * 在模式外被读取，则直接内联成 `return { ... }` / `f({ ... })`。前几轮合并后字面量
+ * 里可能已经带着真实表达式：只要求“第一个待合并字段及其之后”的未赋值字段仍是字面量，
+ * 这样把新赋值并进去不会打乱求值顺序。
  *
  * @Author: jmp0
  */
@@ -87,10 +91,6 @@ export class ObjectLiteralSimplify implements ISimplify {
                     valid = false;
                     break;
                 }
-                if (!this.isTemplateValue(property.value)) {
-                    valid = false;
-                    break;
-                }
                 keyIndex.set(key, keys.length);
                 keys.push(key);
                 properties.push(property);
@@ -114,30 +114,81 @@ export class ObjectLiteralSimplify implements ISimplify {
                 const index = keyIndex.get(key);
                 if (index === undefined || assigned.has(key) || index <= lastIndex) break;
                 // 右值不能读写正在构造的对象(含嵌套函数/立即调用的闭包)
-                if (this.referencesNameDeep(memberAssign.right, name)) break;
+                if (this.referencesNameInAssignment(path, candidate, memberAssign.right, name)) break;
                 assigned.set(key, memberAssign.right);
                 assignmentStmts.push(candidate);
                 lastIndex = index;
             }
             if (assigned.size === 0) continue;
 
-            object.properties = properties.map((property, index) => {
+            // 模板字段只允许字面量/undefined，避免提前求值有副作用的表达式。
+            // 前几轮合并后,字面量里已经带着真实表达式(它们本来就排在新赋值之前求值);
+            // 只要求“第一个待合并字段及其之后”的未赋值字段仍是字面量,把这些字段
+            // 并进字面量才不会改变求值顺序。
+            const firstAssigned = Math.min(...Array.from(assigned.keys(), (key) => keyIndex.get(key)!));
+            for (let index = 0; index < properties.length && valid; index++) {
+                const key = keys[index];
+                if (assigned.has(key)) continue;
+                if (index >= firstAssigned && !this.isTemplateValue(properties[index].value)) valid = false;
+            }
+            if (!valid) continue;
+
+            const mergedProperties = properties.map((property) => {
                 const key = this.keyName(property.key)!;
                 const value = assigned.get(key) ?? property.value;
                 return objectProperty(property.key, value, false);
             });
-            const returnStmt = stmts[next];
-            const canInlineReturn = isReturnStatement(returnStmt)
-                && isIdentifier(returnStmt.argument)
-                && returnStmt.argument.name === name
-                && this.canInlineReturn(path, name, i, [stmt, ...assignmentStmts, returnStmt]);
+            const consumer = stmts[next];
+            const canInline = !!(consumer
+                && this.canInlineConsumer(path, name, i, [stmt, ...assignmentStmts, consumer]));
+            const inlineTarget = canInline
+                ? this.findInlineTarget(consumer, name, mergedProperties)
+                : null;
+
+            object.properties = mergedProperties;
             stmts.splice(i + 1, next - i - 1);
-            if (canInlineReturn) {
-                stmts.splice(i, 2, returnStatement(object));
+            if (inlineTarget) {
+                if (inlineTarget === "return") {
+                    stmts.splice(i, 2, returnStatement(object));
+                } else {
+                    replaceNodeInTree(inlineTarget.consumer.expression, inlineTarget.read, object);
+                    stmts.splice(i, 2, inlineTarget.consumer);
+                }
             }
             changed = true;
         }
         return changed;
+    }
+
+    /**
+     * 对象只在紧跟的消费语句里被读取一次时,把字面量直接内联过去:
+     *   `acc = {...}; return acc;`            => `return {...};`
+     *   `acc = {...}; rows.push(acc);`        => `rows.push({...});`
+     * 内联要求把字面量的求值推迟到消费位置不改变副作用顺序(见 canDeferTestValue)。
+     */
+    private findInlineTarget(
+        consumer: TYPE.Statement,
+        name: string,
+        mergedProperties: TYPE.ObjectProperty[],
+    ): "return" | { consumer: TYPE.ExpressionStatement; read: TYPE.Identifier } | null {
+        if (isReturnStatement(consumer)) {
+            if (!isIdentifier(consumer.argument) || consumer.argument.name !== name) return null;
+            return "return";
+        }
+        if (!isExpressionStatement(consumer)) return null;
+        if (countReadsInNode(consumer.expression, name) !== 1) return null;
+        let read: TYPE.Identifier | null = null;
+        walkNode(consumer.expression, (node) => {
+            if (read) return false;
+            if (isIdentifier(node) && node.name === name) {
+                read = node;
+                return false;
+            }
+            return true;
+        });
+        if (!read) return null;
+        if (!canDeferTestValue(objectExpression(mergedProperties), consumer.expression, read)) return null;
+        return { consumer, read };
     }
 
     /** 变量是否被嵌套函数读写(捕获);捕获时不调整对象赋值时机 */
@@ -147,6 +198,55 @@ export class ObjectLiteralSimplify implements ISimplify {
         const fn = path.getFunctionParent();
         return (binding.referencePaths as any[]).some((ref) => ref.getFunctionParent() !== fn)
             || (binding.constantViolations as any[]).some((violation) => violation.getFunctionParent() !== fn);
+    }
+
+    /**
+     * 右值是否引用了正在构造的对象。不能只按名字扫描:对象方法体里常常有
+     * 自己的同名局部(`function cipher(...) { let v0, ... }`),名字扫描会把
+     * 影子变量当成外层引用,导致对象方法全部并不进字面量(aes 的 cipher/subBytes)。
+     * 有嵌套函数时改用 Babel 的 binding 解析:只有解析到外层 binding 的读取才算引用。
+     */
+    private referencesNameInAssignment(
+        path: any,
+        candidate: TYPE.Statement,
+        rhs: TYPE.Expression,
+        name: string,
+    ): boolean {
+        let hasFunction = false;
+        walkNode(rhs, (node) => {
+            if (isFunctionLike(node) || isClassLike(node)) {
+                hasFunction = true;
+                return false;
+            }
+            return true;
+        });
+        if (!hasFunction) return this.referencesNameDeep(rhs, name);
+        try {
+            const bodyPaths = path.get("body") as any[];
+            const statementPath = Array.isArray(bodyPaths)
+                ? bodyPaths.find((p) => p && p.node === candidate)
+                : null;
+            const outer = path.scope.getBinding(name);
+            if (!statementPath || !outer) return this.referencesNameDeep(rhs, name);
+            const expressionPath = statementPath.get("expression");
+            if (!expressionPath || typeof expressionPath.isAssignmentExpression !== "function"
+                || !expressionPath.isAssignmentExpression()) {
+                return this.referencesNameDeep(rhs, name);
+            }
+            let referenced = false;
+            expressionPath.get("right").traverse({
+                ReferencedIdentifier: (ref: any) => {
+                    if (referenced || !ref.node || ref.node.name !== name) return;
+                    if (ref.scope.getBinding(name) === outer) {
+                        referenced = true;
+                        ref.stop();
+                    }
+                },
+            });
+            return referenced;
+        } catch {
+            return this.referencesNameDeep(rhs, name);
+        }
     }
 
     /** 深度查找标识符(进入嵌套函数体),用于阻止把构造中的对象暴露给 RHS 里的闭包 */
@@ -163,8 +263,8 @@ export class ObjectLiteralSimplify implements ISimplify {
         return found;
     }
 
-    /** 对象变量没有在模式外被读取/闭包捕获改写时，才能把它内联进 return */
-    private canInlineReturn(path: any, name: string, index: number, matched: TYPE.Node[]): boolean {
+    /** 对象变量没有在模式外被读取/闭包捕获改写时，才能把它内联进消费语句 */
+    private canInlineConsumer(path: any, name: string, index: number, matched: TYPE.Node[]): boolean {
         const binding = path.scope.getBinding(name);
         if (!binding) return false;
         const fn = path.getFunctionParent();

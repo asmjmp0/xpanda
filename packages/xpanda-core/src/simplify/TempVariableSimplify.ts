@@ -303,6 +303,9 @@ export class TempVariableSimplify implements ISimplify {
         if (!this.state.conditionsOnly) {
             // 自引用链(`X = X.length; X = f(X)`)先折叠,让后续活跃性/传播看到更紧凑的形态
             this.testFolds.foldSelfReadChains(body, ctx);
+            // `X = F(X); Y = <只读一次 X>`:把更新值代进读取位置,分支里只剩一条赋值,
+            // 后续三目合成才能还原出 `pending.substring(nl + 1)` 这类形态。
+            this.assignments.foldSelfUpdateIntoNextRead(body, ctx);
             this.copy.processStatements(body, new EnvState(), ctx);
             // do { ...; X = E; } while (!X) -> do { ... } while (!E)
             this.conditions.foldDoWhileTestAssignments(body, ctx);

@@ -83,7 +83,7 @@ try {
       };
     }
     static resolveAudioFormat(p0, p1, p2) {
-      let v6, v8;
+      let v6;
       v6 = p0.findFormatByItagAndTrack(p2, p1.audioTrackId);
       if (v6 && p1.audioTrackId && v6.audioTrackId !== p1.audioTrackId) {
         v6 = undefined;
@@ -91,27 +91,18 @@ try {
       if (v6) {
         return v6;
       }
-      v8 = {
-        "itag": null,
-        "mimeType": null,
-        "bitrate": null,
+      return {
+        "itag": p2,
+        "mimeType": p1.mimeType,
+        "bitrate": p1.bitrate,
         "isAudio": true,
         "isVideo": false,
-        "codecs": null,
-        "audioTrackId": null,
-        "audioTrackName": null,
-        "isOriginalAudio": null,
-        "approxDurationMs": null
+        "codecs": p1.codecs,
+        "audioTrackId": p1.audioTrackId,
+        "audioTrackName": p1.audioTrackName,
+        "isOriginalAudio": (p1.audioTrackType || "").toLowerCase() === "original",
+        "approxDurationMs": p1.approxDurationMs
       };
-      v8.itag = p2;
-      v8.mimeType = p1.mimeType;
-      v8.bitrate = p1.bitrate;
-      v8.codecs = p1.codecs;
-      v8.audioTrackId = p1.audioTrackId;
-      v8.audioTrackName = p1.audioTrackName;
-      v8.isOriginalAudio = (p1.audioTrackType || "").toLowerCase() === "original";
-      v8.approxDurationMs = p1.approxDurationMs;
-      return v8;
     }
     static async dumpDualTrack(p0, p1, p2, p3, p4, p5, p6) {
       let v11, v12, v13, v15, v16, v17, v18, v19, v20, v21, v22, v23, v26, v28, acc;

@@ -90,10 +90,7 @@ try {
     }
     appendPendingQueueItems(p0) {
       let v3, v4, v5;
-      v3 = p0;
-      if (p0 === undefined) {
-        v3 = this.QUEUE_BATCH_SIZE;
-      }
+      v3 = p0 === undefined ? this.QUEUE_BATCH_SIZE : p0;
       if (this.pendingQueueItems.length === 0) {
         return 0;
       }
@@ -119,10 +116,7 @@ try {
     }
     async loadFromRemotePlaylist(p0, p1, p2) {
       let v5, v6, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19, v20, v21, v22, v23, v24, v25, v26, v27, v29;
-      v5 = p2;
-      if (p2 === undefined) {
-        v5 = "";
-      }
+      v5 = p2 === undefined ? "" : p2;
       v17 = Date.now();
       local_0_0 /*logger*/.info("loadFromRemotePlaylist start: playlist=" + p0 + " start=" + p1 + "");
       v13 = this.queue.slice();
@@ -205,22 +199,10 @@ try {
       let v6, v7, v8, v9, v11, v13;
       let local_2_0;
       local_2_0 = p2;
-      v6 = p3;
-      v7 = p4;
-      v8 = p5;
-      v9 = p6;
-      if (p3 === undefined) {
-        v6 = "";
-      }
-      if (p4 === undefined) {
-        v7 = -1;
-      }
-      if (p5 === undefined) {
-        v8 = null;
-      }
-      if (p6 === undefined) {
-        v9 = "";
-      }
+      v6 = p3 === undefined ? "" : p3;
+      v7 = p4 === undefined ? -1 : p4;
+      v8 = p5 === undefined ? null : p5;
+      v9 = p6 === undefined ? "" : p6;
       if (!p1 || p1.length === 0) {
         return;
       }
@@ -485,10 +467,7 @@ try {
     }
     appendAutoQueueNext(p0) {
       let v3, v4, v10, v11;
-      v3 = p0;
-      if (p0 === undefined) {
-        v3 = this.QUEUE_BATCH_SIZE;
-      }
+      v3 = p0 === undefined ? this.QUEUE_BATCH_SIZE : p0;
       if (this.sourceType !== QueueSourceType.ADHOC) {
         return 0;
       }
@@ -535,10 +514,7 @@ try {
     }
     exportSnapshot(p0) {
       let v3;
-      v3 = p0;
-      if (p0 === undefined) {
-        v3 = 50;
-      }
+      v3 = p0 === undefined ? 50 : p0;
       return {
         "items": this.queue.slice(0, v3 > 0 ? v3 : 50),
         "currentIndex": this.currentIndex,

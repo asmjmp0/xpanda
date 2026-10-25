@@ -4,8 +4,9 @@ import * as TYPE from "@babel/types";
 import traverse, {NodePath} from "@babel/traverse";
 import {SyntaxRewriteSimplify} from "./SyntaxRewriteSimplify";
 import {
-    addPatternNames, collectIdentifierNames, collectReadNames, isClassLike as isClassLikeNode, isDoneMember,
-    isFunctionLike as isFunctionLikeNode, isNextValue, isNodeEqual, isPureExpression, walkNode
+    addPatternNames, collectAssignedNames, collectIdentifierNames, collectReadNames,
+    isClassLike as isClassLikeNode, isDoneMember,
+    isFunctionLike as isFunctionLikeNode, isNextValue, isNodeEqual, isPureExpression, isTempName, walkNode
 } from "./AstUtils";
 
 
@@ -104,6 +105,103 @@ export class HighLevelGrammarSimplify implements ISimplify {
             }
         }
         return null;
+    }
+
+    /**
+     * `X = E; <不读写 X 的语句>; if (C) { X = F }` -> `X = C ? F : E`。
+     *
+     * ArkTS 把 `topInsetVp: immersiveReading ? 0 : OFFSET` 这类对象字段 lowering 成
+     * 先给临时变量赋初值,再在对象字面量之后用一个只有 then 分支的 if 覆盖:
+     *
+     *   v0 = 0;
+     *   acc = { ..., "topInsetVp": null, ... };
+     *   if (!this.immersiveReading) { v0 = OFFSET; }
+     *   acc.topInsetVp = v0;
+     *
+     * 折成 `v0 = !this.immersiveReading ? OFFSET : 0` 后,ObjectLiteralSimplify 才能
+     * 把字段并进对象字面量。要求 E 纯(它从 if 之前移到三目分支里),跨过的语句与 C
+     * 都不读写 X,且 C/F 不读取 X(三目在赋值前求值,读到的是旧值)。
+     */
+    private checkAndTransformToConditionalAssignment(value: NodePath<TYPE.IfStatement>): boolean {
+        const alternate = value.node.alternate;
+        if (alternate && !(isBlockStatementNode(alternate) && alternate.body.length === 0)) return false;
+        let consequent = value.node.consequent;
+        if (isBlockStatementNode(consequent)) {
+            if (consequent.body.length !== 1) return false;
+            consequent = consequent.body[0];
+        }
+        if (!isExpressionStatementNode(consequent) || !isAssignmentExpressionNode(consequent.expression)) return false;
+        const branchAssign = consequent.expression;
+        if (branchAssign.operator !== "=" || !isIdentifierNode(branchAssign.left)) return false;
+        const name = branchAssign.left.name;
+        if (!isTempName(name)) return false;
+        // 条件本身是 `&&` / `||` 时(典型是 `ok = A; if (B && C) ok = D`),
+        // 保持 if 形式更接近源码;否则会被折成很长的三目再并成逻辑链。
+        if (isLogicalExpression(value.node.test)) return false;
+        if (collectReadNames(value.node.test).has(name)) return false;
+        if (collectReadNames(branchAssign.right).has(name)) return false;
+        if (collectAssignedNames(branchAssign.right).has(name)) return false;
+
+        // 向前跨过不读写 X 的语句,找 `X = E`(对象字面量构造正好夹在中间)
+        let prev = value.getPrevSibling() as NodePath<TYPE.Statement> | null;
+        let init: NodePath<TYPE.Statement> | null = null;
+        const skipped: TYPE.Statement[] = [];
+        while (prev && prev.node && skipped.length < 64) {
+            const node = prev.node;
+            if (isExpressionStatementNode(node) && isAssignmentExpressionNode(node.expression)
+                && node.expression.operator === "=" && isIdentifierNode(node.expression.left)
+                && node.expression.left.name === name) {
+                init = prev;
+                break;
+            }
+            if (collectReadNames(node).has(name) || collectAssignedNames(node).has(name)) return false;
+            skipped.push(node);
+            prev = prev.getPrevSibling() as NodePath<TYPE.Statement> | null;
+        }
+        if (!init) return false;
+        const initAssign = (init.node as TYPE.ExpressionStatement).expression as TYPE.AssignmentExpression;
+        const initial = initAssign.right;
+        if (!isPureExpression(initial)) return false;
+        // 条件与初值相同(或其否定)时是短路链 `X = E; if (X/!X) { X = B }`,
+        // 交给 foldShortCircuitChains 折成 `X = E &&/|| B`;提前合成三目会把它拆散,
+        // 后面的返回折叠就只剩 `return acc ? B : acc`。
+        if (isNodeEqual(value.node.test, initial) || this.isComplementaryTest(value.node.test, initial)) {
+            return false;
+        }
+        // E 从 if 之前移到三目分支里:跨过的语句和 C 都不能改写 E 依赖的名字
+        const deps = collectIdentifierNames(initial);
+        if (deps.size > 0) {
+            for (const node of skipped) {
+                const assigned = collectAssignedNames(node);
+                for (const dep of deps) if (assigned.has(dep)) return false;
+            }
+            const testAssigned = collectAssignedNames(value.node.test);
+            for (const dep of deps) if (testAssigned.has(dep)) return false;
+        }
+
+        const conditional = conditionalExpressionBuilder(
+            value.node.test, branchAssign.right, initial);
+        init.remove();
+        value.replaceWith(expressionStatement(
+            assignmentExpressionBuilder("=", identifier(name), conditional)));
+        return true;
+    }
+
+    /** test 是否正好是 initial 的否定(用于识别短路链 `if (X)` / `if (!X)`)。 */
+    private isComplementaryTest(test: TYPE.Expression, initial: TYPE.Expression): boolean {
+        if (TYPE.isUnaryExpression(test) && test.operator === "!") {
+            return isNodeEqual(test.argument as TYPE.Expression, initial);
+        }
+        if (TYPE.isUnaryExpression(initial) && initial.operator === "!") {
+            return isNodeEqual(initial.argument as TYPE.Expression, test);
+        }
+        if (isBinaryExpressionNode(test) && isBinaryExpressionNode(initial)) {
+            const inverted = SyntaxRewriteSimplify.binaryInvert(test);
+            return inverted != null && inverted === initial.operator
+                && isNodeEqual(test.left, initial.left)
+                && isNodeEqual(test.right, initial.right);
+        }
+        return false;
     }
 
     private checkAndTransformToConditionalExpression(value:NodePath<TYPE.IfStatement>):boolean{
@@ -1906,6 +2004,10 @@ export class HighLevelGrammarSimplify implements ISimplify {
                 // 用 exit 自底向上折叠:嵌套 if / else-if 先折成赋值语句,
                 // 外层再与其合成三目(`if (!p2) {...} else if (B) { X = a } else { X = b }`)。
                 exit:(value)=>{
+                    if (this.checkAndTransformToConditionalAssignment(value)) {
+                        changed = true;
+                        return;
+                    }
                     if (this.checkAndTransformToConditionalExpression(value)) changed = true;
                 },
             },

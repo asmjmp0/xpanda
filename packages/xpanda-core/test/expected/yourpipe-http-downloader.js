@@ -264,14 +264,8 @@ try {
         let v8, v9, v10, v11, v12, v13, v14, v16, v17, v19, v21, acc;
         let local_2_0;
         local_2_0 = p1;
-        v8 = p5;
-        v9 = p6;
-        if (p5 === undefined) {
-          v8 = true;
-        }
-        if (p6 === undefined) {
-          v9 = 30000;
-        }
+        v8 = p5 === undefined || p5;
+        v9 = p6 === undefined ? 30000 : p6;
         v11 = null;
         v10 = 0;
         v12 = v8 ? local_1_2_0 /*HttpDownloader*/.MAX_RETRIES : 1;
@@ -416,10 +410,7 @@ try {
       }
       post(p0, p1, p2, p3, p4, p5) {
         let v8, acc;
-        v8 = p5;
-        if (p5 === undefined) {
-          v8 = 30000;
-        }
+        v8 = p5 === undefined ? 30000 : p5;
         acc = p2 || {};
         if (p4) {
           acc["Content-Type"] = [p4];
@@ -427,20 +418,10 @@ try {
         return this.request("POST", p0, acc, p1, p3, true, v8);
       }
       async postBinary(p0, p1, p2, p3, p4, p5, p6) {
-        let v7;
-        v7 = p4;
-        if (p4 === undefined) {
-          v7 = true;
-        }
-        return this.postBinaryWithRetry(p0, p1, p2, p3, v7, p5, p6, undefined, true);
+        return this.postBinaryWithRetry(p0, p1, p2, p3, p4 === undefined || p4, p5, p6, undefined, true);
       }
       async postBinaryStreaming(p0, p1, p2, p3, p4, p5, p6, p7) {
-        let v7;
-        v7 = p4;
-        if (p4 === undefined) {
-          v7 = true;
-        }
-        return this.postBinaryWithRetry(p0, p1, p2, p3, v7, p6, p7, p5, false);
+        return this.postBinaryWithRetry(p0, p1, p2, p3, p4 === undefined || p4, p6, p7, p5, false);
       }
       async postBinaryWithRetry(p0, p1, p2, p3, p4, p5, p6, p7, p8) {
         let v12, v13, v14, v16, v17, v18, v19, v20, v22, acc;
@@ -716,10 +697,7 @@ try {
           if (!p0.header) {
             return;
           }
-          v7 = p0.header["Set-Cookie"];
-          if (!p0.header["Set-Cookie"]) {
-            v7 = p0.header["set-cookie"];
-          }
+          v7 = !p0.header["Set-Cookie"] ? p0.header["set-cookie"] : p0.header["Set-Cookie"];
           if (!v7) {
             return;
           }
@@ -736,7 +714,7 @@ try {
         return;
       }
       static applyProxyToOptions(p0, p1) {
-        let v5, v7, v8, v9;
+        let v5, v7, v8;
         v5 = HttpProxyOptions.getSnapshot();
         if (!HttpProxyOptions.isActive(v5) || HttpProxyOptions.shouldBypass(p1, v5)) {
           p0.usingProxy = false;
@@ -746,9 +724,8 @@ try {
           v8 = {
             "host": v5.host.trim(),
             "port": v5.port,
-            "exclusionList": null
+            "exclusionList": v5.exclusionList && v5.exclusionList.length > 0 ? v5.exclusionList : HttpProxyOptions.defaultExclusions()
           };
-          v8.exclusionList = v5.exclusionList && v5.exclusionList.length > 0 ? v5.exclusionList : HttpProxyOptions.defaultExclusions();
           if (v5.username && v5.username.length > 0) {
             v8.username = v5.username;
             v8.password = v5.password || "";
@@ -770,13 +747,11 @@ try {
             }
             p0.usingSocks5Proxy = v7;
           } else if (v5.socks5LocalPort && v5.socks5LocalPort > 0) {
-            v9 = {
+            p0.usingProxy = {
               "host": "127.0.0.1",
               "port": v5.socks5LocalPort,
-              "exclusionList": null
+              "exclusionList": []
             };
-            v9.exclusionList = [];
-            p0.usingProxy = v9;
           } else {
             p0.usingProxy = false;
           }

@@ -83,14 +83,8 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     let v6, v7;
     let local_1_0;
     local_1_0 = this;
-    v6 = p3;
-    v7 = p4;
-    if (p3 === undefined) {
-      v6 = -1;
-    }
-    if (p4 === undefined) {
-      v7 = undefined;
-    }
+    v6 = p3 === undefined ? -1 : p3;
+    v7 = p4 === undefined ? undefined : p4;
     local_1_0 = super(p0, p2, v6, p5);
     if (typeof v7 === "function") {
       local_1_0.paramsGenerator_ = v7;
@@ -1647,7 +1641,6 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     local_1_0 = this;
     if (p0 === undefined) {}
     local_1_0.observeComponentCreation2(function (p0, p1) {
-      let v8;
       Menu.create();
       Menu.onAppear(function () {
         return local_1_0.onControlMenuAppear();
@@ -1663,18 +1656,16 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
         "moduleName": "entry"
       });
       Menu.borderRadius(12);
-      v8 = {
+      Menu.menuItemDivider({
         "strokeWidth": LengthMetrics.vp(0.5),
-        "color": null
-      };
-      v8.color = {
-        "id": 125831013,
-        "type": 10001,
-        "params": [],
-        "bundleName": "com.talon.yourpipe",
-        "moduleName": "entry"
-      };
-      Menu.menuItemDivider(v8);
+        "color": {
+          "id": 125831013,
+          "type": 10001,
+          "params": [],
+          "bundleName": "com.talon.yourpipe",
+          "moduleName": "entry"
+        }
+      });
       Menu.width(220);
     }, Menu);
     local_1_0.observeComponentCreation2(function (p0, p1) {
@@ -2219,7 +2210,6 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     local_1_0 = this;
     if (p0 === undefined) {}
     local_1_0.observeComponentCreation2(function (p0, p1) {
-      let v8;
       Menu.create();
       Menu.onAppear(function () {
         return local_1_0.onControlMenuAppear();
@@ -2235,18 +2225,16 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
         "moduleName": "entry"
       });
       Menu.borderRadius(12);
-      v8 = {
+      Menu.menuItemDivider({
         "strokeWidth": LengthMetrics.vp(0.5),
-        "color": null
-      };
-      v8.color = {
-        "id": 125831013,
-        "type": 10001,
-        "params": [],
-        "bundleName": "com.talon.yourpipe",
-        "moduleName": "entry"
-      };
-      Menu.menuItemDivider(v8);
+        "color": {
+          "id": 125831013,
+          "type": 10001,
+          "params": [],
+          "bundleName": "com.talon.yourpipe",
+          "moduleName": "entry"
+        }
+      });
       Menu.width(180);
     }, Menu);
     local_1_0.observeComponentCreation2(function (p0, p1) {
@@ -2255,19 +2243,17 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
         let local_2_0;
         local_2_0 = p0;
         local_1_0.observeComponentCreation2(function (p0, p1) {
-          let v8, acc;
-          v8 = {
+          let acc;
+          MenuItem.create({
             "content": local_2_0 /*speed*/ + "x",
-            "endIcon": null
-          };
-          v8.endIcon = local_1_0.vm.playbackSpeed === local_2_0 /*speed*/ ? {
-            "id": 125831490,
-            "type": 40000,
-            "params": [],
-            "bundleName": "com.talon.yourpipe",
-            "moduleName": "entry"
-          } : "";
-          MenuItem.create(v8);
+            "endIcon": local_1_0.vm.playbackSpeed === local_2_0 /*speed*/ ? {
+              "id": 125831490,
+              "type": 40000,
+              "params": [],
+              "bundleName": "com.talon.yourpipe",
+              "moduleName": "entry"
+            } : ""
+          });
           MenuItem.contentFontColor({
             "id": 125830982,
             "type": 10001,
@@ -2295,7 +2281,6 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     local_1_0 = this;
     if (p0 === undefined) {}
     local_1_0.observeComponentCreation2(function (p0, p1) {
-      let v8;
       Menu.create();
       Menu.onAppear(function () {
         return local_1_0.onControlMenuAppear();
@@ -2311,23 +2296,21 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
         "moduleName": "entry"
       });
       Menu.borderRadius(12);
-      v8 = {
+      Menu.menuItemDivider({
         "strokeWidth": LengthMetrics.vp(0.5),
-        "color": null
-      };
-      v8.color = {
-        "id": 125831013,
-        "type": 10001,
-        "params": [],
-        "bundleName": "com.talon.yourpipe",
-        "moduleName": "entry"
-      };
-      Menu.menuItemDivider(v8);
+        "color": {
+          "id": 125831013,
+          "type": 10001,
+          "params": [],
+          "bundleName": "com.talon.yourpipe",
+          "moduleName": "entry"
+        }
+      });
       Menu.width(220);
     }, Menu);
     local_1_0.observeComponentCreation2(function (p0, p1) {
-      let v8, acc;
-      v8 = {
+      let acc;
+      MenuItem.create({
         "content": {
           "id": 16777909,
           "type": 10003,
@@ -2335,16 +2318,14 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
           "bundleName": "com.talon.yourpipe",
           "moduleName": "entry"
         },
-        "endIcon": null
-      };
-      v8.endIcon = local_1_0.vm.currentSubtitleUrl === "" ? {
-        "id": 125831490,
-        "type": 40000,
-        "params": [],
-        "bundleName": "com.talon.yourpipe",
-        "moduleName": "entry"
-      } : "";
-      MenuItem.create(v8);
+        "endIcon": local_1_0.vm.currentSubtitleUrl === "" ? {
+          "id": 125831490,
+          "type": 40000,
+          "params": [],
+          "bundleName": "com.talon.yourpipe",
+          "moduleName": "entry"
+        } : ""
+      });
       MenuItem.contentFontColor({
         "id": 125830982,
         "type": 10001,
@@ -2369,19 +2350,17 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
         let local_2_0;
         local_2_0 = p0;
         local_1_0.observeComponentCreation2(function (p0, p1) {
-          let v8, acc;
-          v8 = {
+          let acc;
+          MenuItem.create({
             "content": local_1_0.getSubtitleLabel(local_2_0 /*track*/),
-            "endIcon": null
-          };
-          v8.endIcon = local_1_0.vm.currentSubtitleUrl === local_2_0 /*track*/.url ? {
-            "id": 125831490,
-            "type": 40000,
-            "params": [],
-            "bundleName": "com.talon.yourpipe",
-            "moduleName": "entry"
-          } : "";
-          MenuItem.create(v8);
+            "endIcon": local_1_0.vm.currentSubtitleUrl === local_2_0 /*track*/.url ? {
+              "id": 125831490,
+              "type": 40000,
+              "params": [],
+              "bundleName": "com.talon.yourpipe",
+              "moduleName": "entry"
+            } : ""
+          });
           MenuItem.contentFontColor({
             "id": 125830982,
             "type": 10001,
@@ -2412,7 +2391,6 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     local_1_0 = this;
     if (p0 === undefined) {}
     local_1_0.observeComponentCreation2(function (p0, p1) {
-      let v8;
       Menu.create();
       Menu.onAppear(function () {
         return local_1_0.onControlMenuAppear();
@@ -2428,18 +2406,16 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
         "moduleName": "entry"
       });
       Menu.borderRadius(12);
-      v8 = {
+      Menu.menuItemDivider({
         "strokeWidth": LengthMetrics.vp(0.5),
-        "color": null
-      };
-      v8.color = {
-        "id": 125831013,
-        "type": 10001,
-        "params": [],
-        "bundleName": "com.talon.yourpipe",
-        "moduleName": "entry"
-      };
-      Menu.menuItemDivider(v8);
+        "color": {
+          "id": 125831013,
+          "type": 10001,
+          "params": [],
+          "bundleName": "com.talon.yourpipe",
+          "moduleName": "entry"
+        }
+      });
       Menu.width(280);
     }, Menu);
     local_1_0.observeComponentCreation2(function (p0, p1) {
@@ -2449,19 +2425,17 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
         local_2_1 = p1;
         local_2_0 = p0;
         local_1_0.observeComponentCreation2(function (p0, p1) {
-          let v8, acc;
-          v8 = {
+          let acc;
+          MenuItem.create({
             "content": "" + secondToTime(Math.floor(local_2_0 /*chapter*/.startTimeSeconds)) + " · " + local_2_0 /*chapter*/.title + "",
-            "endIcon": null
-          };
-          v8.endIcon = local_1_0.getCurrentChapterIndex() === local_2_1 ? {
-            "id": 125831490,
-            "type": 40000,
-            "params": [],
-            "bundleName": "com.talon.yourpipe",
-            "moduleName": "entry"
-          } : "";
-          MenuItem.create(v8);
+            "endIcon": local_1_0.getCurrentChapterIndex() === local_2_1 ? {
+              "id": 125831490,
+              "type": 40000,
+              "params": [],
+              "bundleName": "com.talon.yourpipe",
+              "moduleName": "entry"
+            } : ""
+          });
           MenuItem.contentFontColor({
             "id": 125830982,
             "type": 10001,
@@ -2492,7 +2466,6 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     local_1_0 = this;
     if (p0 === undefined) {}
     local_1_0.observeComponentCreation2(function (p0, p1) {
-      let v8;
       Menu.create();
       Menu.onAppear(function () {
         return local_1_0.onControlMenuAppear();
@@ -2508,18 +2481,16 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
         "moduleName": "entry"
       });
       Menu.borderRadius(12);
-      v8 = {
+      Menu.menuItemDivider({
         "strokeWidth": LengthMetrics.vp(0.5),
-        "color": null
-      };
-      v8.color = {
-        "id": 125831013,
-        "type": 10001,
-        "params": [],
-        "bundleName": "com.talon.yourpipe",
-        "moduleName": "entry"
-      };
-      Menu.menuItemDivider(v8);
+        "color": {
+          "id": 125831013,
+          "type": 10001,
+          "params": [],
+          "bundleName": "com.talon.yourpipe",
+          "moduleName": "entry"
+        }
+      });
       Menu.width(220);
     }, Menu);
     local_1_0.observeComponentCreation2(function (p0, p1) {
@@ -2530,19 +2501,17 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
         local_2_1 = p1;
         local_2_0 = p0;
         local_1_0.observeComponentCreation2(function (p0, p1) {
-          let v8, acc;
-          v8 = {
+          let acc;
+          MenuItem.create({
             "content": local_1_0.getAudioLabel(local_2_0 /*stream*/),
-            "endIcon": null
-          };
-          v8.endIcon = local_1_0.getSelectedAudioIndex() === local_2_1 ? {
-            "id": 125831490,
-            "type": 40000,
-            "params": [],
-            "bundleName": "com.talon.yourpipe",
-            "moduleName": "entry"
-          } : "";
-          MenuItem.create(v8);
+            "endIcon": local_1_0.getSelectedAudioIndex() === local_2_1 ? {
+              "id": 125831490,
+              "type": 40000,
+              "params": [],
+              "bundleName": "com.talon.yourpipe",
+              "moduleName": "entry"
+            } : ""
+          });
           MenuItem.contentFontColor({
             "id": 125830982,
             "type": 10001,
@@ -2574,7 +2543,6 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     local_1_0 = this;
     if (p0 === undefined) {}
     local_1_0.observeComponentCreation2(function (p0, p1) {
-      let v8;
       Menu.create();
       Menu.onAppear(function () {
         return local_1_0.onControlMenuAppear();
@@ -2590,18 +2558,16 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
         "moduleName": "entry"
       });
       Menu.borderRadius(12);
-      v8 = {
+      Menu.menuItemDivider({
         "strokeWidth": LengthMetrics.vp(0.5),
-        "color": null
-      };
-      v8.color = {
-        "id": 125831013,
-        "type": 10001,
-        "params": [],
-        "bundleName": "com.talon.yourpipe",
-        "moduleName": "entry"
-      };
-      Menu.menuItemDivider(v8);
+        "color": {
+          "id": 125831013,
+          "type": 10001,
+          "params": [],
+          "bundleName": "com.talon.yourpipe",
+          "moduleName": "entry"
+        }
+      });
       Menu.width(220);
     }, Menu);
     local_1_0.observeComponentCreation2(function (p0, p1) {
@@ -2612,19 +2578,17 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
         local_2_1 = p1;
         local_2_0 = p0;
         local_1_0.observeComponentCreation2(function (p0, p1) {
-          let v8, acc;
-          v8 = {
+          let acc;
+          MenuItem.create({
             "content": local_1_0.getVideoLabel(local_2_0 /*entry*/.stream),
-            "endIcon": null
-          };
-          v8.endIcon = local_1_0.getSelectedVideoIndex() === local_2_1 ? {
-            "id": 125831490,
-            "type": 40000,
-            "params": [],
-            "bundleName": "com.talon.yourpipe",
-            "moduleName": "entry"
-          } : "";
-          MenuItem.create(v8);
+            "endIcon": local_1_0.getSelectedVideoIndex() === local_2_1 ? {
+              "id": 125831490,
+              "type": 40000,
+              "params": [],
+              "bundleName": "com.talon.yourpipe",
+              "moduleName": "entry"
+            } : ""
+          });
           MenuItem.contentFontColor({
             "id": 125830982,
             "type": 10001,
@@ -2942,50 +2906,37 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
             __Common__.brightness(0.4);
           }, __Common__);
           local_1_0.observeComponentCreation2(function (p0, p1) {
-            let v6, v9, v11;
+            let v6;
             if (p1) {
-              v11 = {
-                "imageUrl": null,
-                "placeholderColor": null,
-                "thumbId": null,
+              v6 = new MediaThumb(local_1_0, {
+                "imageUrl": local_1_0.selectedVideo.thumbnailUrl || "",
+                "placeholderColor": local_1_0.selectedVideo.thumbnailColor || "#000000",
+                "thumbId": "audio_only_thumb_" + local_1_0.selectedVideo.id,
                 "fillParent": true,
                 "borderRadiusVp": 0
-              };
-              v11.imageUrl = local_1_0.selectedVideo.thumbnailUrl || "";
-              v11.placeholderColor = local_1_0.selectedVideo.thumbnailColor || "#000000";
-              v11.thumbId = "audio_only_thumb_" + local_1_0.selectedVideo.id;
-              v6 = new MediaThumb(local_1_0, v11, undefined, p0, function () {}, {
+              }, undefined, p0, function () {}, {
                 "page": "entry/src/main/ets/features/player/components/AVPlayer.ets",
                 "line": 1952,
                 "col": 9
               });
               ViewPU.create(v6);
               v6.paramsGenerator_ = function () {
-                let v4;
-                v4 = {
-                  "imageUrl": null,
-                  "placeholderColor": null,
-                  "thumbId": null,
+                return {
+                  "imageUrl": local_1_0.selectedVideo.thumbnailUrl || "",
+                  "placeholderColor": local_1_0.selectedVideo.thumbnailColor || "#000000",
+                  "thumbId": "audio_only_thumb_" + local_1_0.selectedVideo.id,
                   "fillParent": true,
                   "borderRadiusVp": 0
                 };
-                v4.imageUrl = local_1_0.selectedVideo.thumbnailUrl || "";
-                v4.placeholderColor = local_1_0.selectedVideo.thumbnailColor || "#000000";
-                v4.thumbId = "audio_only_thumb_" + local_1_0.selectedVideo.id;
-                return v4;
               };
             } else {
-              v9 = {
-                "imageUrl": null,
-                "placeholderColor": null,
-                "thumbId": null,
+              local_1_0.updateStateVarsOfChildByElmtId(p0, {
+                "imageUrl": local_1_0.selectedVideo.thumbnailUrl || "",
+                "placeholderColor": local_1_0.selectedVideo.thumbnailColor || "#000000",
+                "thumbId": "audio_only_thumb_" + local_1_0.selectedVideo.id,
                 "fillParent": true,
                 "borderRadiusVp": 0
-              };
-              v9.imageUrl = local_1_0.selectedVideo.thumbnailUrl || "";
-              v9.placeholderColor = local_1_0.selectedVideo.thumbnailColor || "#000000";
-              v9.thumbId = "audio_only_thumb_" + local_1_0.selectedVideo.id;
-              local_1_0.updateStateVarsOfChildByElmtId(p0, v9);
+              });
             }
           }, {
             "name": "MediaThumb"
@@ -3107,56 +3058,46 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
             __Common__.brightness(0.4);
           }, __Common__);
           local_1_0.observeComponentCreation2(function (p0, p1) {
-            let v6, v9, v11;
+            let v6;
             if (p1) {
-              v11 = {
-                "imageUrl": null,
-                "placeholderColor": null,
+              v6 = new MediaThumb(local_1_0, {
+                "imageUrl": local_1_0.curSource.thumbnailUrl
+                  || (local_1_0.selectedVideo !== null && local_1_0.selectedVideo !== undefined ? local_1_0.selectedVideo.thumbnailUrl : undefined)
+                  || "",
+                "placeholderColor": (local_1_0.selectedVideo !== null && local_1_0.selectedVideo !== undefined ? local_1_0.selectedVideo.thumbnailColor : undefined)
+                  || "#000000",
                 "fillParent": true,
                 "useAspectRatio": false,
                 "borderRadiusVp": 0
-              };
-              v11.imageUrl = local_1_0.curSource.thumbnailUrl
-                || (local_1_0.selectedVideo !== null && local_1_0.selectedVideo !== undefined ? local_1_0.selectedVideo.thumbnailUrl : undefined)
-                || "";
-              v11.placeholderColor = (local_1_0.selectedVideo !== null && local_1_0.selectedVideo !== undefined ? local_1_0.selectedVideo.thumbnailColor : undefined)
-                || "#000000";
-              v6 = new MediaThumb(local_1_0, v11, undefined, p0, function () {}, {
+              }, undefined, p0, function () {}, {
                 "page": "entry/src/main/ets/features/player/components/AVPlayer.ets",
                 "line": 2021,
                 "col": 11
               });
               ViewPU.create(v6);
               v6.paramsGenerator_ = function () {
-                let v4;
-                v4 = {
-                  "imageUrl": null,
-                  "placeholderColor": null,
+                return {
+                  "imageUrl": local_1_0.curSource.thumbnailUrl
+                    || (local_1_0.selectedVideo !== null && local_1_0.selectedVideo !== undefined ? local_1_0.selectedVideo.thumbnailUrl : undefined)
+                    || "",
+                  "placeholderColor": (local_1_0.selectedVideo !== null && local_1_0.selectedVideo !== undefined ? local_1_0.selectedVideo.thumbnailColor : undefined)
+                    || "#000000",
                   "fillParent": true,
                   "useAspectRatio": false,
                   "borderRadiusVp": 0
                 };
-                v4.imageUrl = local_1_0.curSource.thumbnailUrl
-                  || (local_1_0.selectedVideo !== null && local_1_0.selectedVideo !== undefined ? local_1_0.selectedVideo.thumbnailUrl : undefined)
-                  || "";
-                v4.placeholderColor = (local_1_0.selectedVideo !== null && local_1_0.selectedVideo !== undefined ? local_1_0.selectedVideo.thumbnailColor : undefined)
-                  || "#000000";
-                return v4;
               };
             } else {
-              v9 = {
-                "imageUrl": null,
-                "placeholderColor": null,
+              local_1_0.updateStateVarsOfChildByElmtId(p0, {
+                "imageUrl": local_1_0.curSource.thumbnailUrl
+                  || (local_1_0.selectedVideo !== null && local_1_0.selectedVideo !== undefined ? local_1_0.selectedVideo.thumbnailUrl : undefined)
+                  || "",
+                "placeholderColor": (local_1_0.selectedVideo !== null && local_1_0.selectedVideo !== undefined ? local_1_0.selectedVideo.thumbnailColor : undefined)
+                  || "#000000",
                 "fillParent": true,
                 "useAspectRatio": false,
                 "borderRadiusVp": 0
-              };
-              v9.imageUrl = local_1_0.curSource.thumbnailUrl
-                || (local_1_0.selectedVideo !== null && local_1_0.selectedVideo !== undefined ? local_1_0.selectedVideo.thumbnailUrl : undefined)
-                || "";
-              v9.placeholderColor = (local_1_0.selectedVideo !== null && local_1_0.selectedVideo !== undefined ? local_1_0.selectedVideo.thumbnailColor : undefined)
-                || "#000000";
-              local_1_0.updateStateVarsOfChildByElmtId(p0, v9);
+              });
             }
           }, {
             "name": "MediaThumb"
@@ -3417,19 +3358,15 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
             Text.backgroundColor(local_1_0.subtitleDragging ? "#B3000000" : SUBTITLE_BACKGROUND_VALUES[local_1_0.playbackConfig.subtitleBackground]);
             Text.borderRadius(local_1_0.subtitleDragging ? 12 : 4);
             v8 = {
-              "width": null,
-              "color": null,
+              "width": local_1_0.subtitleDragging ? 1.5 : 0,
+              "color": local_1_0.subtitleDragging ? local_1_0.themePrimary : Color.Transparent,
               "radius": 12
             };
-            v8.width = local_1_0.subtitleDragging ? 1.5 : 0;
-            v8.color = local_1_0.subtitleDragging ? local_1_0.themePrimary : Color.Transparent;
             Text.border(v8);
             v8 = {
-              "x": null,
-              "y": null
+              "x": local_1_0.subtitleDragging ? 1.03 : 1,
+              "y": local_1_0.subtitleDragging ? 1.03 : 1
             };
-            v8.x = local_1_0.subtitleDragging ? 1.03 : 1;
-            v8.y = local_1_0.subtitleDragging ? 1.03 : 1;
             Text.scale(v8);
           }, Text);
           Text.pop();
@@ -3845,7 +3782,6 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     local_1_0 = this;
     if (p0 === undefined) {}
     local_1_0.observeComponentCreation2(function (p0, p1) {
-      let v8;
       Menu.create();
       Menu.onAppear(function () {
         return local_1_0.onControlMenuAppear();
@@ -3861,18 +3797,16 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
         "moduleName": "entry"
       });
       Menu.borderRadius(12);
-      v8 = {
+      Menu.menuItemDivider({
         "strokeWidth": LengthMetrics.vp(0.5),
-        "color": null
-      };
-      v8.color = {
-        "id": 125831013,
-        "type": 10001,
-        "params": [],
-        "bundleName": "com.talon.yourpipe",
-        "moduleName": "entry"
-      };
-      Menu.menuItemDivider(v8);
+        "color": {
+          "id": 125831013,
+          "type": 10001,
+          "params": [],
+          "bundleName": "com.talon.yourpipe",
+          "moduleName": "entry"
+        }
+      });
       Menu.subMenuExpandingMode(SubMenuExpandingMode.EMBEDDED_EXPAND);
       Menu.width(260);
     }, Menu);
@@ -3881,8 +3815,7 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       if (local_1_0.isFullLandscapeScreen && local_1_0.onShowInfoPanel) {
         local_1_0.ifElseBranchUpdateFunction(0, function () {
           local_1_0.observeComponentCreation2(function (p0, p1) {
-            let v8;
-            v8 = {
+            MenuItem.create({
               "symbolStartIcon": local_1_0.menuSymbol({
                 "id": 125832646,
                 "type": 40000,
@@ -3897,8 +3830,7 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
                 "bundleName": "com.talon.yourpipe",
                 "moduleName": "entry"
               }
-            };
-            MenuItem.create(v8);
+            });
             MenuItem.contentFontColor({
               "id": 125830982,
               "type": 10001,
@@ -3925,8 +3857,7 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       if (!local_1_0.isLocalMode && local_1_0.chapters.length > 0) {
         local_1_0.ifElseBranchUpdateFunction(0, function () {
           local_1_0.observeComponentCreation2(function (p0, p1) {
-            let v8;
-            v8 = {
+            MenuItem.create({
               "symbolStartIcon": local_1_0.menuSymbol({
                 "id": 125831926,
                 "type": 40000,
@@ -3944,8 +3875,7 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
               "builder": function () {
                 local_1_0.ChapterMenu();
               }
-            };
-            MenuItem.create(v8);
+            });
             MenuItem.contentFontColor({
               "id": 125830982,
               "type": 10001,
@@ -3971,8 +3901,7 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       } else if (!local_1_0.isLocalMode) {
         local_1_0.ifElseBranchUpdateFunction(0, function () {
           local_1_0.observeComponentCreation2(function (p0, p1) {
-            let v8;
-            v8 = {
+            MenuItem.create({
               "symbolStartIcon": local_1_0.menuSymbol({
                 "id": 125832924,
                 "type": 40000,
@@ -3990,8 +3919,7 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
               "builder": function () {
                 local_1_0.SubtitleMenu();
               }
-            };
-            MenuItem.create(v8);
+            });
             MenuItem.contentFontColor({
               "id": 125830982,
               "type": 10001,
@@ -4015,8 +3943,7 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       if (!local_1_0.curSource.isLive && !local_1_0.isLocalMode && local_1_0.controller.getAudioStreamList().length > 1) {
         local_1_0.ifElseBranchUpdateFunction(0, function () {
           local_1_0.observeComponentCreation2(function (p0, p1) {
-            let v8;
-            v8 = {
+            MenuItem.create({
               "symbolStartIcon": local_1_0.menuSymbol({
                 "id": 125831509,
                 "type": 40000,
@@ -4034,8 +3961,7 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
               "builder": function () {
                 local_1_0.AudioMenu();
               }
-            };
-            MenuItem.create(v8);
+            });
             MenuItem.contentFontColor({
               "id": 125830982,
               "type": 10001,
@@ -4061,8 +3987,7 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       } else if (!local_1_0.curSource.isLive || local_1_0.vm.playerModel.liveQualityReady) {
         local_1_0.ifElseBranchUpdateFunction(0, function () {
           local_1_0.observeComponentCreation2(function (p0, p1) {
-            let v8;
-            v8 = {
+            MenuItem.create({
               "symbolStartIcon": local_1_0.menuSymbol({
                 "id": 125831321,
                 "type": 40000,
@@ -4080,8 +4005,7 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
               "builder": function () {
                 local_1_0.VideoMenu();
               }
-            };
-            MenuItem.create(v8);
+            });
             MenuItem.contentFontColor({
               "id": 125830982,
               "type": 10001,
@@ -4105,8 +4029,7 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       if (!local_1_0.curSource.isLive) {
         local_1_0.ifElseBranchUpdateFunction(0, function () {
           local_1_0.observeComponentCreation2(function (p0, p1) {
-            let v8;
-            v8 = {
+            MenuItem.create({
               "symbolStartIcon": local_1_0.menuSymbol({
                 "id": 125831173,
                 "type": 40000,
@@ -4125,8 +4048,7 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
               "builder": function () {
                 local_1_0.SpeedMenu();
               }
-            };
-            MenuItem.create(v8);
+            });
             MenuItem.contentFontColor({
               "id": 125830982,
               "type": 10001,
@@ -4157,8 +4079,7 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     }, If);
     If.pop();
     local_1_0.observeComponentCreation2(function (p0, p1) {
-      let v8;
-      v8 = {
+      MenuItem.create({
         "symbolStartIcon": local_1_0.menuSymbol({
           "id": 125831321,
           "type": 40000,
@@ -4177,8 +4098,7 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
         "builder": function () {
           local_1_0.AspectMenu();
         }
-      };
-      MenuItem.create(v8);
+      });
       MenuItem.contentFontColor({
         "id": 125830982,
         "type": 10001,
@@ -4203,8 +4123,7 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     }, MenuItem);
     MenuItem.pop();
     local_1_0.observeComponentCreation2(function (p0, p1) {
-      let v8;
-      v8 = {
+      MenuItem.create({
         "symbolStartIcon": local_1_0.menuSymbol({
           "id": 125831488,
           "type": 40000,
@@ -4219,8 +4138,7 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
           "bundleName": "com.talon.yourpipe",
           "moduleName": "entry"
         }
-      };
-      MenuItem.create(v8);
+      });
       MenuItem.contentFontColor({
         "id": 125830982,
         "type": 10001,
@@ -4493,7 +4411,6 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     local_1_0 = this;
     if (p0 === undefined) {}
     local_1_0.observeComponentCreation2(function (p0, p1) {
-      let v8;
       Row.create();
       Row.width("100%");
       Row.alignItems(VerticalAlign.Center);
@@ -4503,12 +4420,10 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
         "top": local_1_0.getControlTopPad(),
         "bottom": local_0_23 /*CONTROL_VERTICAL_INSET*/
       });
-      v8 = {
+      Row.linearGradient({
         "direction": GradientDirection.Bottom,
-        "colors": null
-      };
-      v8.colors = [["#66000000", 0], ["#00000000", 1]];
-      Row.linearGradient(v8);
+        "colors": [["#66000000", 0], ["#00000000", 1]]
+      });
     }, Row);
     local_1_0.observeComponentCreation2(function (p0, p1) {
       Stack.create({
@@ -4588,7 +4503,6 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     local_1_0 = this;
     if (p0 === undefined) {}
     local_1_0.observeComponentCreation2(function (p0, p1) {
-      let v8;
       Row.create({
         "space": local_1_0.getControlItemGap()
       });
@@ -4599,12 +4513,10 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
         "right": local_1_0.getControlRightPad(),
         "bottom": local_1_0.getControlBottomPad()
       });
-      v8 = {
+      Row.linearGradient({
         "direction": GradientDirection.Bottom,
-        "colors": null
-      };
-      v8.colors = [["#00000000", 0], ["#66000000", 1]];
-      Row.linearGradient(v8);
+        "colors": [["#00000000", 0], ["#66000000", 1]]
+      });
       Row.onAreaChange(function (p0, p1) {
         local_1_0.bottomControlBarVpH = Number(p1.height);
       });
@@ -4717,16 +4629,11 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
           }, Canvas);
           Canvas.pop();
           local_1_0.observeComponentCreation2(function (p0, p1) {
-            let v8;
-            v8 = {
-              "value": null,
-              "max": null,
-              "style": null
-            };
-            v8.value = local_1_0.isSliderDragging ? local_1_0.sliderDragValue : local_1_0.isGestureSeek ? local_1_0.gestureSeekTime : local_1_0.currentTime;
-            v8.max = local_1_0.durationTime;
-            v8.style = local_1_0.sliderStyle;
-            Slider.create(v8);
+            Slider.create({
+              "value": local_1_0.isSliderDragging ? local_1_0.sliderDragValue : local_1_0.isGestureSeek ? local_1_0.gestureSeekTime : local_1_0.currentTime,
+              "max": local_1_0.durationTime,
+              "style": local_1_0.sliderStyle
+            });
             Slider.width("100%");
             Slider.height(local_0_26 /*CONTROL_SLOT_SIZE*/);
             Slider.trackColor(Color.Transparent);

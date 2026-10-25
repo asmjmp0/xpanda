@@ -151,18 +151,12 @@ contentContextTitle = function (p0) {
   return contentTitle(p0).trim();
 };
 contentCreatedAtText = function (p0) {
-  let v0, acc;
+  let v0;
   if (p0.kind !== ContentDetailKind.ANSWER && p0.kind !== ContentDetailKind.ARTICLE) {
     return "";
   }
   v0 = formatContentDateTime(p0.value.createdAt);
-  if (v0.length > 0) {
-    v0 = "发布于 " + v0;
-    acc = v0 + "";
-  } else {
-    acc = "";
-  }
-  return acc;
+  return v0.length > 0 ? "发布于 " + v0 + "" : "";
 };
 contentDetailPageTitle = function (p0) {
   switch (p0) {
@@ -290,12 +284,7 @@ contentUpdatedAtText = function (p0) {
   return v1.length > 0 ? "编辑于 " + v1 + "" : "";
 };
 local_0_2 = function (p0, p1, p2) {
-  let v0;
-  v0 = 1;
-  if (p0 < 0) {
-    v0 = -1;
-  }
-  return v0 * p1 * Math.tanh(Math.abs(p0) / (p1 * p2));
+  return (p0 < 0 ? -1 : 1) * p1 * Math.tanh(Math.abs(p0) / (p1 * p2));
 };
 local_0_8 = function (p0) {
   let v0;
@@ -381,7 +370,7 @@ local_0_1 = function (p0) {
     });
     local_1_1 = [];
     local_1_0.forEach(function (p0) {
-      let v0 /*merged*/, v3;
+      let v0 /*merged*/;
       let local_2_0, local_2_1, local_2_2, local_2_3, local_2_4, local_2_5;
       v0 = p0.filter(function (p0) {
         return p0.masterSegInfo !== undefined;
@@ -421,20 +410,18 @@ local_0_1 = function (p0) {
         local_2_5 = local_2_5 /*isSpan*/ || v0.isSpan;
         return;
       });
-      v3 = {
+      local_1_1.push({
         "startIndex": p0[0].startIndex,
         "endIndex": p0[0].endIndex,
-        "segInfo": null
-      };
-      v3.segInfo = {
-        "segIds": local_2_0,
-        "isLike": local_2_4,
-        "likeCount": local_2_1,
-        "commentCount": local_2_2,
-        "myCommentCount": local_2_3,
-        "isSpan": local_2_5
-      };
-      local_1_1.push(v3);
+        "segInfo": {
+          "segIds": local_2_0,
+          "isLike": local_2_4,
+          "likeCount": local_2_1,
+          "commentCount": local_2_2,
+          "myCommentCount": local_2_3,
+          "isSpan": local_2_5
+        }
+      });
     });
     local_1_1.sort(function (p0, p1) {
       return p0.startIndex - p1.startIndex;
@@ -1666,17 +1653,13 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       if (p0.pid === local_1_0) {
         local_2_0 = [];
         p0.marks.forEach(function (p0, p1) {
-          let v0 /*marks*/;
           if (p1 === local_1_2) {
-            v0 = {
+            local_2_0.push({
               "startIndex": p0.startIndex,
               "endIndex": p0.endIndex,
-              "segInfo": null,
-              "masterSegInfo": null
-            };
-            v0.segInfo = p0.segInfo === undefined ? p0.segInfo : local_1_3;
-            v0.masterSegInfo = p0.masterSegInfo === undefined ? p0.masterSegInfo : local_1_3;
-            local_2_0.push(v0);
+              "segInfo": p0.segInfo === undefined ? p0.segInfo : local_1_3,
+              "masterSegInfo": p0.masterSegInfo === undefined ? p0.masterSegInfo : local_1_3
+            });
             return;
           }
           local_2_0.push(p0);
@@ -1718,17 +1701,12 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     v7 = this.kind === ContentDetailKind.ANSWER ? "answer" : "article";
     v8 = {
       "segIds": v6.segIds,
-      "isLike": null,
-      "likeCount": null,
-      "commentCount": null,
-      "myCommentCount": null,
-      "isSpan": null
+      "isLike": !v6.isLike,
+      "likeCount": v6.isLike ? Math.max(v3, v6.likeCount - 1) : v6.likeCount + 1,
+      "commentCount": v6.commentCount,
+      "myCommentCount": v6.myCommentCount,
+      "isSpan": v6.isSpan
     };
-    v8.isLike = !v6.isLike;
-    v8.likeCount = v6.isLike ? Math.max(v3, v6.likeCount - 1) : v6.likeCount + 1;
-    v8.commentCount = v6.commentCount;
-    v8.myCommentCount = v6.myCommentCount;
-    v8.isSpan = v6.isSpan;
     this.segmentLikeBusy = true;
     try {
       this.applySegmentMeta(local_1_0, this.segmentSheetMarkIndex, v8);
@@ -1861,51 +1839,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
             let v0 /*SegmentPill*/, v2;
             if (p1) {
               v2 = {
-                "icon": null,
-                "count": null,
-                "active": null,
-                "iconAccent": false,
-                "testId": "segment_sheet_like",
-                "label": null,
-                "onTap": null
-              };
-              v2.icon = local_1_0.currentSegmentMeta().isLike ? {
-                "id": 125832148,
-                "type": 40000,
-                "params": [],
-                "bundleName": "com.github.zhuoyi233.zhplus",
-                "moduleName": "entry"
-              } : {
-                "id": 125832147,
-                "type": 40000,
-                "params": [],
-                "bundleName": "com.github.zhuoyi233.zhplus",
-                "moduleName": "entry"
-              };
-              v2.count = "" + local_1_0.currentSegmentMeta().likeCount + "";
-              v2.active = local_1_0.currentSegmentMeta().isLike;
-              v2.label = local_1_0.currentSegmentMeta().isLike ? "取消点赞该划线" : "点赞该划线";
-              v2.onTap = function () {
-                local_1_0.onSegmentLike();
-              };
-              v0 = new SegmentPill(local_1_0, v2, undefined, p0, function () {}, {
-                "page": "entry/src/main/ets/pages/ContentDetailPages.ets",
-                "line": 569,
-                "col": 11
-              });
-              ViewPU.create(v0);
-              v0.paramsGenerator_ = function () {
-                let v0;
-                v0 = {
-                  "icon": null,
-                  "count": null,
-                  "active": null,
-                  "iconAccent": false,
-                  "testId": "segment_sheet_like",
-                  "label": null,
-                  "onTap": null
-                };
-                v0.icon = local_1_0.currentSegmentMeta().isLike ? {
+                "icon": local_1_0.currentSegmentMeta().isLike ? {
                   "id": 125832148,
                   "type": 40000,
                   "params": [],
@@ -1917,41 +1851,68 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
                   "params": [],
                   "bundleName": "com.github.zhuoyi233.zhplus",
                   "moduleName": "entry"
-                };
-                v0.count = "" + local_1_0.currentSegmentMeta().likeCount + "";
-                v0.active = local_1_0.currentSegmentMeta().isLike;
-                v0.label = local_1_0.currentSegmentMeta().isLike ? "取消点赞该划线" : "点赞该划线";
-                v0.onTap = function () {
-                  local_1_0.onSegmentLike();
-                };
-                return v0;
-              };
-            } else {
-              v2 = {
-                "icon": null,
-                "count": null,
-                "active": null,
+                },
+                "count": "" + local_1_0.currentSegmentMeta().likeCount + "",
+                "active": local_1_0.currentSegmentMeta().isLike,
                 "iconAccent": false,
                 "testId": "segment_sheet_like",
-                "label": null
+                "label": local_1_0.currentSegmentMeta().isLike ? "取消点赞该划线" : "点赞该划线",
+                "onTap": function () {
+                  local_1_0.onSegmentLike();
+                }
               };
-              v2.icon = local_1_0.currentSegmentMeta().isLike ? {
-                "id": 125832148,
-                "type": 40000,
-                "params": [],
-                "bundleName": "com.github.zhuoyi233.zhplus",
-                "moduleName": "entry"
-              } : {
-                "id": 125832147,
-                "type": 40000,
-                "params": [],
-                "bundleName": "com.github.zhuoyi233.zhplus",
-                "moduleName": "entry"
+              v0 = new SegmentPill(local_1_0, v2, undefined, p0, function () {}, {
+                "page": "entry/src/main/ets/pages/ContentDetailPages.ets",
+                "line": 569,
+                "col": 11
+              });
+              ViewPU.create(v0);
+              v0.paramsGenerator_ = function () {
+                return {
+                  "icon": local_1_0.currentSegmentMeta().isLike ? {
+                    "id": 125832148,
+                    "type": 40000,
+                    "params": [],
+                    "bundleName": "com.github.zhuoyi233.zhplus",
+                    "moduleName": "entry"
+                  } : {
+                    "id": 125832147,
+                    "type": 40000,
+                    "params": [],
+                    "bundleName": "com.github.zhuoyi233.zhplus",
+                    "moduleName": "entry"
+                  },
+                  "count": "" + local_1_0.currentSegmentMeta().likeCount + "",
+                  "active": local_1_0.currentSegmentMeta().isLike,
+                  "iconAccent": false,
+                  "testId": "segment_sheet_like",
+                  "label": local_1_0.currentSegmentMeta().isLike ? "取消点赞该划线" : "点赞该划线",
+                  "onTap": function () {
+                    local_1_0.onSegmentLike();
+                  }
+                };
               };
-              v2.count = "" + local_1_0.currentSegmentMeta().likeCount + "";
-              v2.active = local_1_0.currentSegmentMeta().isLike;
-              v2.label = local_1_0.currentSegmentMeta().isLike ? "取消点赞该划线" : "点赞该划线";
-              local_1_0.updateStateVarsOfChildByElmtId(p0, v2);
+            } else {
+              local_1_0.updateStateVarsOfChildByElmtId(p0, {
+                "icon": local_1_0.currentSegmentMeta().isLike ? {
+                  "id": 125832148,
+                  "type": 40000,
+                  "params": [],
+                  "bundleName": "com.github.zhuoyi233.zhplus",
+                  "moduleName": "entry"
+                } : {
+                  "id": 125832147,
+                  "type": 40000,
+                  "params": [],
+                  "bundleName": "com.github.zhuoyi233.zhplus",
+                  "moduleName": "entry"
+                },
+                "count": "" + local_1_0.currentSegmentMeta().likeCount + "",
+                "active": local_1_0.currentSegmentMeta().isLike,
+                "iconAccent": false,
+                "testId": "segment_sheet_like",
+                "label": local_1_0.currentSegmentMeta().isLike ? "取消点赞该划线" : "点赞该划线"
+              });
             }
           }, {
             "name": "SegmentPill"
@@ -2004,7 +1965,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
                 };
               };
             } else {
-              v2 = {
+              local_1_0.updateStateVarsOfChildByElmtId(p0, {
                 "icon": {
                   "id": 125832126,
                   "type": 40000,
@@ -2017,8 +1978,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
                 "iconAccent": true,
                 "testId": "segment_sheet_comment",
                 "label": "查看该划线的评论"
-              };
-              local_1_0.updateStateVarsOfChildByElmtId(p0, v2);
+              });
             }
           }, {
             "name": "SegmentPill"
@@ -2141,20 +2101,13 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       });
     }, Stack);
     local_1_0.observeComponentCreation2(function (p0, p1) {
-      let v0, v3;
-      v0 = 0;
       Column.create();
       Column.id("content_" + local_1_0.kind + "_detail_page");
       Column.width("100%");
       Column.height("100%");
-      v3 = {
-        "top": null
-      };
-      if (local_1_0.immersiveReading) {
-        v0 = Math.max(local_1_0.statusBarHeightVp, 0);
-      }
-      v3.top = v0;
-      Column.padding(v3);
+      Column.padding({
+        "top": local_1_0.immersiveReading ? Math.max(local_1_0.statusBarHeightVp, 0) : 0
+      });
       Column.backgroundColor({
         "id": 50331662,
         "type": 10001,
@@ -2341,8 +2294,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       if (v0 && local_1_0.phase === ContentDetailPhase.READY) {
         local_1_0.ifElseBranchUpdateFunction(0, function () {
           local_1_0.observeComponentCreation2(function (p0, p1) {
-            let v0, v1, v3, v4;
-            v1 = 0;
+            let v0, v4;
             Stack.create({
               "alignContent": Alignment.Bottom
             });
@@ -2352,16 +2304,10 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
             Stack.opacity(v4);
             v0 = local_1_0.kind !== ContentDetailKind.ANSWER ? HitTestMode.Transparent : local_1_0.answerOverscrollOffset !== 0 || local_1_0.answerOverscrollProgress() >= 1 ? HitTestMode.None : HitTestMode.Transparent;
             Stack.hitTestBehavior(v0);
-            v3 = {
-              "x": null,
-              "y": null
-            };
-            v3.x = local_1_0.answerSwitchMode === "horizontal" ? local_1_0.answerOverscrollOffset : 0;
-            if (local_1_0.answerSwitchMode !== "horizontal") {
-              v1 = local_1_0.answerOverscrollOffset;
-            }
-            v3.y = v1;
-            Stack.translate(v3);
+            Stack.translate({
+              "x": local_1_0.answerSwitchMode === "horizontal" ? local_1_0.answerOverscrollOffset : 0,
+              "y": local_1_0.answerSwitchMode !== "horizontal" ? local_1_0.answerOverscrollOffset : 0
+            });
           }, Stack);
           local_1_0.bottomActionBar.bind(local_1_0)();
           Stack.pop();
@@ -2431,33 +2377,29 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       if (local_1_0.phase === ContentDetailPhase.READY && local_1_0.collectionRepository !== undefined && local_1_0.session !== undefined) {
         local_1_0.ifElseBranchUpdateFunction(0, function () {
           local_1_0.observeComponentCreation2(function (p0, p1) {
-            let v4;
             Column.create();
-            v4 = {
-              "height": SheetSize.LARGE,
-              "dragBar": true,
-              "showClose": false,
-              "maskColor": "#66000000",
-              "backgroundColor": null,
-              "onDisappear": null
-            };
-            v4.backgroundColor = {
-              "id": 50331666,
-              "type": 10001,
-              "params": [],
-              "bundleName": "com.github.zhuoyi233.zhplus",
-              "moduleName": "entry"
-            };
-            v4.onDisappear = function () {
-              if (local_1_0.favoriteDialogShown) {
-                local_1_0.favoriteDialogShown = false;
-              }
-            };
             Column.bindSheet(local_1_0.favoriteDialogShown, {
               "builder": function () {
                 local_1_0.favoriteDialog();
               }
-            }, v4);
+            }, {
+              "height": SheetSize.LARGE,
+              "dragBar": true,
+              "showClose": false,
+              "maskColor": "#66000000",
+              "backgroundColor": {
+                "id": 50331666,
+                "type": 10001,
+                "params": [],
+                "bundleName": "com.github.zhuoyi233.zhplus",
+                "moduleName": "entry"
+              },
+              "onDisappear": function () {
+                if (local_1_0.favoriteDialogShown) {
+                  local_1_0.favoriteDialogShown = false;
+                }
+              }
+            });
           }, Column);
           Column.pop();
         });
@@ -2489,99 +2431,86 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     }, If);
     If.pop();
     local_1_0.observeComponentCreation2(function (p0, p1) {
-      let v4;
       Column.create();
-      v4 = {
-        "height": SheetSize.FIT_CONTENT,
-        "dragBar": true,
-        "showClose": false,
-        "maskColor": "#66000000",
-        "backgroundColor": null,
-        "onDisappear": null
-      };
-      v4.backgroundColor = {
-        "id": 50331666,
-        "type": 10001,
-        "params": [],
-        "bundleName": "com.github.zhuoyi233.zhplus",
-        "moduleName": "entry"
-      };
-      v4.onDisappear = function () {
-        if (local_1_0.actionMenuShown) {
-          local_1_0.actionMenuShown = false;
-        }
-      };
       Column.bindSheet(local_1_0.actionMenuShown, {
         "builder": function () {
           local_1_0.actionMenuSheet();
         }
-      }, v4);
-    }, Column);
-    Column.pop();
-    local_1_0.observeComponentCreation2(function (p0, p1) {
-      let v4;
-      Column.create();
-      v4 = {
+      }, {
         "height": SheetSize.FIT_CONTENT,
         "dragBar": true,
         "showClose": false,
         "maskColor": "#66000000",
-        "backgroundColor": null,
-        "onDisappear": null
-      };
-      v4.backgroundColor = {
-        "id": 50331666,
-        "type": 10001,
-        "params": [],
-        "bundleName": "com.github.zhuoyi233.zhplus",
-        "moduleName": "entry"
-      };
-      v4.onDisappear = function () {
-        if (local_1_0.doubleTapAskSheetShown) {
-          local_1_0.doubleTapAskSheetShown = false;
+        "backgroundColor": {
+          "id": 50331666,
+          "type": 10001,
+          "params": [],
+          "bundleName": "com.github.zhuoyi233.zhplus",
+          "moduleName": "entry"
+        },
+        "onDisappear": function () {
+          if (local_1_0.actionMenuShown) {
+            local_1_0.actionMenuShown = false;
+          }
         }
-      };
+      });
+    }, Column);
+    Column.pop();
+    local_1_0.observeComponentCreation2(function (p0, p1) {
+      Column.create();
       Column.bindSheet(local_1_0.doubleTapAskSheetShown, {
         "builder": function () {
           local_1_0.doubleTapAskSheet();
         }
-      }, v4);
-    }, Column);
-    Column.pop();
-    local_1_0.observeComponentCreation2(function (p0, p1) {
-      let v4;
-      Column.create();
-      v4 = {
+      }, {
         "height": SheetSize.FIT_CONTENT,
         "dragBar": true,
         "showClose": false,
         "maskColor": "#66000000",
-        "backgroundColor": null,
-        "onWillDismiss": null,
-        "onDisappear": null
-      };
-      v4.backgroundColor = {
-        "id": 50331666,
-        "type": 10001,
-        "params": [],
-        "bundleName": "com.github.zhuoyi233.zhplus",
-        "moduleName": "entry"
-      };
-      v4.onWillDismiss = function (p0) {
-        return local_1_0.guardSegmentSheetDismiss(p0);
-      };
-      v4.onDisappear = function () {
-        if (local_1_0.segmentSheetShown) {
-          local_1_0.segmentSheetShown = false;
-          local_1_0.segmentSheetPid = "";
-          local_1_0.segmentSheetMarkIndex = -1;
+        "backgroundColor": {
+          "id": 50331666,
+          "type": 10001,
+          "params": [],
+          "bundleName": "com.github.zhuoyi233.zhplus",
+          "moduleName": "entry"
+        },
+        "onDisappear": function () {
+          if (local_1_0.doubleTapAskSheetShown) {
+            local_1_0.doubleTapAskSheetShown = false;
+          }
         }
-      };
+      });
+    }, Column);
+    Column.pop();
+    local_1_0.observeComponentCreation2(function (p0, p1) {
+      Column.create();
       Column.bindSheet(local_1_0.segmentSheetShown, {
         "builder": function () {
           local_1_0.segmentActionSheet();
         }
-      }, v4);
+      }, {
+        "height": SheetSize.FIT_CONTENT,
+        "dragBar": true,
+        "showClose": false,
+        "maskColor": "#66000000",
+        "backgroundColor": {
+          "id": 50331666,
+          "type": 10001,
+          "params": [],
+          "bundleName": "com.github.zhuoyi233.zhplus",
+          "moduleName": "entry"
+        },
+        "onWillDismiss": function (p0) {
+          return local_1_0.guardSegmentSheetDismiss(p0);
+        },
+        "onDisappear": function () {
+          if (local_1_0.segmentSheetShown) {
+            local_1_0.segmentSheetShown = false;
+            local_1_0.segmentSheetPid = "";
+            local_1_0.segmentSheetMarkIndex = -1;
+          }
+        }
+      });
     }, Column);
     Column.pop();
     local_1_0.observeComponentCreation2(function (p0, p1) {
@@ -2641,57 +2570,40 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     let local_1_0;
     local_1_0 = this;
     local_1_0.observeComponentCreation2(function (p0, p1) {
-      let v0 /*CollectionDialogComponent*/, v2;
+      let v0 /*CollectionDialogComponent*/;
       if (p1) {
-        v2 = {
-          "contentType": null,
-          "contentId": null,
-          "repository": null,
-          "session": null,
-          "navigate": null,
-          "onDismiss": null,
-          "onFavoriteStateChange": null
-        };
-        v2.contentType = local_1_0.kind === ContentDetailKind.ARTICLE ? "article" : "answer";
-        v2.contentId = local_1_0.activeContentId;
-        v2.repository = local_1_0.collectionRepository;
-        v2.session = local_1_0.session;
-        v2.navigate = local_1_0.navigate;
-        v2.onDismiss = function () {
-          local_1_0.favoriteDialogShown = false;
-        };
-        v2.onFavoriteStateChange = function (p0) {
-          local_1_0.contentFavorited = p0;
-        };
-        v0 = new CollectionDialogComponent(local_1_0, v2, undefined, p0, function () {}, {
+        v0 = new CollectionDialogComponent(local_1_0, {
+          "contentType": local_1_0.kind === ContentDetailKind.ARTICLE ? "article" : "answer",
+          "contentId": local_1_0.activeContentId,
+          "repository": local_1_0.collectionRepository,
+          "session": local_1_0.session,
+          "navigate": local_1_0.navigate,
+          "onDismiss": function () {
+            local_1_0.favoriteDialogShown = false;
+          },
+          "onFavoriteStateChange": function (p0) {
+            local_1_0.contentFavorited = p0;
+          }
+        }, undefined, p0, function () {}, {
           "page": "entry/src/main/ets/pages/ContentDetailPages.ets",
           "line": 892,
           "col": 5
         });
         ViewPU.create(v0);
         v0.paramsGenerator_ = function () {
-          let v0;
-          v0 = {
-            "contentType": null,
-            "contentId": null,
-            "repository": null,
-            "session": null,
-            "navigate": null,
-            "onDismiss": null,
-            "onFavoriteStateChange": null
+          return {
+            "contentType": local_1_0.kind === ContentDetailKind.ARTICLE ? "article" : "answer",
+            "contentId": local_1_0.activeContentId,
+            "repository": local_1_0.collectionRepository,
+            "session": local_1_0.session,
+            "navigate": local_1_0.navigate,
+            "onDismiss": function () {
+              local_1_0.favoriteDialogShown = false;
+            },
+            "onFavoriteStateChange": function (p0) {
+              local_1_0.contentFavorited = p0;
+            }
           };
-          v0.contentType = local_1_0.kind === ContentDetailKind.ARTICLE ? "article" : "answer";
-          v0.contentId = local_1_0.activeContentId;
-          v0.repository = local_1_0.collectionRepository;
-          v0.session = local_1_0.session;
-          v0.navigate = local_1_0.navigate;
-          v0.onDismiss = function () {
-            local_1_0.favoriteDialogShown = false;
-          };
-          v0.onFavoriteStateChange = function (p0) {
-            local_1_0.contentFavorited = p0;
-          };
-          return v0;
         };
       } else {
         local_1_0.updateStateVarsOfChildByElmtId(p0, {});
@@ -2846,7 +2758,6 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     local_1_1 = this;
     local_1_0 = p0;
     local_1_1.observeComponentCreation2(function (p0, p1) {
-      let v2;
       Stack.create({
         "alignContent": Alignment.Bottom
       });
@@ -2854,12 +2765,10 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       Stack.height("100%");
       Stack.clip(true);
       globalThis.Gesture.create(GesturePriority.Parallel);
-      v2 = {
+      PanGesture.create({
         "fingers": 1,
-        "direction": null
-      };
-      v2.direction = local_1_1.answerSwitchMode === "horizontal" ? PanDirection.Horizontal : PanDirection.Vertical;
-      PanGesture.create(v2);
+        "direction": local_1_1.answerSwitchMode === "horizontal" ? PanDirection.Horizontal : PanDirection.Vertical
+      });
       PanGesture.onActionStart(function (p0) {
         local_1_1.overscrollPanPrevY = local_1_1.answerSwitchMode === "horizontal" ? p0.offsetX : p0.offsetY;
       });
@@ -2885,168 +2794,43 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       globalThis.Gesture.pop();
     }, Stack);
     local_1_1.observeComponentCreation2(function (p0, p1) {
-      let v0, v3;
-      v0 = 0;
       Column.create();
       Column.width("100%");
       Column.height("100%");
-      v3 = {
-        "x": null,
-        "y": null
-      };
-      v3.x = local_1_1.answerSwitchMode === "horizontal" ? local_1_1.answerOverscrollOffset : 0;
-      if (local_1_1.answerSwitchMode !== "horizontal") {
-        v0 = local_1_1.answerOverscrollOffset;
-      }
-      v3.y = v0;
-      Column.translate(v3);
+      Column.translate({
+        "x": local_1_1.answerSwitchMode === "horizontal" ? local_1_1.answerOverscrollOffset : 0,
+        "y": local_1_1.answerSwitchMode !== "horizontal" ? local_1_1.answerOverscrollOffset : 0
+      });
     }, Column);
     local_1_1.observeComponentCreation2(function (p0, p1) {
       __Common__.create();
       __Common__.layoutWeight(1);
     }, __Common__);
     local_1_1.observeComponentCreation2(function (p0, p1) {
-      let v0 /*FLOATING_TITLE_BAR_OFFSET*/, acc;
+      let acc;
       if (p1) {
-        v0 = 0;
         acc = {
           "html": contentHtml(local_1_0),
           "emptyMessage": contentEmptyMessage(local_1_0),
           "linkCardMetaRepository": local_1_1.linkCardMetaRepository,
           "disableEdgeSpring": local_1_1.kind === ContentDetailKind.ANSWER,
-          "topInsetVp": null,
-          "onVideoOpen": null,
-          "onLinkClick": null,
-          "onBodyDoubleTap": null,
-          "documentHeader": null,
-          "documentFooter": null,
-          "onScrollOffset": null,
-          "onBottomEdgeChange": null,
-          "onTopEdgeChange": null,
-          "onPageTurnPastStart": null,
-          "onPageTurnPastEnd": null,
-          "segmentInfos": null,
-          "onSegmentClick": null,
-          "onBodySelectionActive": null
-        };
-        if (!local_1_1.immersiveReading) {
-          v0 = FLOATING_TITLE_BAR_OFFSET;
-        }
-        acc.topInsetVp = v0;
-        acc.onVideoOpen = function (p0) {
-          return local_1_1.openVideo(p0);
-        };
-        acc.onLinkClick = function (p0) {
-          return local_1_1.openContentLink(p0);
-        };
-        acc.onBodyDoubleTap = function () {
-          return local_1_1.onContentDoubleTap();
-        };
-        acc.documentHeader = function () {
-          local_1_1.contentHeader(local_1_0);
-        };
-        acc.documentFooter = function () {
-          local_1_1.contentDateFooter(local_1_0);
-        };
-        acc.onScrollOffset = function (p0) {
-          if (local_1_1.pageActive) {
-            if (!acceptsContentDocumentEvent(local_1_1.phase, local_1_1.content, local_1_0)) {
-              return;
-            }
-            local_1_1.updateChromeHiddenByScroll(p0);
-            if (local_1_1.kind === ContentDetailKind.ANSWER) {
-              local_1_1.updateAnswerTitleScrolled(local_1_0, p0);
-            } else {
-              local_1_1.updateArticleTitleScrolled(local_1_0, p0);
-            }
-          }
-          return;
-        };
-        acc.onBottomEdgeChange = function (p0) {
-          if (local_1_1.pageActive) {
-            if (!acceptsContentDocumentEvent(local_1_1.phase, local_1_1.content, local_1_0)) {
-              return;
-            }
-            local_1_1.contentAtBottom = p0;
-            local_1_1.revealChromeAtBottom(p0);
-          }
-          return;
-        };
-        acc.onTopEdgeChange = function (p0) {
-          if (local_1_1.pageActive) {
-            if (!acceptsContentDocumentEvent(local_1_1.phase, local_1_1.content, local_1_0)) {
-              return;
-            }
-            local_1_1.contentAtTop = p0;
-          }
-          return;
-        };
-        acc.onPageTurnPastStart = function () {
-          if (local_1_1.pageTurnSwitchAnswer && local_1_1.kind === ContentDetailKind.ANSWER) {
-            local_1_1.moveAnswer(-1);
-          }
-        };
-        acc.onPageTurnPastEnd = function () {
-          if (local_1_1.pageTurnSwitchAnswer && local_1_1.kind === ContentDetailKind.ANSWER) {
-            local_1_1.moveAnswer(1);
-          }
-        };
-        acc.segmentInfos = local_1_1.segmentInfos;
-        acc.onSegmentClick = function (p0, p1) {
-          return local_1_1.openSegmentSheet(p0, p1);
-        };
-        acc.onBodySelectionActive = function (p0) {
-          local_1_1.bodyTextSelectionActive = p0;
-        };
-        acc = new NativeContentDocument(local_1_1, acc, undefined, p0, function () {}, {
-          "page": "entry/src/main/ets/pages/ContentDetailPages.ets",
-          "line": 985,
-          "col": 9
-        });
-        ViewPU.create(acc);
-        acc.paramsGenerator_ = function () {
-          let v0 /*FLOATING_TITLE_BAR_OFFSET*/, acc;
-          v0 = 0;
-          acc = {
-            "html": contentHtml(local_1_0),
-            "emptyMessage": contentEmptyMessage(local_1_0),
-            "linkCardMetaRepository": local_1_1.linkCardMetaRepository,
-            "disableEdgeSpring": local_1_1.kind === ContentDetailKind.ANSWER,
-            "topInsetVp": null,
-            "onVideoOpen": null,
-            "onLinkClick": null,
-            "onBodyDoubleTap": null,
-            "documentHeader": null,
-            "documentFooter": null,
-            "onScrollOffset": null,
-            "onBottomEdgeChange": null,
-            "onTopEdgeChange": null,
-            "onPageTurnPastStart": null,
-            "onPageTurnPastEnd": null,
-            "segmentInfos": null,
-            "onSegmentClick": null,
-            "onBodySelectionActive": null
-          };
-          if (!local_1_1.immersiveReading) {
-            v0 = FLOATING_TITLE_BAR_OFFSET;
-          }
-          acc.topInsetVp = v0;
-          acc.onVideoOpen = function (p0) {
+          "topInsetVp": local_1_1.immersiveReading ? 0 : FLOATING_TITLE_BAR_OFFSET,
+          "onVideoOpen": function (p0) {
             return local_1_1.openVideo(p0);
-          };
-          acc.onLinkClick = function (p0) {
+          },
+          "onLinkClick": function (p0) {
             return local_1_1.openContentLink(p0);
-          };
-          acc.onBodyDoubleTap = function () {
+          },
+          "onBodyDoubleTap": function () {
             return local_1_1.onContentDoubleTap();
-          };
-          acc.documentHeader = function () {
+          },
+          "documentHeader": function () {
             local_1_1.contentHeader(local_1_0);
-          };
-          acc.documentFooter = function () {
+          },
+          "documentFooter": function () {
             local_1_1.contentDateFooter(local_1_0);
-          };
-          acc.onScrollOffset = function (p0) {
+          },
+          "onScrollOffset": function (p0) {
             if (local_1_1.pageActive) {
               if (!acceptsContentDocumentEvent(local_1_1.phase, local_1_1.content, local_1_0)) {
                 return;
@@ -3059,8 +2843,8 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
               }
             }
             return;
-          };
-          acc.onBottomEdgeChange = function (p0) {
+          },
+          "onBottomEdgeChange": function (p0) {
             if (local_1_1.pageActive) {
               if (!acceptsContentDocumentEvent(local_1_1.phase, local_1_1.content, local_1_0)) {
                 return;
@@ -3069,8 +2853,8 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
               local_1_1.revealChromeAtBottom(p0);
             }
             return;
-          };
-          acc.onTopEdgeChange = function (p0) {
+          },
+          "onTopEdgeChange": function (p0) {
             if (local_1_1.pageActive) {
               if (!acceptsContentDocumentEvent(local_1_1.phase, local_1_1.content, local_1_0)) {
                 return;
@@ -3078,25 +2862,104 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
               local_1_1.contentAtTop = p0;
             }
             return;
-          };
-          acc.onPageTurnPastStart = function () {
+          },
+          "onPageTurnPastStart": function () {
             if (local_1_1.pageTurnSwitchAnswer && local_1_1.kind === ContentDetailKind.ANSWER) {
               local_1_1.moveAnswer(-1);
             }
-          };
-          acc.onPageTurnPastEnd = function () {
+          },
+          "onPageTurnPastEnd": function () {
             if (local_1_1.pageTurnSwitchAnswer && local_1_1.kind === ContentDetailKind.ANSWER) {
               local_1_1.moveAnswer(1);
             }
-          };
-          acc.segmentInfos = local_1_1.segmentInfos;
-          acc.onSegmentClick = function (p0, p1) {
+          },
+          "segmentInfos": local_1_1.segmentInfos,
+          "onSegmentClick": function (p0, p1) {
             return local_1_1.openSegmentSheet(p0, p1);
-          };
-          acc.onBodySelectionActive = function (p0) {
+          },
+          "onBodySelectionActive": function (p0) {
             local_1_1.bodyTextSelectionActive = p0;
+          }
+        };
+        acc = new NativeContentDocument(local_1_1, acc, undefined, p0, function () {}, {
+          "page": "entry/src/main/ets/pages/ContentDetailPages.ets",
+          "line": 985,
+          "col": 9
+        });
+        ViewPU.create(acc);
+        acc.paramsGenerator_ = function () {
+          return {
+            "html": contentHtml(local_1_0),
+            "emptyMessage": contentEmptyMessage(local_1_0),
+            "linkCardMetaRepository": local_1_1.linkCardMetaRepository,
+            "disableEdgeSpring": local_1_1.kind === ContentDetailKind.ANSWER,
+            "topInsetVp": local_1_1.immersiveReading ? 0 : FLOATING_TITLE_BAR_OFFSET,
+            "onVideoOpen": function (p0) {
+              return local_1_1.openVideo(p0);
+            },
+            "onLinkClick": function (p0) {
+              return local_1_1.openContentLink(p0);
+            },
+            "onBodyDoubleTap": function () {
+              return local_1_1.onContentDoubleTap();
+            },
+            "documentHeader": function () {
+              local_1_1.contentHeader(local_1_0);
+            },
+            "documentFooter": function () {
+              local_1_1.contentDateFooter(local_1_0);
+            },
+            "onScrollOffset": function (p0) {
+              if (local_1_1.pageActive) {
+                if (!acceptsContentDocumentEvent(local_1_1.phase, local_1_1.content, local_1_0)) {
+                  return;
+                }
+                local_1_1.updateChromeHiddenByScroll(p0);
+                if (local_1_1.kind === ContentDetailKind.ANSWER) {
+                  local_1_1.updateAnswerTitleScrolled(local_1_0, p0);
+                } else {
+                  local_1_1.updateArticleTitleScrolled(local_1_0, p0);
+                }
+              }
+              return;
+            },
+            "onBottomEdgeChange": function (p0) {
+              if (local_1_1.pageActive) {
+                if (!acceptsContentDocumentEvent(local_1_1.phase, local_1_1.content, local_1_0)) {
+                  return;
+                }
+                local_1_1.contentAtBottom = p0;
+                local_1_1.revealChromeAtBottom(p0);
+              }
+              return;
+            },
+            "onTopEdgeChange": function (p0) {
+              if (local_1_1.pageActive) {
+                if (!acceptsContentDocumentEvent(local_1_1.phase, local_1_1.content, local_1_0)) {
+                  return;
+                }
+                local_1_1.contentAtTop = p0;
+              }
+              return;
+            },
+            "onPageTurnPastStart": function () {
+              if (local_1_1.pageTurnSwitchAnswer && local_1_1.kind === ContentDetailKind.ANSWER) {
+                local_1_1.moveAnswer(-1);
+              }
+            },
+            "onPageTurnPastEnd": function () {
+              if (local_1_1.pageTurnSwitchAnswer && local_1_1.kind === ContentDetailKind.ANSWER) {
+                local_1_1.moveAnswer(1);
+              }
+            },
+            "segmentInfos": local_1_1.segmentInfos,
+            "onSegmentClick": function (p0, p1) {
+              return local_1_1.openSegmentSheet(p0, p1);
+            },
+            "onBodySelectionActive": function (p0) {
+              local_1_1.bodyTextSelectionActive = p0;
+            }
           };
-          return acc;
         };
       } else {
         local_1_1.updateStateVarsOfChildByElmtId(p0, {
@@ -3449,86 +3312,84 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       });
     }, Row);
     local_1_1.observeComponentCreation2(function (p0, p1) {
-      let v0 /*GlassCapsule*/, v2;
+      let v0 /*GlassCapsule*/;
       if (p1) {
-        v2 = {
+        v0 = new GlassCapsule(local_1_1, {
           "useMaterial": local_1_1.immersiveMaterialSupported,
-          "content": null
-        };
-        v2.content = function () {
-          local_1_1.observeComponentCreation2(function (p0, p1) {
-            Row.create({
-              "space": 0
-            });
-          }, Row);
-          local_1_1.observeComponentCreation2(function (p0, p1) {
-            Row.create({
-              "space": 4
-            });
-            Row.padding({
-              "left": 8,
-              "right": 8,
-              "top": 8,
-              "bottom": 8
-            });
-          }, Row);
-          local_1_1.observeComponentCreation2(function (p0, p1) {
-            SymbolGlyph.create({
-              "id": 125835554,
-              "type": 40000,
-              "params": [],
-              "bundleName": "com.github.zhuoyi233.zhplus",
-              "moduleName": "entry"
-            });
-            SymbolGlyph.fontSize(20);
-            SymbolGlyph.fontColor([local_1_1.resolvedThemeColor]);
-            SymbolGlyph.rotate({
-              "x": 0,
-              "y": 0,
-              "z": 1,
-              "angle": 90
-            });
-          }, SymbolGlyph);
-          local_1_1.observeComponentCreation2(function (p0, p1) {
-            Text.create("" + local_1_1.answerPreviewVoteupCount(local_1_0) + "");
-            Text.fontSize({
-              "id": 50331675,
-              "type": 10002,
-              "params": [],
-              "bundleName": "com.github.zhuoyi233.zhplus",
-              "moduleName": "entry"
-            });
-            Text.fontWeight(FontWeight.Medium);
-            Text.fontColor(local_1_1.resolvedThemeColor);
-          }, Text);
-          Text.pop();
-          Row.pop();
-          local_1_1.observeComponentCreation2(function (p0, p1) {
-            SymbolGlyph.create({
-              "id": 125835554,
-              "type": 40000,
-              "params": [],
-              "bundleName": "com.github.zhuoyi233.zhplus",
-              "moduleName": "entry"
-            });
-            SymbolGlyph.fontSize(20);
-            SymbolGlyph.fontColor([local_1_1.resolvedThemeColor]);
-            SymbolGlyph.rotate({
-              "x": 0,
-              "y": 0,
-              "z": 1,
-              "angle": -90
-            });
-            SymbolGlyph.padding({
-              "left": 8,
-              "right": 8,
-              "top": 8,
-              "bottom": 8
-            });
-          }, SymbolGlyph);
-          Row.pop();
-        };
-        v0 = new GlassCapsule(local_1_1, v2, undefined, p0, function () {}, {
+          "content": function () {
+            local_1_1.observeComponentCreation2(function (p0, p1) {
+              Row.create({
+                "space": 0
+              });
+            }, Row);
+            local_1_1.observeComponentCreation2(function (p0, p1) {
+              Row.create({
+                "space": 4
+              });
+              Row.padding({
+                "left": 8,
+                "right": 8,
+                "top": 8,
+                "bottom": 8
+              });
+            }, Row);
+            local_1_1.observeComponentCreation2(function (p0, p1) {
+              SymbolGlyph.create({
+                "id": 125835554,
+                "type": 40000,
+                "params": [],
+                "bundleName": "com.github.zhuoyi233.zhplus",
+                "moduleName": "entry"
+              });
+              SymbolGlyph.fontSize(20);
+              SymbolGlyph.fontColor([local_1_1.resolvedThemeColor]);
+              SymbolGlyph.rotate({
+                "x": 0,
+                "y": 0,
+                "z": 1,
+                "angle": 90
+              });
+            }, SymbolGlyph);
+            local_1_1.observeComponentCreation2(function (p0, p1) {
+              Text.create("" + local_1_1.answerPreviewVoteupCount(local_1_0) + "");
+              Text.fontSize({
+                "id": 50331675,
+                "type": 10002,
+                "params": [],
+                "bundleName": "com.github.zhuoyi233.zhplus",
+                "moduleName": "entry"
+              });
+              Text.fontWeight(FontWeight.Medium);
+              Text.fontColor(local_1_1.resolvedThemeColor);
+            }, Text);
+            Text.pop();
+            Row.pop();
+            local_1_1.observeComponentCreation2(function (p0, p1) {
+              SymbolGlyph.create({
+                "id": 125835554,
+                "type": 40000,
+                "params": [],
+                "bundleName": "com.github.zhuoyi233.zhplus",
+                "moduleName": "entry"
+              });
+              SymbolGlyph.fontSize(20);
+              SymbolGlyph.fontColor([local_1_1.resolvedThemeColor]);
+              SymbolGlyph.rotate({
+                "x": 0,
+                "y": 0,
+                "z": 1,
+                "angle": -90
+              });
+              SymbolGlyph.padding({
+                "left": 8,
+                "right": 8,
+                "top": 8,
+                "bottom": 8
+              });
+            }, SymbolGlyph);
+            Row.pop();
+          }
+        }, undefined, p0, function () {}, {
           "page": "entry/src/main/ets/pages/ContentDetailPages.ets",
           "line": 1192,
           "col": 9
@@ -3626,107 +3487,105 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     }, Blank);
     Blank.pop();
     local_1_1.observeComponentCreation2(function (p0, p1) {
-      let v0 /*GlassCapsule*/, v2;
+      let v0 /*GlassCapsule*/;
       if (p1) {
-        v2 = {
+        v0 = new GlassCapsule(local_1_1, {
           "useMaterial": local_1_1.immersiveMaterialSupported,
-          "content": null
-        };
-        v2.content = function () {
-          local_1_1.observeComponentCreation2(function (p0, p1) {
-            Row.create({
-              "space": 0
-            });
-          }, Row);
-          local_1_1.observeComponentCreation2(function (p0, p1) {
-            SymbolGlyph.create({
-              "id": 125831605,
-              "type": 40000,
-              "params": [],
-              "bundleName": "com.github.zhuoyi233.zhplus",
-              "moduleName": "entry"
-            });
-            SymbolGlyph.fontSize(20);
-            SymbolGlyph.fontColor([{
-              "id": 50331664,
-              "type": 10001,
-              "params": [],
-              "bundleName": "com.github.zhuoyi233.zhplus",
-              "moduleName": "entry"
-            }]);
-            SymbolGlyph.width(36);
-            SymbolGlyph.height(36);
-          }, SymbolGlyph);
-          local_1_1.observeComponentCreation2(function (p0, p1) {
-            Row.create({
-              "space": 4
-            });
-            Row.padding({
-              "left": 6,
-              "right": 6,
-              "top": 8,
-              "bottom": 8
-            });
-          }, Row);
-          local_1_1.observeComponentCreation2(function (p0, p1) {
-            SymbolGlyph.create({
-              "id": 125831766,
-              "type": 40000,
-              "params": [],
-              "bundleName": "com.github.zhuoyi233.zhplus",
-              "moduleName": "entry"
-            });
-            SymbolGlyph.fontSize(20);
-            SymbolGlyph.fontColor([{
-              "id": 50331664,
-              "type": 10001,
-              "params": [],
-              "bundleName": "com.github.zhuoyi233.zhplus",
-              "moduleName": "entry"
-            }]);
-          }, SymbolGlyph);
-          local_1_1.observeComponentCreation2(function (p0, p1) {
-            Text.create("" + local_1_1.answerPreviewCommentCount(local_1_0) + "");
-            Text.fontSize({
-              "id": 50331675,
-              "type": 10002,
-              "params": [],
-              "bundleName": "com.github.zhuoyi233.zhplus",
-              "moduleName": "entry"
-            });
-            Text.fontWeight(FontWeight.Medium);
-            Text.fontColor({
-              "id": 50331664,
-              "type": 10001,
-              "params": [],
-              "bundleName": "com.github.zhuoyi233.zhplus",
-              "moduleName": "entry"
-            });
-          }, Text);
-          Text.pop();
-          Row.pop();
-          local_1_1.observeComponentCreation2(function (p0, p1) {
-            SymbolGlyph.create({
-              "id": 125833751,
-              "type": 40000,
-              "params": [],
-              "bundleName": "com.github.zhuoyi233.zhplus",
-              "moduleName": "entry"
-            });
-            SymbolGlyph.fontSize(20);
-            SymbolGlyph.fontColor([{
-              "id": 50331664,
-              "type": 10001,
-              "params": [],
-              "bundleName": "com.github.zhuoyi233.zhplus",
-              "moduleName": "entry"
-            }]);
-            SymbolGlyph.width(36);
-            SymbolGlyph.height(36);
-          }, SymbolGlyph);
-          Row.pop();
-        };
-        v0 = new GlassCapsule(local_1_1, v2, undefined, p0, function () {}, {
+          "content": function () {
+            local_1_1.observeComponentCreation2(function (p0, p1) {
+              Row.create({
+                "space": 0
+              });
+            }, Row);
+            local_1_1.observeComponentCreation2(function (p0, p1) {
+              SymbolGlyph.create({
+                "id": 125831605,
+                "type": 40000,
+                "params": [],
+                "bundleName": "com.github.zhuoyi233.zhplus",
+                "moduleName": "entry"
+              });
+              SymbolGlyph.fontSize(20);
+              SymbolGlyph.fontColor([{
+                "id": 50331664,
+                "type": 10001,
+                "params": [],
+                "bundleName": "com.github.zhuoyi233.zhplus",
+                "moduleName": "entry"
+              }]);
+              SymbolGlyph.width(36);
+              SymbolGlyph.height(36);
+            }, SymbolGlyph);
+            local_1_1.observeComponentCreation2(function (p0, p1) {
+              Row.create({
+                "space": 4
+              });
+              Row.padding({
+                "left": 6,
+                "right": 6,
+                "top": 8,
+                "bottom": 8
+              });
+            }, Row);
+            local_1_1.observeComponentCreation2(function (p0, p1) {
+              SymbolGlyph.create({
+                "id": 125831766,
+                "type": 40000,
+                "params": [],
+                "bundleName": "com.github.zhuoyi233.zhplus",
+                "moduleName": "entry"
+              });
+              SymbolGlyph.fontSize(20);
+              SymbolGlyph.fontColor([{
+                "id": 50331664,
+                "type": 10001,
+                "params": [],
+                "bundleName": "com.github.zhuoyi233.zhplus",
+                "moduleName": "entry"
+              }]);
+            }, SymbolGlyph);
+            local_1_1.observeComponentCreation2(function (p0, p1) {
+              Text.create("" + local_1_1.answerPreviewCommentCount(local_1_0) + "");
+              Text.fontSize({
+                "id": 50331675,
+                "type": 10002,
+                "params": [],
+                "bundleName": "com.github.zhuoyi233.zhplus",
+                "moduleName": "entry"
+              });
+              Text.fontWeight(FontWeight.Medium);
+              Text.fontColor({
+                "id": 50331664,
+                "type": 10001,
+                "params": [],
+                "bundleName": "com.github.zhuoyi233.zhplus",
+                "moduleName": "entry"
+              });
+            }, Text);
+            Text.pop();
+            Row.pop();
+            local_1_1.observeComponentCreation2(function (p0, p1) {
+              SymbolGlyph.create({
+                "id": 125833751,
+                "type": 40000,
+                "params": [],
+                "bundleName": "com.github.zhuoyi233.zhplus",
+                "moduleName": "entry"
+              });
+              SymbolGlyph.fontSize(20);
+              SymbolGlyph.fontColor([{
+                "id": 50331664,
+                "type": 10001,
+                "params": [],
+                "bundleName": "com.github.zhuoyi233.zhplus",
+                "moduleName": "entry"
+              }]);
+              SymbolGlyph.width(36);
+              SymbolGlyph.height(36);
+            }, SymbolGlyph);
+            Row.pop();
+          }
+        }, undefined, p0, function () {}, {
           "page": "entry/src/main/ets/pages/ContentDetailPages.ets",
           "line": 1216,
           "col": 9
@@ -3847,13 +3706,11 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     local_1_1 = this;
     local_1_0 = p0;
     local_1_1.observeComponentCreation2(function (p0, p1) {
-      let v2 /*themeColorContainerColor*/, v3;
+      let v2 /*themeColorContainerColor*/;
       Column.create({
         "space": 8
       });
-      v2 = local_1_0 ? "answer_prev_preview_card" : "answer_next_preview_card";
-      v3 = 0;
-      Column.id(v2);
+      Column.id(local_1_0 ? "answer_prev_preview_card" : "answer_next_preview_card");
       Column.width("100%");
       Column.padding(12);
       Column.borderRadius({
@@ -3878,14 +3735,9 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
           "bundleName": "com.github.zhuoyi233.zhplus",
           "moduleName": "entry"
         },
-        "top": null,
-        "bottom": null
+        "top": local_1_0 ? Math.max(local_1_1.statusBarHeightVp, 0) : 0,
+        "bottom": local_1_0 ? 0 : 8 + Math.max(local_1_1.bottomRectHeightVp, 0)
       };
-      v2.top = local_1_0 ? Math.max(local_1_1.statusBarHeightVp, 0) : 0;
-      if (!local_1_0) {
-        v3 = 8 + Math.max(local_1_1.bottomRectHeightVp, 0);
-      }
-      v2.bottom = v3;
       Column.margin(v2);
       v2 = local_1_1.answerOverscrollTriggered() ? themeColorContainerColor(local_1_1.resolvedThemeColor) : {
         "id": 50331666,
@@ -4231,21 +4083,11 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     return 94 + 12 + 44 + 206 - this.answerFabOverlayHeightVp;
   }
   answerFabMaxDownY() {
-    let v0;
-    v0 = 48;
-    if (this.bottomActionBarHeightVp > 0) {
-      v0 = this.bottomActionBarHeightVp;
-    }
-    return Math.max(0, 206 - v0 - 4);
+    return Math.max(0, 206 - (this.bottomActionBarHeightVp > 0 ? this.bottomActionBarHeightVp : 48) - 4);
   }
   snapAnswerFabToEdge() {}
   answerFabSnapTargetX() {
-    let v0;
-    v0 = 0;
-    if (this.answerFabOverlayWidthVp - this.answerFabWidthVp + this.answerFabOffsetX + this.answerFabWidthVp / 2 < this.answerFabOverlayWidthVp / 2) {
-      v0 = this.answerFabWidthVp + 12 - this.answerFabOverlayWidthVp;
-    }
-    return v0;
+    return this.answerFabOverlayWidthVp - this.answerFabWidthVp + this.answerFabOffsetX + this.answerFabWidthVp / 2 < this.answerFabOverlayWidthVp / 2 ? this.answerFabWidthVp + 12 - this.answerFabOverlayWidthVp : 0;
   }
   gripIsLeftHand() {
     return this.gripMotionSupported && this.holdingHand === motion.HoldingHandStatus.LEFT_HAND_HELD;
@@ -4383,24 +4225,22 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
             Column.alignItems(HorizontalAlign.Start);
             Column.width("100%");
             v3 = {
-              "left": null,
-              "right": null,
+              "left": local_1_0.kind === ContentDetailKind.ANSWER ? 0 : local_1_0.kind === ContentDetailKind.ARTICLE ? 0 : {
+                "id": 50331674,
+                "type": 10002,
+                "params": [],
+                "bundleName": "com.github.zhuoyi233.zhplus",
+                "moduleName": "entry"
+              },
+              "right": local_1_0.kind === ContentDetailKind.ANSWER ? 0 : local_1_0.kind === ContentDetailKind.ARTICLE ? 0 : {
+                "id": 50331674,
+                "type": 10002,
+                "params": [],
+                "bundleName": "com.github.zhuoyi233.zhplus",
+                "moduleName": "entry"
+              },
               "top": null,
               "bottom": null
-            };
-            v3.left = local_1_0.kind === ContentDetailKind.ANSWER ? 0 : local_1_0.kind === ContentDetailKind.ARTICLE ? 0 : {
-              "id": 50331674,
-              "type": 10002,
-              "params": [],
-              "bundleName": "com.github.zhuoyi233.zhplus",
-              "moduleName": "entry"
-            };
-            v3.right = local_1_0.kind === ContentDetailKind.ANSWER ? 0 : local_1_0.kind === ContentDetailKind.ARTICLE ? 0 : {
-              "id": 50331674,
-              "type": 10002,
-              "params": [],
-              "bundleName": "com.github.zhuoyi233.zhplus",
-              "moduleName": "entry"
             };
             if (local_1_0.kind !== ContentDetailKind.ANSWER && local_1_0.kind !== ContentDetailKind.ARTICLE) {
               v0 = {
@@ -5174,35 +5014,26 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     If.pop();
   }
   updateAnswerTitleScrolled(p0, p1) {
-    let v0 /*scrolled*/;
     let local_1_0, local_1_1, local_1_2;
     local_1_2 = this;
     local_1_0 = p0;
     if (local_1_0.kind === ContentDetailKind.ANSWER) {
       if (local_1_0.value.id === (local_1_2.content === null || local_1_2.content === undefined ? undefined : local_1_2.content.value.id)) {
-        v0 = 64;
-        if (local_1_2.contentTitleHeightVp > 0) {
-          v0 = local_1_2.contentTitleHeightVp + 8;
-        }
-        local_1_1 = p1 > v0;
+        local_1_1 = p1 > (local_1_2.contentTitleHeightVp > 0 ? local_1_2.contentTitleHeightVp + 8 : 64);
         if (local_1_1 !== local_1_2.answerQuestionScrolled) {
           local_1_2.answerQuestionScrolled = local_1_1;
           local_1_2.getUIContext().animateTo({
             "duration": 220,
             "curve": Curve.EaseInOut
           }, function () {
-            let v1;
-            v1 = {
+            publishAnswerTitle({
               "id": local_1_2.contentId,
               "questionTitle": contentContextTitle(local_1_0),
               "authorName": contentAuthorName(local_1_0),
               "authorAvatarUrl": contentAuthorAvatarUrl(local_1_0),
-              "authorBadgeIconUrl": null,
-              "scrolled": null
-            };
-            v1.authorBadgeIconUrl = contentAuthorBadge(local_1_0)?.iconUrl ?? "";
-            v1.scrolled = local_1_1;
-            publishAnswerTitle(v1);
+              "authorBadgeIconUrl": contentAuthorBadge(local_1_0)?.iconUrl ?? "",
+              "scrolled": local_1_1
+            });
           });
         }
       }
@@ -5229,35 +5060,26 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     }
   }
   updateArticleTitleScrolled(p0, p1) {
-    let v0 /*scrolled*/;
     let local_1_0, local_1_1, local_1_2;
     local_1_2 = this;
     local_1_0 = p0;
     if (local_1_0.kind === ContentDetailKind.ARTICLE) {
       if (local_1_0.value.id === (local_1_2.content === null || local_1_2.content === undefined ? undefined : local_1_2.content.value.id)) {
-        v0 = 64;
-        if (local_1_2.contentTitleHeightVp > 0) {
-          v0 = local_1_2.contentTitleHeightVp + 8;
-        }
-        local_1_1 = p1 > v0;
+        local_1_1 = p1 > (local_1_2.contentTitleHeightVp > 0 ? local_1_2.contentTitleHeightVp + 8 : 64);
         if (local_1_1 !== local_1_2.articleTitleScrolled) {
           local_1_2.articleTitleScrolled = local_1_1;
           local_1_2.getUIContext().animateTo({
             "duration": 220,
             "curve": Curve.EaseInOut
           }, function () {
-            let v1;
-            v1 = {
+            publishArticleTitle({
               "id": local_1_2.contentId,
               "title": contentContextTitle(local_1_0),
               "authorName": contentAuthorName(local_1_0),
               "authorAvatarUrl": contentAuthorAvatarUrl(local_1_0),
-              "authorBadgeIconUrl": null,
-              "scrolled": null
-            };
-            v1.authorBadgeIconUrl = contentAuthorBadge(local_1_0)?.iconUrl ?? "";
-            v1.scrolled = local_1_1;
-            publishArticleTitle(v1);
+              "authorBadgeIconUrl": contentAuthorBadge(local_1_0)?.iconUrl ?? "",
+              "scrolled": local_1_1
+            });
           });
         }
       }
@@ -5269,18 +5091,15 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     local_1_1 = this;
     local_1_0 = p0;
     local_1_1.observeComponentCreation2(function (p0, p1) {
-      let v2;
-      v2 = {
+      Refresh.create({
         "refreshing": {
           "value": local_1_1.refreshingAnswers,
           "changeEvent": function (p0) {
             local_1_1.refreshingAnswers = p0;
           }
         },
-        "refreshingContent": null
-      };
-      v2.refreshingContent = local_1_1.indicator === null || local_1_1.indicator === undefined ? undefined : local_1_1.indicator.view();
-      Refresh.create(v2);
+        "refreshingContent": local_1_1.indicator === null || local_1_1.indicator === undefined ? undefined : local_1_1.indicator.view()
+      });
       Refresh.height("100%");
       Refresh.width("100%");
       Refresh.onRefreshing(function () {
@@ -5291,128 +5110,41 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       });
     }, Refresh);
     local_1_1.observeComponentCreation2(function (p0, p1) {
-      let v0 /*FLOATING_TITLE_BAR_OFFSET*/, acc;
+      let acc;
       if (p1) {
-        v0 = 0;
         acc = {
           "html": contentHtml(local_1_0),
           "emptyMessage": contentEmptyMessage(local_1_0),
           "collapsible": true,
           "linkCardMetaRepository": local_1_1.linkCardMetaRepository,
-          "topInsetVp": null,
-          "onVideoOpen": null,
-          "onLinkClick": null,
-          "documentHeader": null,
-          "onBodyDoubleTap": null,
-          "documentBodyFooter": null,
-          "documentItems": null,
-          "documentFooter": null,
-          "onListReachEnd": null,
-          "onScrollOffset": null
-        };
-        if (!local_1_1.immersiveReading) {
-          v0 = FLOATING_TITLE_BAR_OFFSET;
-        }
-        acc.topInsetVp = v0;
-        acc.onVideoOpen = function (p0) {
-          return local_1_1.openVideo(p0);
-        };
-        acc.onLinkClick = function (p0) {
-          return local_1_1.openContentLink(p0);
-        };
-        acc.documentHeader = function () {
-          local_1_1.contentHeader(local_1_0);
-        };
-        acc.onBodyDoubleTap = function () {
-          return local_1_1.onContentDoubleTap();
-        };
-        acc.documentBodyFooter = function () {
-          local_1_1.questionBodyFooter(local_1_0);
-        };
-        acc.documentItems = function () {
-          local_1_1.questionAnswerItems();
-        };
-        acc.documentFooter = function () {
-          local_1_1.questionAnswersFooter();
-        };
-        acc.onListReachEnd = function () {
-          if (local_1_1.answersController !== null && local_1_1.answersController !== undefined) {
-            local_1_1.answersController.loadMore();
-          }
-        };
-        acc.onScrollOffset = function (p0) {
-          let local_2_0;
-          local_2_0 = p0 > 160;
-          if (local_2_0 !== local_1_1.questionScrolled) {
-            local_1_1.questionScrolled = local_2_0;
-            local_1_1.getUIContext().animateTo({
-              "duration": 220,
-              "curve": Curve.EaseInOut
-            }, function () {
-              publishQuestionTitle({
-                "id": local_1_1.activeContentId,
-                "title": contentTitle(local_1_0),
-                "scrolled": local_2_0
-              });
-            });
-          }
-        };
-        acc = new NativeContentDocument(local_1_1, acc, undefined, p0, function () {}, {
-          "page": "entry/src/main/ets/pages/ContentDetailPages.ets",
-          "line": 1941,
-          "col": 7
-        });
-        ViewPU.create(acc);
-        acc.paramsGenerator_ = function () {
-          let v0 /*FLOATING_TITLE_BAR_OFFSET*/, acc;
-          v0 = 0;
-          acc = {
-            "html": contentHtml(local_1_0),
-            "emptyMessage": contentEmptyMessage(local_1_0),
-            "collapsible": true,
-            "linkCardMetaRepository": local_1_1.linkCardMetaRepository,
-            "topInsetVp": null,
-            "onVideoOpen": null,
-            "onLinkClick": null,
-            "documentHeader": null,
-            "onBodyDoubleTap": null,
-            "documentBodyFooter": null,
-            "documentItems": null,
-            "documentFooter": null,
-            "onListReachEnd": null,
-            "onScrollOffset": null
-          };
-          if (!local_1_1.immersiveReading) {
-            v0 = FLOATING_TITLE_BAR_OFFSET;
-          }
-          acc.topInsetVp = v0;
-          acc.onVideoOpen = function (p0) {
+          "topInsetVp": local_1_1.immersiveReading ? 0 : FLOATING_TITLE_BAR_OFFSET,
+          "onVideoOpen": function (p0) {
             return local_1_1.openVideo(p0);
-          };
-          acc.onLinkClick = function (p0) {
+          },
+          "onLinkClick": function (p0) {
             return local_1_1.openContentLink(p0);
-          };
-          acc.documentHeader = function () {
+          },
+          "documentHeader": function () {
             local_1_1.contentHeader(local_1_0);
-          };
-          acc.onBodyDoubleTap = function () {
+          },
+          "onBodyDoubleTap": function () {
             return local_1_1.onContentDoubleTap();
-          };
-          acc.documentBodyFooter = function () {
+          },
+          "documentBodyFooter": function () {
             local_1_1.questionBodyFooter(local_1_0);
-          };
-          acc.documentItems = function () {
+          },
+          "documentItems": function () {
             local_1_1.questionAnswerItems();
-          };
-          acc.documentFooter = function () {
+          },
+          "documentFooter": function () {
             local_1_1.questionAnswersFooter();
-          };
-          acc.onListReachEnd = function () {
+          },
+          "onListReachEnd": function () {
             if (local_1_1.answersController !== null && local_1_1.answersController !== undefined) {
               local_1_1.answersController.loadMore();
             }
-          };
-          acc.onScrollOffset = function (p0) {
+          },
+          "onScrollOffset": function (p0) {
             let local_2_0;
             local_2_0 = p0 > 160;
             if (local_2_0 !== local_1_1.questionScrolled) {
@@ -5428,8 +5160,65 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
                 });
               });
             }
+          }
+        };
+        acc = new NativeContentDocument(local_1_1, acc, undefined, p0, function () {}, {
+          "page": "entry/src/main/ets/pages/ContentDetailPages.ets",
+          "line": 1941,
+          "col": 7
+        });
+        ViewPU.create(acc);
+        acc.paramsGenerator_ = function () {
+          return {
+            "html": contentHtml(local_1_0),
+            "emptyMessage": contentEmptyMessage(local_1_0),
+            "collapsible": true,
+            "linkCardMetaRepository": local_1_1.linkCardMetaRepository,
+            "topInsetVp": local_1_1.immersiveReading ? 0 : FLOATING_TITLE_BAR_OFFSET,
+            "onVideoOpen": function (p0) {
+              return local_1_1.openVideo(p0);
+            },
+            "onLinkClick": function (p0) {
+              return local_1_1.openContentLink(p0);
+            },
+            "documentHeader": function () {
+              local_1_1.contentHeader(local_1_0);
+            },
+            "onBodyDoubleTap": function () {
+              return local_1_1.onContentDoubleTap();
+            },
+            "documentBodyFooter": function () {
+              local_1_1.questionBodyFooter(local_1_0);
+            },
+            "documentItems": function () {
+              local_1_1.questionAnswerItems();
+            },
+            "documentFooter": function () {
+              local_1_1.questionAnswersFooter();
+            },
+            "onListReachEnd": function () {
+              if (local_1_1.answersController !== null && local_1_1.answersController !== undefined) {
+                local_1_1.answersController.loadMore();
+              }
+            },
+            "onScrollOffset": function (p0) {
+              let local_2_0;
+              local_2_0 = p0 > 160;
+              if (local_2_0 !== local_1_1.questionScrolled) {
+                local_1_1.questionScrolled = local_2_0;
+                local_1_1.getUIContext().animateTo({
+                  "duration": 220,
+                  "curve": Curve.EaseInOut
+                }, function () {
+                  publishQuestionTitle({
+                    "id": local_1_1.activeContentId,
+                    "title": contentTitle(local_1_0),
+                    "scrolled": local_2_0
+                  });
+                });
+              }
+            }
           };
-          return acc;
         };
       } else {
         local_1_1.updateStateVarsOfChildByElmtId(p0, {});
@@ -6720,28 +6509,26 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
             if (!local_1_0.authenticated) {
               local_1_0.ifElseBranchUpdateFunction(0, function () {
                 local_1_0.observeComponentCreation2(function (p0, p1) {
-                  let v0 /*AppPageStatusPanel*/, v2;
+                  let acc;
                   if (p1) {
-                    v2 = {
+                    acc = new AppPageStatusPanel(local_1_0, {
                       "kind": AppPageStatusKind.EMPTY,
                       "message": "登录后即可查看全部回答",
                       "testId": "question_answers_login",
                       "actionLabel": "去登录",
                       "actionId": "question_answers_login_button",
-                      "onAction": null
-                    };
-                    v2.onAction = function () {
-                      return local_1_0.navigate({
-                        "name": AppDestinationName.LOGIN
-                      });
-                    };
-                    v0 = new AppPageStatusPanel(local_1_0, v2, undefined, p0, function () {}, {
+                      "onAction": function () {
+                        return local_1_0.navigate({
+                          "name": AppDestinationName.LOGIN
+                        });
+                      }
+                    }, undefined, p0, function () {}, {
                       "page": "entry/src/main/ets/pages/ContentDetailPages.ets",
                       "line": 2400,
                       "col": 11
                     });
-                    ViewPU.create(v0);
-                    v0.paramsGenerator_ = function () {
+                    ViewPU.create(acc);
+                    acc.paramsGenerator_ = function () {
                       return {
                         "kind": AppPageStatusKind.EMPTY,
                         "message": "登录后即可查看全部回答",
@@ -6792,48 +6579,15 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
             } else if (local_1_0.answersState.errorMessage.length > 0) {
               local_1_0.ifElseBranchUpdateFunction(2, function () {
                 local_1_0.observeComponentCreation2(function (p0, p1) {
-                  let v0 /*AppPageStatusPanel*/, v2;
+                  let v0 /*AppPageStatusPanel*/;
                   if (p1) {
-                    v2 = {
+                    v0 = new AppPageStatusPanel(local_1_0, {
                       "kind": AppPageStatusKind.ERROR,
                       "message": local_1_0.answersState.errorMessage,
                       "testId": "question_answers_error",
-                      "actionLabel": null,
+                      "actionLabel": local_1_0.answersState.requiresLogin ? "去登录" : "重试",
                       "actionId": "question_answers_retry",
-                      "onAction": null
-                    };
-                    v2.actionLabel = local_1_0.answersState.requiresLogin ? "去登录" : "重试";
-                    v2.onAction = function () {
-                      if (local_1_0.answersState.requiresLogin) {
-                        local_1_0.navigate({
-                          "name": AppDestinationName.LOGIN
-                        });
-                      } else if (local_1_0.answersState.phase !== QuestionAnswersPhase.ERROR) {
-                        if (local_1_0.answersController !== null && local_1_0.answersController !== undefined) {
-                          local_1_0.answersController.loadMore();
-                        }
-                      } else if (local_1_0.answersController !== null && local_1_0.answersController !== undefined) {
-                        local_1_0.answersController.refresh();
-                      }
-                    };
-                    v0 = new AppPageStatusPanel(local_1_0, v2, undefined, p0, function () {}, {
-                      "page": "entry/src/main/ets/pages/ContentDetailPages.ets",
-                      "line": 2406,
-                      "col": 11
-                    });
-                    ViewPU.create(v0);
-                    v0.paramsGenerator_ = function () {
-                      let v0;
-                      v0 = {
-                        "kind": AppPageStatusKind.ERROR,
-                        "message": local_1_0.answersState.errorMessage,
-                        "testId": "question_answers_error",
-                        "actionLabel": null,
-                        "actionId": "question_answers_retry",
-                        "onAction": null
-                      };
-                      v0.actionLabel = local_1_0.answersState.requiresLogin ? "去登录" : "重试";
-                      v0.onAction = function () {
+                      "onAction": function () {
                         if (local_1_0.answersState.requiresLogin) {
                           local_1_0.navigate({
                             "name": AppDestinationName.LOGIN
@@ -6845,8 +6599,34 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
                         } else if (local_1_0.answersController !== null && local_1_0.answersController !== undefined) {
                           local_1_0.answersController.refresh();
                         }
+                      }
+                    }, undefined, p0, function () {}, {
+                      "page": "entry/src/main/ets/pages/ContentDetailPages.ets",
+                      "line": 2406,
+                      "col": 11
+                    });
+                    ViewPU.create(v0);
+                    v0.paramsGenerator_ = function () {
+                      return {
+                        "kind": AppPageStatusKind.ERROR,
+                        "message": local_1_0.answersState.errorMessage,
+                        "testId": "question_answers_error",
+                        "actionLabel": local_1_0.answersState.requiresLogin ? "去登录" : "重试",
+                        "actionId": "question_answers_retry",
+                        "onAction": function () {
+                          if (local_1_0.answersState.requiresLogin) {
+                            local_1_0.navigate({
+                              "name": AppDestinationName.LOGIN
+                            });
+                          } else if (local_1_0.answersState.phase !== QuestionAnswersPhase.ERROR) {
+                            if (local_1_0.answersController !== null && local_1_0.answersController !== undefined) {
+                              local_1_0.answersController.loadMore();
+                            }
+                          } else if (local_1_0.answersController !== null && local_1_0.answersController !== undefined) {
+                            local_1_0.answersController.refresh();
+                          }
+                        }
                       };
-                      return v0;
                     };
                   } else {
                     local_1_0.updateStateVarsOfChildByElmtId(p0, {});
@@ -7074,18 +6854,15 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       return p0.pid === local_1_0.segmentSheetPid;
     })?.marks[local_1_0.segmentSheetMarkIndex];
     v5 = {
-      "name": null,
-      "contentType": null,
-      "contentId": null,
+      "name": AppDestinationName.COMMENT,
+      "contentType": local_1_0.kind === ContentDetailKind.ARTICLE ? "article" : "answer",
+      "contentId": local_1_0.activeContentId,
       "segmentId": null,
       "segmentContent": null,
       "segmentParagraphId": null,
       "segmentStartOffset": null,
       "segmentEndOffset": null
     };
-    v5.name = AppDestinationName.COMMENT;
-    v5.contentType = local_1_0.kind === ContentDetailKind.ARTICLE ? "article" : "answer";
-    v5.contentId = local_1_0.activeContentId;
     v1 = v1.segIds;
     v5.segmentId = v1.join(",");
     v5.segmentContent = local_1_0.currentSegmentQuote();
@@ -8592,25 +8369,20 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
           "questionTitle": contentContextTitle(p0.content),
           "authorName": contentAuthorName(p0.content),
           "authorAvatarUrl": contentAuthorAvatarUrl(p0.content),
-          "authorBadgeIconUrl": null,
-          "scrolled": null
+          "authorBadgeIconUrl": contentAuthorBadge(p0.content)?.iconUrl ?? "",
+          "scrolled": this.answerQuestionScrolled
         };
-        v1.authorBadgeIconUrl = contentAuthorBadge(p0.content)?.iconUrl ?? "";
-        v1.scrolled = this.answerQuestionScrolled;
         publishAnswerTitle(v1);
       }
       if (p0.content.kind === ContentDetailKind.ARTICLE) {
-        v1 = {
+        publishArticleTitle({
           "id": this.contentId,
           "title": contentContextTitle(p0.content),
           "authorName": contentAuthorName(p0.content),
           "authorAvatarUrl": contentAuthorAvatarUrl(p0.content),
-          "authorBadgeIconUrl": null,
-          "scrolled": null
-        };
-        v1.authorBadgeIconUrl = contentAuthorBadge(p0.content)?.iconUrl ?? "";
-        v1.scrolled = this.articleTitleScrolled;
-        publishArticleTitle(v1);
+          "authorBadgeIconUrl": contentAuthorBadge(p0.content)?.iconUrl ?? "",
+          "scrolled": this.articleTitleScrolled
+        });
       }
       if (p0.content.kind === ContentDetailKind.ANSWER && this.answerNavigator === undefined) {
         this.ensureAnswerNavigator(p0.content.value.questionId);
