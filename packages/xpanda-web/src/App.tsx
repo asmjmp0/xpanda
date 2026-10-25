@@ -281,6 +281,31 @@ export function App() {
         setCacheVersion((v) => v + 1); // 触发 effect 重新反编译
     };
 
+    /** 关闭一个已加载文件:释放其字节码与内存缓存(浏览器里保存的结果保留),回到可加载状态 */
+    const closeImage = (imageId: string): void => {
+        const img = images.find((i) => i.id === imageId);
+        if (img === undefined) return;
+        service.clearSources(img.sources.map((s) => s.cacheKey));
+        setImages((prev) => prev.filter((i) => i.id !== imageId));
+        // 选中的类属于被关闭文件时清空选中;窄屏下回到类列表视图
+        if (selected !== null && selected.source.image.id === imageId) {
+            setSelected(null);
+            setMobileView("list");
+        }
+        setBulk(null);
+        setCacheVersion((v) => v + 1);
+    };
+
+    /** 关闭全部文件:清空整个内存缓存,回到欢迎页(浏览器里保存的结果保留) */
+    const closeAll = (): void => {
+        service.clear();
+        setImages([]);
+        setSelected(null);
+        setBulk(null);
+        setMobileView("list");
+        setCacheVersion((v) => v + 1);
+    };
+
     /** 清空浏览器里保存的反编译结果(当前会话已显示的内容保留) */
     const clearSavedCache = (): void => {
         if (!window.confirm(
@@ -353,6 +378,9 @@ export function App() {
                                 setSelected(ref);
                                 setMobileView("code");
                             }}
+                            onCloseImage={closeImage}
+                            onCloseAll={images.length > 1 ? closeAll : undefined}
+                            closeDisabled={bulk !== null && bulk.running}
                         />
                         <CodePane
                             selected={selected}

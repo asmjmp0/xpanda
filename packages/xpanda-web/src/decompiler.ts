@@ -237,6 +237,23 @@ export class DecompileService {
     }
 
     /**
+     * 删除属于给定来源(按 cacheKey 前缀匹配)的全部内存缓存条目,关闭文件时释放内存。
+     * 只清内存:IndexedDB 里保存的结果保留,重新载入同一文件仍可通过 hydrate 秒开。
+     */
+    clearSources(sourceKeys: readonly string[]): void {
+        if (sourceKeys.length === 0) return;
+        const prefixes = sourceKeys.map((key) => key + "\u0000");
+        for (const key of [...this.cache.keys()]) {
+            if (prefixes.some((prefix) => key.startsWith(prefix))) this.cache.delete(key);
+        }
+    }
+
+    /** 清空全部内存缓存(关闭所有文件时释放内存;持久化结果同样保留) */
+    clear(): void {
+        this.cache.clear();
+    }
+
+    /**
      * 从 IndexedDB 恢复某个来源上次会话已反编译的结果,返回恢复条数。
      * 只填充内存中尚不存在的键(本次会话新反编译的结果优先)。
      */

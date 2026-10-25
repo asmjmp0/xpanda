@@ -4,7 +4,7 @@ import { formatBytes } from "../format";
 
 /**
  * 左侧栏:文件(来源)列表 + 可搜索、按包分组的类列表。
- * 每个文件(.abc / .hap)可单独折叠,多次拖入的文件依次排列;
+ * 每个文件(.abc / .hap)可单独折叠、可单独关闭(×),多个文件时支持一键全部关闭;
  * 已反编译的类带绿点标记;点击类项触发选中反编译。
  * @Author: jmp0
  */
@@ -14,9 +14,15 @@ interface SidebarProps {
     selectedKey: string | null;
     cachedKeys: Set<string>;
     onSelect: (ref: ClassRef) => void;
+    /** 关闭单个已加载文件(释放其字节码与内存缓存) */
+    onCloseImage: (imageId: string) => void;
+    /** 关闭全部文件;只有多于一个文件时由 App 传入 */
+    onCloseAll?: () => void;
+    /** 全量反编译运行中禁止关闭,避免进度统计失效 */
+    closeDisabled: boolean;
 }
 
-export function Sidebar({ images, refs, selectedKey, cachedKeys, onSelect }: SidebarProps) {
+export function Sidebar({ images, refs, selectedKey, cachedKeys, onSelect, onCloseImage, onCloseAll, closeDisabled }: SidebarProps) {
     const [query, setQuery] = useState("");
     const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
     /** 按 image.id 折叠整个文件(不影响包分组各自的折叠状态) */
@@ -56,6 +62,16 @@ export function Sidebar({ images, refs, selectedKey, cachedKeys, onSelect }: Sid
                     onChange={(e) => setQuery(e.target.value)}
                     spellCheck={false}
                 />
+                {onCloseAll !== undefined && (
+                    <button
+                        className="sidebar-close-all"
+                        onClick={onCloseAll}
+                        disabled={closeDisabled}
+                        title="Close all loaded files and release their memory (browser-saved results are kept)"
+                    >
+                        Close all
+                    </button>
+                )}
             </div>
             <div className="tree">
                 {images.map((img) => {
@@ -80,17 +96,28 @@ export function Sidebar({ images, refs, selectedKey, cachedKeys, onSelect }: Sid
                     const fileCollapsed = collapsedFiles.has(img.id) && query.trim().length === 0;
                     return (
                         <div key={img.id} className={"tree-image-block" + (fileCollapsed ? " collapsed" : "")}>
-                            <button
-                                className="tree-image"
-                                onClick={() => toggleFile(img.id)}
-                                aria-expanded={!fileCollapsed}
-                                title={(fileCollapsed ? "Expand " : "Collapse ") + img.fileName}
-                            >
-                                <span className="tw">{fileCollapsed ? "▸" : "▾"}</span>
-                                <span className={"badge badge-" + img.kind}>{img.kind}</span>
-                                <span className="tree-image-name" title={img.fileName}>{img.fileName}</span>
-                                <span className="tree-image-meta">{formatBytes(img.sizeBytes)}</span>
-                            </button>
+                            <div className="tree-image">
+                                <button
+                                    className="tree-image-main"
+                                    onClick={() => toggleFile(img.id)}
+                                    aria-expanded={!fileCollapsed}
+                                    title={(fileCollapsed ? "Expand " : "Collapse ") + img.fileName}
+                                >
+                                    <span className="tw">{fileCollapsed ? "▸" : "▾"}</span>
+                                    <span className={"badge badge-" + img.kind}>{img.kind}</span>
+                                    <span className="tree-image-name" title={img.fileName}>{img.fileName}</span>
+                                    <span className="tree-image-meta">{formatBytes(img.sizeBytes)}</span>
+                                </button>
+                                <button
+                                    className="tree-image-close"
+                                    onClick={() => onCloseImage(img.id)}
+                                    disabled={closeDisabled}
+                                    title={"Close " + img.fileName + " and release its memory"}
+                                    aria-label={"Close " + img.fileName}
+                                >
+                                    ×
+                                </button>
+                            </div>
                             {!fileCollapsed && (
                                 <>
                                     {img.moduleInfo !== null && (

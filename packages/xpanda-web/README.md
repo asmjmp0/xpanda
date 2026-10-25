@@ -10,6 +10,10 @@ app package and decompile it **entirely in the browser** (pure frontend, nothing
   are sent to a server
 - Multiple files can be dropped at once or added one after another; each loaded file is a
   collapsible section in the sidebar
+- Projects can be closed to free memory: a × next to each loaded file unloads it (or "Close all"
+  unloads every file at once); closing is disabled while "Decompile all" is running. Only the
+  in-memory bytecode and results are released — browser-saved results are kept, so re-loading the
+  same file still shows them instantly; closing the last file returns to the welcome screen
 - `.hap` packages are unpacked in-memory; every `.abc` entry becomes a source with its own class list
 - Class list with search and package grouping; click a single class to decompile it.
   Classes without a `func_main_0` entry (compiler metadata such as `L_ES*Annotation;`

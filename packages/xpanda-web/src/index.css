@@ -400,13 +400,17 @@ button:disabled {
 }
 
 .sidebar-search {
+    display: flex;
+    align-items: center;
+    gap: 6px;
     padding: 8px;
     border-bottom: 1px solid var(--border);
     flex: 0 0 auto;
 }
 
 .sidebar-search input {
-    width: 100%;
+    flex: 1 1 auto;
+    min-width: 0;
     background: var(--bg);
     color: var(--text);
     border: 1px solid var(--border);
@@ -417,6 +421,18 @@ button:disabled {
 
 .sidebar-search input:focus {
     border-color: var(--accent);
+}
+
+.sidebar-close-all {
+    flex: 0 0 auto;
+    color: var(--text-dim);
+    padding: 5px 8px;
+    font-size: 12px;
+}
+
+.sidebar-close-all:hover:not(:disabled) {
+    color: var(--red);
+    border-color: var(--red);
 }
 
 .tree {
@@ -437,26 +453,56 @@ button:disabled {
 .tree-image {
     display: flex;
     align-items: center;
-    gap: 8px;
     width: 100%;
+    padding-right: 6px;
+}
+
+/* 文件行主体(折叠切换);右侧独立放一个关闭 × 按钮 */
+.tree-image-main {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1 1 auto;
+    min-width: 0;
     text-align: left;
-    padding: 8px 10px;
+    padding: 8px 0 8px 10px;
     background: transparent;
     border: 0;
     border-radius: 0;
     color: var(--text);
 }
 
-.tree-image:hover:not(:disabled) {
+.tree-image-main:hover:not(:disabled) {
     background: var(--panel2);
     color: var(--text);
 }
 
-.tree-image .tw {
+.tree-image-main .tw {
     color: var(--text-dim);
     font-size: 10px;
     width: 10px;
     flex: 0 0 10px;
+}
+
+.tree-image-close {
+    flex: 0 0 auto;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: 0;
+    border-radius: 4px;
+    color: var(--text-dim);
+    font-size: 15px;
+    line-height: 1;
+}
+
+.tree-image-close:hover:not(:disabled) {
+    color: var(--red);
+    background: var(--panel2);
 }
 
 .tree-image-name {
@@ -913,11 +959,17 @@ button:disabled {
         padding: 6px 10px 6px 0;
     }
 
-    .tree-image,
+    .tree-image-main,
     .tree-group-head,
     .tree-class {
         padding-top: 8px;
         padding-bottom: 8px;
+    }
+
+    .tree-image-close,
+    .sidebar-close-all {
+        min-width: 30px;
+        min-height: 30px;
     }
 
     .bulk-jobs select {
