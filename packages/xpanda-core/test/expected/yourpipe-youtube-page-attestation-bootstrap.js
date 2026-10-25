@@ -178,18 +178,13 @@ local_0_4 = function (p0) {
   }
 };
 parseSabrAttChallengeData = function (p0) {
-  let v4, v5, v6, v7, v8, v9, v10, v13, acc;
-  v10 = local_0_2(JSON.parse(p0));
-  acc = v10?.bgChallenge;
-  v4 = local_0_2(acc);
+  let v4, v5, v6, v7, v8, v9;
+  v4 = local_0_2(local_0_2(JSON.parse(p0))?.bgChallenge);
   if (!v4) {
     throw new Error("Attestation response has no BotGuard challenge");
   }
-  v13 = local_0_2(v4.interpreterJavascript);
-  v6 = local_0_5(v13?.privateDoNotAccessOrElseSafeScriptWrappedValue);
-  v13 = local_0_2(v4.interpreterUrl);
-  acc = v13?.privateDoNotAccessOrElseTrustedResourceUrlWrappedValue;
-  v9 = local_0_5(acc);
+  v6 = local_0_5(local_0_2(v4.interpreterJavascript)?.privateDoNotAccessOrElseSafeScriptWrappedValue);
+  v9 = local_0_5(local_0_2(v4.interpreterUrl)?.privateDoNotAccessOrElseTrustedResourceUrlWrappedValue);
   v7 = undefined;
   if (v9) {
     v7 = v9.startsWith("//") ? "https:" + v9 + "" : v9;
@@ -215,11 +210,10 @@ parseSabrAttChallengeData = function (p0) {
   };
 };
 parseYoutubePageAttestationBootstrap = function (p0) {
-  let v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v20, v23, v24, v26, v27, acc;
+  let v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v24, v26, v27;
   let local_1_0;
   v10 = [];
   for (v24 of local_0_0(p0, local_0_1 /*YTCFG_CALLEE*/)) {
-    v26 = v24;
     try {
       v27 = local_0_2(JSON.parse(v24.argument));
       if (v27) {
@@ -233,23 +227,14 @@ parseYoutubePageAttestationBootstrap = function (p0) {
     }
   }
   local_1_0 = undefined;
-  v23 = local_0_0(p0, local_0_3 /*INITIAL_ATTESTATION_CALLEE*/)[Symbol.iterator]();
-  do {
-    v24 = v23.next();
-    if (v24.done) {
-      if (local_1_0 /*challengeCall*/) {
-        throw new Error("YouTube home has no initial attestation challenge");
-      }
-      throw new Error("YouTube home has no initial attestation challenge");
+  for (v24 of local_0_0(p0, local_0_3 /*INITIAL_ATTESTATION_CALLEE*/)) {
+    v26 = v24;
+    v27 = local_0_4(v24.argument);
+    if (v27) {
+      local_1_0 = v26;
+      v5 = v27;
+      break;
     }
-    v26 = v24.value;
-    v27 = local_0_4(v24.value.argument);
-    acc = !v27;
-  } while (acc);
-  local_1_0 = v26;
-  v5 = v27;
-  if (v23.return != undefined) {
-    v23.return();
   }
   if (local_1_0 /*challengeCall*/) {
     if (!v27) {
@@ -291,9 +276,7 @@ parseYoutubePageAttestationBootstrap = function (p0) {
         v12 = v27;
       }
     }
-    v20 = local_0_2(v7.INNERTUBE_CONTEXT);
-    acc = v20?.client;
-    v6 = local_0_2(acc);
+    v6 = local_0_2(local_0_2(v7.INNERTUBE_CONTEXT)?.client);
     if (!v6) {
       throw new Error("YouTube home has no Innertube client context");
     }
@@ -306,17 +289,14 @@ parseYoutubePageAttestationBootstrap = function (p0) {
       if (!v9) {
         throw new Error("YouTube home has no client version");
       }
-      v20 = local_0_2(v7.WEB_PLAYER_CONTEXT_CONFIGS);
-      v17 = local_0_2(v20?.WEB_PLAYER_CONTEXT_CONFIG_ID_KEVLAR_WATCH);
-      acc = local_0_5(v17?.serializedExperimentFlags) ?? "";
-      v14 = local_0_6(acc);
+      v17 = local_0_2(local_0_2(v7.WEB_PLAYER_CONTEXT_CONFIGS)?.WEB_PLAYER_CONTEXT_CONFIG_ID_KEVLAR_WATCH);
+      v14 = local_0_6(local_0_5(v17?.serializedExperimentFlags) ?? "");
       if (v14.get("html5_generate_content_po_token") === "true") {
         v4 = "content";
       } else if (v14.get("html5_generate_session_po_token") === "true") {
         v4 = "session";
       } else {
-        acc = !v17;
-        v4 = acc ? "content" : "none";
+        v4 = !v17 ? "content" : "none";
       }
       return {
         "visitorData": v16,

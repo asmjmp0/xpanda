@@ -202,7 +202,7 @@ try {
       return undefined;
     }
     setRemotePlaylistSnapshot(p0, p1, p2, p3, p4, p5, p6) {
-      let v6, v7, v8, v9, v11, v13, acc;
+      let v6, v7, v8, v9, v11, v13;
       let local_2_0;
       local_2_0 = p2;
       v6 = p3;
@@ -238,8 +238,7 @@ try {
         });
         this.applyLazyQueue(p1, v11 >= 0 ? v11 : 0);
       }
-      acc = "setRemotePlaylistSnapshot: playlist=" + p0 + " total=" + p1.length + " shown=" + this.queue.length + " pending=" + this.pendingQueueItems.length;
-      v13 = acc + " idx=" + this.currentIndex + " token=";
+      v13 = "setRemotePlaylistSnapshot: playlist=" + p0 + " total=" + p1.length + " shown=" + this.queue.length + " pending=" + this.pendingQueueItems.length + " idx=" + this.currentIndex + " token=";
       local_0_0 /*logger*/.info(v13 + !!this.nextPageToken + "");
       this.notifyQueueChanged();
       this.notifyCurrentIndexChanged(this.currentIndex);

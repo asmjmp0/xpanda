@@ -205,6 +205,24 @@ export class TempVariableSimplify implements ISimplify {
         return pass.state.changed;
     }
 
+    /**
+     * 只折叠 `X = E; <下一条语句里对 X 的唯一一次读取>`,其余一律不动。
+     *
+     * 可选链还原(`tryRestoreOptionalChain`)与 `??` 折叠发生在流水线尾部/三目
+     * 合成之后,轮内的复制传播来不及把 `acc = v20?.client; v6 = f(acc)` 合并;
+     * simplifyTail 之后补一轮。
+     */
+    static foldNextReadAssignments(node: Program): boolean {
+        const pass = new TempVariableSimplify();
+        pass.state.changed = false;
+        pass.state.nextReadOnly = true;
+        traverse(file(node), {
+            Program: (path) => pass.processScope(path),
+            Function: (path) => pass.processScope(path),
+        });
+        return pass.state.changed;
+    }
+
     private processScope(path: NodePath<TYPE.Program> | NodePath<TYPE.Function>): void {
         const scope = path.scope;
         const body: TYPE.Statement[] | null = isProgramNode(path.node)
@@ -255,6 +273,12 @@ export class TempVariableSimplify implements ISimplify {
         }
         if (this.state.accumulatorOnly) {
             this.assignments.foldAccumulatorChainsDeep(body, ctx);
+            return;
+        }
+        if (this.state.nextReadOnly) {
+            this.liveness.analyzeList(body, new Set(), ctx);
+            this.assignments.foldTempLastUseIntoNextRead(body, ctx);
+            this.removeUnusedDeclarations(body, ctx);
             return;
         }
         if (this.state.cleanupOnly) {

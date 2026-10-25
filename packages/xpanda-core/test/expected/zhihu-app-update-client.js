@@ -75,9 +75,9 @@ local_0_5 = 4000;
       return;
     }
     async requestStatic(p0) {
-      let v0, v2 /*http*/, v7;
+      let v0, v2 /*http*/;
       v2 = http.createHttp();
-      v7 = {
+      v0 = await v2.request(p0, {
         "method": http.RequestMethod.GET,
         "header": {
           "Accept": "application/json",
@@ -87,8 +87,7 @@ local_0_5 = 4000;
         "connectTimeout": local_0_3,
         "readTimeout": local_0_4,
         "usingCache": true
-      };
-      v0 = await v2.request(p0, v7);
+      });
       Number(v0.responseCode);
       if (v0 !== 200 || typeof v0.result !== "string") {
         throw new Error("静态源响应码 " + v0.responseCode + "");
@@ -192,8 +191,8 @@ local_0_5 = 4000;
       return v0;
     }
     async requestAtomFallback() {
-      let v0, v5;
-      v5 = {
+      let v0;
+      v0 = await this.requestHandle.request(GITHUB_RELEASES_ATOM, {
         "method": http.RequestMethod.GET,
         "header": {
           "Accept": "application/atom+xml",
@@ -203,8 +202,7 @@ local_0_5 = 4000;
         "connectTimeout": local_0_3,
         "readTimeout": local_0_4,
         "usingCache": false
-      };
-      v0 = await this.requestHandle.request(GITHUB_RELEASES_ATOM, v5);
+      });
       Number(v0.responseCode);
       return v0 !== 200 || typeof v0.result !== "string" ? undefined : decodeLatestReleaseAtom(v0.result);
     }

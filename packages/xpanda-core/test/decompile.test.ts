@@ -228,6 +228,102 @@ function buildChain(p0) {
 }
 
 /**
+ * 回归:可选链/`??` 还原后才出现的累加器枢纽搬进下一条语句的唯一读取。
+ *   acc = v0?.client; v1 = asRecord(acc);
+ *   acc = flags(p0) ?? ""; v2 = parse(acc);
+ *   acc = !v3; v4 = acc ? "content" : "none";
+ * 这些形态由 tryRestoreOptionalChain / NullishCoalescing 在流水线尾部才生成,
+ * 定点迭代里的复制传播已经跑完,需要 simplifyTail 之后的 foldNextReadAssignments。
+ */
+function verifyAccumulatorNextReadFold(): void {
+    const program = NodeFactory.parse(`
+function build(p0) {
+  let v0, v1, v2, v3, v4, acc;
+  v0 = p0?.client;
+  acc = v0?.name;
+  v1 = asRecord(acc);
+  acc = flags(p0) ?? "";
+  v2 = parse(acc);
+  v3 = v1 && v2;
+  acc = !v3;
+  v4 = acc ? "content" : "none";
+  return [v1, v2, v4];
+}
+`);
+    SimplifyExport.simplify(program);
+    const code = NodeFactory.generate(program);
+    if (code.includes("acc")) {
+        throw new Error(`simplify: 累加器枢纽未搬进下一条语句的唯一读取\n${code}`);
+    }
+    if (!code.includes('v2 = parse(flags(p0) ?? "");')) {
+        throw new Error(`simplify: 非纯右值(调用/??)未搬进调用参数\n${code}`);
+    }
+    if (!code.includes('? "none" : "content"')) {
+        throw new Error(`simplify: 布尔物化未搬进三目 test\n${code}`);
+    }
+}
+
+/**
+ * 回归:for...of + break 的 do-while lowering 还原。
+ *
+ *   it = xs[Symbol.iterator]();
+ *   do {
+ *     vv = it.next();
+ *     if (vv.done) { DONE }
+ *     ...; acc = !T;
+ *   } while (acc);
+ *   EXIT;                  // break 路径前缀
+ *   close(it);
+ *   AFTER
+ *
+ * → for (vv of xs) { ...; if (T) { EXIT; break; } } AFTER
+ * 循环耗尽和 break 都落到 close 之后的续接代码上,DONE 是同一块的副本,必须丢弃,
+ * 否则 break 会落到耗尽分支上。
+ */
+function verifyDoWhileBreakForOf(): void {
+    const program = NodeFactory.parse(`
+function pick(p0) {
+  let v1, v2, v3, v5, acc;
+  let it, found;
+  found = undefined;
+  it = p0[Symbol.iterator]();
+  do {
+    v1 = it.next();
+    if (v1.done) {
+      if (found) {
+        throw new Error("no item");
+      }
+      throw new Error("no item");
+    }
+    v2 = v1.value;
+    v3 = check(v1.value);
+    acc = !v3;
+  } while (acc);
+  found = v2;
+  v5 = v3;
+  if (it.return != undefined) {
+    it.return();
+  }
+  if (found) {
+    return [found, v5];
+  }
+  throw new Error("no item");
+}
+`);
+    SimplifyExport.simplify(program);
+    const code = NodeFactory.generate(program);
+    if (code.includes("[Symbol.iterator]") || code.includes("do {")) {
+        throw new Error(`simplify: break 形态的 for...of 未还原\n${code}`);
+    }
+    if (!/for \(v1 of p0\) \{\s*v2 = v1;\s*if \(check\(v1\)\) \{\s*found = v2;\s*break;/.test(code)) {
+        throw new Error(`simplify: 出口判断未还原成 if (T) { ... break; }\n${code}`);
+    }
+    if (!/if \(found\) \{\s*return \[found, v3\];/.test(code)) {
+        throw new Error(`simplify: close 之后的续接代码被破坏\n${code}`);
+    }
+}
+
+/**
  * 回归:`then` 分支一定终止时展开 else(守卫子句)。
  *   if (!p0) { return null; } else { BODY }  ->  if (!p0) { return null; } BODY
  * 两分支都是单条 return 的 if/else 仍由三目合成处理(verifyConditionMaterializationIntoTest)。
@@ -1841,6 +1937,25 @@ function verifyYourpipeYoutubePageAttestationBootstrap(): void {
         throw new Error(`YoutubePageAttestationBootstrap.parseJsString: case 分支的 continue 缺失\n${body}`);
     }
 
+    // for...of + break 的 do-while lowering(第 2 个循环)要还原成 for-of,
+    // `it.return()` 收尾由 for-of 的 break 隐式完成,耗尽分支的 DONE 副本丢弃。
+    const parseStart = code.indexOf("parseYoutubePageAttestationBootstrap = function");
+    const parseEnd = code.indexOf("local_0_11 = function", parseStart);
+    if (parseStart < 0 || parseEnd < 0) {
+        throw new Error(`YoutubePageAttestationBootstrap: 未找到 parseYoutubePageAttestationBootstrap\n${code}`);
+    }
+    const parseBody = code.slice(parseStart, parseEnd);
+    if (parseBody.includes("acc") || parseBody.includes("do {") || parseBody.includes("[Symbol.iterator]")) {
+        throw new Error(`YoutubePageAttestationBootstrap: 累加器/迭代器 lowering 残留\n${parseBody}`);
+    }
+    if (!/for \(v24 of local_0_0\(p0, local_0_3 \/\*INITIAL_ATTESTATION_CALLEE\*\/\)\) \{[\s\S]*?\n      break;/.test(parseBody)) {
+        throw new Error(`YoutubePageAttestationBootstrap: break 形态的 for...of 未还原\n${parseBody}`);
+    }
+    // 可选链枢纽(`acc = E; Y = f(acc)`)要在流水线尾部搬进唯一读取。
+    if (!code.includes("v4 = local_0_2(local_0_2(JSON.parse(p0))?.bgChallenge);")) {
+        throw new Error(`YoutubePageAttestationBootstrap.parseSabrAttChallengeData: 累加器枢纽未合并\n${code}`);
+    }
+
     const expectedPath = path.join(__dirname, "expected", "yourpipe-youtube-page-attestation-bootstrap.js");
     const expected = fs.readFileSync(expectedPath, "utf-8");
     if (code !== expected) {
@@ -1873,13 +1988,10 @@ function verifyYourpipeMusicSearchService(): void {
     const end = code.indexOf("static parseMusicSearchContinuationResponse", start);
     if (start < 0 || end < 0) throw new Error(`MusicSearchService: 未找到 parseInitialMusicSearchResponse\n${code}`);
     const body = code.slice(start, end);
-    // 可选链还原 + 死枢纽拷贝折叠:守卫三目不允许残留,链要落在命名临时变量上。
+    // 可选链还原 + 枢纽搬移:守卫三目不允许残留,整条导航链折叠成两条可选链赋值。
     const expectedChains = [
-        "v14 = p0.contents?.tabbedSearchResultsRenderer;",
-        "v15 = v14?.tabs;",
-        "v13 = v11?.tabRenderer;",
-        "v12 = v13?.content;",
-        "v9 = v12?.sectionListRenderer;",
+        "v15 = p0.contents?.tabbedSearchResultsRenderer?.tabs;",
+        "v9 = (v15 && v15.length > 0 ? v15[0] : undefined)?.tabRenderer?.content?.sectionListRenderer;",
     ];
     for (const chain of expectedChains) {
         if (!body.includes(chain)) {
@@ -1897,10 +2009,10 @@ function verifyYourpipeMusicSearchService(): void {
     if (body.includes("[Symbol.iterator]") || body.includes(".next") || /\.call\(v2[12]\)/.test(body)) {
         throw new Error(`MusicSearchService: 迭代器 lowering 残留\n${body}`);
     }
-    // 失去使用者的临时变量(v20/v21/acc)要从声明列表里清掉。
+    // 失去使用者的临时变量(被搬移的枢纽/迭代器)要从声明列表里清掉。
     const decl = code.slice(start, end).match(/let ([^\n]*);/)?.[0] ?? "";
     if (!decl) throw new Error(`MusicSearchService: 未找到声明列表\n${code.slice(start, start + 200)}`);
-    for (const dead of ["v20", "v21", "acc"]) {
+    for (const dead of ["v11", "v12", "v13", "v14", "v20", "v21", "acc"]) {
         if (new RegExp(`\\b${dead}\\b`).test(decl)) {
             throw new Error(`MusicSearchService: 未用临时变量 ${dead} 残留在声明 ${decl.trim()}\n${code}`);
         }
@@ -2428,7 +2540,9 @@ function verifyYourpipeChannelInfoService(): void {
     if (!avatar.includes("if (v8 && (v11 = this.asArray(v8.contents)) && v11.length > 0 &&")) {
         throw new Error(`ChannelInfoService.extractAvatarUrl: carousel 条件未还原\n${avatar}`);
     }
-    if (!avatar.includes("if (v10) {") || !avatar.includes("v17 = this.pickLargestImageUrl(this.asArray(acc));")) {
+    // pageHeader 分派链:可选链枢纽(acc)要搬进 pickLargestImageUrl 的参数
+    if (!avatar.includes("if (v10) {")
+        || !avatar.includes("v17 = this.pickLargestImageUrl(this.asArray(this.asRecord(v13.image)?.sources));")) {
         throw new Error(`ChannelInfoService.extractAvatarUrl: pageHeader 分派链缺失\n${avatar}`);
     }
 
@@ -2920,6 +3034,14 @@ async function main(): Promise<void> {
 
     console.log("[test] simplify accumulator member-call chain + hub alias");
     verifyAccumulatorMemberCallChain();
+    console.log("    ok");
+
+    console.log("[test] simplify accumulator next-read fold");
+    verifyAccumulatorNextReadFold();
+    console.log("    ok");
+
+    console.log("[test] simplify do-while break for...of restore");
+    verifyDoWhileBreakForOf();
     console.log("    ok");
 
     console.log("[test] simplify else-after-exit flatten");

@@ -103,6 +103,9 @@ export class SimplifyExport {
         // (`acc = E; v14 = acc`)与 while(true)+break 形态的 for-of(含 `it.next`
         // 提升为临时方法量的 lowering)都在条件折叠之后才物化,这里统一还原。
         new HighLevelGrammarSimplify().simplifyTail(node);
+        // 可选链/`??` 还原后才出现的累加器枢纽(`acc = v20?.client; v6 = f(acc)`)
+        // 轮内的复制传播已经跑完,这里补一轮“把右值搬进下一条语句的唯一读取”。
+        TempVariableSimplify.foldNextReadAssignments(node);
         // 区域归约把共享尾块复制到每条路径:到这里各路径的语句形状已经归一化
         // (else 已展开、守卫链已合成 switch、可选链/for-of 已还原),再做重复
         // 尾块消除。必须放在 simplifyTail 之后:守卫链→switch 需要分支体保留

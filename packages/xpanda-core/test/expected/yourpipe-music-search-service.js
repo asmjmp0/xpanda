@@ -21,15 +21,11 @@ try {
       return !!(v5 && p0[0].startsWith("music_"));
     }
     static parseInitialMusicSearchResponse(p0, p1, p2) {
-      let v7, v8, v9, v11, v12, v13, v14, v15, v22, v28;
+      let v7, v8, v9, v15, v22, v28;
       v7 = [];
       v8 = null;
-      v14 = p0.contents?.tabbedSearchResultsRenderer;
-      v15 = v14?.tabs;
-      v11 = v15 && v15.length > 0 ? v15[0] : undefined;
-      v13 = v11?.tabRenderer;
-      v12 = v13?.content;
-      v9 = v12?.sectionListRenderer;
+      v15 = p0.contents?.tabbedSearchResultsRenderer?.tabs;
+      v9 = (v15 && v15.length > 0 ? v15[0] : undefined)?.tabRenderer?.content?.sectionListRenderer;
       for (v22 of v9 ? v9.contents : []) {
         if (v22.musicShelfRenderer) {
           if (v22.musicShelfRenderer.contents && v22.musicShelfRenderer.contents.length > 0) {
@@ -113,12 +109,11 @@ try {
       return getTextFromRuns(v6?.text);
     }
     static getMusicDescriptionRuns(p0) {
-      let v6, v8;
+      let v8;
       if (!p0.flexColumns || p0.flexColumns.length < 2) {
         return [];
       }
-      v6 = p0.flexColumns[1]?.musicResponsiveListItemFlexColumnRenderer;
-      v8 = v6?.text;
+      v8 = p0.flexColumns[1]?.musicResponsiveListItemFlexColumnRenderer?.text;
       return v8?.runs ?? [];
     }
     static getMusicAuthorFromRuns(p0) {
@@ -149,23 +144,16 @@ try {
       return p0.playlistItemData ? p0.playlistItemData.videoId || "" : "";
     }
     static getMusicPlaylistId(p0) {
-      let v4, v5, v8, v10, v11, v12, v19, v22, v23, v24, v26, acc;
-      v8 = p0.menu?.menuRenderer;
-      acc = v8?.items;
+      let v12, v19, v23, v24, acc;
+      acc = p0.menu?.menuRenderer?.items;
       if (acc) {
         for (v19 of acc) {
-          v26 = v19.toggleMenuServiceItemRenderer?.toggledServiceEndpoint;
-          v22 = v26?.likeEndpoint;
-          v24 = v22?.target;
+          v24 = v19.toggleMenuServiceItemRenderer?.toggledServiceEndpoint?.likeEndpoint?.target;
           v23 = v24 ? v24.playlistId : "";
           if (v23) return v23;
         }
       }
-      v11 = p0.overlay?.musicItemThumbnailOverlayRenderer;
-      v4 = v11?.content;
-      v10 = v4?.musicPlayButtonRenderer;
-      v5 = v10?.playNavigationEndpoint;
-      v12 = v5?.watchPlaylistEndpoint;
+      v12 = p0.overlay?.musicItemThumbnailOverlayRenderer?.content?.musicPlayButtonRenderer?.playNavigationEndpoint?.watchPlaylistEndpoint;
       return v12 ? v12.playlistId || "" : "";
     }
     static getMusicThumbnailUrl(p0) {

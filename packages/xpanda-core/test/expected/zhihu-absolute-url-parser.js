@@ -55,8 +55,7 @@ parseAbsoluteUrl = function (p0) {
   if (v2.length === v1) {
     return undefined;
   }
-  v8 = v0[4] ?? "";
-  v1 = local_0_1(v8);
+  v1 = local_0_1(v0[4] ?? "");
   return v1 === undefined ? undefined : {
     "protocol": "" + v0[1].toLowerCase() + ":",
     "hostname": v2.toLowerCase(),

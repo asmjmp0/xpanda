@@ -1774,9 +1774,7 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       return;
     }
     if (p0.touches.length === 2) {
-      v12 = (p0.touches[0].x - p0.touches[1].x) * (p0.touches[0].x - p0.touches[1].x);
-      acc = v12 + (p0.touches[0].y - p0.touches[1].y) * (p0.touches[0].y - p0.touches[1].y);
-      v7 = Math.sqrt(acc);
+      v7 = Math.sqrt((p0.touches[0].x - p0.touches[1].x) * (p0.touches[0].x - p0.touches[1].x) + (p0.touches[0].y - p0.touches[1].y) * (p0.touches[0].y - p0.touches[1].y));
       if (!this.videoPinching) {
         this.videoPinching = true;
         this.pinchStartDistanceVp = Math.max(1, v7);
@@ -1852,7 +1850,6 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     Logger.debug(local_0_1 /*TAG*/, "Player pan ignored reason=" + p0 + "");
   }
   onPlayerPanStart(p0) {
-    let acc;
     this.hiddenUiSeekOnly = false;
     if (this.subtitleDragging || this.videoPinching) {
       this.ignorePlayerPan(this.subtitleDragging ? "subtitle-dragging" : "pinching");
@@ -1863,10 +1860,8 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       Logger.debug(local_0_1 /*TAG*/, "Player pan ignored reason=slider-dragging-start");
       return;
     }
-    acc = (p0.fingerList[0] !== null && p0.fingerList[0] !== undefined ? p0.fingerList[0].localX : undefined) ?? 0;
-    this.gestureStartX = acc - p0.offsetX;
-    acc = (p0.fingerList[0] !== null && p0.fingerList[0] !== undefined ? p0.fingerList[0].localY : undefined) ?? 0;
-    this.gestureStartY = acc - p0.offsetY;
+    this.gestureStartX = ((p0.fingerList[0] !== null && p0.fingerList[0] !== undefined ? p0.fingerList[0].localX : undefined) ?? 0) - p0.offsetX;
+    this.gestureStartY = ((p0.fingerList[0] !== null && p0.fingerList[0] !== undefined ? p0.fingerList[0].localY : undefined) ?? 0) - p0.offsetY;
     this.gestureSeekStartTime = this.currentTime;
     this.gestureSeekTime = this.currentTime;
     this.panEndTime = this.currentTime;
@@ -1950,7 +1945,7 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     return;
   }
   onPlayerPanUpdate(p0) {
-    let v5, acc;
+    let v5;
     if (this.isSliderDragging || this.activeInteraction === local_0_3.SLIDER) {
       this.ignorePlayerPan("slider-dragging-update");
       return;
@@ -1961,8 +1956,7 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       }
       switch (this.gestureMode) {
         case local_0_2.SEEK:
-          acc = Math.max(0, this.gestureSeekStartTime + p0.offsetX / Math.max(1, this.containerVpWidth) * this.durationTime);
-          this.gestureSeekTime = Math.min(acc, this.durationTime);
+          this.gestureSeekTime = Math.min(Math.max(0, this.gestureSeekStartTime + p0.offsetX / Math.max(1, this.containerVpWidth) * this.durationTime), this.durationTime);
           this.panEndTime = this.gestureSeekTime;
           break;
         case local_0_2.BRIGHTNESS:

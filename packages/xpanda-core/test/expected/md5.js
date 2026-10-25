@@ -19,11 +19,10 @@
     return cmn(p1 & p3 | p2 & ~p3, p0, p1, p4, p5, p6);
   }
   function md5blk(p0) {
-    let v8, v9, v11;
+    let v8, v9;
     v8 = 0;
     for (v9 = []; v8 < 64; v8 += 4) {
-      v11 = p0.charCodeAt(v8) + (p0.charCodeAt(v8 + 1) << 8) + (p0.charCodeAt(v8 + 2) << 16);
-      v9[v8 >> 2] = v11 + (p0.charCodeAt(v8 + 3) << 24);
+      v9[v8 >> 2] = p0.charCodeAt(v8) + (p0.charCodeAt(v8 + 1) << 8) + (p0.charCodeAt(v8 + 2) << 16) + (p0.charCodeAt(v8 + 3) << 24);
     }
     return v9;
   }

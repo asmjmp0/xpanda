@@ -565,7 +565,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     local_1_0.lastContentScrollOffset = 0;
     local_1_0.__doubleTapAskSheetShown = new ObservedPropertySimplePU(false, local_1_0, "doubleTapAskSheetShown");
     local_1_0.segmentSheetOpenedAt = 0;
-    v3 = {
+    local_1_0.__answersState = new ObservedPropertyObjectPU({
       "phase": QuestionAnswersPhase.IDLE,
       "items": [],
       "loadingMore": false,
@@ -573,8 +573,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       "sortOrder": QuestionAnswerSortOrder.DEFAULT,
       "errorMessage": "",
       "requiresLogin": false
-    };
-    local_1_0.__answersState = new ObservedPropertyObjectPU(v3, local_1_0, "answersState");
+    }, local_1_0, "answersState");
     local_1_0.__answersSortIndexes = new ObservedPropertyObjectPU([0], local_1_0, "answersSortIndexes");
     local_1_0.answersController = undefined;
     local_1_0.__actionMenuShown = new ObservedPropertySimplePU(false, local_1_0, "actionMenuShown");
@@ -1547,9 +1546,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     return;
   }
   onLoginChanged() {
-    let v0;
-    v0 = this.session === null || this.session === undefined ? undefined : this.session.getState().status;
-    this.authenticated = v0 === SessionStatus.AUTHENTICATED;
+    this.authenticated = (this.session === null || this.session === undefined ? undefined : this.session.getState().status) === SessionStatus.AUTHENTICATED;
     if (!this.pageActive) {
       return;
     }
@@ -6032,9 +6029,9 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
                   Row.transition(local_1_0.gripSwapTransition(-240));
                 }, Row);
                 local_1_0.observeComponentCreation2(function (p0, p1) {
-                  let v0 /*GlassCapsule*/, v2;
+                  let v0 /*GlassCapsule*/;
                   if (p1) {
-                    v2 = {
+                    v0 = new GlassCapsule(local_1_0, {
                       "useMaterial": local_1_0.immersiveMaterialSupported,
                       "content": function () {
                         local_1_0.observeComponentCreation2(function (p0, p1) {
@@ -6049,8 +6046,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
                         }, If);
                         If.pop();
                       }
-                    };
-                    v0 = new GlassCapsule(local_1_0, v2, undefined, p0, function () {}, {
+                    }, undefined, p0, function () {}, {
                       "page": "entry/src/main/ets/pages/ContentDetailPages.ets",
                       "line": 2172,
                       "col": 15
@@ -6087,9 +6083,9 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
             } else {
               local_1_0.ifElseBranchUpdateFunction(1, function () {
                 local_1_0.observeComponentCreation2(function (p0, p1) {
-                  let v0 /*GlassCapsule*/, v2;
+                  let v0 /*GlassCapsule*/;
                   if (p1) {
-                    v2 = {
+                    v0 = new GlassCapsule(local_1_0, {
                       "useMaterial": local_1_0.immersiveMaterialSupported,
                       "content": function () {
                         local_1_0.observeComponentCreation2(function (p0, p1) {
@@ -6104,8 +6100,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
                         }, If);
                         If.pop();
                       }
-                    };
-                    v0 = new GlassCapsule(local_1_0, v2, undefined, p0, function () {}, {
+                    }, undefined, p0, function () {}, {
                       "page": "entry/src/main/ets/pages/ContentDetailPages.ets",
                       "line": 2180,
                       "col": 13
@@ -7298,19 +7293,17 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     return this.content !== undefined && this.content.kind === ContentDetailKind.ANSWER ? contentContextTitle(this.content) : "";
   }
   canEditExistingAnswer() {
-    let v0, v1, v2, v3 /*SessionStatus*/;
+    let v2, v3 /*SessionStatus*/;
     v2 = this.session === null || this.session === undefined ? undefined : this.session.getState().profile;
     v3 = this.content !== undefined && this.content.kind === ContentDetailKind.ANSWER;
     if (this.content !== undefined && this.content.kind === ContentDetailKind.ANSWER) {
-      v1 = this.session === null || this.session === undefined ? undefined : this.session.getState().status;
-      v3 = v1 === SessionStatus.AUTHENTICATED;
+      v3 = (this.session === null || this.session === undefined ? undefined : this.session.getState().status) === SessionStatus.AUTHENTICATED;
     }
     if (v3) {
       v3 = v2 !== undefined;
     }
     if (v3) {
-      v0 = this.content.value.author === null || this.content.value.author === undefined ? undefined : this.content.value.author.id;
-      v3 = v0 === v2.id;
+      v3 = (this.content.value.author === null || this.content.value.author === undefined ? undefined : this.content.value.author.id) === v2.id;
     }
     return v3;
   }

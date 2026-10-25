@@ -3,7 +3,10 @@ import {ISimplify} from "./ISimplify";
 import * as TYPE from "@babel/types";
 import traverse, {NodePath} from "@babel/traverse";
 import {SyntaxRewriteSimplify} from "./SyntaxRewriteSimplify";
-import {collectIdentifierNames, collectReadNames, isDoneMember, isNextValue, isNodeEqual, isPureExpression, walkNode} from "./AstUtils";
+import {
+    addPatternNames, collectIdentifierNames, collectReadNames, isClassLike as isClassLikeNode, isDoneMember,
+    isFunctionLike as isFunctionLikeNode, isNextValue, isNodeEqual, isPureExpression, walkNode
+} from "./AstUtils";
 
 
 const {
@@ -699,6 +702,27 @@ export class HighLevelGrammarSimplify implements ISimplify {
     }
 
     /**
+     * ref 所在语句是否整体位于 loop 之后(同层或外层语句列表里)。循环之后的写入
+     * 与本循环无关:删除迭代器初始化不会影响它们。
+     */
+    private isStatementAfterLoop(ref: NodePath, loop: NodePath<TYPE.Statement>): boolean {
+        let current: NodePath = ref;
+        while (current.parentPath) {
+            const parent = current.parentPath;
+            if (current.node === loop.node) return false;
+            if (!parent.node) return false;
+            const siblings = (parent.node as { body?: TYPE.Node[] }).body;
+            if (Array.isArray(siblings)) {
+                const refIndex = siblings.indexOf(current.node);
+                const loopIndex = siblings.indexOf(loop.node);
+                if (refIndex >= 0 && loopIndex >= 0) return refIndex > loopIndex;
+            }
+            current = parent;
+        }
+        return false;
+    }
+
+    /**
      * 删除 `it = iterable[Symbol.iterator]()` 后,循环外的这次读取是否还能看到被删掉的值。
      *
      * 循环之前执行、或读取前一定先有 `name = ...` 覆盖(例如同一个临时迭代器被
@@ -748,6 +772,20 @@ export class HighLevelGrammarSimplify implements ISimplify {
         while (current && current.node !== common.node) {
             const parent = current.parentPath;
             if (!parent) return false;
+            // 读取位于 for-of/for-in/for 的循环体里:循环头在每轮 body 之前写入
+            // 循环变量/init,读到的是新值(同一个临时量被后续循环复用)。
+            if ((parent.node as { body?: TYPE.Node }).body === current.node) {
+                const loopNode = parent.node as TYPE.ForOfStatement | TYPE.ForInStatement | TYPE.ForStatement;
+                if (isForOfStatementNode(loopNode) || isForInStatementNode(loopNode)) {
+                    const bound = new Set<string>();
+                    addPatternNames(loopNode.left, bound);
+                    if (bound.has(name)) return true;
+                } else if (isForStatementNode(loopNode)) {
+                    const bound = new Set<string>();
+                    if (loopNode.init) addPatternNames(loopNode.init, bound);
+                    if (bound.has(name)) return true;
+                }
+            }
             const siblings = (parent.node as { body?: TYPE.Node[] }).body;
             if (Array.isArray(siblings)) {
                 const index = siblings.indexOf(current.node);
@@ -1057,41 +1095,68 @@ export class HighLevelGrammarSimplify implements ISimplify {
 
     /** test 去掉偶数个 `!` 后是标识符时返回名字;`!X`(奇数次)返回 null。 */
     private loopTestSimpleName(test: TYPE.Expression): string | null {
+        const name = this.stripNegations(test);
+        return name && name.negated === false ? name.name : null;
+    }
+
+    /** test 去掉任意个 `!` 后是标识符时返回名字与取反奇偶性。 */
+    private loopTestOperand(test: TYPE.Expression): { name: string; negated: boolean } | null {
+        return this.stripNegations(test);
+    }
+
+    private stripNegations(test: TYPE.Expression): { name: string; negated: boolean } | null {
         let expr: TYPE.Expression = test;
         let negated = false;
         while (TYPE.isUnaryExpression(expr) && expr.operator === "!") {
             negated = !negated;
             expr = expr.argument as TYPE.Expression;
         }
-        return !negated && isIdentifierNode(expr) ? expr.name : null;
+        return isIdentifierNode(expr) ? { name: expr.name, negated } : null;
+    }
+
+    /** 按 `!` 的奇偶性取反表达式本身(`!!X` → `!X`,`!X` → `X`)。 */
+    private negateLoopTest(test: TYPE.Expression): TYPE.Expression {
+        const operand = this.stripNegations(test);
+        if (!operand) return this.negateCondition(test);
+        let expr: TYPE.Expression = identifier(operand.name);
+        if (!operand.negated) expr = unaryExpressionBuilder("!", expr);
+        return expr;
     }
 
     /**
-     * 还原“提前 return 的 for...of”被 lower 成的 do-while:
+     * 还原“提前退出(+ return/break)的 for...of”被 lower 成的 do-while:
      *
      *   it = arr[Symbol.iterator]();
      *   do {
      *     v = it.next();
-     *     if (v.done) { DONE }       // 循环耗尽后的代码,所有路径都离开循环
+     *     if (v.done) { DONE }       // 循环耗尽后的代码,所有路径都离开函数
      *     ...;                       // 含 if (acc) continue;
      *     acc = ...;                 // 循环 test 的物化
      *   } while (acc);
      *   close(it);
-     *   return E;                    // test 为假时的提前退出路径
+     *   return E;                    // A: test 为假时提前 return
+     *   // 或 break 形态:B: EXIT 是 break 路径的前缀,EXIT 之后是 close,
+     *   // close 之后是循环耗尽与 break 共用的续接代码(AFTER)
      *
      * → for (const v of arr) {
      *     ...;
-     *     if (!TEST) return E;       // 原来的循环出口
+     *     if (!TEST) return E;       // A:原来的提前 return
+     *     if (TEST) { EXIT; break; } // B:原来的 break
      *   }
-     *   DONE
+     *   DONE                        // 仅 A:DONE 搬到 for-of 之后
+     *   AFTER                       // 仅 B:DONE 是 AFTER 的副本,直接丢弃
      *
      * 与 while(true)+break 形态不同,这里的 done 分支 return 的是循环正常结束值;
-     * 循环 test 为假则走循环后的提前退出路径。只有 continue 的守卫能保证 test 在
+     * 循环 test 为假则走循环后的出口。只有 continue 的守卫能保证 test 在
      * continue 路径上为真时才转换,否则 for-of 的 continue 会跳过附加的出口判断。
      */
     private checkAndTransformDoWhileToForOfStatement(value: NodePath<TYPE.DoWhileStatement>): boolean {
-        const testName = this.loopTestSimpleName(value.node.test);
-        if (testName === null) return false;
+        const testOperand = this.loopTestOperand(value.node.test);
+        if (!testOperand) return false;
+        const testName = testOperand.name;
+        // 已折平的 test(如 `while (!v3)`)没有物化赋值语句,出口条件直接按取反
+        // 奇偶性计算;物化形态(`acc = T; while (acc)`)由下面的 lastAssignsTest 处理。
+        const loopTest = value.node.test;
 
         // 提升成临时方法量的 lowering(`v12 = v13.next; ... v12.call(v13)`)先归一化,
         // 否则初始化查找会先撞上这条 `F = it.next` 而找不到迭代器初始化。
@@ -1142,20 +1207,43 @@ export class HighLevelGrammarSimplify implements ISimplify {
             if (iterableReads.has(name)) return false;
         }
 
-        // 循环后的 iterator.close + return E(循环 test 为假时的提前退出路径)。
-        const extras: NodePath<TYPE.Statement>[] = [];
+        // 循环之后有两种出口形态:
+        //   A) iterator.close 之后紧跟 `return E`:循环体里是提前 return;
+        //   B) iterator.close 之前是 break 路径的前缀语句(EXIT),close 之后是
+        //      循环耗尽与 break 共用的续接代码。DONE 是同一块的副本:break
+        //      还原后直接落到续接代码,耗尽路径也走续接代码,因此 DONE 丢弃。
+        //      (典型: for (const x of xs) { ...; if (cond) { A = x; break; } })
         let cursor = value.getNextSibling();
+        const exitPaths: NodePath<TYPE.Statement>[] = [];
+        while (cursor && !collectIdentifierNames(cursor.node).has(iterName)) {
+            exitPaths.push(cursor as NodePath<TYPE.Statement>);
+            cursor = cursor.getNextSibling();
+        }
+        const extras: NodePath<TYPE.Statement>[] = [];
         while (cursor && cursor.isIfStatement() && collectIdentifierNames(cursor.node).has(iterName)) {
             extras.push(cursor as NodePath<TYPE.Statement>);
             cursor = cursor.getNextSibling();
         }
-        if (extras.length === 0 || !cursor || !cursor.isReturnStatement()) return false;
-        const exitPath = cursor as NodePath<TYPE.ReturnStatement>;
-        if (!exitPath.node.argument) return false;
-        const exitReturn = exitPath.node.argument;
-        // E 会被搬进循环体按当前元素求值:只接受纯表达式(搬移不引入副作用),
-        // 且不能读取迭代器临时量(for-of 里迭代器已不存在)。
-        if (!isPureExpression(exitReturn) || collectIdentifierNames(exitReturn).has(iterName)) return false;
+        if (extras.length === 0) return false;
+        const exitReturnPath = exitPaths.length === 0 ? cursor as NodePath<TYPE.ReturnStatement> : null;
+        let exitReturn: TYPE.Expression | null = null;
+        let breakPath: TYPE.Statement[] | null = null;
+        if (!exitReturnPath) {
+            // break 路径:close 之后必须还有共享续接代码,前缀语句必须是直线代码
+            // (搬进新循环的 if 分支后,声明会换作用域,break/continue/label 会
+            // 绑定到新循环)。
+            if (!cursor) return false;
+            for (const prefix of exitPaths) {
+                if (!this.isBreakPathStatement(prefix.node)) return false;
+            }
+            breakPath = exitPaths.map((prefix) => prefix.node);
+        } else {
+            if (!exitReturnPath.isReturnStatement() || !exitReturnPath.node.argument) return false;
+            exitReturn = exitReturnPath.node.argument;
+            // E 会被搬进循环体按当前元素求值:只接受纯表达式(搬移不引入副作用),
+            // 且不能读取迭代器临时量(for-of 里迭代器已不存在)。
+            if (!isPureExpression(exitReturn) || collectIdentifierNames(exitReturn).has(iterName)) return false;
+        }
 
         const body = value.get('body');
         if (!isBlockStatementNode(body.node)) return false;
@@ -1185,18 +1273,28 @@ export class HighLevelGrammarSimplify implements ISimplify {
             doneStatements = [doneConsequent.node as TYPE.Statement];
         } else return false;
         if (doneStatements.length === 0) return false;
-        // 循环耗尽后执行,必须自己离开循环(否则会落到已删除的 `vv = vv.value`)。
+        // 循环耗尽分支必须自己离开函数(return/throw):它要么搬到 for-of 之后
+        // (变体 A),要么是 close 之后续接代码的副本(变体 B)。
         if (!this.statementAlwaysExits(doneStatements[doneStatements.length - 1])) return false;
-        // 循环耗尽时 vv 还是上一轮的值(do-while 里刚赋的是 done 结果对象),
-        // 搬到 for-of 之后 vv 停在最后一个元素上:要求 DONE 先写 vv 再读。
-        if (!this.readsNameOnlyAfterWrite(doneStatements, vv.name)) return false;
+        if (exitReturn) {
+            // 循环耗尽时 vv 还是上一轮的值(do-while 里刚赋的是 done 结果对象),
+            // 搬到 for-of 之后 vv 停在最后一个元素上:要求 DONE 先写 vv 再读。
+            if (!this.readsNameOnlyAfterWrite(doneStatements, vv.name)) return false;
+        }
 
         // 转换后 it/vv 都不再存在:it 只能出现在 init/next()/close 里,
         // vv 只能在循环体内或提前退出路径 E 里使用。
         const iterObjectNode = ((nextAssign.right as TYPE.CallExpression).callee as TYPE.MemberExpression).object;
+        const nextStatementNode = bodyStatements[0].node;
         for (const ref of iterBinding.referencePaths) {
             if (!ref.node || ref.node === iterObjectNode) continue;
+            // foldHoistedIteratorNext 改写了 `F.call(it)` → `it.next()`,绑定里的
+            // referencePaths 还是改写前的节点:按语句归属再认一次首条 next()。
+            if (ref.getStatementParent()?.node === nextStatementNode) continue;
             if (extras.some((e) => ref.findParent((parent) => parent.node === e.node))) continue;
+            // break 形态下 DONE 整块丢弃,里面的引用(通常是被复制进来的续接
+            // 代码又复用了同一个迭代器临时量)不再影响本循环。
+            if (!exitReturn && ref.findParent((parent) => parent.node === doneStmt.node)) continue;
             // 循环之前的读取、以及同一个临时迭代器被后面的循环复用(done 分支里
             // 重新 `it = x[Symbol.iterator]()` 后内层循环再读 it)都不受删除初始化影响。
             if (this.hasNewerValueBefore(ref, value, iterName)) continue;
@@ -1207,6 +1305,9 @@ export class HighLevelGrammarSimplify implements ISimplify {
             if (!violation.node || violation.node === init) continue;
             // done 分支里的重新初始化随分支一起搬走,不再影响本循环。
             if (violation.findParent((parent) => parent.node === doneStmt.node)) continue;
+            // 循环之后的重新初始化(内层循环的 `it = xs[Symbol.iterator]()`)在本循环
+            // 之外,删除初始化不影响它,也不需要它来“覆盖”循环里的读取。
+            if (this.isStatementAfterLoop(violation, value)) continue;
             if (this.hasNewerValueBefore(violation, value, iterName)) continue;
             return false;
         }
@@ -1214,8 +1315,16 @@ export class HighLevelGrammarSimplify implements ISimplify {
         if (valueBinding) {
             for (const ref of valueBinding.referencePaths) {
                 if (!ref.node) continue;
+                // `for (vv of xs)` 的循环变量是写入位置,不是对旧值的读取。
+                const refParent = ref.parentPath?.node;
+                if (refParent && (isForOfStatementNode(refParent) || isForInStatementNode(refParent))
+                    && refParent.left === ref.node) continue;
                 if (ref.findParent((parent) => parent.node === value.node)) continue;
-                if (ref.findParent((parent) => parent.node === exitPath.node)) continue;
+                if (exitReturnPath && ref.findParent((parent) => parent.node === exitReturnPath.node)) continue;
+                // break 路径前缀会被搬进循环体,那里 vv 仍是当前元素。
+                if (exitPaths.some((prefix) => ref.findParent((parent) => parent.node === prefix.node))) continue;
+                // break 形态下 DONE 整块丢弃,里面的读取随块一起消失。
+                if (!exitReturn && ref.findParent((parent) => parent.node === doneStmt.node)) continue;
                 // 循环之前的读取不受影响(外层循环还原后,内层循环的变量读取落在
                 // 它前面);循环之后的读取必须能看到后续赋值。
                 if (this.hasNewerValueBefore(ref, value, vv.name)) continue;
@@ -1231,7 +1340,8 @@ export class HighLevelGrammarSimplify implements ISimplify {
                 const owner = p.findParent((parent) => parent.isWhileStatement() || parent.isDoWhileStatement()
                     || parent.isForStatement() || parent.isForInStatement() || parent.isForOfStatement());
                 if (!owner || owner.node !== value.node) return;
-                if (!this.continueHoldsLoopTest(p as NodePath<TYPE.ContinueStatement>, testName)) {
+                if (!this.continueHoldsLoopTest(
+                    p as NodePath<TYPE.ContinueStatement>, testName, loopTest, testOperand.negated)) {
                     valid = false;
                     p.stop();
                 }
@@ -1265,9 +1375,11 @@ export class HighLevelGrammarSimplify implements ISimplify {
             if (i === 2 && skipSelfValueAssignment) continue;
             arr.push(bodyStatements[i].node);
         }
-        // 循环 test 的物化赋值 `testName = T` 直接变成出口判断的条件 `if (!T) return E`,
-        // 避免输出里留下只给 while test 用的 acc 赋值。
-        let exitTest: TYPE.Expression = unaryExpressionBuilder("!", identifier(testName));
+        // 循环 test 的物化赋值 `testName = T` 直接变成出口判断的条件,避免输出里
+        // 留下只给 while test 用的 acc 赋值。取反奇偶性作用在 T 上:
+        //   while (acc) + acc = T        -> if (!T)
+        //   while (!acc) + acc = T       -> if (T)
+        let exitTest: TYPE.Expression = this.negateLoopTest(loopTest);
         const testAssign = arr[arr.length - 1];
         const lastAssignsTest = isExpressionStatementNode(testAssign) && isAssignmentExpressionNode(testAssign.expression)
             && testAssign.expression.operator === "=" && isIdentifierNode(testAssign.expression.left)
@@ -1275,31 +1387,59 @@ export class HighLevelGrammarSimplify implements ISimplify {
         if (lastAssignsTest) {
             const testExpr = (testAssign as TYPE.ExpressionStatement).expression as TYPE.AssignmentExpression;
             const testValue = testExpr.right as TYPE.Expression;
+            // 出口路径(return E / break 前缀)不能在删掉物化赋值后还读 testName。
+            const exitConsumers: TYPE.Node[] = exitReturn ? [exitReturn] : (breakPath ?? []);
+            const exitReadsTest = exitConsumers.some((node) => collectReadNames(node).has(testName));
             if (!collectReadNames(testValue).has(testName)
                 && !this.readsName(doneStatements, testName)
-                && !collectReadNames(exitReturn).has(testName)) {
+                && !exitReadsTest) {
                 arr.pop();
-                exitTest = this.negateCondition(testValue);
+                exitTest = testOperand.negated ? testValue : this.negateCondition(testValue);
             }
         }
         // test 的常量初值只有在 body 末尾确实重写 test 时才可以删;它还可能覆盖
         // for-of 头部仍要读取的迭代器表达式(`acc = false; for (v of acc)`),
         // 那种情况下不删就会读错,直接放弃转换。
         if (!lastAssignsTest && mustDropTestInit) return false;
-        arr.push(TYPE.ifStatement(exitTest, returnStatementBuilder(exitReturn)));
+        if (exitReturn) {
+            arr.push(TYPE.ifStatement(exitTest, returnStatementBuilder(exitReturn)));
+        } else {
+            // 源码形态:if (cond) { <break 路径前缀> break; }
+            arr.push(TYPE.ifStatement(exitTest, blockStatementBuilder([...(breakPath ?? []), breakStatement()])));
+        }
         const forOfStatement = forOfStatementBuilder(vv, iterable as TYPE.Expression, blockStatementBuilder(arr));
         for (const extra of extras) extra.remove();
-        exitPath.remove();
+        for (const prefix of exitPaths) prefix.remove();
+        if (exitReturnPath) exitReturnPath.remove();
         value.replaceWith(forOfStatement);
-        // DONE 里可能有块级声明,包一层块避免与外部同名声明冲突。
-        const hasDeclaration = doneStatements.some((stmt) =>
-            isVariableDeclarationNode(stmt) || stmt.type === "FunctionDeclaration" || stmt.type === "ClassDeclaration");
-        value.insertAfter(hasDeclaration ? [blockStatementBuilder(doneStatements)] : doneStatements);
+        if (exitReturn) {
+            // DONE 里可能有块级声明,包一层块避免与外部同名声明冲突。
+            const hasDeclaration = doneStatements.some((stmt) =>
+                isVariableDeclarationNode(stmt) || stmt.type === "FunctionDeclaration" || stmt.type === "ClassDeclaration");
+            value.insertAfter(hasDeclaration ? [blockStatementBuilder(doneStatements)] : doneStatements);
+        }
+        // break 形态下 DONE 是 close 之后续接代码的副本:耗尽和 break 都走续接代码,
+        // 保留 DONE 会让 break 落到耗尽分支上。
         initPath.remove();
         if (lastAssignsTest) {
             for (const dead of deadInits) dead.remove();
         }
         return true;
+    }
+
+    /** break 路径前缀能否搬进 for-of 的 if 分支(直线代码,无声明与跳转)。 */
+    private isBreakPathStatement(stmt: TYPE.Statement): boolean {
+        let valid = true;
+        walkNode(stmt, (node) => {
+            if (!valid) return false;
+            if (isVariableDeclarationNode(node) || isFunctionLikeNode(node) || isClassLikeNode(node)
+                || isBreakStatement(node) || node.type === "ContinueStatement" || isLabeledStatementNode(node)) {
+                valid = false;
+                return false;
+            }
+            return true;
+        });
+        return valid;
     }
 
     /** 语句是否所有执行路径都会离开(return / throw)。 */
@@ -1389,7 +1529,12 @@ export class HighLevelGrammarSimplify implements ISimplify {
      *   `if (!x) continue;` 且紧邻前一条是 `acc = !x;`(continue 前刚物化过 test)
      * 后者保证 continue 时 test 为真,跳过的出口判断本来也不会触发。
      */
-    private continueHoldsLoopTest(value: NodePath<TYPE.ContinueStatement>, testName: string): boolean {
+    private continueHoldsLoopTest(
+        value: NodePath<TYPE.ContinueStatement>,
+        testName: string,
+        loopTest: TYPE.Expression,
+        testNegated: boolean,
+    ): boolean {
         let child: NodePath = value;
         let parent = value.parentPath;
         while (parent && (parent.isBlockStatement() || parent.isLabeledStatement())) {
@@ -1399,7 +1544,9 @@ export class HighLevelGrammarSimplify implements ISimplify {
         if (!parent || !parent.isIfStatement() || parent.node.alternate
             || child.node !== parent.node.consequent) return false;
         const guard = parent.node.test;
-        if (this.loopTestSimpleName(guard) === testName) return true;
+        // 守卫和循环 test 逐字相同(取反形态 `while (!x)` 也成立)。
+        if (isNodeEqual(guard, loopTest)) return true;
+        if (!testNegated && this.loopTestSimpleName(guard) === testName) return true;
         const prev = parent.getPrevSibling();
         if (!prev.node || !this.isDirectAssignmentTo(prev.node, testName)) return false;
         const rhs = ((prev.node as TYPE.ExpressionStatement).expression as TYPE.AssignmentExpression).right;
@@ -1555,7 +1702,8 @@ export class HighLevelGrammarSimplify implements ISimplify {
      * else { X = undefined }` 物化成守卫三目、把累加器枢纽拷贝留在语句序列里,
      * 这些都发生在 simplify() 只跑一次的主遍历之后。这里只做五类安全且局部的
      * 还原:守卫三目 → 可选链、死枢纽拷贝折叠、while(true)+break 形态的 for-of
-     * 还原(含 `it.next` 被提升为临时方法量的 lowering)、连续 if 守卫链 →
+     * 还原(含 `it.next` 被提升为临时方法量的 lowering)、do-while 形态的 for-of
+     * 还原(提前 return / break 两种出口)、连续 if 守卫链 →
      * switch(else-if 块已被 flattenElseAfterExit 展开成守卫子句)、随之失去
      * 使用者的临时变量声明清理。
      * 必须在所有条件折叠之后调用(依赖 `!acc` 物化链已被折回标识符守卫)。
@@ -1573,6 +1721,21 @@ export class HighLevelGrammarSimplify implements ISimplify {
                 if (this.checkAndTransformToForOfStatement(value)) changed = true;
             },
         });
+        // do-while 形态同样只有到尾部(可选链/条件物化折叠完、close 块归一化成
+        // `if (it.return != undefined)`)之后才能识别;循环体的出口判断也要等
+        // 测试序列清理后才是 `testName = T`。
+        for (let round = 0; round < 8; round++) {
+            let roundChanged = false;
+            traverse(file(node), {
+                DoWhileStatement: (value) => {
+                    if (this.checkAndTransformDoWhileToForOfStatement(value)) {
+                        roundChanged = true;
+                        changed = true;
+                    }
+                },
+            });
+            if (!roundChanged) break;
+        }
         // 同一语句列表里的连续 `if (disc === v) { return ...; }` 守卫链是
         // ArkTS 对源码 switch 的 lowering(else-if 块先由 flattenElseAfterExit
         // 展开成守卫子句),在流水线末尾按语句列表整体还原。

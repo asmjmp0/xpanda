@@ -103,16 +103,13 @@ ChannelInfoService = class panda_jmp0_reserved_anonymous_3 {
     return new local_0_0 /*LocaleContext*/(new Localization(i18n.System.getSystemLanguage() || Localization.DEFAULT.getLanguageCode(), "GB"), new ContentCountry("GB"));
   }
   extractDescription(p0) {
-    let v5, v6, v8, v9, acc;
+    let v5, v8, v9;
     v9 = this.asRecord(p0.metadata);
-    acc = this.asRecord(v9?.channelMetadataRenderer)?.description;
-    v5 = this.asString(acc);
+    v5 = this.asString(this.asRecord(v9?.channelMetadataRenderer)?.description);
     if (v5) {
       return v5;
     }
-    v6 = this.asRecord(p0.header);
-    acc = v6?.interactiveTabbedHeaderRenderer;
-    v8 = this.asRecord(acc);
+    v8 = this.asRecord(this.asRecord(p0.header)?.interactiveTabbedHeaderRenderer);
     return (v8 ? this.readText(v8.description) : "") || "";
   }
   extractBannerUrl(p0) {
@@ -134,8 +131,7 @@ ChannelInfoService = class panda_jmp0_reserved_anonymous_3 {
     v12 = ["c4TabbedHeaderRenderer", "interactiveTabbedHeaderRenderer", "carouselHeaderRenderer"];
     for (v16 = 0; v16 < v12.length; v16 += 1) {
       v18 = this.asRecord(v5[v12[v16]]);
-      acc = this.asRecord(v18?.banner)?.thumbnails;
-      v17 = this.pickLargestImageUrl(this.asArray(acc));
+      v17 = this.pickLargestImageUrl(this.asArray(this.asRecord(v18?.banner)?.thumbnails));
       if (v17) {
         return this.normalizeUrl(v17);
       }
@@ -143,29 +139,23 @@ ChannelInfoService = class panda_jmp0_reserved_anonymous_3 {
     return "";
   }
   extractChannelName(p0) {
-    let v4, v7, v8, v9, acc;
+    let v4, v8, v9;
     v8 = this.asRecord(p0.metadata);
-    acc = this.asRecord(v8?.channelMetadataRenderer)?.title;
-    v9 = this.asString(acc);
+    v9 = this.asString(this.asRecord(v8?.channelMetadataRenderer)?.title);
     if (v9) {
       return v9;
     }
-    v7 = this.asRecord(p0.header);
-    acc = v7?.c4TabbedHeaderRenderer;
-    v4 = this.asRecord(acc);
+    v4 = this.asRecord(this.asRecord(p0.header)?.c4TabbedHeaderRenderer);
     return (v4 ? this.readText(v4.title) : "") || "";
   }
   extractHandle(p0) {
-    let v4, v7, v8, v9, acc;
+    let v4, v7, v9, acc;
     v9 = this.asRecord(p0.metadata);
-    acc = this.asRecord(v9?.channelMetadataRenderer)?.vanityChannelUrl;
-    v7 = this.handleFromVanityUrl(this.asString(acc));
+    v7 = this.handleFromVanityUrl(this.asString(this.asRecord(v9?.channelMetadataRenderer)?.vanityChannelUrl));
     if (v7) {
       return v7;
     }
-    v8 = this.asRecord(p0.header);
-    acc = v8?.c4TabbedHeaderRenderer;
-    v4 = this.asRecord(acc);
+    v4 = this.asRecord(this.asRecord(p0.header)?.c4TabbedHeaderRenderer);
     acc = v4 ? this.readText(v4.vanityChannelUrl) : "";
     return this.handleFromVanityUrl(acc);
   }
@@ -181,8 +171,7 @@ ChannelInfoService = class panda_jmp0_reserved_anonymous_3 {
     if (v4) {
       v7 = this.asRecord(v4.c4TabbedHeaderRenderer);
       if (v7) {
-        v11 = this.asRecord(v7.avatar);
-        acc = v11?.thumbnails;
+        acc = this.asRecord(v7.avatar)?.thumbnails;
         v13 = this.pickLargestImageUrl(this.asArray(acc));
         if (v13) {
           return this.normalizeUrl(v13);
@@ -190,8 +179,7 @@ ChannelInfoService = class panda_jmp0_reserved_anonymous_3 {
       }
       v9 = this.asRecord(v4.interactiveTabbedHeaderRenderer);
       if (v9) {
-        v11 = this.asRecord(v9.boxArt);
-        acc = v11?.thumbnails;
+        acc = this.asRecord(v9.boxArt)?.thumbnails;
         v13 = this.pickLargestImageUrl(this.asArray(acc));
         if (v13) {
           return this.normalizeUrl(v13);
@@ -199,33 +187,25 @@ ChannelInfoService = class panda_jmp0_reserved_anonymous_3 {
       }
       v8 = this.asRecord(v4.carouselHeaderRenderer);
       if (v8 && (v11 = this.asArray(v8.contents)) && v11.length > 0 && (acc = this.asRecord(v11[0]), v12 = acc) && (v13 = this.asRecord(v12.topicChannelDetailsRenderer), acc)) {
-        v14 = this.asRecord(v13.avatar);
-        acc = v14?.thumbnails;
-        v16 = this.pickLargestImageUrl(this.asArray(acc));
+        v16 = this.pickLargestImageUrl(this.asArray(this.asRecord(v13.avatar)?.thumbnails));
         if (v16) {
           return this.normalizeUrl(v16);
         }
       }
       v10 = this.asRecord(v4.pageHeaderRenderer);
       if (v10) {
-        v11 = this.asRecord(v10.content);
-        acc = v11?.pageHeaderViewModel;
-        v12 = this.asRecord(acc);
+        v12 = this.asRecord(this.asRecord(v10.content)?.pageHeaderViewModel);
         if (v12) {
           v13 = this.asRecord(v12.avatar);
           if (v13) {
-            v15 = this.asRecord(v13.image);
-            acc = v15?.sources;
-            v17 = this.pickLargestImageUrl(this.asArray(acc));
+            v17 = this.pickLargestImageUrl(this.asArray(this.asRecord(v13.image)?.sources));
             if (v17) {
               return this.normalizeUrl(v17);
             }
           }
           v14 = this.asRecord(v12.image);
           if (v14 && (v15 = this.asRecord(v14.contentPreviewImageViewModel), !v14)) {
-            v16 = this.asRecord(v15.image);
-            acc = v16?.sources;
-            v18 = this.pickLargestImageUrl(this.asArray(acc));
+            v18 = this.pickLargestImageUrl(this.asArray(this.asRecord(v15.image)?.sources));
             if (v18) {
               return this.normalizeUrl(v18);
             }
@@ -320,7 +300,7 @@ ChannelInfoService = class panda_jmp0_reserved_anonymous_3 {
     return "";
   }
   readHeaderMetadataParts(p0) {
-    let v6, v7, v9, v12, v13, v14, v16, v17, v18, v22, acc;
+    let v6, v7, v9, v12, v13, v16, v17, v18, v22, acc;
     v9 = [];
     v7 = this.asRecord(p0.content);
     acc = this.asRecord(v7?.pageHeaderViewModel)?.metadata;
@@ -331,15 +311,12 @@ ChannelInfoService = class panda_jmp0_reserved_anonymous_3 {
       return [];
     }
     for (v12 = 0; v12 < v6.length; v12 += 1) {
-      v14 = this.asRecord(v6[v12]);
-      acc = v14?.metadataParts;
-      v13 = this.asArray(acc);
+      v13 = this.asArray(this.asRecord(v6[v12])?.metadataParts);
       acc = !!v13;
       if (acc) {
         for (v16 = 0; v16 < v13.length; v16 += 1) {
           v18 = this.asRecord(v13[v16]);
-          acc = this.asRecord(v18?.text)?.content;
-          v17 = this.asString(acc);
+          v17 = this.asString(this.asRecord(v18?.text)?.content);
           if (v17) {
             v22 = {
               "content": v17,
@@ -362,8 +339,7 @@ ChannelInfoService = class panda_jmp0_reserved_anonymous_3 {
     v4 = -1;
     for (v8 = 0; v8 < p0.length; v8 += 1) {
       v11 = this.asRecord(p0[v8]);
-      acc = v11?.url;
-      v12 = this.normalizeUrl(this.asString(acc));
+      v12 = this.normalizeUrl(this.asString(v11?.url));
       if (v12) {
         v13 = this.asNumber(v11?.width);
         acc = this.asNumber(v11?.height);

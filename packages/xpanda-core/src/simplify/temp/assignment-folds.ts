@@ -11,6 +11,7 @@ import {
     isIdentifier,
     isMemberExpression,
     isOptionalCallExpression,
+    isOptionalMemberExpression,
     isReferenced,
     isReturnStatement,
     isStringLiteral,
@@ -35,6 +36,7 @@ import {
 import { TempVariablePass } from "./base";
 import { FunctionContext } from "./types";
 import {
+    canDeferTestValue,
     containsNode,
     countIdentifiers,
     countReadsInNode,
@@ -391,6 +393,117 @@ export class AssignmentFolds extends TempVariablePass {
         this.changed = true;
         return true;
     }
+    /**
+     * 尾部补齐:`X = E; Y = <只读取一次 X 的表达式>` -> `Y = <E 代进去>`。
+     *
+     * 可选链(`tryRestoreOptionalChain`)和 `??` 还原发生在流水线尾部/三目合成
+     * 之后,轮内的复制传播/别名折叠看不到这些中间形态,典型残留:
+     *   acc = v20?.client; v6 = asRecord(acc);
+     *   acc = local_0_5(x) ?? ""; v14 = parseFlags(acc);
+     *   acc = !v17; v4 = acc ? "content" : "none";
+     * 要求 X 未被捕获、消费语句里只读一次且不写 X、语句之后 X 已死,E 的
+     * 搬移不改变求值顺序(见 canDeferTestValue)。只处理右值位置。
+     */
+    foldTempLastUseIntoNextRead(stmts: TYPE.Statement[], ctx: FunctionContext): void {
+        for (let i = 0; i + 1 < stmts.length; i++) {
+            if (!this.tryFoldTempIntoNextRead(stmts, i, ctx)) continue;
+            i--;
+        }
+        for (const stmt of stmts) this.foldTempLastUseIntoNextReadInChildren(stmt, ctx);
+    }
+
+    private tryFoldTempIntoNextRead(stmts: TYPE.Statement[], i: number, ctx: FunctionContext): boolean {
+        const first = stmts[i];
+        const second = stmts[i + 1];
+        if (!isExpressionStatement(first) || !isAssignmentExpression(first.expression)) return false;
+        if (!isExpressionStatement(second) || !isAssignmentExpression(second.expression)) return false;
+        const a = first.expression;
+        const b = second.expression;
+        if (a.operator !== "=" || !isIdentifier(a.left)) return false;
+        if (b.operator !== "=") return false;
+        const name = a.left.name;
+        if (!isTempName(name) || isDeclarationValue(a.right)) return false;
+        // 右值自引用(`X = F(X)`)属于累加器链,交给 foldAccumulatorChains。
+        if (collectReadNames(a.right).has(name)) return false;
+        const info = ctx.infos.get(name);
+        if (!info || info.captured) return false;
+        // 消费语句里不得写入 X(如 `f((X = 1))`),否则删掉赋值会改变写入次数。
+        if (collectAssignedNames(second).has(name)) return false;
+        const target = b.right as TYPE.Expression;
+        // 左值在右值之前求值:成员左值必须无副作用(否则 E 被推后求值会改变
+        // 与左值副作用之间的顺序),且 E 不能写左值读取的名字。
+        if (!isIdentifier(b.left)) {
+            if (!isMemberExpression(b.left) && !isOptionalMemberExpression(b.left)) return false;
+            const member = b.left as TYPE.MemberExpression;
+            if (!isPureExpression(member.object)) return false;
+            if (member.computed && !isPureExpression(member.property as TYPE.Expression)) return false;
+            const leftReads = collectIdentifierNames(member);
+            for (const written of collectAssignedNames(a.right)) {
+                if (leftReads.has(written)) return false;
+            }
+        }
+        if (countReadsInNode(target, name) !== 1) return false;
+        const liveAfter = ctx.liveAfter.get(second);
+        if (!liveAfter || liveAfter.has(name)) return false;
+
+        let id: TYPE.Identifier | null = null;
+        walkNode(target, (node, parent) => {
+            if (isFunctionLike(node) || isClassLike(node)) return false;
+            if (isIdentifier(node) && node.name === name && parent && isReferenced(node, parent)) {
+                id = node;
+                return false;
+            }
+            return true;
+        });
+        if (!id) return false;
+        // callee 位置的读取是方法装载形态,交给 AccCallSimplify。
+        if ((isCallExpression(target) || isOptionalCallExpression(target)) && containsNode(target.callee, id)) {
+            return false;
+        }
+        if (!canDeferTestValue(a.right, target, id)) return false;
+
+        info.refs.delete(id);
+        if (!replaceNodeInTree(target, id, a.right)) return false;
+        stmts.splice(i, 1);
+        this.changed = true;
+        return true;
+    }
+
+    private foldTempLastUseIntoNextReadInChildren(stmt: TYPE.Statement, ctx: FunctionContext): void {
+        switch (stmt.type) {
+            case "BlockStatement":
+                this.foldTempLastUseIntoNextRead(stmt.body, ctx);
+                break;
+            case "IfStatement":
+                if (isBlockStatement(stmt.consequent)) this.foldTempLastUseIntoNextRead(stmt.consequent.body, ctx);
+                else this.foldTempLastUseIntoNextReadInChildren(stmt.consequent, ctx);
+                if (stmt.alternate) {
+                    if (isBlockStatement(stmt.alternate)) this.foldTempLastUseIntoNextRead(stmt.alternate.body, ctx);
+                    else this.foldTempLastUseIntoNextReadInChildren(stmt.alternate, ctx);
+                }
+                break;
+            case "WhileStatement":
+            case "DoWhileStatement":
+            case "ForStatement":
+            case "ForInStatement":
+            case "ForOfStatement":
+            case "LabeledStatement":
+                if (isBlockStatement(stmt.body)) this.foldTempLastUseIntoNextRead(stmt.body.body, ctx);
+                else this.foldTempLastUseIntoNextReadInChildren(stmt.body, ctx);
+                break;
+            case "TryStatement":
+                if (isBlockStatement(stmt.block)) this.foldTempLastUseIntoNextRead(stmt.block.body, ctx);
+                if (stmt.handler) this.foldTempLastUseIntoNextRead(stmt.handler.body.body, ctx);
+                if (stmt.finalizer) this.foldTempLastUseIntoNextRead(stmt.finalizer.body, ctx);
+                break;
+            case "SwitchStatement":
+                for (const c of stmt.cases) this.foldTempLastUseIntoNextRead(c.consequent, ctx);
+                break;
+            default:
+                break;
+        }
+    }
+
     private foldReturnAssignmentsInChildren(stmt: TYPE.Statement, ctx: FunctionContext): void {
         switch (stmt.type) {
             case "BlockStatement":

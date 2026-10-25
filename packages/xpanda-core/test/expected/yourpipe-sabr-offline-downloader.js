@@ -83,7 +83,7 @@ try {
       };
     }
     static resolveAudioFormat(p0, p1, p2) {
-      let v6, v8, acc;
+      let v6, v8;
       v6 = p0.findFormatByItagAndTrack(p2, p1.audioTrackId);
       if (v6 && p1.audioTrackId && v6.audioTrackId !== p1.audioTrackId) {
         v6 = undefined;
@@ -109,8 +109,7 @@ try {
       v8.codecs = p1.codecs;
       v8.audioTrackId = p1.audioTrackId;
       v8.audioTrackName = p1.audioTrackName;
-      acc = (p1.audioTrackType || "").toLowerCase();
-      v8.isOriginalAudio = acc === "original";
+      v8.isOriginalAudio = (p1.audioTrackType || "").toLowerCase() === "original";
       v8.approxDurationMs = p1.approxDurationMs;
       return v8;
     }
@@ -216,8 +215,7 @@ try {
             v17 = local_2_5 /*audioSeq*/ > 0 ? p1.getSegmentEndMs(local_2_5 /*audioSeq*/) : 0;
             if (!local_2_3 /*videoDone*/) {}
             if (!local_2_3 /*videoDone*/) {
-              acc = !local_2_7 /*audioDone*/;
-              v18 = acc ? v21 <= v17 : local_2_7 /*audioDone*/;
+              v18 = !local_2_7 /*audioDone*/ ? v21 <= v17 : local_2_7 /*audioDone*/;
             } else v18 = local_2_7 /*audioDone*/;
             v19 = false;
             if (!v18) {
@@ -287,8 +285,7 @@ try {
             if (v19) {
               v11 = 0;
               v26 = local_2_1 /*videoSeq*/ > 0 ? p0.getSegmentEndMs(local_2_1 /*videoSeq*/) : 0;
-              acc = local_2_5 /*audioSeq*/ > 0 ? p1.getSegmentEndMs(local_2_5 /*audioSeq*/) : 0;
-              v22 = Math.min(v26, acc);
+              v22 = Math.min(v26, local_2_5 /*audioSeq*/ > 0 ? p1.getSegmentEndMs(local_2_5 /*audioSeq*/) : 0);
               v22 > 0 && sabrSessionStore.setPlayHeadMs(p2.key, v22);
               v23 = local_1_0 /*SabrOfflineDownloader*/.overallPercent(local_2_1 /*videoSeq*/, local_2_5 /*audioSeq*/, p0.getEndSegment(), p1.getEndSegment(), local_2_0 /*videoBytes*/, local_2_4 /*audioBytes*/);
               if (p5 != null) {
@@ -400,8 +397,7 @@ try {
         v17 = local_2_5 /*audioSeq*/ > 0 ? p1.getSegmentEndMs(local_2_5 /*audioSeq*/) : 0;
         if (!local_2_3 /*videoDone*/) {}
         if (!local_2_3 /*videoDone*/) {
-          acc = !local_2_7 /*audioDone*/;
-          v18 = acc ? v21 <= v17 : local_2_7 /*audioDone*/;
+          v18 = !local_2_7 /*audioDone*/ ? v21 <= v17 : local_2_7 /*audioDone*/;
         } else v18 = local_2_7 /*audioDone*/;
         v19 = false;
         if (!v18) {
@@ -471,8 +467,7 @@ try {
         if (v19) {
           v11 = 0;
           v26 = local_2_1 /*videoSeq*/ > 0 ? p0.getSegmentEndMs(local_2_1 /*videoSeq*/) : 0;
-          acc = local_2_5 /*audioSeq*/ > 0 ? p1.getSegmentEndMs(local_2_5 /*audioSeq*/) : 0;
-          v22 = Math.min(v26, acc);
+          v22 = Math.min(v26, local_2_5 /*audioSeq*/ > 0 ? p1.getSegmentEndMs(local_2_5 /*audioSeq*/) : 0);
           v22 > 0 && sabrSessionStore.setPlayHeadMs(p2.key, v22);
           v23 = local_1_0 /*SabrOfflineDownloader*/.overallPercent(local_2_1 /*videoSeq*/, local_2_5 /*audioSeq*/, p0.getEndSegment(), p1.getEndSegment(), local_2_0 /*videoBytes*/, local_2_4 /*audioBytes*/);
           if (p5 != null) {
