@@ -3246,6 +3246,70 @@ function verifyAmclForOfCloseBlock(): void {
 }
 
 /**
+ * 回归:字节码 24.0.0.0 的 try/catch/finally 结构还原(hx360e1.0.2.abc 的 LogExport)。
+ *
+ * 该版本把真正的 catch / finally handler 的 codeSize 全写成 0,旧逻辑会把
+ * handler 整段跳过:catch 体在正常控制流里不可达而被剪掉,输出只剩没有异常
+ * 处理的直线代码(LogExport.readLogTail 的 hilog.error 分支、exportLogs 的
+ * 失败返回都消失了)。现在按 handler 结构注册真正的 catch;finally 的异常清理
+ * 路径先输出成 eager catch,再由 foldEagerCatchToFinally 折回 try/finally。
+ * 整类输出锁定在 expected/hx360e-log-export.js。
+ */
+function verifyHx360eExceptionStructure(): void {
+    const abcPath = path.join(__dirname, "resources", "hx360e1.0.2.abc");
+    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
+    const clazz = pandaFile.getAllClasses().find(
+        (c) => c.name.content === "L&entry/src/main/ets/common/LogExport&;");
+    if (!clazz) throw new Error("hx360e: 未找到 LogExport");
+    const code = new PandaDecompiler().decompileClass(clazz);
+    NodeFactory.parse(code);
+    if (code.includes("created by SimpleAnalysis") || code.includes("decompiler_")) {
+        throw new Error(`LogExport: 反编译降级或残留伪语句\n${code}`);
+    }
+    if (/\bhole\b/.test(code)) {
+        throw new Error(`LogExport: 仍残留 hole 哨兵\n${code}`);
+    }
+
+    const readStart = code.indexOf("static readLogTail(");
+    const readEnd = code.indexOf("static buildText(", readStart);
+    if (readStart < 0 || readEnd < 0) throw new Error(`LogExport: 未找到 readLogTail\n${code}`);
+    const readBody = code.slice(readStart, readEnd);
+    for (const fragment of [
+        "} catch (catchAcc) {",
+        'hilog.error(local_0_0, local_0_1, "readLogTail failed: %{public}s", JSON.stringify(catchAcc));',
+        'return "(read failed: " + p0 + ")\\n";',
+        "} finally {",
+        "fs.closeSync(v1);",
+    ]) {
+        if (!readBody.includes(fragment)) {
+            throw new Error(`LogExport.readLogTail: 缺少 ${JSON.stringify(fragment)}\n${readBody}`);
+        }
+    }
+
+    const exportStart = code.indexOf("static async exportLogs(");
+    const exportBody = code.slice(exportStart);
+    for (const fragment of [
+        "} catch (catchAcc) {",
+        'hilog.error(local_0_0, local_0_1, "exportLogs failed: %{public}s", JSON.stringify(catchAcc));',
+        'return "导出失败（见 hilog）";',
+        "} finally {",
+        "fs.closeSync(v8);",
+        'hilog.info(local_0_0, local_0_1, "exportLogs: %{public}s", v0[0]);',
+        'return "已导出 " + v5.length + " 字符 → " + v0[0] + "";',
+    ]) {
+        if (!exportBody.includes(fragment)) {
+            throw new Error(`LogExport.exportLogs: 缺少 ${JSON.stringify(fragment)}\n${exportBody}`);
+        }
+    }
+
+    const expected = fs.readFileSync(
+        path.join(__dirname, "expected", "hx360e-log-export.js"), "utf-8");
+    if (code !== expected) {
+        throw new Error(`LogExport: 输出与快照不一致\n${firstDifference(expected, code)}`);
+    }
+}
+
+/**
  * 回归:字节码 24.0.0.0 的 SOURCE_FILE 类标签 + 登录参数校验的短路链还原。
  *
  * 1. lnga1.2.6.abc 的类带 `PandaClassTag.SOURCE_FILE`(tag 0x07),载荷是 4 字节
@@ -4120,6 +4184,10 @@ async function main(): Promise<void> {
 
     console.log("[test] lnga SOURCE_FILE + qr login short circuit (lnga1.2.6.abc)");
     verifyLngaQrLoginUtils();
+    console.log("    ok");
+
+    console.log("[test] hx360e 24.0.0.0 try/catch/finally structure (hx360e1.0.2.abc)");
+    verifyHx360eExceptionStructure();
     console.log("    ok");
 
     console.log("[test] simplify sequenced test prefix fold");

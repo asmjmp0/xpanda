@@ -139,6 +139,29 @@ export class SyntaxRewriteSimplify implements ISimplify {
                 const isEqual = test.operator === "==" || test.operator === "===";
                 const normalBranch = isEqual ? path.node.consequent : path.node.alternate;
                 const exceptionBranch = isEqual ? path.node.alternate : path.node.consequent;
+                // 24.0.0.0 的 eager catch:
+                //   catch (e) { <cleanup>; if (hole == e) { return; } throw e; }
+                // e 是 catch 参数(真正的异常),不可能等于内部哨兵 hole,这个 if 是
+                // 死代码,删掉后就是 `<cleanup>; throw e;`(finally 的异常路径)。
+                // 必须确认 e 就是外层 catch 的参数:经典 finally 收尾里的哨兵守卫
+                // (`if (hole == pending) { <正常路径> } throw pending`) 是正常分支,
+                // 不能删。
+                const catchClause = path.parentPath?.parentPath?.node;
+                if (isEqual && !path.node.alternate
+                    && catchClause && TYPE.isCatchClause(catchClause) && isIdentifier(catchClause.param)) {
+                    const exceptionName = holeLeft
+                        ? (isIdentifier(test.right) ? test.right.name : null)
+                        : holeRight ? (isIdentifier(test.left) ? test.left.name : null) : null;
+                    if (exceptionName && exceptionName === catchClause.param.name
+                        && SyntaxRewriteSimplify.terminates(path.node.consequent)) {
+                        const next = path.getNextSibling();
+                        if (next.isThrowStatement() && isIdentifier((next.node as TYPE.ThrowStatement).argument, { name: exceptionName })) {
+                            changed = true;
+                            path.remove();
+                            return;
+                        }
+                    }
+                }
                 if (!exceptionBranch || !SyntaxRewriteSimplify.isThrowOnly(exceptionBranch)) return;
                 changed = true;
                 if (normalBranch) {
@@ -171,6 +194,71 @@ export class SyntaxRewriteSimplify implements ISimplify {
             return !!last && SyntaxRewriteSimplify.isThrowOnly(last);
         }
         return isThrowStatement(statement);
+    }
+
+    /**
+     * 24.0.0.0 的 try/finally lowering:eager catch 形式
+     *   try { <body>; <cleanup>; <exit> } catch (e) { <cleanup>; throw e }
+     * 与 `try { <body>; <exit> } finally { <cleanup> }` 等价,后者才是源码结构。
+     * 只在 cleanup 逐语句结构相同、且不读取 catch 参数 / try 体内声明的变量时改写。
+     */
+    public static foldEagerCatchToFinally(node: Program): boolean {
+        let changed = false;
+        traverse(file(node), {
+            noScope: true,
+            TryStatement(path) {
+                const handler = path.node.handler;
+                if (!handler || path.node.finalizer) return;
+                const param = handler.param;
+                if (!isIdentifier(param)) return;
+                const catchBody = handler.body.body;
+                if (catchBody.length < 2) return;
+                const throwStatement = catchBody[catchBody.length - 1];
+                if (!isThrowStatement(throwStatement) || !isIdentifier(throwStatement.argument, { name: param.name })) return;
+                const cleanup = catchBody.slice(0, -1);
+                if (cleanup.length === 0) return;
+                // 清理语句必须都是表达式语句(不改变控制流),否则不能搬进 finally
+                if (!cleanup.every((statement) => isExpressionStatementNode(statement))) return;
+                const tryBody = path.node.block.body;
+                if (tryBody.length <= cleanup.length) return;
+                const exit = tryBody[tryBody.length - 1];
+                if (!SyntaxRewriteSimplify.terminates(exit)) return;
+                const offset = tryBody.length - 1 - cleanup.length;
+                for (let i = 0; i < cleanup.length; i++) {
+                    if (!isNodeEqual(tryBody[offset + i], cleanup[i])) return;
+                }
+                const cleanupNames = collectIdentifierNames(TYPE.blockStatement(cleanup));
+                if (cleanupNames.has(param.name)) return;
+                // 清理语句不能引用 try 体内声明的变量(搬进 finally 后不在作用域)
+                const tryLocalNames = new Set<string>();
+                for (const statement of tryBody.slice(0, offset)) {
+                    walkNode(statement, (inner) => {
+                        if (isFunctionDeclaration(inner) || isClassDeclaration(inner)) {
+                            tryLocalNames.add((inner as TYPE.FunctionDeclaration | TYPE.ClassDeclaration).id?.name ?? "");
+                            return false;
+                        }
+                        if (isVariableDeclaration(inner)) {
+                            for (const declarator of inner.declarations) {
+                                if (isIdentifier(declarator.id)) tryLocalNames.add(declarator.id.name);
+                            }
+                            return true;
+                        }
+                        return true;
+                    });
+                }
+                for (const name of cleanupNames) {
+                    if (tryLocalNames.has(name)) return;
+                }
+                const newTryBody = [...tryBody.slice(0, offset), exit];
+                path.replaceWith(TYPE.tryStatement(
+                    TYPE.blockStatement(newTryBody),
+                    null,
+                    TYPE.blockStatement(cleanup),
+                ));
+                changed = true;
+            },
+        });
+        return changed;
     }
 
     /**

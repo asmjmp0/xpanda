@@ -38,6 +38,10 @@ export interface FinallyPlan {
     cleanupStartPC: number;
     guardStartPC: number;
     guardEndPC: number;
+    /** 守卫的正常继续分支就是方法末尾(隐式 return),不需要再补一条 `return;` */
+    endIsMethodTail?: boolean;
+    /** 守卫 else 分支里的正常继续语句是否搬回 try/finally 之后(24.0.0.0+ 的布局) */
+    restoreContinuation?: boolean;
     /** 语句级 try 起点标记 */
     startMarker?: TYPE.Statement;
     /** 对应角色落在条件 test 序列里时的表达式标记(applyFinallyPlans 会提升到包含它的语句) */
@@ -116,6 +120,8 @@ export function buildFinallyPlans(cfg: PandaIRCFG): FinallyPlan[] {
             cleanupStartPC: cleanupBlock.getStartPC(),
             guardStartPC: guardBlock.getStartPC(),
             guardEndPC: afterBranch.getStartPC(),
+            endIsMethodTail: isImplicitMethodTail(cfg, afterBranch),
+            restoreContinuation: isNewHandlerEncoding(cfg),
         });
     }
     return plans;
@@ -234,6 +240,72 @@ function findEnclosingStatement(root: any, target: any): TYPE.Statement | null {
     return found;
 }
 
+/**
+ * 守卫 if 的“非抛出”分支就是 try/finally 之后的正常继续语句。
+ * 24.0.0.0 把守卫降级成 `if (sentinel != hole) { throw sentinel } else { <继续> }`,
+ * 继续语句被收进 else,删除守卫时必须把它们搬回 try/finally 之后。
+ */
+function branchStatements(branch: TYPE.Statement | null | undefined): TYPE.Statement[] {
+    if (!branch) return [];
+    if (TYPE.isBlockStatement(branch)) return branch.body;
+    return [branch];
+}
+
+function branchEndsWithThrow(branch: TYPE.Statement | null | undefined): boolean {
+    if (!branch) return false;
+    if (TYPE.isThrowStatement(branch)) return true;
+    if (TYPE.isBlockStatement(branch)) {
+        const last = branch.body[branch.body.length - 1];
+        return !!last && TYPE.isThrowStatement(last);
+    }
+    return false;
+}
+
+function extractGuardContinuation(guard: TYPE.IfStatement): TYPE.Statement[] {
+    if (branchEndsWithThrow(guard.consequent) && !branchEndsWithThrow(guard.alternate)) {
+        return branchStatements(guard.alternate).slice();
+    }
+    if (branchEndsWithThrow(guard.alternate) && !branchEndsWithThrow(guard.consequent)) {
+        return branchStatements(guard.consequent).slice();
+    }
+    return [];
+}
+
+/** 24.0.0.0+ 的 try 表 / handler 布局 */
+function isNewHandlerEncoding(cfg: PandaIRCFG): boolean {
+    const version = cfg.getPandaMethod().getPandaFile()?.header.version;
+    return !!version && version[0] >= 24;
+}
+
+/**
+ * afterBranch 是否是方法末尾的隐式返回(只有寄存器恢复 / `undefined` 载入 / 异步收尾 /
+ * `return`)。这种“正常继续”没有源码语句,搬回 try/finally 之后只会多出一条
+ * `return undefined;`。
+ */
+function isImplicitMethodTail(cfg: PandaIRCFG, block: PandaIRBasicBlock): boolean {
+    const visited = new Set<any>();
+    let current = block;
+    for (let depth = 0; depth < 8 && current; depth++) {
+        if (visited.has(current)) return false;
+        visited.add(current);
+        for (const instruction of current.pandaInstructions) {
+            const name = instruction.opcode.name;
+            if (instruction.kind === "mov" || instruction.kind === "nop" || instruction.kind === "popLexEnv") continue;
+            if (instruction.kind === "load" && (instruction.loadType === "UNDEFINED" || instruction.loadType === "HOLE")) continue;
+            if (name === "asyncfunctionresolve" || name === "asyncfunctionreject") continue;
+            if (instruction.kind === "return") continue;
+            return false;
+        }
+        const terminator = current.getTerminator();
+        if (terminator.isReturnIns()) return true;
+        if (terminator.isThrowIns() || terminator.isConditional() || !terminator.isJump()) return false;
+        const successors = cfg.graph.successors(current);
+        if (successors.length !== 1) return false;
+        current = successors[0];
+    }
+    return false;
+}
+
 function stripMarkers(node: any): void {
     if (!node || typeof node !== "object" || !node.type) return;
     for (const key of TYPE.VISITOR_KEYS[node.type] ?? []) {
@@ -320,7 +392,11 @@ export function applyFinallyPlans(astNode: any, plans: FinallyPlan[]): void {
             // 守卫语句(if (sentinel != hole) throw sentinel)可能把“之后”的块收进
             // else 分支,此时 endMarker 不在同一层。以守卫本身(第一个 IfStatement)
             // 为删除边界,同时删掉它前面的哨兵比较语句。
+            // 24.0.0.0 的 if/else 形状(`if (X != hole) { throw X } else { <正常继续> }`)
+            // 要把 else 里的正常继续语句搬回 try/finally 之后,不能整条 if 丢掉,
+            // 否则 try/finally 后面的代码会整体消失(exportLogs 的成功返回路径)。
             let guardEnd: number;
+            let guardContinuation: TYPE.Statement[] = [];
             if (guardPos.inExpression) {
                 // 表达式标记所在的语句就是守卫检查本身
                 guardEnd = guard + 1;
@@ -328,6 +404,8 @@ export function applyFinallyPlans(astNode: any, plans: FinallyPlan[]): void {
                 guardEnd = guard + 1;
                 while (guardEnd < cleanupList.length && !TYPE.isIfStatement(cleanupList[guardEnd])) guardEnd++;
                 if (guardEnd < cleanupList.length && TYPE.isIfStatement(cleanupList[guardEnd])) {
+                    const guardStatement = cleanupList[guardEnd] as TYPE.IfStatement;
+                    guardContinuation = extractGuardContinuation(guardStatement);
                     guardEnd++;
                 } else {
                     const end = locateMarker(astNode, plan.endMarker, plan.endExpr);
@@ -335,6 +413,9 @@ export function applyFinallyPlans(astNode: any, plans: FinallyPlan[]): void {
                     guardEnd = end.index;
                 }
             }
+            // 只有 24.0.0.0+ 的守卫布局把正常继续收进 else 分支;旧版本保持原有
+            // 输出(已由大量快照锁定,而且那里的 start 标记位置另有约定)。
+            if (!plan.restoreContinuation || plan.endIsMethodTail) guardContinuation = [];
 
             const finallyStatements = cleanupList.slice(finallyStart, guard);
             // try/catch 布局:结构化分析已经把 finally handler 生成成了
@@ -353,7 +434,7 @@ export function applyFinallyPlans(astNode: any, plans: FinallyPlan[]): void {
                 const parentList = findStatementList(astNode, tryOwner);
                 const parentIndex = parentList ? parentList.indexOf(tryOwner) : -1;
                 if (parentIndex < 0) break left;
-                parentList!.splice(parentIndex, 1, tryNode);
+                parentList!.splice(parentIndex, 1, tryNode, ...guardContinuation);
                 applied = true;
             } else if (cleanupList === startList) {
                 // 常规布局:try 体 = [tryStart, cleanup),守卫之后是 try/finally 之后的语句
@@ -364,7 +445,7 @@ export function applyFinallyPlans(astNode: any, plans: FinallyPlan[]): void {
                     null,
                     TYPE.blockStatement(finallyStatements),
                 );
-                startList.splice(tryStart, guardEnd - tryStart, tryNode);
+                startList.splice(tryStart, guardEnd - tryStart, tryNode, ...guardContinuation);
                 applied = true;
             } else {
                 // 折叠布局:只有整段 finally 都在嵌套列表尾部、且该嵌套列表的顶层语句
@@ -380,7 +461,7 @@ export function applyFinallyPlans(astNode: any, plans: FinallyPlan[]): void {
                     null,
                     TYPE.blockStatement(finallyStatements),
                 );
-                startList.splice(tryStart, startList.length - tryStart, tryNode);
+                startList.splice(tryStart, startList.length - tryStart, tryNode, ...guardContinuation);
                 applied = true;
             }
         }
