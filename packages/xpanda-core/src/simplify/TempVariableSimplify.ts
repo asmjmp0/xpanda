@@ -252,10 +252,17 @@ export class TempVariableSimplify implements ISimplify {
             returned: new Set(),
             branchLive: new Map(),
             loopBodyIn: new Map(),
+            labels: new Map(),
+            labelLive: new Map(),
         };
         if (renameCatchParameters(path, ctx)) this.state.changed = true;
         walkNode({ type: "BlockStatement", body } as TYPE.BlockStatement, (node) => {
             if (isFunctionLike(node) || isClassLike(node)) return false;
+            if (node.type === "LabeledStatement") {
+                // 同名标签(区域复制)以最后一个为准:活跃性按最近的标签位置计算。
+                ctx.labels.set((node as TYPE.LabeledStatement).label.name, node);
+                return true;
+            }
             if (isReturnStatement(node) && node.argument) {
                 for (const name of collectIdentifierNames(node.argument)) ctx.returned.add(name);
             }

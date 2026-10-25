@@ -238,19 +238,12 @@ local_0_5 = function (p0) {
   return acc;
 };
 local_0_10 = function (p0) {
-  let v9, v10, v11, v12;
-  v9 = sabrReadFields(p0)[Symbol.iterator]();
-  do {
-    v10 = v9.next();
-    if (v10.done) {
-      return -1;
-    }
-    v11 = v10.value;
-  } while ((v12 = v11, v11.number !== 1) || v11.wireType !== WIRE_VARINT);
-  if (v9.return != undefined) {
-    v9.return();
+  let v10, v11, v12;
+  for (v10 of sabrReadFields(p0)) {
+    v11 = v10;
+    if ((v12 = v11, v11.number === 1) && v11.wireType === WIRE_VARINT) return v12.varint | 0;
   }
-  return v12.varint | 0;
+  return -1;
 };
 local_0_6 = function (p0) {
   let v4, v11;

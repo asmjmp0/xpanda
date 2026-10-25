@@ -159,15 +159,12 @@ e190 = class panda_jmp0_reserved_anonymous_2 {
     }, 0);
   }
   applyVisibility_() {
-    let v5, v8, acc;
+    let v5, v8;
     this.visible = [];
     for (v5 of this.filtered) {
       if (!this.isEventExpanded(this.rows[v5].eventId ?? "") && this.rows[v5].eventStart !== true) {
-        v8 = this.rows[v5].event === null || this.rows[v5].event === undefined ? undefined : this.rows[v5].event.format;
-        acc = v8 !== "xml";
-        v8 = v8 !== "xml";
-        acc = !acc;
-        if (!acc) {
+        v8 = (this.rows[v5].event === null || this.rows[v5].event === undefined ? undefined : this.rows[v5].event.format) !== "xml";
+        if (v8) {
           v8 = ((this.rows[v5].event === null || this.rows[v5].event === undefined ? undefined : this.rows[v5].event.lines.length) ?? 0) <= 4;
         }
         if (v8) {

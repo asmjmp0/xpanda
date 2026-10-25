@@ -183,6 +183,8 @@ export class LivenessAnalyzer extends TempVariablePass {
             case "BlockStatement":
                 return this.transferNested(stmt, liveOut, ctx, loop, cleanup);
             case "LabeledStatement":
+                // 登记标签处的活跃集:pseudo-goto break(见 pseudoGotoLive)要用它。
+                ctx.labelLive.set(stmt, new Set(liveOut));
                 return this.transferNested(stmt.body, liveOut, ctx, loop, cleanup);
             case "TryStatement": {
                 const finalizerReads = stmt.finalizer ? tempReads(stmt.finalizer, ctx) : new Set<string>();
@@ -241,7 +243,14 @@ export class LivenessAnalyzer extends TempVariablePass {
                 return new Set(liveOut);
             case "ExportDefaultDeclaration":
                 return tempReads(stmt.declaration as TYPE.Node, ctx);
-            case "BreakStatement":
+            case "BreakStatement": {
+                // 结构化分析把“跳到 label 的 goto”输出成带 `//from goto label_x`
+                // 注释的 break。它的实际目标是标签处(通常跳过紧随循环的 close 块),
+                // 不能沿用循环之后的 breakLive,否则标签之前、只在标签之后读取的
+                // 初始化会被误判成死存储(`v30 = ""; do { ... break //from goto } ...
+                // label: ; v30.length`)。
+                const gotoLive = this.pseudoGotoLive(stmt, ctx);
+                if (gotoLive) return union(gotoLive, loop?.finallyLive ?? new Set<string>());
                 // break 跳出循环后,活跃集是循环之后的代码;switch 里的 break 只跳出 switch。
                 // 必须返回副本:调用方会 live.clear() 后把返回值写回 live,
                 // 直接返回 liveOut 时 before 与 live 是同一个 Set,clear() 会一起清空。
@@ -249,6 +258,7 @@ export class LivenessAnalyzer extends TempVariablePass {
                     loop && !loop.inSwitch ? loop.breakLive : liveOut,
                     loop?.finallyLive ?? new Set<string>(),
                 );
+            }
             case "ContinueStatement":
                 // continue 跳到循环头(test/update),循环头的读取仍然活跃;
                 // 外层 try/finally 的 finally 会先执行,它的读取也要算进来。
@@ -309,6 +319,27 @@ export class LivenessAnalyzer extends TempVariablePass {
         if (isBlockStatement(stmt)) return this.cleanupStatements(stmt.body, ctx, liveOut, loop);
         return this.transfer(stmt, liveOut, ctx, loop, true);
     }
+    /**
+     * 伪 goto break(`break; //from goto label_x`)在标签处的活跃集。
+     *
+     * 标签节点与标签处活跃集在反向遍历中先于 break 被登记(标签在语句序上位于
+     * 循环之后),因此这里通常能直接取到;取不到时返回 null,退回普通 break 语义。
+     */
+    private pseudoGotoLive(stmt: TYPE.BreakStatement, ctx: FunctionContext): Set<string> | null {
+        const comments = [
+            ...((stmt.leadingComments ?? []) as TYPE.Comment[]),
+            ...((stmt.trailingComments ?? []) as TYPE.Comment[]),
+        ];
+        for (const comment of comments) {
+            const matched = /from goto ([A-Za-z_$][\w$]*)/.exec(comment.value);
+            if (!matched) continue;
+            const label = ctx.labels.get(matched[1]);
+            if (!label) return null;
+            return ctx.labelLive.get(label) ?? null;
+        }
+        return null;
+    }
+
     /**
      * 判断并删除一条死赋值。
      * @returns null 表示不是死赋值;否则给出替换语句(或 null 表示删除)以及仍需保留的读取

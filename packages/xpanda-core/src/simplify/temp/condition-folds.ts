@@ -22,6 +22,7 @@ import {
     isClassLike,
     isDeclarationValue,
     isFunctionLike,
+    isNodeEqual,
     isPureExpression,
     isTempName,
     replaceNodeInTree,
@@ -434,14 +435,16 @@ export class ConditionFolds extends TempVariablePass {
             if (isIfStatement(stmt)) {
                 const pattern = this.matchConditionPattern(stmts, i, ctx);
                 if (pattern) {
-                    const { start, expr, testIds } = pattern;
+                    const { start, expr, testIds, alias, source } = pattern;
                     const oldTest = stmt.test;
                     // 只移除旧 test 里对 X 的那些读取;test 中其它标识符(E 替换后仍在)
                     // 的引用必须保留,否则后续声明清理会误删它们。
                     for (const testId of testIds) removeRefs(testId, ctx);
                     if (i - start > 1) {
-                        // 删除整条 `X = !X` 取反链(可能有多条)里的引用
+                        // 删除 `X = E` 与 `X = !X` 取反链(可能有多条)里的引用。
+                        // 保留的 `Y = E` 别名(复制传播形态)右值仍然在输出里,不能移除。
                         for (let j = start + 1; j < i; j++) {
+                            if (alias && !alias.rewrite && j === start + 1) continue;
                             const negation = stmts[j];
                             if (isExpressionStatement(negation) && isAssignmentExpression(negation.expression)) {
                                 removeRefs(negation.expression.right, ctx);
@@ -466,7 +469,16 @@ export class ConditionFolds extends TempVariablePass {
                         continue;
                     }
                     stmt.test = newTest;
-                    stmts.splice(start, i - start);
+                    if (alias) {
+                        // 别名语句保留下来,只把 `Y = X` 的右值换成 E(求值位置不变):
+                        //   X = E; Y = X; X = !X; if (!X && Y.attr)
+                        // → Y = E;              if (Y && Y.attr)
+                        if (alias.rewrite) alias.assign.right = source.right;
+                        stmts.splice(start + 2, i - (start + 2));
+                        stmts.splice(start, 1);
+                    } else {
+                        stmts.splice(start, i - start);
+                    }
                     i = start - 1;
                     this.changed = true;
                     continue;
@@ -514,7 +526,16 @@ export class ConditionFolds extends TempVariablePass {
         stmts: TYPE.Statement[],
         ifIndex: number,
         ctx: FunctionContext,
-    ): { start: number; name: string; expr: TYPE.Expression; testIds: TYPE.Identifier[] } | null {
+    ): {
+        start: number;
+        name: string;
+        expr: TYPE.Expression;
+        testIds: TYPE.Identifier[];
+        /** `X = E` 与取反链之间的别名语句 `Y = X` / `Y = E`(保留,按需改写)。 */
+        alias: { assign: TYPE.AssignmentExpression; rewrite: boolean } | null;
+        /** 模式起点处的 `X = E`,别名改写要用它的右值。 */
+        source: TYPE.AssignmentExpression;
+    } | null {
         const ifStmt = stmts[ifIndex];
         if (!isIfStatement(ifStmt)) return null;
         const test = ifStmt.test;
@@ -573,6 +594,40 @@ export class ConditionFolds extends TempVariablePass {
             negations++;
             start--;
         }
+        // 别名形态:`X = E; Y = X; X = !X; if (!X && Y.attr)`(Y 是源级局部量复用的
+        // 寄存器),复制传播也可能已经把别名右值换成同一个 E(`Y = E`)。Y 与 X 的旧值
+        // 相同,所以 test 里对 X 的读取可以换成 Y;别名语句保留在取反链之前:
+        //   - `Y = X` 改写成 `Y = E`(求值位置不变,不需要 E 纯);
+        //   - `Y = E` 原样保留(只允许纯 E,此时删掉重复求值不改变语义)。
+        // 多个别名或别名落在取反链之后时不处理。
+        let alias: { assign: TYPE.AssignmentExpression; rewrite: boolean } | null = null;
+        if (start >= 1) {
+            const candidate = stmts[start];
+            const sourceStmt = stmts[start - 1];
+            if (isExpressionStatement(candidate) && isAssignmentExpression(candidate.expression)
+                && isExpressionStatement(sourceStmt) && isAssignmentExpression(sourceStmt.expression)) {
+                const candidateAssign = candidate.expression;
+                const sourceAssign = sourceStmt.expression;
+                if (candidateAssign.operator === "=" && isIdentifier(candidateAssign.left)
+                    && candidateAssign.left.name !== name && isTempName(candidateAssign.left.name)
+                    && sourceAssign.operator === "=" && isIdentifier(sourceAssign.left)
+                    && sourceAssign.left.name === name
+                    // 只处理取反链存在、或 test 真的读取别名变量的形态。裸 `X = E;
+                    // Y = X; if (X)` 换成 Y 只是改名,却会提前消掉累加器枢纽,
+                    // 挡住前面方法量(`acc = recv.m; ... acc.call(recv, ...)`)的还原
+                    // (c12 的 extractErrorFromLog 出现过 `v5.indexOf.call(v5, …)`)。
+                    && (negations > 0 || countReadsInNode(test, candidateAssign.left.name) > 0)
+                    && !collectReadNames(sourceAssign.right).has(name)) {
+                    const sameCopy = isIdentifier(candidateAssign.right) && candidateAssign.right.name === name;
+                    const sameValue = !sameCopy && isNodeEqual(candidateAssign.right, sourceAssign.right)
+                        && isPureExpression(sourceAssign.right);
+                    if (sameCopy || sameValue) {
+                        alias = { assign: candidateAssign, rewrite: sameCopy };
+                        start--;
+                    }
+                }
+            }
+        }
         if (start < 0) return null;
         const assign = stmts[start];
         if (!isExpressionStatement(assign) || !isAssignmentExpression(assign.expression)) return null;
@@ -619,10 +674,17 @@ export class ConditionFolds extends TempVariablePass {
         // 再赋值 X——`acc = trim(), acc = acc.length, acc === 0` 的两次读取是
         // 不同版本,不能都替换成模式右值。
         let expr = expression.right;
+        if (alias) {
+            // test 里先写别名变量、再读 X 的位置时,替换会读到新值而不是 Y 的旧值。
+            const aliasName = (alias.assign.left as TYPE.Identifier).name;
+            if (collectAssignedNames(test).has(aliasName)) return null;
+            expr = identifierBuilder(aliasName);
+        }
         if (negations % 2 === 1) expr = negateExpression(expr);
         if (testIds.length > 1) {
             if (negations === 0) return null;
-            if (!isPureExpression(expression.right)) return null;
+            // 别名形态不在 test 里复制 E(用别名变量代替),因此 E 有副作用也可以。
+            if (!alias && !isPureExpression(expression.right)) return null;
             if (collectAssignedNames(test).has(name)) return null;
         }
         // 求值时序:把赋值右值搬进 test 会把它的求值推迟到 test 中 X 的位置。
@@ -637,6 +699,6 @@ export class ConditionFolds extends TempVariablePass {
             }
         }
 
-        return { start, name, expr, testIds };
+        return { start, name, expr, testIds, alias, source: expression };
     }
 }

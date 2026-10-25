@@ -411,6 +411,9 @@ function check(p0) {
  *   } while (...);
  *
  * 旧 hasNewerValueBefore 只按语句顺序判断,认为读取 v2 需要更新的赋值,放弃还原。
+ * 外层循环的 test 是裸条件(`while (again(vv.value))`),同时覆盖“raw test 也要
+ * 还原成 for...of”的路径:没有解包语句时循环 test 里的 `vv.value` 与循环体
+ * 同一语义(迭代器结果的 value),还原后一起换成循环变量本身。
  */
 function verifyReusedIteratorTempForOf(): void {
     const program = NodeFactory.parse(`
@@ -444,8 +447,10 @@ function check(p0) {
     if (code.includes("while (true)") || code.includes("p0.keys()[Symbol.iterator]")) {
         throw new Error(`simplify: 迭代器 lowering 残留\n${code}`);
     }
-    // 另一个 live range 的读取必须保留原值(65535),不能改成迭代器
-    if (!code.includes("if (compare(v7.value) > v2) {") || !code.includes("v2 = 65535;")) {
+    // 另一个 live range 的读取必须保留原值(65535),不能改成迭代器;
+    // 外层循环(test 为裸条件)也还原成 for...of,循环变量的 .value 统一换成变量本身。
+    if (!code.includes("for (v7 of p0) {")
+        || !code.includes("if (compare(v7) > v2) {") || !code.includes("v2 = 65535;")) {
         throw new Error(`simplify: 复用临时量的另一处读取被破坏\n${code}`);
     }
 }
@@ -532,6 +537,52 @@ function hasMore(p0) {
     }
 }
 
+
+/**
+ * 回归:条件物化里的别名拷贝 `X = E; Y = X; X = !X; if (X/!X/复合条件)`。
+ *
+ * ArkTS 会把源级局部量复用成寄存器拷贝,别名语句夹在累加器物化与取反链之间;
+ * 复制传播通常又把它变成 `Y = E`(右值与 E 逐字相同)。以前 `matchConditionPattern`
+ * 从 if 往前只认连续的自取反链,撞上别名就放弃,于是 a12 里一直留着
+ *   acc = v9.downloads; v9 = v9.downloads; acc = !acc; if (!acc && v9.artifact)
+ * 现在别名语句保留在取反链之前(必要时把 `Y = X` 改写成 `Y = E`),test 里对 X 的
+ * 读取换成 Y(按取反奇偶性):
+ *   v9 = v9.downloads; if (v9 && v9.artifact)
+ */
+function verifyConditionAliasFold(): void {
+    const program = NodeFactory.parse(`
+function copyAlias(v9) {
+  let acc;
+  acc = v9.downloads;
+  v9 = acc;
+  acc = !acc;
+  if (!acc && v9.artifact) {
+    v9 = v9.artifact;
+    use(v9);
+  }
+  return v9;
+}
+function propagatedAlias(v9) {
+  let acc;
+  acc = v9.downloads;
+  v9 = v9.downloads;
+  acc = !acc;
+  if (!acc && v9.artifact) {
+    use(v9);
+  }
+  return v9;
+}
+`);
+
+    SimplifyExport.simplify(program);
+    const code = NodeFactory.generate(program);
+    if (code.includes("acc = !acc")) {
+        throw new Error(`simplify: 别名物化链未折叠\n${code}`);
+    }
+    if ((code.match(/if \(v9 && v9\.artifact\) \{/g) ?? []).length !== 2) {
+        throw new Error(`simplify: 两种别名形态都应折叠成 if (v9 && v9.artifact)\n${code}`);
+    }
+}
 
 /**
  * 回归:尾部临时变量别名 `X = E; Y = X` -> `Y = E`。
@@ -3019,6 +3070,76 @@ function verifyAmclStructuredCycleGuard(): void {
 }
 
 /**
+ * 回归:break 退出 for...of 时内联的 iterator close 块与伪 goto break。
+ *
+ * `L&feature_core/src/main/ets/t11/a12&1.0.0;` 的 `#*#c1268` 结构化输出:
+ *
+ *   v30 = "";
+ *   it = JSON.parse(...).versions[Symbol.iterator]();
+ *   do {
+ *     vv = it.next();
+ *     if (vv.done) { break; //from goto label_5439 }  // goto 出口输出成伪 break
+ *     vv = vv.value;
+ *   } while (vv.id !== p1);       // foldDoWhileTestAssignments 折平的裸条件 test
+ *   v30 = vv.url || "";           // break 路径前缀(EXIT)
+ *   { v = hole; if (it.return != undefined) it.return(); }  // close + hole 哨兵残留
+ *   label_5439: ;                 // goto 目标(续接代码)
+ *   acc = v30.length === 0;
+ *
+ * 旧实现只认“物化标识符 test + 裸 close if”的 break 形态,于是整块 close/哨兵/
+ * 标签都留在输出里;并且伪 goto break 被当成真正的 break 计算活跃性,`v30 = ""`
+ * (只在标签之后才被读取)会被误删。现在应还原成:
+ *
+ *   v30 = "";
+ *   for (v33 of JSON.parse(...).versions) {
+ *     if (v33.id === p1) { v30 = v33.url || ""; break; }
+ *   }
+ *   acc = v30.length === 0;
+ *
+ * close 由 for...of 的 break 隐式完成;`v30 = ""` 必须保留(耗尽路径会读
+ * `v30.length`)。整类输出锁定在 expected/amcl-t11-a12.js。
+ */
+function verifyAmclForOfCloseBlock(): void {
+    const abcPath = path.join(__dirname, "resources", "amcl1.0.6.abc");
+    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
+    pandaFile.parseAssembly();
+    const decompiler = new PandaDecompiler();
+    const pandaClass = pandaFile.getAllClasses().find(
+        (c) => c.name.content === "L&feature_core/src/main/ets/t11/a12&1.0.0;");
+    if (!pandaClass) throw new Error("amcl: 未找到 L&feature_core/src/main/ets/t11/a12&1.0.0;");
+    const code = decompiler.decompileClass(pandaClass);
+    NodeFactory.parse(code);
+    if (code.includes("created by SimpleAnalysis") || code.includes("decompiler_")) {
+        throw new Error(`amcl a12: 仍在降级或残留伪语句\n${code.slice(0, 800)}`);
+    }
+    const start = code.indexOf("c1268 = async function");
+    if (start < 0) throw new Error(`amcl a12: 未找到 c1268\n${code.slice(0, 800)}`);
+    const body = code.slice(start, code.indexOf("\n};", start));
+    // close 块、hole 哨兵与 goto 标签都随 for...of 还原消失
+    for (const leftover of ["versions[Symbol.iterator]()", "label_5439", "v29.return", "v33 = hole"]) {
+        if (body.includes(leftover)) {
+            throw new Error(`amcl a12: iterator 收尾残留 ${JSON.stringify(leftover)}\n${body}`);
+        }
+    }
+    for (const fragment of [
+        // 耗尽路径的初始化必须保留(伪 goto break 的活跃性按标签处计算)
+        'v30 = "";',
+        "for (v33 of JSON.parse(await local_1_3.fetchText(v12.value)).versions) {",
+        "if (v33.id === p1) {",
+        'v30 = v33.url || "";',
+        "break;",
+    ]) {
+        if (!body.includes(fragment)) {
+            throw new Error(`amcl a12: 缺少 ${JSON.stringify(fragment)}\n${body}`);
+        }
+    }
+    const expected = fs.readFileSync(path.join(__dirname, "expected", "amcl-t11-a12.js"), "utf-8");
+    if (code !== expected) {
+        throw new Error(`amcl a12: 输出与快照不一致\n${firstDifference(expected, code)}`);
+    }
+}
+
+/**
  * 回归:if 条件尾部多条赋值序列还原成嵌套 if。
  * `if (A && B && (x = 1, y = 2, C))` 中序列只在 A/B 为真时求值,可安全搬进分支体;
  * 有 else 时外层条件为假也必须执行 else,因此不能用同一变换(否则 else 丢失)。
@@ -3675,6 +3796,10 @@ async function main(): Promise<void> {
     verifyConditionMaterializationIntoTest();
     console.log("    ok");
 
+    console.log("[test] simplify condition alias fold");
+    verifyConditionAliasFold();
+    console.log("    ok");
+
     console.log("[test] simplify tail temp alias fold");
     verifyTailTempAliasFold();
     console.log("    ok");
@@ -3833,6 +3958,10 @@ async function main(): Promise<void> {
 
     console.log("[test] amcl structured cycle guard (amcl1.0.6.abc)");
     verifyAmclStructuredCycleGuard();
+    console.log("    ok");
+
+    console.log("[test] amcl break for...of close block (amcl1.0.6.abc)");
+    verifyAmclForOfCloseBlock();
     console.log("    ok");
 
     console.log("[test] simplify sequenced test prefix fold");

@@ -75,6 +75,17 @@ export interface FunctionContext {
      * `v8 = false` 这类寄存器恢复误判为活跃(body 里的 `v8 = v6.call(v5)` 先写后读)。
      */
     loopBodyIn: Map<TYPE.Node, Set<string>>;
+    /** 当前函数里的 `label_x: ;` 标记(标签名 → LabeledStatement 节点)。 */
+    labels: Map<string, TYPE.Node>;
+    /**
+     * `LabeledStatement` 节点 → 标签处的活跃集。
+     *
+     * 结构化分析把“跳到循环之后的 label”的 goto 输出成带 `//from goto label_x`
+     * 注释的 `break`;它不是真正的 break(实际跳过后面的 close 块)。活跃性要按
+     * 标签处计算,否则 label 之前、只在 label 之后被读取的初始化会被当成死存储删掉
+     * (`v30 = ""; do { ... if (done) break //from goto label } ... label: ; v30.length`)。
+     */
+    labelLive: Map<TYPE.Node, Set<string>>;
 }
 
 /**

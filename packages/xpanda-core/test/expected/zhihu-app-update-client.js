@@ -204,7 +204,7 @@ local_0_5 = 4000;
       return v0 !== 200 || typeof v0.result !== "string" ? undefined : decodeLatestReleaseAtom(v0.result);
     }
     async fetchReleaseDetail(p0) {
-      let v3, v5, v6, v8;
+      let v5, v6, v8;
       v5 = JSON.parse(await this.releasesCatalog())[Symbol.iterator]();
       v6 = v5.next;
       do {
@@ -213,22 +213,14 @@ local_0_5 = 4000;
           if (local_1_0.bundledReleasesJson.length <= 0) {
             return local_0_6("静态更新清单中暂无 HMOSv" + p0 + " 的发布说明");
           }
-          v3 = JSON.parse(local_1_0.bundledReleasesJson)[Symbol.iterator]();
-          do {
-            v6 = v3.next();
-            if (v6.done) {
-              return local_0_6("静态更新清单中暂无 HMOSv" + p0 + " 的发布说明");
-            }
-            v6 = v6.value;
-          } while ((v6 = decodeReleaseDetail(JSON.stringify(v6)), v6 === undefined) || v6.versionName !== p0);
-          if (v3.return != undefined) {
-            v3.return();
+          for (v6 of JSON.parse(local_1_0.bundledReleasesJson)) {
+            if ((v6 = decodeReleaseDetail(JSON.stringify(v6)), v6 !== undefined) && v6.versionName === p0) return {
+              "status": AppReleaseDetailStatus.OK,
+              "detail": v6,
+              "message": ""
+            };
           }
-          return {
-            "status": AppReleaseDetailStatus.OK,
-            "detail": v6,
-            "message": ""
-          };
+          return local_0_6("静态更新清单中暂无 HMOSv" + p0 + " 的发布说明");
         }
         v8 = v8.value;
       } while ((v8 = decodeReleaseDetail(JSON.stringify(v8)), v8 === undefined) || v8.versionName !== p0);
