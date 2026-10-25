@@ -15,11 +15,13 @@ interface BulkBarProps {
     onRun: () => void;
     onCancel: () => void;
     onDownloadAll: () => void;
+    /** 清空浏览器里保存的反编译结果 */
+    onClearCache: () => void;
 }
 
 const JOB_OPTIONS = Array.from({ length: MAX_DECOMPILE_JOBS }, (_, i) => i + 1);
 
-export function BulkBar({ bulk, total, cachedCount, jobs, onJobsChange, onRun, onCancel, onDownloadAll }: BulkBarProps) {
+export function BulkBar({ bulk, total, cachedCount, jobs, onJobsChange, onRun, onCancel, onDownloadAll, onClearCache }: BulkBarProps) {
     const running = bulk !== null && bulk.running;
     const pct = bulk !== null && bulk.total > 0 ? Math.round((bulk.done / bulk.total) * 100) : 0;
     // 运行中显示本次实际使用的 worker 数,结束后恢复为“下次使用”的设置值
@@ -65,6 +67,9 @@ export function BulkBar({ bulk, total, cachedCount, jobs, onJobsChange, onRun, o
             </label>
             <button onClick={onDownloadAll} disabled={cachedCount === 0 || running} title="Pack every decompiled class into a .zip">
                 Download all (.zip)
+            </button>
+            <button onClick={onClearCache} title="Delete the decompile results stored in this browser (they are kept for this session)">
+                Clear saved
             </button>
         </div>
     );

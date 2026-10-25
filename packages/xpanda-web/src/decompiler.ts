@@ -7,6 +7,7 @@
  */
 import { ENTRY_FUNCTION_MAIN, HapFile, PandaDecompiler, PandaFile, ZipFile } from "xpanda-core";
 import type { PandaClass } from "xpanda-core";
+import { DecompileCache } from "./cache";
 import { readError, sanitizeFileName, splitClassName, stripExt } from "./format";
 import { SimplifyWorker } from "./parallel/SimplifyWorker";
 
@@ -36,6 +37,8 @@ export interface AbcSource {
     name: string;
     /** zip 导出时的路径前缀(hap 内条目名去 .abc);单文件 abc 为 null */
     zipPrefix: string | null;
+    /** 持久化缓存来源标识:上传文件内容哈希 + .abc 条目名(同内容同条目重逢即命中) */
+    cacheKey: string;
     pandaFile: PandaFile;
     sizeBytes: number;
 }
@@ -79,9 +82,10 @@ export interface BulkState {
 
 /**
  * 解析上传的文件字节:ZIP 容器按 HAP 解包全部 .abc 条目,否则按裸 .abc 解析。
+ * `fileHash` 是文件内容哈希,与条目名一起构成持久化缓存键,保证换文件 / 改文件后旧结果不命中。
  * 校验失败(checksum 不符 / 非 panda 文件)抛 PandaParseException,由调用方展示。
  */
-export function loadImage(data: Uint8Array, fileName: string): LoadedImage {
+export function loadImage(data: Uint8Array, fileName: string, fileHash: string): LoadedImage {
     if (ZipFile.isZip(data)) {
         const hap = new HapFile(data);
         const entries = hap.getAbcEntries();
@@ -112,6 +116,7 @@ export function loadImage(data: Uint8Array, fileName: string): LoadedImage {
             image,
             name: entry.name,
             zipPrefix: entry.name.replace(/\.abc$/i, ""),
+            cacheKey: fileHash + "\u0000" + entry.name,
             pandaFile: new PandaFile(entry.read()),
             sizeBytes: entry.uncompressedSize,
         }));
@@ -131,6 +136,7 @@ export function loadImage(data: Uint8Array, fileName: string): LoadedImage {
         image,
         name: fileName,
         zipPrefix: null,
+        cacheKey: fileHash + "\u0000" + fileName,
         pandaFile,
         sizeBytes: data.length,
     }];
@@ -178,13 +184,20 @@ function estimateWeight(clazz: PandaClass): number {
 }
 
 /**
- * 反编译服务:缓存键 = sourceId::类名|mode,单类与全量共用同一份缓存。
+ * 反编译服务:缓存键 = 来源缓存键 + 模式 + 类名,单类与全量共用同一份缓存。
+ * 结果同时写入 IndexedDB(可选),刷新页面 / 重新载入同一文件后可直接命中,
+ * 再次点开已反编译的类不会重跑反编译。
  * 反编译失败向上抛异常,由调用方决定展示方式(单类不中断全量)。
  */
 interface CacheEntry {
     code: string;
     /** 首次反编译耗时(毫秒),缓存命中时保留原值 */
     elapsedMs: number;
+}
+
+/** 内存与持久化共用的缓存键:来源(文件哈希 + 条目名)+ 模式 + 原始类名 */
+function cacheKeyFor(ref: ClassRef, mode: DecompileMode): string {
+    return ref.source.cacheKey + "\u0000" + mode + "\u0000" + ref.clazz.name.content;
 }
 
 /** 全量反编译回调 */
@@ -202,25 +215,54 @@ export interface BulkDecompileOptions {
 export class DecompileService {
     private readonly decompiler = new PandaDecompiler();
     private readonly cache = new Map<string, CacheEntry>();
+    /** IndexedDB 持久化缓存(不可用时自动降级为纯内存) */
+    private readonly persistent = new DecompileCache();
     /** 惰性创建的 simplify worker 池,跨多次全量反编译复用 */
     private workers: SimplifyWorker[] = [];
 
     /** 已缓存则返回代码,否则返回 undefined(空输出缓存为 "") */
     peek(ref: ClassRef, mode: DecompileMode): string | undefined {
-        return this.cache.get(ref.key + "|" + mode)?.code;
+        return this.cache.get(cacheKeyFor(ref, mode))?.code;
     }
 
     /** 最近一次单类反编译耗时(毫秒);尚未反编译时返回 undefined */
     elapsedMs(ref: ClassRef, mode: DecompileMode): number | undefined {
-        return this.cache.get(ref.key + "|" + mode)?.elapsedMs;
+        return this.cache.get(cacheKeyFor(ref, mode))?.elapsedMs;
     }
 
     invalidate(ref: ClassRef, mode: DecompileMode): void {
-        this.cache.delete(ref.key + "|" + mode);
+        const cacheKey = cacheKeyFor(ref, mode);
+        this.cache.delete(cacheKey);
+        this.persistent.remove(cacheKey);
+    }
+
+    /**
+     * 从 IndexedDB 恢复某个来源上次会话已反编译的结果,返回恢复条数。
+     * 只填充内存中尚不存在的键(本次会话新反编译的结果优先)。
+     */
+    async hydrate(source: AbcSource): Promise<number> {
+        const records = await this.persistent.loadSource(source.cacheKey);
+        let restored = 0;
+        for (const record of records) {
+            if (this.cache.has(record.key)) continue;
+            this.cache.set(record.key, { code: record.code, elapsedMs: record.elapsedMs });
+            restored++;
+        }
+        return restored;
+    }
+
+    /** 清空 IndexedDB 中保存的结果(当前会话的内存缓存保留,页面刷新后不再恢复) */
+    async clearPersistent(): Promise<void> {
+        await this.persistent.clear();
+    }
+
+    /** 等待攒批写入完成(页面卸载前调用) */
+    async flush(): Promise<void> {
+        await this.persistent.flush();
     }
 
     decompile(ref: ClassRef, mode: DecompileMode): string {
-        const cacheKey = ref.key + "|" + mode;
+        const cacheKey = cacheKeyFor(ref, mode);
         const hit = this.cache.get(cacheKey);
         if (hit !== undefined) return hit.code;
         const started = performance.now();
@@ -352,7 +394,15 @@ export class DecompileService {
     }
 
     private store(ref: ClassRef, mode: DecompileMode, code: string, elapsedMs: number): void {
-        this.cache.set(ref.key + "|" + mode, { code, elapsedMs });
+        const key = cacheKeyFor(ref, mode);
+        this.cache.set(key, { code, elapsedMs });
+        this.persistent.save({
+            key,
+            sourceKey: ref.source.cacheKey,
+            code,
+            elapsedMs,
+            savedAt: Date.now(),
+        });
     }
 }
 

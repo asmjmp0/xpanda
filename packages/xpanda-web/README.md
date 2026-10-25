@@ -19,6 +19,10 @@ app package and decompile it **entirely in the browser** (pure frontend, nothing
   expensive `simplify` pass runs in a pool of Web Workers (1–8 threads, default 4, same split as
   the CLI `-j`: main thread builds the AST, workers optimize); the thread count is selectable in
   the toolbar and remembered in `localStorage`; raw mode stays single-threaded
+- Decompile results are cached twice: in memory for the current session and in IndexedDB
+  (keyed by file content hash + `.abc` entry + mode + class name). Clicking a class again never
+  re-decompiles it, and re-loading the same file after a page reload shows the stored output
+  immediately; "Clear saved" removes the browser-stored copy
 - Copy / download a single class as `.js`, or pack every decompiled class into a `.zip`
 - The code pane shows how long the selected class took to decompile (first run, per output mode)
 - Output mode toggle: **Optimized** (full simplify pipeline) or **Raw AST** output
@@ -54,6 +58,7 @@ npm run preview --workspace xpanda-web
 | Path | Responsibility |
 |---|---|
 | `src/decompiler.ts` | file loading (`.abc` / `.hap`), class indexing, `DecompileService` (cache + single/bulk decompile) |
+| `src/cache.ts` | IndexedDB persistence of decompile results (file content hashing, batched writes, silent fallback) |
 | `src/highlight.ts` | Shiki-based line-oriented JavaScript highlighter (lazy singleton, pure-JS regex engine — no WASM) |
 | `src/format.ts` | class demangle (shared rules with cli `io.ts`), clipboard, download helpers |
 | `src/components/` | `Topbar` / `BulkBar` / `Sidebar` / `CodePane` |

@@ -13,6 +13,7 @@ import {
     type DecompileMode,
     type LoadedImage,
 } from "./decompiler";
+import { hashBytes } from "./cache";
 import { downloadBlob, readError, sanitizeFileName, stripExt } from "./format";
 import { Topbar } from "./components/Topbar";
 import { NoticeBar } from "./components/NoticeBar";
@@ -129,6 +130,15 @@ export function App() {
         };
     }, [selected, mode, cacheVersion, service]);
 
+    // 页面卸载前把攒批中的缓存写入 IndexedDB,避免丢掉最后几个类的结果
+    useEffect(() => {
+        const onPageHide = (): void => {
+            void service.flush();
+        };
+        window.addEventListener("pagehide", onPageHide);
+        return () => window.removeEventListener("pagehide", onPageHide);
+    }, [service]);
+
     // 全屏拖拽:dragenter/leave 成对计数,避免经过子元素时闪烁
     useEffect(() => {
         const hasFiles = (e: DragEvent): boolean =>
@@ -183,7 +193,14 @@ export function App() {
             for (const file of files) {
                 try {
                     const data = new Uint8Array(await file.arrayBuffer());
-                    loaded.push(loadImage(data, file.name));
+                    const hash = await hashBytes(data);
+                    const image = loadImage(data, file.name, hash);
+                    // 先恢复上次会话保存在浏览器里的结果:列表出现后点开已反编译的类即命中缓存
+                    for (const source of image.sources) {
+                        await service.hydrate(source);
+                        await yieldToUI();
+                    }
+                    loaded.push(image);
                 } catch (e) {
                     failures.push(file.name + ": " + readError(e));
                 }
@@ -264,6 +281,15 @@ export function App() {
         setCacheVersion((v) => v + 1); // 触发 effect 重新反编译
     };
 
+    /** 清空浏览器里保存的反编译结果(当前会话已显示的内容保留) */
+    const clearSavedCache = (): void => {
+        if (!window.confirm(
+            "Delete the decompile results stored in this browser? " +
+            "They will be decompiled again after the page is reloaded.",
+        )) return;
+        void service.clearPersistent();
+    };
+
     return (
         <div className="app">
             <Topbar
@@ -296,6 +322,7 @@ export function App() {
                         bulkCancel.current = true;
                     }}
                     onDownloadAll={downloadAll}
+                    onClearCache={clearSavedCache}
                 />
             )}
             <div className={"main" + (isNarrow ? " mobile-view-" + mobileView : "")}>

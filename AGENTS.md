@@ -42,7 +42,7 @@ Other sub-projects:
 | `packages/xpanda-cli/test/parallel-consistency.test.ts` | serial/parallel byte-exact consistency regression (core samples) |
 | `packages/xpanda-mcp/src/` | MCP Server (`server.ts` stdio entry, `registry.ts` abc/hap session registry, `tools/` ten tools, `io.ts` disk IO), documented in [docs/MCP.md](docs/MCP.md) |
 | `packages/xpanda-mcp/scripts/test-mcp.ts` | MCP Server end-to-end test (subprocess + JSON-RPC) |
-| `packages/xpanda-web/` | browser UI (React + Vite, pure frontend): drag & drop / file picker, per-class and bulk decompile against the browser-safe core entry, zip download; see `packages/xpanda-web/README.md` |
+| `packages/xpanda-web/` | browser UI (React + Vite, pure frontend): drag & drop / file picker, per-class and bulk decompile against the browser-safe core entry, zip download, IndexedDB-backed decompile result cache (`src/cache.ts`); see `packages/xpanda-web/README.md` |
 | `docs/ARCHITECTURE.md` | architecture doc |
 | `docs/MCP.md` | MCP Server doc |
 
