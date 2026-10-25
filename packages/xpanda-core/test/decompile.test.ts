@@ -930,6 +930,65 @@ function trueBranch(p0) {
 }
 
 /**
+ * 回归:短路链链头的取反 test 自赋值 `if (!A) { X = A }`。
+ *
+ * 编译器把 `X = A && B`(此时 X 已经保存 B)降级成"A 为假时把 A 写回结果变量,
+ * 否则保持 B",即 `if (!A) { X = A }`。它后面紧跟 `if (X) { X = C }` 短路链,
+ * 链头不是赋值语句时 matchShortCircuitFold 无法匹配,整条链都会留在 if 形态
+ * (NgaQrLoginUtils 的登录参数校验)。折叠成 `X = A && X` 后原有链式折叠才能继续。
+ * 分支赋的不是 test 取反的那个值时不能套用该变形。
+ */
+function verifyNegatedTestSelfAssignmentChain(): void {
+    const program = NodeFactory.parse(`
+function check(v4, v5, v6, v7, v8, v3) {
+  if (!v4) {
+    v6 = v4;
+  }
+  if (v6) {
+    v6 = v5;
+  }
+  if (v6) {
+    v6 = v7 === "login";
+  }
+  if (v6) {
+    v6 = v3 === "qrlogin_ui";
+  }
+  if (v6) {
+    v6 = v8.length > 0;
+  }
+  return v6;
+}
+`);
+    SimplifyExport.simplify(program);
+    const code = NodeFactory.generate(program);
+    NodeFactory.parse(code);
+    if (!code.includes('return v4 && v6 && v5 && v7 === "login" && v3 === "qrlogin_ui" && v8.length > 0;')) {
+        throw new Error(`simplify: 取反 test 自赋值链头未折叠进短路链\n${code}`);
+    }
+    if (/if \((?:!)?v6\)/.test(code)) {
+        throw new Error(`simplify: 短路链仍残留 if\n${code}`);
+    }
+
+    // 分支赋固定值时不能套用 `X = A && X`(A 与分支值不同,语义不等价)
+    const notSelf = NodeFactory.parse(`
+function guard(v4, v6) {
+  if (!v4) {
+    v6 = true;
+  }
+  if (v6) {
+    v6 = false;
+  }
+  return v6;
+}
+`);
+    SimplifyExport.simplify(notSelf);
+    const notSelfCode = NodeFactory.generate(notSelf);
+    if (notSelfCode.includes("v4 && v6") || !notSelfCode.includes("if (!v4)")) {
+        throw new Error(`simplify: 非自赋值的取反 test 被误折叠\n${notSelfCode}`);
+    }
+}
+
+/**
  * 回归:HAP 应用包(ZIP 容器)适配。
  * 完整反编译该 hap 约需一分钟,这里只做轻量校验:
  *   1. 中央目录解析与 .abc 条目定位;
@@ -1867,6 +1926,53 @@ function f(x) {
         if (!completeCode.includes(expected)) {
             throw new Error(`switch 合成: 缺少 ${expected}\n${completeCode}`);
         }
+    }
+
+    // 源码 switch 的最后一个 case 常被降级成默认分支守卫提前:
+    //   else { if (x !== "c") EXIT; BODY }
+    // 等价于 `else if (x === "c") { BODY } else { EXIT }`,补成尾 case
+    // 后整条链才有 3 个 case;不还原就只剩 if/else-if。
+    const trailingGuard = NodeFactory.parse(`
+function f(x, y) {
+  if (x === "a") {
+    y = 1;
+  } else if (x === "b") {
+    y = 2;
+  } else {
+    if (x !== "c") {
+      return y;
+    }
+    y = 3;
+  }
+  return y;
+}
+function g(x, y) {
+  if (x === "a") {
+    y = 1;
+  } else {
+    if (x !== "b") {
+      return y;
+    }
+    y = 2;
+  }
+  return y;
+}
+`);
+    SimplifyExport.simplify(trailingGuard);
+    const trailingCode = NodeFactory.generate(trailingGuard);
+    const fBody = trailingCode.slice(0, trailingCode.indexOf("function g"));
+    for (const expected of ['switch (x)', 'case "a":', 'case "b":', 'case "c":', "default:", "return y;"]) {
+        if (!fBody.includes(expected)) {
+            throw new Error(`switch 合成: 尾 case 守卫未还原(缺 ${expected})\n${trailingCode}`);
+        }
+    }
+    if (fBody.includes('if (x !== "c")')) {
+        throw new Error(`switch 合成: 尾 case 守卫条件残留\n${trailingCode}`);
+    }
+    // 只有 2 个 case 标签的链(1 个普通 case + 尾 case)仍保持 if 形式
+    const gBody = trailingCode.slice(trailingCode.indexOf("function g"));
+    if (gBody.includes("switch (")) {
+        throw new Error(`switch 合成: 2 个 case 的链不应合成 switch\n${trailingCode}`);
     }
 }
 
@@ -3140,6 +3246,50 @@ function verifyAmclForOfCloseBlock(): void {
 }
 
 /**
+ * 回归:字节码 24.0.0.0 的 SOURCE_FILE 类标签 + 登录参数校验的短路链还原。
+ *
+ * 1. lnga1.2.6.abc 的类带 `PandaClassTag.SOURCE_FILE`(tag 0x07),载荷是 4 字节
+ *    字符串偏移;旧实现直接抛 PandaParseException,整个文件无法解析。
+ * 2. `validateQrParams` 的 `hasLib && hasAct && hasKey && ...` 被降级成
+ *    `if (!hasLib) { result = hasLib }` 领头的 if 链,链头折叠后必须还原成
+ *    单个 return 逻辑链。
+ */
+function verifyLngaQrLoginUtils(): void {
+    const abcPath = path.join(__dirname, "resources", "lnga1.2.6.abc");
+    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
+    const pandaClass = pandaFile.getAllClasses().find(
+        (c) => c.name.content === "Lcom.example.nga_oh/entry/ets/common/utils/NgaQrLoginUtils;");
+    if (!pandaClass) throw new Error("lnga: 未找到 NgaQrLoginUtils");
+    if (!pandaClass.sourceFile || !pandaClass.sourceFile.content.endsWith("common/utils/NgaQrLoginUtils.ts")) {
+        throw new Error(`lnga: SOURCE_FILE 标签未解析 (${pandaClass.sourceFile?.content ?? "null"})`);
+    }
+    const code = new PandaDecompiler().decompileClass(pandaClass);
+    NodeFactory.parse(code);
+    const expected = 'return v4 && v6 && v5 && v7 === "login" && v3 === "qrlogin_ui" && v8.length > 0;';
+    if (!code.includes(expected)) {
+        throw new Error(`lnga: 登录参数校验的短路链未还原(缺 ${expected})\n${code}`);
+    }
+    if (code.includes("if (!v4) {") || code.includes("v6 = v4;")) {
+        throw new Error(`lnga: 取反 test 自赋值链头残留\n${code}`);
+    }
+    // 参数名分派是源码 switch:最后一个 case 被降级成 `if (v11 !== "qrkey")`
+    // 守卫,必须和前面两个 `===` 分支一起还原成 switch + default。
+    for (const expected of ['switch (v11)', 'case "__lib":', 'case "__act":', 'case "qrkey":', "default:"]) {
+        if (!code.includes(expected)) {
+            throw new Error(`lnga: 参数名分派未还原成 switch(缺 ${expected})\n${code}`);
+        }
+    }
+    if (code.includes('if (v11 !== "qrkey")')) {
+        throw new Error(`lnga: 尾 case 守卫条件残留\n${code}`);
+    }
+    const expectedPath = path.join(__dirname, "expected", "lnga-nga-qr-login-utils.js");
+    const snapshot = fs.readFileSync(expectedPath, "utf-8");
+    if (code !== snapshot) {
+        throw new Error(`lnga: 输出与快照不一致\n${firstDifference(snapshot, code)}`);
+    }
+}
+
+/**
  * 回归:if 条件尾部多条赋值序列还原成嵌套 if。
  * `if (A && B && (x = 1, y = 2, C))` 中序列只在 A/B 为真时求值,可安全搬进分支体;
  * 有 else 时外层条件为假也必须执行 else,因此不能用同一变换(否则 else 丢失)。
@@ -3832,6 +3982,10 @@ async function main(): Promise<void> {
     verifyBooleanConditionalFolding();
     console.log("    ok");
 
+    console.log("[test] simplify negated test self assignment chain");
+    verifyNegatedTestSelfAssignmentChain();
+    console.log("    ok");
+
     console.log("[test] simplify loop condition fold");
     verifyLoopConditionFold();
     console.log("    ok");
@@ -3962,6 +4116,10 @@ async function main(): Promise<void> {
 
     console.log("[test] amcl break for...of close block (amcl1.0.6.abc)");
     verifyAmclForOfCloseBlock();
+    console.log("    ok");
+
+    console.log("[test] lnga SOURCE_FILE + qr login short circuit (lnga1.2.6.abc)");
+    verifyLngaQrLoginUtils();
     console.log("    ok");
 
     console.log("[test] simplify sequenced test prefix fold");

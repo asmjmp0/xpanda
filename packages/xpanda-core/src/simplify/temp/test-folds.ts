@@ -91,8 +91,69 @@ export class TestFolds extends TempVariablePass {
                 i--;
                 continue;
             }
+            if (this.foldNegatedTestSelfAssignment(stmts, i, ctx)) {
+                // 链头已变成 `X = A && X`,原地重试让后续 `if (X) { X = B }` 继续成链
+                i--;
+                continue;
+            }
             this.foldShortCircuitChildren(stmts[i], ctx);
         }
+    }
+
+    /**
+     * 链头 `if (!A) { X = A }` -> `X = A && X`。
+     *
+     * 编译器会把 `X = A && B`(此时 X 已经保存 B)降级成"A 为假时把 A 写回结果变量,
+     * 否则保持 B",即 `if (!A) { X = A }`;它后面通常紧跟 `if (X) { X = C }` 的短路链。
+     * 不先折成赋值,链头没有 `X = E` 供 matchShortCircuitFold 匹配,整条链都会留在
+     * if 形态(NgaQrLoginUtils 的登录参数校验: `hasLib && hasAct && hasKey && ...`
+     * 被输出成一串 `if (v6) { v6 = ... }`)。
+     *
+     * 等价性:A 为假时原分支写入 A,`A && X` 也取 A;A 为真时原分支不动 X,
+     * `A && X` 取 X 的旧值。要求 A 纯(原形态在 test 与分支里各求值一次,折叠后只
+     * 求值一次)、X 是未被闭包捕获的临时变量,且下一句确实是读 X 的短路 if,
+     * 避免把孤立的 if 改写成赋值。
+     */
+    private foldNegatedTestSelfAssignment(stmts: TYPE.Statement[], i: number, ctx: FunctionContext): boolean {
+        if (i + 1 >= stmts.length) return false;
+        const ifStmt = stmts[i];
+        if (!isIfStatement(ifStmt) || ifStmt.alternate) return false;
+        const test = ifStmt.test;
+        if (!isUnaryExpression(test) || test.operator !== "!") return false;
+        const value = test.argument;
+        if (!isPureExpression(value) || isDeclarationValue(value)) return false;
+        const consequent = ifStmt.consequent;
+        const only = isBlockStatement(consequent)
+            ? (consequent.body.length === 1 ? consequent.body[0] : null)
+            : consequent;
+        if (!only || !isExpressionStatement(only) || !isAssignmentExpression(only.expression)) return false;
+        const assign = only.expression;
+        if (assign.operator !== "=" || !isIdentifier(assign.left)) return false;
+        const name = assign.left.name;
+        if (!isTempName(name)) return false;
+        const info = ctx.infos.get(name);
+        if (!info || info.captured) return false;
+        // 只处理 `X = A`(A 正是 test 取反的那个值);同时排除 `if (!X) { X = X }` 自赋值
+        if (!isNodeEqual(assign.right, value)) return false;
+        if (isIdentifier(value) && value.name === name) return false;
+        // 下一句必须是读 X 的短路 if,否则保持原样
+        const next = stmts[i + 1];
+        if (!isIfStatement(next)) return false;
+        const nextTest = isUnaryExpression(next.test) && next.test.operator === "!"
+            ? next.test.argument
+            : next.test;
+        if (!isIdentifier(nextTest) || nextTest.name !== name) return false;
+
+        stmts[i] = TYPE.expressionStatement(TYPE.assignmentExpression(
+            "=",
+            assign.left,
+            logicalExpression("&&", value, TYPE.identifier(name)),
+        ));
+        // 先移除被删分支里的引用,再登记新语句(复用 A 的节点,顺序反了会把它当成已删除)
+        removeRefs(only, ctx);
+        registerCloneRefs(stmts[i], ctx);
+        this.changed = true;
+        return true;
     }
     private foldShortCircuitChildren(stmt: TYPE.Statement, ctx: FunctionContext): void {
         switch (stmt.type) {

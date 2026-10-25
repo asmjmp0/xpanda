@@ -246,6 +246,7 @@ export class PandaClass extends Offset {
     numIfaces = 0;
     ifacesOffsets: Offset = Offset.nullOffset();
     sourceLang = 0;
+    sourceFile: PandaString | null = null;
     pandaFields: PandaField[] | null = null;
     pandaMethods = new Map<string, PandaMethod>();
     pandaClassModuleData: PandaClassModuleData | null = null;
@@ -312,7 +313,11 @@ export class PandaClass extends Offset {
             } else if (tag === PandaClassTag.TYPE_ANNOTATION) {
                 throw new PandaParseException("PandaClassTag.TYPE_ANNOTATION");
             } else if (tag === PandaClassTag.SOURCE_FILE) {
-                throw new PandaParseException("PandaClassTag.SOURCE_FILE");
+                // Bytecode 24.0.0.0 stores the source file name as a 32-bit string offset
+                // (the module path, e.g. "entry|entry|1.0.0|.../ResourceTable.js").
+                this.sourceFile = PandaString.create(pandaFile,
+                    PandaFileUtils.bytes2UnsignedInteger(pandaFile.data, this.offsetValue + this.index));
+                this.index += 4;
             }
             tag = pandaFile.data[this.offsetValue + this.index];
         }

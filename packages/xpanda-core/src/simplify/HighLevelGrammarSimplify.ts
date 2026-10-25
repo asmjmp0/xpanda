@@ -61,9 +61,9 @@ const {
 
 class SwitchCaseDesc {
     public type:"NORMAL"|"DEFAULT";
-    public left:NodePath<TYPE.Expression>;
-    public right:NodePath<TYPE.Expression>;
-    public body:NodePath<TYPE.BlockStatement>|null;
+    public left:TYPE.Expression;
+    public right:TYPE.Expression;
+    public body:TYPE.BlockStatement|null;
 }
 
 export class HighLevelGrammarSimplify implements ISimplify {
@@ -266,10 +266,6 @@ export class HighLevelGrammarSimplify implements ISimplify {
         return [(path as NodePath<TYPE.BinaryExpression>).get('left') as NodePath<TYPE.Expression>, (path as NodePath<TYPE.BinaryExpression>).get('right')];
     }
 
-    private nodeEqual(path1:NodePath<TYPE.Node>,path2:NodePath<TYPE.Node>):boolean {
-        return isNodeEqual(path1.node, path2.node)
-    }
-
     /**
      * 把 `x.a.b` 链的最内层成员改成可选访问 `x?.a.b`;x 必须是受保护标识符。
      * 外层链也必须是 OptionalMemberExpression(optional=false),否则 Babel 会
@@ -422,18 +418,17 @@ export class HighLevelGrammarSimplify implements ISimplify {
         const case1:SwitchCaseDesc = rawSwitchCase[0];
         const case2:SwitchCaseDesc = rawSwitchCase[1];
         if (case1.body != null) return null;
-        if (!case1.right.isNullLiteral()) return null;
-        if (!isIdentifierNode(case2.right.node)) return null;
-        if (case2.right.node.name !== 'undefined') return null;
-        if (case2?.body.node.body.length != 1) return null;
-        const statement = case2.body.node.body[0];
+        if (!isNullLiteralNode(case1.right)) return null;
+        if (!isIdentifierNode(case2.right) || case2.right.name !== 'undefined') return null;
+        if (!case2.body || case2.body.body.length != 1) return null;
+        const statement = case2.body.body[0];
         if (isExpressionStatementNode(statement) && isAssignmentExpressionNode(statement.expression)){
-            if (isIdentifierNode(statement.expression.left) && isIdentifierNode(case1.left.node)){
-                if(statement.expression.left.name === case1.left.node.name) {
-                    const assignmentExpression = assignmentExpressionBuilder("=", identifier(case1.left.node.name), logicalExpressionBuilder("??", identifier(case1.left.node.name), statement.expression.right));
+            if (isIdentifierNode(statement.expression.left) && isIdentifierNode(case1.left)){
+                if(statement.expression.left.name === case1.left.name) {
+                    const assignmentExpression = assignmentExpressionBuilder("=", identifier(case1.left.name), logicalExpressionBuilder("??", identifier(case1.left.name), statement.expression.right));
                     return expressionStatement(assignmentExpression);
                 }else {
-                    const logicalExpression = logicalExpressionBuilder("??",case1.left.node,statement.expression);
+                    const logicalExpression = logicalExpressionBuilder("??",case1.left,statement.expression);
                     return expressionStatement(logicalExpression);
                 }
             }
@@ -444,9 +439,9 @@ export class HighLevelGrammarSimplify implements ISimplify {
     /** case 标签恰好是 null / undefined 两个(顺序不限):`??` 的 switch lowering。 */
     private isNullishCasePair(rawSwitchCase:Array<SwitchCaseDesc>):boolean{
         if (rawSwitchCase.length !== 2) return false;
-        const isNull = (desc:SwitchCaseDesc) => desc.right.isNullLiteral();
+        const isNull = (desc:SwitchCaseDesc) => isNullLiteralNode(desc.right);
         const isUndefined = (desc:SwitchCaseDesc) =>
-            isIdentifierNode(desc.right.node) && desc.right.node.name === 'undefined';
+            isIdentifierNode(desc.right) && desc.right.name === 'undefined';
         return (isNull(rawSwitchCase[0]) && isUndefined(rawSwitchCase[1]))
             || (isUndefined(rawSwitchCase[0]) && isNull(rawSwitchCase[1]));
     }
@@ -459,8 +454,8 @@ export class HighLevelGrammarSimplify implements ISimplify {
         let partial = false;
         while (true){
             const tempTest = temp.get('test');
-            const testResult:Array<[NodePath<TYPE.Expression>,NodePath<TYPE.Expression>]> = [];
-            if (!this.checkEqualAngGetLeftRight(tempTest,testResult)) {
+            const splitResult:Array<[NodePath<TYPE.Expression>,NodePath<TYPE.Expression>]> = [];
+            if (!this.checkEqualAngGetLeftRight(tempTest,splitResult)) {
                 // 链尾条件拆不出比较(如 `else if (a && b) ...`):把当前 if 及其 else
                 // 链整体放进 default,前面已经识别出的 case 仍可合成 switch。
                 // 第一个条件就拆不出时不能合成(没有任何 case)。
@@ -469,14 +464,14 @@ export class HighLevelGrammarSimplify implements ISimplify {
                 partial = true;
                 break;
             }
-            if (testResult.length === 0) return false;
+            if (splitResult.length === 0) return false;
             const body = temp.get('consequent');
             if (!body.isBlockStatement()) return false;
-            for (let i = 0; i < testResult.length; i++) {
+            for (let i = 0; i < splitResult.length; i++) {
                 const oneCase= new SwitchCaseDesc();
-                oneCase.left = testResult[i][0];
-                oneCase.right = testResult[i][1];
-                oneCase.body = i === testResult.length -1 ? body : null;
+                oneCase.left = splitResult[i][0].node;
+                oneCase.right = splitResult[i][1].node;
+                oneCase.body = i === splitResult.length -1 ? body.node as TYPE.BlockStatement : null;
                 oneCase.type = "NORMAL";
                 rawSwitchCase.push(oneCase);
             }
@@ -484,7 +479,17 @@ export class HighLevelGrammarSimplify implements ISimplify {
             if (tt.isIfStatement()){
                 temp = tt;
             }else if(tt.isBlockStatement()){
-                defaultBody = tt.node.body;
+                // 源码 switch 的最后一个 case 常被降级成"默认分支守卫提前":
+                //   else { if (disc !== VALUE) EXIT; BODY }
+                // 它是 `else if (disc === VALUE) { BODY } else { EXIT }`,补成尾 case
+                // 后整条链才有 3 个可拆的 case(否则只能输出 if/else-if)。
+                const trailing = this.extractTrailingGuardCase(tt.node as TYPE.BlockStatement);
+                if (trailing !== null) {
+                    rawSwitchCase.push(trailing.desc);
+                    defaultBody = trailing.defaultBody;
+                } else {
+                    defaultBody = tt.node.body;
+                }
                 break;
             }else if (tt.node === null){
                 break;
@@ -496,7 +501,7 @@ export class HighLevelGrammarSimplify implements ISimplify {
         if (rawSwitchCase.length < 3 && !this.isNullishCasePair(rawSwitchCase)) return false;
         //check left all same;
         for (let i = 0; i < rawSwitchCase.length - 1; i++) {
-            if (!this.nodeEqual(rawSwitchCase[i].left,rawSwitchCase[i+1].left))
+            if (!isNodeEqual(rawSwitchCase[i].left,rawSwitchCase[i+1].left))
                 return false;
         }
         //build switch statement
@@ -509,20 +514,71 @@ export class HighLevelGrammarSimplify implements ISimplify {
         const switchCases:Array<TYPE.SwitchCase> = []
         for (let desc of rawSwitchCase) {
             if (desc.body === null){
-                switchCases.push(switchCase(desc.right.node,[]))
+                switchCases.push(switchCase(desc.right,[]))
                 continue;
             }
-            if (!isReturnStatementNode(desc.body.node.body[desc.body.node.body.length-1])){
-                desc.body.node.body.push(breakStatement())
+            if (!isReturnStatementNode(desc.body.body[desc.body.body.length-1])){
+                desc.body.body.push(breakStatement())
             }
-            switchCases.push(switchCase(desc.right.node,desc.body.node.body))
+            switchCases.push(switchCase(desc.right,desc.body.body))
         }
-        const switchStatement = switchStatementBuilder(rawSwitchCase[0].left.node,switchCases)
+        const switchStatement = switchStatementBuilder(rawSwitchCase[0].left,switchCases)
         if (defaultBody != null){
             switchCases.push(switchCase(null,defaultBody))
         }
         value.replaceWith(switchStatement);
         return true;
+    }
+
+    /**
+     * 尾 case 的"默认分支守卫提前"形态:
+     *
+     *   else { if (disc !== VALUE) EXIT; BODY }
+     *     ≡ else if (disc === VALUE) { BODY } else { EXIT }
+     *
+     * 只接受 `!==`(switch 的 case 用 `===` 严格比较)以及 `!(disc === VALUE)`;
+     * EXIT 必须以 return/throw 结束(switch 会截获裸 break),BODY 不能为空,
+     * 否则保持原样交给外层按 default 处理。返回的 case 描述体是新块,
+     * 只有整条链最终确实合成 switch 时才会被使用。
+     */
+    private extractTrailingGuardCase(block:TYPE.BlockStatement):{desc:SwitchCaseDesc,defaultBody:TYPE.Statement[]}|null {
+        if (block.body.length < 2) return null;
+        const first = block.body[0];
+        if (!isIfStatementNode(first) || first.alternate) return null;
+        const test = first.test;
+        let left:TYPE.Expression;
+        let right:TYPE.Expression;
+        if (isBinaryExpressionNode(test) && test.operator === "!==") {
+            left = test.left as TYPE.Expression;
+            right = test.right;
+        } else if (TYPE.isUnaryExpression(test) && test.operator === "!"
+            && isBinaryExpressionNode(test.argument) && test.argument.operator === "===") {
+            left = test.argument.left as TYPE.Expression;
+            right = test.argument.right;
+        } else {
+            return null;
+        }
+        if (TYPE.isPrivateName(left)) return null;
+        const exitStatements = isBlockStatementNode(first.consequent)
+            ? first.consequent.body
+            : [first.consequent];
+        if (exitStatements.length === 0) return null;
+        const last = exitStatements[exitStatements.length - 1];
+        if (!isReturnStatementNode(last) && last.type !== "ThrowStatement") return null;
+        for (const statement of exitStatements) {
+            if (this.hasUnboundBreak(statement)) return null;
+        }
+        // case 体里指向外层循环的裸 break 会被 switch 截获,不能搬进 switch
+        const caseStatements = block.body.slice(1);
+        for (const statement of caseStatements) {
+            if (this.hasUnboundBreak(statement)) return null;
+        }
+        const desc = new SwitchCaseDesc();
+        desc.type = "NORMAL";
+        desc.left = left;
+        desc.right = right;
+        desc.body = blockStatementBuilder(caseStatements);
+        return { desc, defaultBody: exitStatements };
     }
 
     /**
