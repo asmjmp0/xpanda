@@ -246,6 +246,74 @@ export class StructureAnalysis {
         return regionSize(root);
     }
 
+    /**
+     * 语句图按引用展开后是否成环。
+     *
+     * `Region.decompile()` 每遇到一个 Region 就再展开它当前的语句,所以只要某个
+     * Region(或语句)的展开子树里又引用到它自己,decompile 就会无限递归:浅时抛
+     * RangeError 让方法降级,深时直接爆栈/OOM 拖死整个进程。归约阶段已经用
+     * `statementsReferenceRegion` 拒绝会产生环的 reduceSequence 合并,这里再兜底
+     * 检查一次,发现环就抛异常走 SimpleAnalysis 降级。
+     *
+     * 迭代实现:展开后的树可以有几千层,递归遍历本身就会爆栈;memo 以对象身份去重,
+     * 复杂度是唯一节点数(与 estimateStructuredStatements 一致)。
+     */
+    private findStructuredCycle(root: Region): string | null {
+        const childrenOf = (node: IPandaDecompileAble): IPandaDecompileAble[] => {
+            if (node instanceof Region) return node.getStatements();
+            if (node instanceof IfPandaStatement) {
+                return [(node as any).consequent, (node as any).alternate, (node as any).tryCatchPandaStatement]
+                    .filter(Boolean) as IPandaDecompileAble[];
+            }
+            if (node instanceof WhileStatement) {
+                return [...((node as any).headStms ?? []), ...((node as any).bodyStms ?? [])] as IPandaDecompileAble[];
+            }
+            if (node instanceof DoWhileStatement) return ((node as any).bodyStms ?? []) as IPandaDecompileAble[];
+            if (node instanceof TryCatchPandaStatement) {
+                return [(node as any).tryBody, (node as any).catchBody].filter(Boolean) as IPandaDecompileAble[];
+            }
+            if (node instanceof LogicalExpressionStatement) {
+                return [(node as any).first, (node as any).second] as IPandaDecompileAble[];
+            }
+            return [];
+        };
+        const label = (node: IPandaDecompileAble): string => {
+            const block = (node as any).block;
+            const where = block && typeof block.getStartPC === "function" ? "@" + block.getStartPC() : "";
+            if (node instanceof Region) return "Region(" + node.getName() + where + ")";
+            return (node.constructor?.name ?? "?") + where;
+        };
+        // 0/1/2 = 未访问 / 正在展开 / 已完成
+        const state = new Map<object, number>();
+        const path: IPandaDecompileAble[] = [];
+        const frames: Array<{ node: IPandaDecompileAble; children: IPandaDecompileAble[]; next: number }> = [];
+        const enter = (node: IPandaDecompileAble): void => {
+            state.set(node, 1);
+            path.push(node);
+            frames.push({ node, children: childrenOf(node), next: 0 });
+        };
+        enter(root);
+        while (frames.length > 0) {
+            const frame = frames[frames.length - 1];
+            if (frame.next >= frame.children.length) {
+                state.set(frame.node, 2);
+                frames.pop();
+                path.pop();
+                continue;
+            }
+            const child = frame.children[frame.next++];
+            const childState = state.get(child) ?? 0;
+            if (childState === 1) {
+                const cycleStart = path.indexOf(child);
+                const cycle = path.slice(cycleStart).concat(child);
+                // 只报最近 20 层,避免超长消息
+                return cycle.slice(Math.max(0, cycle.length - 20)).map(label).join(" -> ");
+            }
+            if (childState === 0) enter(child);
+        }
+        return null;
+    }
+
     analysis(methodHandler: PandaDecompilerMethodHandler, pandaLexical: PandaLexical, astNode: any): void {
         let count = this.pandaIRCFG.pandaIRBasicBlocks.length;
         if (count > 500) {
@@ -299,6 +367,11 @@ export class StructureAnalysis {
         if (structuredStatements > MAX_STRUCTURED_STATEMENTS) {
             throw new PandaDecompileException(
                 this.pandaIRCFG.getPandaMethod().name.content + " structured output too large");
+        }
+        const cycle = this.findStructuredCycle(root);
+        if (cycle !== null) {
+            throw new PandaDecompileException(
+                this.pandaIRCFG.getPandaMethod().name.content + " cyclic structured statement graph: " + cycle);
         }
         root.decompile(methodHandler, pandaLexical, astNode);
     }
@@ -570,10 +643,39 @@ export class StructureAnalysis {
         return true;
     }
 
+    /** reference 子树里是否引用了 target(用于阻止会产生语句图环的合并) */
+    private statementsReferenceRegion(nextRegion: Region, target: Region): boolean {
+        const seen = new Set<object>();
+        const visit = (node: any): boolean => {
+            if (!node || seen.has(node)) return false;
+            seen.add(node);
+            if (node instanceof Region) {
+                return node === target || node.getStatements().some(visit);
+            }
+            if (node instanceof IfPandaStatement) {
+                return visit((node as any).consequent) || visit((node as any).alternate)
+                    || visit((node as any).tryCatchPandaStatement);
+            }
+            if (node instanceof WhileStatement) {
+                return [ ...((node as any).headStms ?? []), ...((node as any).bodyStms ?? [])].some(visit);
+            }
+            if (node instanceof DoWhileStatement) return ((node as any).bodyStms ?? []).some(visit);
+            if (node instanceof LogicalExpressionStatement) return visit((node as any).first) || visit((node as any).second);
+            if (node instanceof TryCatchPandaStatement) {
+                return visit((node as any).tryBody) || visit((node as any).catchBody);
+            }
+            return false;
+        };
+        return nextRegion.getStatements().some(visit);
+    }
+
     private reduceSequence(region: Region): boolean {
         const nextRegion = getOnlyOneSuccessor(this.regionGraph, region);
         if (!nextRegion) return false;
         if (this.regionGraph.inDegree(nextRegion) !== 1 || nextRegion === this.entryRegion) return false;
+        // 合并后 region 的语句里会出现对 region 自己的引用(语句图成环),
+        // decompile 按引用展开会无限递归;这种合并不能做,留给循环归约处理。
+        if (this.statementsReferenceRegion(nextRegion, region)) return false;
         region.setType(nextRegion.getType());
         if (nextRegion.getType() === "Condition") {
             region.conditionalExp = nextRegion.isConditionalExp();

@@ -5,6 +5,7 @@ const {
     VISITOR_KEYS,
     blockStatement,
     booleanLiteral,
+    breakStatement,
     continueStatement,
     isEmptyStatement,
     isCallExpression,
@@ -32,6 +33,12 @@ interface LabelSite {
 interface GotoLoopSpan extends LabelSite {
     /** 该 label 的全部 goto 语句(都在循环体内) */
     gotos: TYPE.Statement[];
+    /**
+     * 循环体会自然落空(末尾不是 return/throw/break/continue/goto)。
+     * 包装后要在循环体末尾补一条 break:落空原本是"继续执行循环体后面的语句",
+     * 包进 while (true) 之后必须靠 break 离开,否则变成死循环。
+     */
+    fallsThrough: boolean;
 }
 
 /**
@@ -178,11 +185,15 @@ function buildSpan(site: LabelSite): GotoLoopSpan | null {
     for (const goto of gotos) {
         if (insideNestedLoop(body, goto)) return null;
     }
-    // 循环体末尾不能自然落空:包装前这些语句是循环头之后的一段直线代码,落空只是
-    // 继续执行后面的语句(通常就是方法结尾的隐含 return);包进 while (true) 后会变成死循环。
+    // 循环体末尾可能自然落空:包装前这些语句是循环头之后的一段直线代码,落空只是
+    // 继续执行循环体后面的语句(含方法结尾的隐含 return);包进 while (true) 之后
+    // 就变成了"再执行一遍循环体",所以要在末尾补 break 离开循环:
+    //
+    //   label: A; if (c) goto label; B
+    //     =>  while (true) { A; if (c) continue; break; } B
     const last = body[body.length - 1];
-    if (!terminatesInLoop(last, site.label)) return null;
-    return { ...site, gotos };
+    const fallsThrough = !terminatesInLoop(last, site.label);
+    return { ...site, gotos, fallsThrough };
 }
 
 /**
@@ -206,10 +217,15 @@ function terminatesInLoop(statement: TYPE.Statement, label: string): boolean {
         case "LabeledStatement":
             return terminatesInLoop(statement.body, label);
         case "SwitchStatement":
-            // 每个 case(含 default)都必须以终止语句结尾
             return statement.cases.some((one) => one.test === null)
-                && statement.cases.every((one) => one.consequent.length > 0
-                    && terminatesInLoop(one.consequent[one.consequent.length - 1], label));
+                && statement.cases.every((one) => {
+                    if (one.consequent.length === 0) return false;
+                    const last = one.consequent[one.consequent.length - 1];
+                    // case 末尾的裸 break 只跳出 switch,switch 之后的语句仍然会执行,
+                    // 所以它不能算"离开循环体"(否则外层 while (true) 会漏补 break 成死循环)。
+                    if (last.type === "BreakStatement" && last.label == null) return false;
+                    return terminatesInLoop(last, label);
+                });
         case "TryStatement":
             return terminatesInLoop(statement.block, label)
                 && (!statement.handler || terminatesInLoop(statement.handler.body, label));
@@ -220,8 +236,10 @@ function terminatesInLoop(statement: TYPE.Statement, label: string): boolean {
 
 function applySpan(span: GotoLoopSpan): void {
     const body = span.list.splice(span.index + 1);
+    // 末尾补的 break 在替换 goto 之后追加,保证它绑定到新包出来的 while 上
     const block = blockStatement(body);
     replaceGotos(block, span.label);
+    if (span.fallsThrough) block.body.push(breakStatement());
     span.list.splice(span.index, 1, whileStatement(booleanLiteral(true), block));
 }
 

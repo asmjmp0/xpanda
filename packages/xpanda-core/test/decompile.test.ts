@@ -8,6 +8,7 @@ import { NodeFactory } from "../src/ast/NodeFactory";
 import { SimplifyExport } from "../src/simplify/SimplifyExport";
 import { NullishCoalescingSimplify } from "../src/simplify/NullishCoalescingSimplify";
 import { SyntaxRewriteSimplify } from "../src/simplify/SyntaxRewriteSimplify";
+import { restoreGotoLoops } from "../src/simplify/GotoLoopRestore";
 import { HapFile } from "../src/hap/HapFile";
 import { ResourceIndexFile } from "../src/res/ResourceIndexFile";
 import { formatLongLogicalChains } from "../src/ast/FormatCode";
@@ -42,7 +43,9 @@ import traverse from "@babel/traverse";
  *  20. 校验 amcl1.0.6.abc 的 i8 类 do-while 出口扫描不越界(旧实现无限增长 OOM)
  *      与 z12 类的共享后继指数展开在结构分析里收敛成线性结构;
  *  21. 校验 amcl1.0.6.abc 的 commons/h1/w1 类不再因 finally handler 下游的带环孤岛
- *      整方法降级 SimpleAnalysis。
+ *      整方法降级 SimpleAnalysis;
+ *  22. 校验 amcl1.0.6.abc 的 r2/l3 类不会因语句图成环(while 里的 if 的 else 指向
+ *      被合并进来的 region 自身)无限递归/爆栈,loadLive 正常结构化。
  */
 
 interface Sample {
@@ -2830,6 +2833,66 @@ function verifyAmclUnreachableHandlerIsland(): void {
 }
 
 /**
+ * 回归:amcl1.0.6.abc 的 `L&entry/src/main/ets/r2/l3&;` 里 `#~@2>#loadLive` 曾整方法降级。
+ *
+ * 该方法的 CFG 里 2902 同时是内层循环头(6056 → 2902 的回边)和外层循环体的一部分
+ * (2902 → 1017 的回边)。归约在 `reduceIfRegion` case 3 把两个分支汇合到 2902 自身
+ * (语句里 else 分支按引用嵌入 1017 这个 region),随后 `reduceCyclic` 把 2902 包成
+ * while,`reduceSequence` 又把 1017 这个 region 合并进来 —— 而 while 里的 if 的 else
+ * 仍指向它自己,语句图成环。`Region.decompile()` 按引用展开,递归深度没有上界:
+ * 浅时抛 RangeError 降级 SimpleAnalysis,深时直接爆栈/OOM(在 debug 遍历里见过整进程
+ * 4GB 堆耗尽)。
+ *
+ * 修复:两条防线。
+ *   1) `reduceSequence` 合并前用 `statementsReferenceRegion` 检查:合并后会不会让
+ *      region 的语句子树引用回自己,会就不合并,交给循环归约处理;
+ *   2) `analysis` 末尾用迭代 DFS 兜底检测语句图环,发现环抛 PandaDecompileException
+ *      走 SimpleAnalysis 降级,绝不让它无限递归。
+ *
+ * 这是 amcl 里唯一受影响的类;loadLive 现在正常结构化,它的事件裁剪循环里
+ * determineFollowLatch 兜底留下的 `label_4078` + `xpanda_goto(label_4078)` 也由
+ * GotoLoopRestore 还原成 `while (true) { ...; break; }`(见 verifyGotoLoopFallthrough)。
+ * 整个类的输出锁定在 expected/amcl-r2-l3.js。
+ */
+function verifyAmclStructuredCycleGuard(): void {
+    const abcPath = path.join(__dirname, "resources", "amcl1.0.6.abc");
+    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
+    pandaFile.parseAssembly();
+    const decompiler = new PandaDecompiler();
+    const pandaClass = pandaFile.getAllClasses().find((c) => c.name.content === "L&entry/src/main/ets/r2/l3&;");
+    if (!pandaClass) throw new Error("amcl: 未找到 L&entry/src/main/ets/r2/l3&;");
+    const code = decompiler.decompileClass(pandaClass);
+    NodeFactory.parse(code);
+    if (code.includes("created by SimpleAnalysis") || code.includes("decompiler_")) {
+        throw new Error(`amcl r2/l3: 仍在降级或残留伪语句\n${code.slice(0, 800)}`);
+    }
+    if (!code.includes("  async loadLive(p0, p1, p2) {")) {
+        throw new Error(`amcl r2/l3: loadLive 没有结构化输出\n${code.slice(0, 800)}`);
+    }
+    // determineFollowLatch 兜底的 label/goto 必须还原成 while (true) + continue/break
+    for (const leftover of ["xpanda_goto", "label_4078"]) {
+        if (code.includes(leftover)) {
+            throw new Error(`amcl r2/l3: 残留伪语句 ${JSON.stringify(leftover)}\n${code}`);
+        }
+    }
+    for (const fragment of [
+        'if (this.live === undefined || this.live.path !== p0.path) {',
+        "await this.live.cursor.refreshLive();",
+        'v24 = this.live.pending.indexOf("\\n");',
+        "v24 = this.live.parser.feed(v25, v27);",
+        "this.live.events.push(v24);",
+    ]) {
+        if (!code.includes(fragment)) {
+            throw new Error(`amcl r2/l3: 缺少 ${JSON.stringify(fragment)}\n${code}`);
+        }
+    }
+    const expected = fs.readFileSync(path.join(__dirname, "expected", "amcl-r2-l3.js"), "utf-8");
+    if (code !== expected) {
+        throw new Error(`amcl r2/l3: 输出与快照不一致\n${firstDifference(expected, code)}`);
+    }
+}
+
+/**
  * 回归:if 条件尾部多条赋值序列还原成嵌套 if。
  * `if (A && B && (x = 1, y = 2, C))` 中序列只在 A/B 为真时求值,可安全搬进分支体;
  * 有 else 时外层条件为假也必须执行 else,因此不能用同一变换(否则 else 丢失)。
@@ -3240,6 +3303,156 @@ function poll(p0) {
 }
 
 /**
+ * 回归:determineFollowLatch 兜底产生的 `label_x: ;` + `xpanda_goto(label_x)`
+ * 在循环体会自然落空时也必须还原。
+ *
+ * 原逻辑要求 label 之后到语句列表结尾一定以 return/throw/break/continue/goto
+ * 离开(`terminatesInLoop`),否则包成 while (true) 会变成死循环。但"自然落空"
+ * 的原语义就是继续执行循环体后面的语句,循环体末尾补一条 break 即可等价:
+ *
+ *   label: A; if (c) goto label; B
+ *     =>  while (true) { A; if (c) continue; break; } B
+ *
+ * amcl1.0.6.abc 的 r2/l3 `#loadLive`(events 裁剪循环)与 pages/McGamePage
+ * 里的 4 条 goto 都是这个形态,不还原就残留不可执行的 `xpanda_goto(...)`。
+ */
+function verifyGotoLoopFallthrough(): void {
+    const program = NodeFactory.parse(`
+function trim(p0, p1, p2) {
+  label_1: ;
+  if (p0.events.length > p1) {
+    p2 = p0.events.shift();
+    p0.characters -= p2.lines.length;
+    xpanda_goto(label_1);
+  }
+  if (p0.events.length > 1 && p0.characters > p2) {
+    p0.events.shift();
+    xpanda_goto(label_1);
+  }
+  consume(p0);
+}
+`);
+    restoreGotoLoops(program);
+    const code = NodeFactory.generate(program);
+    NodeFactory.parse(code);
+    if (code.includes("xpanda_goto") || code.includes("label_1")) {
+        throw new Error(`goto 循环未还原\n${code}`);
+    }
+    if (!code.includes("while (true) {")) {
+        throw new Error(`goto 循环没有包成 while (true)\n${code}`);
+    }
+    if (!/consume\(p0\);\n\s+break;/.test(code)) {
+        throw new Error(`自然落空的循环体末尾没有补 break\n${code}`);
+    }
+    if ((code.match(/continue;/g) ?? []).length !== 2) {
+        throw new Error(`goto 没有替换成 continue\n${code}`);
+    }
+
+    // 循环体一定以 return 离开时不需要补 break
+    const terminating = NodeFactory.parse(`
+function firstNode(p0) {
+  label_2: ;
+  if (p0.next) {
+    p0 = p0.next;
+    xpanda_goto(label_2);
+  }
+  return p0;
+}
+`);
+    restoreGotoLoops(terminating);
+    const terminatingCode = NodeFactory.generate(terminating);
+    NodeFactory.parse(terminatingCode);
+    if (terminatingCode.includes("xpanda_goto") || terminatingCode.includes("label_2")) {
+        throw new Error(`goto 循环未还原(终止型)\n${terminatingCode}`);
+    }
+    if (!terminatingCode.includes("continue;") || !terminatingCode.includes("return p0;")) {
+        throw new Error(`终止型循环体结构不对\n${terminatingCode}`);
+    }
+    if (terminatingCode.includes("break;")) {
+        throw new Error(`终止型循环体不应补 break\n${terminatingCode}`);
+    }
+
+    // 行为等价:goto 程序的语义用等价的带标签 while 表达,比较执行结果
+    const behaviorProgram = NodeFactory.parse(`
+function trimBehavior(p0) {
+  let i = 0;
+  let out = [];
+  label_3: ;
+  if (i < p0.limit) {
+    out.push("a" + i);
+    i += 1;
+    xpanda_goto(label_3);
+  }
+  if (i < p0.limit + 2 && i > 0) {
+    out.push("b" + i);
+    i += 1;
+    xpanda_goto(label_3);
+  }
+  out.push("end" + i);
+  return out;
+}
+`);
+    restoreGotoLoops(behaviorProgram);
+    const behaviorCode = NodeFactory.generate(behaviorProgram);
+    const referenceCode = `
+function trimBehaviorRef(p0) {
+  let i = 0;
+  let out = [];
+  while (true) {
+    if (i < p0.limit) { out.push("a" + i); i += 1; continue; }
+    if (i < p0.limit + 2 && i > 0) { out.push("b" + i); i += 1; continue; }
+    break;
+  }
+  out.push("end" + i);
+  return out;
+}
+`;
+    const runWithLimit = (source: string, fn: string, limit: number): unknown => {
+        const sandbox: Record<string, unknown> = {};
+        sandbox.globalThis = sandbox;
+        vm.runInNewContext(`${source}\nresult = ${fn}({ limit: ${limit} });`, sandbox, { timeout: 5000 });
+        return sandbox.result;
+    };
+    for (const limit of [0, 1, 5]) {
+        const actual = JSON.stringify(runWithLimit(behaviorCode, "trimBehavior", limit));
+        const expected = JSON.stringify(runWithLimit(referenceCode, "trimBehaviorRef", limit));
+        if (actual !== expected) {
+            throw new Error(`goto 循环还原后行为不一致 (limit=${limit}): ${actual} !== ${expected}\n${behaviorCode}`);
+        }
+    }
+
+    // case 末尾的裸 break 只跳出 switch:循环体仍然落空,必须补 break,否则死循环
+    const switchProgram = NodeFactory.parse(`
+function pickSwitch(p0) {
+  let n = 0;
+  label_4: ;
+  switch (p0.value) {
+    case 1:
+      p0.value = 2;
+      xpanda_goto(label_4);
+    default:
+      break;
+  }
+  n = 7;
+  return n;
+}
+`);
+    restoreGotoLoops(switchProgram);
+    const switchCode = NodeFactory.generate(switchProgram);
+    NodeFactory.parse(switchCode);
+    if (switchCode.includes("xpanda_goto") || switchCode.includes("label_4")) {
+        throw new Error(`goto 循环未还原(switch 结尾)\n${switchCode}`);
+    }
+    const switchSandbox: Record<string, unknown> = { value: 1 };
+    switchSandbox.globalThis = switchSandbox;
+    switchSandbox.arg = switchSandbox;
+    vm.runInNewContext(`${switchCode}\nresult = pickSwitch(arg);`, switchSandbox, { timeout: 5000 });
+    if (switchSandbox.result !== 7) {
+        throw new Error(`switch 结尾的循环体没有正确离开 (result=${String(switchSandbox.result)})\n${switchCode}`);
+    }
+}
+
+/**
  * 回归:超长逻辑链的输出折行。
  *   - 超过 120 字符的行在顶层 `||` / `&&` / `??` 前折行,新行以操作符开头;
  *   - 字符串里的 `||`、顶层三目都不参与折行。
@@ -3488,6 +3701,10 @@ async function main(): Promise<void> {
     verifyAmclUnreachableHandlerIsland();
     console.log("    ok");
 
+    console.log("[test] amcl structured cycle guard (amcl1.0.6.abc)");
+    verifyAmclStructuredCycleGuard();
+    console.log("    ok");
+
     console.log("[test] simplify sequenced test prefix fold");
     verifySequencedTestPrefixFold();
     console.log("    ok");
@@ -3502,6 +3719,10 @@ async function main(): Promise<void> {
 
     console.log("[test] simplify loop liveness after continue");
     verifyLoopLivenessAfterContinue();
+    console.log("    ok");
+
+    console.log("[test] simplify goto loop fall-through");
+    verifyGotoLoopFallthrough();
     console.log("    ok");
 
     console.log("[test] output logical chain formatting");
