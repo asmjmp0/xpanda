@@ -176,6 +176,8 @@ The most error-prone part of structured analysis is "should this condition be in
 
 Confirm output changes are intended before updating snapshots; never overwrite snapshots just to make tests pass.
 
+**Default verification scope for a change**: run `npm test` and decompile `packages/xpanda-core/test/resources/amcl1.0.6.abc` (serial or `-j`, refresh `test_out/` and eyeball the affected classes). Do not run full-sample comparisons for `yourpipe0.7.0.abc` / `zhihupp0.59.hap` or other `.abc` / `.hap` resources unless the user explicitly asks or `npm test` cannot cover the change.
+
 ## Pitfalls and Notes
 
 - **Degradation paths are by design, not bugs**: single methods > 500 basic blocks, estimated structured expansion > `MAX_STRUCTURED_STATEMENTS` (30k statements), and unregistered instruction kinds all route the method through `SimpleAnalysis` linear output; `jeq/jne/jstricteq/jnstricteq` instructions throw on construction, and the lexical phase (`PandaLexical`) skips the method and emits a placeholder function body without interrupting the whole class.

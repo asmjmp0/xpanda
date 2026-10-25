@@ -123,13 +123,14 @@ export class AccCallSimplify implements ISimplify {
             && stmt.expression.right.name === name;
     }
 
-    private matchReceiverAssign(stmt: TYPE.Statement, name: string): boolean {
+    private matchReceiverAssign(stmt: TYPE.Statement, name: string, sourceName: string = "acc"): boolean {
         return isExpressionStatement(stmt)
             && isAssignmentExpression(stmt.expression)
             && stmt.expression.operator === "="
             && isIdentifier(stmt.expression.left)
             && stmt.expression.left.name === name
-            && AccCallSimplify.isAcc(stmt.expression.right);
+            && isIdentifier(stmt.expression.right)
+            && stmt.expression.right.name === sourceName;
     }
 
     /**
@@ -137,16 +138,82 @@ export class AccCallSimplify implements ISimplify {
      * M' 是 TempVariableSimplify 按 isCopyable(成员访问链可克隆)约定克隆出来的,
      * 两次紧邻求值结果相同,方法装载改接 recv 等价。
      */
-    private isCloneOfAccValue(accStmt: TYPE.Statement, recvStmt: TYPE.Statement): boolean {
+    private isCloneOfAccValue(accStmt: TYPE.Statement, recvStmt: TYPE.Statement, accName: string = "acc"): boolean {
         if (!isExpressionStatement(accStmt) || !isAssignmentExpression(accStmt.expression)) return false;
         const accAssign = accStmt.expression;
-        if (!AccCallSimplify.isAcc(accAssign.left)) return false;
+        if (!isIdentifier(accAssign.left) || accAssign.left.name !== accName) return false;
         const value = accAssign.right;
         if (!isPureExpression(value)) return false;
         if (!isExpressionStatement(recvStmt) || !isAssignmentExpression(recvStmt.expression)) return false;
         const recvAssign = recvStmt.expression;
         if (recvAssign.operator !== "=" || !isIdentifier(recvAssign.left)) return false;
         return isNodeEqual(recvAssign.right, value);
+    }
+
+    /**
+     * 已合并的自调用形态:`X = X.prop.call(recv, ...)`。
+     *
+     * TempVariableSimplify 的自引用链折叠会把 `X = X.prop; X = X.call(recv, ...)`
+     * 先合成为一条语句,这里再按接收者别名还原成 `X = recv.prop(...)`:
+     *   acc = v1.activation; v1 = v1.activation; acc = acc.toString.call(v1);
+     * → v1 = v1.activation; acc = v1.toString();
+     * recv 与 X 的旧值必须是同一个值(`recv = X` 或紧邻克隆 `X = M; recv = M'`),
+     * 否则不能把方法接回接收者。
+     */
+    private matchMergedSelfCall(list: TYPE.Statement[], index: number): {
+        assign: TYPE.AssignmentExpression;
+        method: TYPE.Identifier;
+        receiver: TYPE.Identifier;
+        args: TYPE.CallExpression["arguments"];
+    } | null {
+        const stmt = list[index];
+        if (!isExpressionStatement(stmt) || !isAssignmentExpression(stmt.expression)) return null;
+        const assign = stmt.expression;
+        if (assign.operator !== "=" || !isCallExpression(assign.right)) return null;
+        const call = assign.right;
+        const callee = call.callee;
+        if (!isMemberExpression(callee) || callee.computed) return null;
+        if (!isIdentifier(callee.property) || callee.property.name !== "call") return null;
+        const methodMember = callee.object;
+        if (!isMemberExpression(methodMember) || !isIdentifier(methodMember.object)) return null;
+        const name = methodMember.object.name;
+        if (!isTempName(name)) return null;
+        let method: TYPE.Identifier;
+        if (!methodMember.computed && isIdentifier(methodMember.property)) {
+            method = methodMember.property;
+        } else if (methodMember.computed && isStringLiteral(methodMember.property)
+            && /^[A-Za-z_$][\w$]*$/.test(methodMember.property.value)) {
+            method = identifier(methodMember.property.value);
+        } else {
+            return null;
+        }
+        if (call.arguments.length === 0) return null;
+        const receiver = call.arguments[0];
+        if (!isIdentifier(receiver) || !isTempName(receiver.name)) return null;
+        // 接收者就是 X 自己(`X = X.prop.call(X, ...)`)时两者必然是同一个值,
+        // 不需要回找别名;否则要求接收者持有与 X 旧值相同的值。
+        if (receiver.name !== name && !this.receiverAliasesName(list, index - 1, name, receiver.name)) return null;
+        return { assign, method, receiver, args: call.arguments.slice(1) as TYPE.CallExpression["arguments"] };
+    }
+
+    /** 回找接收者的赋值,确认它持有的值与 name 的当前值相同(期间 name 未被改写)。 */
+    private receiverAliasesName(list: TYPE.Statement[], start: number, name: string, receiverName: string): boolean {
+        for (let i = start; i >= 0; i--) {
+            const writes = collectAssignedNames(list[i]);
+            if (writes.has(name)) return false;
+            if (!writes.has(receiverName)) continue;
+            if (this.matchReceiverAssign(list[i], receiverName, name)) return true;
+            return i >= 1 && this.isCloneOfAccValue(list[i - 1], list[i], name);
+        }
+        return false;
+    }
+
+    private rewriteMergedSelfCall(match: NonNullable<ReturnType<AccCallSimplify["matchMergedSelfCall"]>>): void {
+        // 接收者/属性复用原节点:标识符上带着反编译出的类型注释(/*foo*/),重建会丢注释
+        match.assign.right = callExpression(
+            memberExpression(match.receiver, match.method, false),
+            match.args,
+        );
     }
 
     /**
@@ -209,6 +276,14 @@ export class AccCallSimplify implements ISimplify {
             const receiverName = this.matchPattern(list, i);
             if (receiverName === null) continue;
             this.rewrite(list, i, receiverName);
+            changed = true;
+        }
+        // 自引用链折叠已经把 `X = X.prop; X.call(recv, ...)` 合并成一条语句时,
+        // 按接收者别名还原(见 matchMergedSelfCall)。
+        for (let i = list.length - 1; i >= 0; i--) {
+            const merged = this.matchMergedSelfCall(list, i);
+            if (!merged) continue;
+            this.rewriteMergedSelfCall(merged);
             changed = true;
         }
         return changed;

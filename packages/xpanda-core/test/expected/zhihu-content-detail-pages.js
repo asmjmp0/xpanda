@@ -384,8 +384,7 @@ local_0_1 = function (p0) {
         if (v0 === undefined) {
           return;
         }
-        v0 = v0.segIds;
-        v0.forEach(function (p0) {
+        v0.segIds.forEach(function (p0) {
           if (!local_2_0.includes(p0)) {
             local_2_0.push(p0);
           }
@@ -1619,7 +1618,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     return v0 === undefined ? undefined : effectiveSegmentMeta(v0);
   }
   currentSegmentQuote() {
-    let v0, v1, v2, acc;
+    let v0, v1, v2;
     let local_1_0;
     local_1_0 = this;
     v0 = local_1_0.segmentInfos.find(function (p0) {
@@ -1633,14 +1632,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     }
     v2 = Math.max(0, Math.min(v0.text.length, v0.marks[local_1_0.segmentSheetMarkIndex].startIndex));
     v1 = Math.max(0, Math.min(v0.text.length, v0.marks[local_1_0.segmentSheetMarkIndex].endIndex));
-    if (v1 > v2) {
-      acc = v0.text;
-      v0 = v0.text;
-      acc = acc.substring.call(v0, v2, v1);
-    } else {
-      acc = "";
-    }
-    return acc;
+    return v1 > v2 ? v0.text.substring(v2, v1) : "";
   }
   applySegmentMeta(p0, p1, p2) {
     let local_1_0, local_1_1, local_1_2, local_1_3;
@@ -5668,15 +5660,13 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     Column.pop();
   }
   confirmUserBlock() {
-    let v0, v4;
+    let v0;
     v0 = this.pendingUserBlock;
     if (this.pendingUserBlock === undefined || this.blockingAction === undefined || this.content === undefined) {
       return;
     }
     this.pendingUserBlock = undefined;
-    v4 = v0.userId;
-    v0 = v0.userName;
-    this.blockingAction.blockUser(v4, v0, this.blockContext(this.content));
+    this.blockingAction.blockUser(v0.userId, v0.userName, this.blockContext(this.content));
     return;
   }
   confirmKeywordBlock() {
@@ -6857,17 +6847,12 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       "name": AppDestinationName.COMMENT,
       "contentType": local_1_0.kind === ContentDetailKind.ARTICLE ? "article" : "answer",
       "contentId": local_1_0.activeContentId,
-      "segmentId": null,
-      "segmentContent": null,
-      "segmentParagraphId": null,
-      "segmentStartOffset": null,
+      "segmentId": v1.segIds.join(","),
+      "segmentContent": local_1_0.currentSegmentQuote(),
+      "segmentParagraphId": local_1_0.segmentSheetPid,
+      "segmentStartOffset": v2 === undefined ? 0 : v2.startIndex,
       "segmentEndOffset": null
     };
-    v1 = v1.segIds;
-    v5.segmentId = v1.join(",");
-    v5.segmentContent = local_1_0.currentSegmentQuote();
-    v5.segmentParagraphId = local_1_0.segmentSheetPid;
-    v5.segmentStartOffset = v2 === undefined ? 0 : v2.startIndex;
     if (v2 !== undefined) {
       v0 = v2.endIndex;
     }
@@ -7810,14 +7795,10 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     return;
   }
   isCurrentContentSpeaking() {
-    let v0 /*getSpeechPlaybackService*/, v1;
+    let v0 /*getSpeechPlaybackService*/;
     v0 = getSpeechPlaybackService().getSnapshot();
-    v1 = v0.status === SpeechPlaybackStatus.INITIALIZING || v0.status === SpeechPlaybackStatus.SPEAKING;
-    if (v0.status === SpeechPlaybackStatus.INITIALIZING || v0.status === SpeechPlaybackStatus.SPEAKING) {
-      v0 = v0.contentId;
-      v1 = v0 === this.activeContentId;
-    }
-    return v1;
+    return (v0.status === SpeechPlaybackStatus.INITIALIZING || v0.status === SpeechPlaybackStatus.SPEAKING)
+      && v0.contentId === this.activeContentId;
   }
   async toggleSpeechPlayback() {
     let v3, v4 /*getSpeechPlaybackService*/, v5 /*defaultSpeechPreferences*/, v7 /*AppPreferencesStore*/;

@@ -68,6 +68,9 @@ export class SimplifyExport {
         //   acc = !(v3 !== undefined); if (v3 !== undefined && (acc = call(), v3 = acc, acc === v2))
         // → if (v3 !== undefined && call() === v2);以及 `A || !(acc = X !== Y, X !== Y)` 的死保存元素
         ConditionSimplify.foldMaterializedTestArtifacts(node);
+        // 物化清理把大段测试序列收敛成 `acc = acc.m.call(recv, ...)` 后,才能再还原一次;
+        // 前面那轮 simplifySequences 看到的还是中间别名形态。
+        AccCallSimplify.simplifySequences(node);
         // `if (C) { return/throw/break/continue ... } else { BODY }` 展开成守卫子句。
         // 放在三目合成之后(两分支都是单条 return 的 if/else 已合成为三目),
         // 同时让紧随其后的尾部折叠看到连续语句列表(累加器旧值的读取可能跨越 else)。

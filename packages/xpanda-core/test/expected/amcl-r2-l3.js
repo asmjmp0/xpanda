@@ -302,7 +302,7 @@ e190 = class panda_jmp0_reserved_anonymous_2 {
       v12 = false;
       v14 = 0;
       v15 = 0;
-      for (v16 = 0; v5.sourceIndex < p0.length; this.appendEvent_(v10, v20, v19, v11)) {
+      for (v16 = 0; v5.sourceIndex < p0.length; this.appendEvent_(v10, v20, v19.path, v11)) {
         v19 = p0[v5.sourceIndex];
         if (v5.cursor === undefined) {
           v5.cursor = new a90();
@@ -355,7 +355,6 @@ e190 = class panda_jmp0_reserved_anonymous_2 {
         }
         v14 += 1;
         v15 += v20.lines.length;
-        v19 = v19.path;
       }
       if (v4 === this.generation) {
         v7 = {
@@ -397,7 +396,7 @@ e190 = class panda_jmp0_reserved_anonymous_2 {
     return true;
   }
   releaseLive_() {
-    let v0, acc;
+    let v0;
     v0 = this.live;
     this.live = undefined;
     if (v0 === undefined) {
@@ -405,10 +404,8 @@ e190 = class panda_jmp0_reserved_anonymous_2 {
     }
     v0.cursor.cancel();
     if (this.activeCursor !== v0.cursor) {
-      acc = v0.cursor;
-      v0 = v0.cursor;
-      acc = acc.close.call(v0);
-      acc.catch(function () {});
+      v0 = v0.cursor.close();
+      v0.catch(function () {});
     }
     return;
   }
@@ -476,16 +473,14 @@ e190 = class panda_jmp0_reserved_anonymous_2 {
         v24 = this.live.parser.feed(v25, v27);
         if (v24 !== undefined) {
           this.live.events.push(v24);
-          v24 = v24.lines;
-          this.live.characters = this.live.characters + v24.reduce(function (p0, p1) {
+          this.live.characters = this.live.characters + v24.lines.reduce(function (p0, p1) {
             return p0 + p1.text.length;
           }, v4);
           while (true) {
             if (this.live.events.length > v20) {
               v24 = this.live.events.shift();
               if (v24 !== undefined) {
-                v24 = v24.lines;
-                this.live.characters = this.live.characters - v24.reduce(function (p0, p1) {
+                this.live.characters = this.live.characters - v24.lines.reduce(function (p0, p1) {
                   return p0 + p1.text.length;
                 }, v4);
               }
@@ -494,8 +489,7 @@ e190 = class panda_jmp0_reserved_anonymous_2 {
             if (this.live.events.length > 1 && this.live.characters > v19 * v21 * v21) {
               v24 = this.live.events.shift();
               if (v24 !== undefined) {
-                v24 = v24.lines;
-                this.live.characters = this.live.characters - v24.reduce(function (p0, p1) {
+                this.live.characters = this.live.characters - v24.lines.reduce(function (p0, p1) {
                   return p0 + p1.text.length;
                 }, v4);
               }

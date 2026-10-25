@@ -216,31 +216,19 @@ w91 = async function (p0, p1, p2, p3) {
       });
       v23 = "AMCL_DIAGNOSIS_V2\nlauncher=AMCL\nactivityId=" + p2.activityId + "\nThis is diagnostic context, not the complete game log. Full selected files are attached to this same log ID.\n" + "游戏结局与日志完整性是独立事实；缺少文件不代表没有异常。\n" + "captureIntegrity=" + (v23?.integrityState ?? "unknown") + "\nselectedFiles=" + v5.files.length + "\nuploadCoverage=selected-files\n";
       v4 = (p2.includePublicSummary ? v23 + (j92(v21) + "\n" + j50(p3, n50.LOGSHARE, 1536) + "\n") : v23 + "environment=omitted by user; do not infer unrecorded platform or hardware\n") + "Read _amcl/evidence-manifest.json for file names, source status and omitted/partial ranges.\n";
-      v22 = acc.slice(0, 8)[Symbol.iterator]();
-      while (true) {
-        v25 = v22.next();
-        if (v25.done) break;
-        v25 = v25.value;
+      for (v25 of acc.slice(0, 8)) {
         v25 = "captureGap=" + v25.path + ": " + v25.reason.substring(0, 100);
         v4 += v25 + "\n";
       }
-      v3 = v5.files.slice(0, 12)[Symbol.iterator]();
-      while (true) {
-        v23 = v3.next();
-        if (v23.done) break;
-        v23 = v23.value;
+      for (v23 of v5.files.slice(0, 12)) {
         v23 = "file=" + v23.name + " (" + v23.bytes + " bytes, " + v23.state;
         v4 += v23 + ")\n";
       }
       v4 = j50(v4, n50.LOGSHARE, 11000);
       local_0_2(v5, m92, v4);
       x89(v5);
-      v3 = v6[Symbol.iterator]();
-      while (true) {
-        v23 = v3.next();
-        if (v23.done) break;
-        v23 = v23.value.file;
-        g50.closeSync(v23);
+      for (v23 of v6) {
+        g50.closeSync(v23.file);
       }
       a52(p0, p2.activityId);
       return v5;

@@ -367,10 +367,11 @@ export class AssignmentFolds extends TempVariablePass {
         // 右值必须只读一次旧值,否则搬进消费位置后旧值会被读到多次
         if (countReadsInNode(a.right, name) !== 1) return false;
         if (collectAssignedNames(a.right).has(name)) return false;
-        // 只处理算术/位运算/一元取反这类自更新。成员装载 `X = X.method` 是
-        // AccCallSimplify 依赖的方法装载中间形态,不能提前代进下一条语句;
-        // `X = X.prop` 由 foldSelfReadChains 处理。
-        if (!isBinaryExpression(a.right) && !isUnaryExpression(a.right)) return false;
+        // 算术/位运算/一元取反这类自更新,以及成员装载 `X = X.prop`
+        // (`v0 = v0.text; acc = v0.substring(...)`)都能整体代进下一条语句。
+        // 同名目标的 `X = X.prop; X = f(X)` 已由 foldSelfReadChains 先折叠。
+        const selfLoad = isMemberExpression(a.right) || isOptionalMemberExpression(a.right);
+        if (!isBinaryExpression(a.right) && !isUnaryExpression(a.right) && !selfLoad) return false;
         if (!isPureExpression(a.right)) return false;
         const consumer = second.expression;
         if (collectAssignedNames(consumer).has(name)) return false;
@@ -392,8 +393,9 @@ export class AssignmentFolds extends TempVariablePass {
             return true;
         });
         if (!id) return false;
-        // callee 位置属于方法装载形态,交给 AccCallSimplify
-        if ((isCallExpression(consumer) || isOptionalCallExpression(consumer))
+        // 非成员装载的右值若被消费成方法装载(`X = F(X); Y = X.call(...)`),
+        // 交给 AccCallSimplify;成员装载的读取本身就是接收者/参数,搬移安全。
+        if (!selfLoad && (isCallExpression(consumer) || isOptionalCallExpression(consumer))
             && containsNode(consumer.callee, id)) return false;
         if (!canDeferTestValue(a.right, consumer, id)) return false;
         info.refs.delete(id);

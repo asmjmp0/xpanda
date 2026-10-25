@@ -14,12 +14,9 @@ let AppUpdateClient, GITHUB_RELEASES_ATOM, catalogUrlWaves;
 let acc;
 let local_0_0, local_0_1, local_0_2, local_0_3, local_0_4, local_0_5, local_0_6;
 catalogUrlWaves = function (p0) {
-  let v0, v1;
+  let v0;
   v0 = local_0_2(p0);
-  v1 = [v0];
-  v0 = v0[0];
-  v1[1] = proxiedCatalogUrls(v0);
-  return v1;
+  return [v0, proxiedCatalogUrls(v0[0])];
 };
 local_0_6 = function (p0) {
   return {

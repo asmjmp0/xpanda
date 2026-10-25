@@ -648,6 +648,62 @@ function md5(str) {
 }
 
 /**
+ * 回归:已合并的自调用形态。
+ *   `acc = E; v8 = E; acc = acc.toLowerCase.call(v8)`
+ * 自引用链折叠先把 `acc = acc.toLowerCase; acc = acc.call(v8)` 合成一条语句,
+ * AccCallSimplify 需要按接收者别名(`v8 = acc` / 紧邻克隆 `acc = E; v8 = E`)
+ * 还原成 `v8.toLowerCase()`,不能留下重复求值的 `acc = E` 与 `.call(v8)`。
+ * 方法量存放在无关变量里(`v1 = acc.substring; v1.call(v2, ...)`)不属于该形态,保持原样。
+ */
+function verifyMergedSelfCallFold(): void {
+    const program = NodeFactory.parse(`
+function foldText(v8) {
+  let v9, acc;
+  v9 = v8.filePath;
+  acc = v8.filename + "\\n" + v8.displayName;
+  v8 = v8.filename + "\\n" + v8.displayName;
+  acc = acc.toLowerCase.call(v8);
+  return [v9, acc];
+}
+function foldMember(obj, v0, row) {
+  let acc;
+  acc = row.targets;
+  v0 = row.targets;
+  obj.preview = acc.slice.call(v0);
+  return obj;
+}
+function keepUnrelated(acc, v2) {
+  let v1;
+  v1 = acc.substring;
+  acc = v1.call(v2, 0, 8);
+  return acc;
+}
+function sameReceiver(acc) {
+  if (!acc && (acc = list(), acc = acc.some.call(acc, function (p0) {
+    return p0.ok;
+  }))) {
+    return acc;
+  }
+  return undefined;
+}
+`);
+    SimplifyExport.simplify(program);
+    const code = NodeFactory.generate(program);
+    if (!code.includes('return [v8.filePath, (v8.filename + "\\n" + v8.displayName).toLowerCase()];')) {
+        throw new Error(`simplify: 合并后的自调用未按接收者别名还原\n${code}`);
+    }
+    if (!code.includes("obj.preview = row.targets.slice();")) {
+        throw new Error(`simplify: 成员目标的自调用未还原\n${code}`);
+    }
+    if (!code.includes("return acc.substring.call(v2, 0, 8);")) {
+        throw new Error(`simplify: 无关方法量被误改写\n${code}`);
+    }
+    if (code.includes("some.call(")) {
+        throw new Error(`simplify: 接收者与对象同名的方法量未还原\n${code}`);
+    }
+}
+
+/**
  * 回归:acc 的成员装载链。
  *   `acc = E; v6 = acc; acc = acc.length; if (acc === 0)`
  * 应折成 `v6 = E; if (v6.length === 0)`(E 为调用时先经别名搬运,再传播进 test);
@@ -1092,6 +1148,40 @@ function g(p0) {
     }
     if (!/if \(v3 === undefined\) \{\s*return;/.test(inlinedCloseCode)) {
         throw new Error(`for...of 还原: 提前 return 分支被破坏\n${inlinedCloseCode}`);
+    }
+
+    // 循环体读取的 `vv.value` 有两种含义:解包语句存在时,后面的 `vv` 已经是元素,
+    // `vv.value` 是元素自身的属性,必须保留;没有解包语句时 `vv.value` 才是元素本身。
+    const valueMeaning = NodeFactory.parse(`
+function m(items) {
+  let v6, acc;
+  acc = items[Symbol.iterator]();
+  while (true) {
+    v6 = acc.next();
+    if (v6.done) break;
+    v6 = v6.value;
+    if (typeof v6.value === "string") {
+      use(v6.value);
+    }
+  }
+  acc = items[Symbol.iterator]();
+  while (true) {
+    v6 = acc.next();
+    if (v6.done) break;
+    use(v6.value);
+  }
+}
+`);
+    SimplifyExport.simplify(valueMeaning);
+    const valueMeaningCode = NodeFactory.generate(valueMeaning);
+    if (valueMeaningCode.includes("while (true)")) {
+        throw new Error(`for...of 还原: 未还原\n${valueMeaningCode}`);
+    }
+    if (!valueMeaningCode.includes('if (typeof v6.value === "string") {\n      use(v6.value);')) {
+        throw new Error(`for...of 还原: 解包后的元素属性被改写\n${valueMeaningCode}`);
+    }
+    if (!valueMeaningCode.includes("use(v6);")) {
+        throw new Error(`for...of 还原: 直接读取的迭代结果未改写\n${valueMeaningCode}`);
     }
 
     // 提前 return 的 for...of 的另一形态是 do-while:done 分支是循环耗尽后的代码,
@@ -2794,6 +2884,26 @@ function verifyAmclStructureMemory(): void {
     if (expandedCode !== expandedExpected) {
         throw new Error(`amcl z12: 输出与快照不一致\n${firstDifference(expandedExpected, expandedCode)}`);
     }
+
+    // 条件折叠把 `v4 = v4.inheritsFrom.length` 并进外层 if 的 test 后,这次读取与
+    // for-of 循环的最近公共祖先是 if 语句本身;hasNewerValueBefore 必须认得
+    // “条件在分支(含循环体)之前求值”,否则 for-of 退化成手动迭代器循环。
+    const forOfGuardClass = pandaFile.getAllClasses().find((c) =>
+        c.name.content === "L&entry/src/main/ets/e4/s6&;");
+    if (!forOfGuardClass) throw new Error("amcl: 未找到 L&entry/src/main/ets/e4/s6&;");
+    const forOfGuardCode = decompiler.decompileClass(forOfGuardClass);
+    NodeFactory.parse(forOfGuardCode);
+    for (const fragment of [
+        'if (v4 !== null && v4.inheritsFrom.length === 0) {',
+        'for (v12 of ["mobilegl", "minecraft-vulkan"]) {',
+    ]) {
+        if (!forOfGuardCode.includes(fragment)) {
+            throw new Error(`amcl s6: 缺少 ${JSON.stringify(fragment)}\n${forOfGuardCode}`);
+        }
+    }
+    if (/v12 = [A-Za-z_$][\w$]*\.next\(\)/.test(forOfGuardCode)) {
+        throw new Error(`amcl s6: 条件折叠后的 for-of 退化成手动迭代器循环\n${forOfGuardCode}`);
+    }
 }
 
 /**
@@ -2833,7 +2943,7 @@ function verifyAmclUnreachableHandlerIsland(): void {
         // 既有 try/finally 还原能力不能被这次结构分析改动破坏
         "        } finally {\n          await g50.close(v34);\n        }",
         // 正常路径上的 openFiles 关闭循环(结构分析里被剪掉的是异常路径的同一段副本)
-        "g50.closeSync(v23);",
+        "g50.closeSync(v23.file);",
         "local_0_2(v5, m92, v4);",
     ]) {
         if (!code.includes(fragment)) {
@@ -3575,6 +3685,10 @@ async function main(): Promise<void> {
 
     console.log("[test] simplify acc call");
     verifyAccCallSimplification();
+    console.log("    ok");
+
+    console.log("[test] simplify merged self call");
+    verifyMergedSelfCallFold();
     console.log("    ok");
 
     console.log("[test] simplify duplicate construction");

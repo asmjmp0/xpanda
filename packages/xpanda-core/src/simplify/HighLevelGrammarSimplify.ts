@@ -8,6 +8,7 @@ import {
     isClassLike as isClassLikeNode, isDoneMember,
     isFunctionLike as isFunctionLikeNode, isNextValue, isNodeEqual, isPureExpression, isTempName, walkNode
 } from "./AstUtils";
+import { containsNode } from "./temp/queries";
 
 
 const {
@@ -900,6 +901,17 @@ export class HighLevelGrammarSimplify implements ISimplify {
             refChild = p;
         }
         if (!common || common.node === loop.node) return false;
+        // 读取位于包含循环的祖先 if 的条件里:条件在分支(含循环体)之前求值一次,
+        // 删除分支里的迭代器初始化不会改变这次读取。典型形态(amcl e4/s6):
+        //   if (v4 !== null && v4.inheritsFrom.length === 0) { for (v4 of ...) }
+        // 条件折叠把 `v4 = v4.inheritsFrom.length` 并进 test 后,这次读取与循环
+        // 的最近公共祖先是 if 语句本身,不是语句块。
+        // 该 if 本身在循环里时不安全:下一轮会重新求值,而 init 已被删除,
+        // 读到的是上一轮遗留的值。while/for 的条件同理(每轮 body 之后重新求值)。
+        if (common.isIfStatement() && containsNode(common.node.test, ref.node)
+            && !this.isInsideLoop(common, loop)) {
+            return true;
+        }
         if (!isBlockStatementNode(common.node) && !isProgram(common.node)) return false;
 
         const body = common.node.body as TYPE.Node[];
@@ -953,6 +965,25 @@ export class HighLevelGrammarSimplify implements ISimplify {
                 }
             }
             current = parent;
+        }
+        return false;
+    }
+
+    /** path 是否位于 loop 所在函数的某个循环里(含嵌套)。 */
+    private isInsideLoop(path: NodePath, loop: NodePath): boolean {
+        const functionRoot = loop.getFunctionParent() ?? loop;
+        for (let p: NodePath | null = path.parentPath; p; p = p.parentPath) {
+            if (p === functionRoot) return false;
+            switch (p.node.type) {
+                case "WhileStatement":
+                case "DoWhileStatement":
+                case "ForStatement":
+                case "ForInStatement":
+                case "ForOfStatement":
+                    return true;
+                default:
+                    break;
+            }
         }
         return false;
     }
@@ -1208,17 +1239,21 @@ export class HighLevelGrammarSimplify implements ISimplify {
         // `vv = vv.value` 由 for-of 的循环变量赋值替代。先判定再替换,
         // 否则 `vv.value` 已被改写后这条赋值就认不出来了。
         const skipSelfValueAssignment = this.isSelfValueAssignment(bodyStatements[2].node, vv.name);
-        // 只替换迭代器结果对象自己的 `.value`,循环体里其它对象的 `.value` 保持不变。
+        // 只有“直接读取迭代器结果 `.value`”的形态才需要把 `vv.value` 换成 `vv`。
+        // 存在解包语句时,后面的 `vv` 已经是元素,`vv.value` 是元素自身的属性,
+        // 改写会把它错误地当成元素本身(`typeof v6.value === "string"` → `typeof v6`).
         // 必须在仍挂在 AST 上的 body 路径上遍历:对脱离树的 blockStatement 单独调用 traverse
         // 会因 parentPath 缺失使 scope 链断在非 Program 节点(crawl 时 programParent 为 undefined)。
-        body.traverse({
-           MemberExpression:(path)=>{
-               if (path.node.computed) return;
-               if (!isIdentifierNode(path.node.object) || path.node.object.name !== vv.name) return;
-               if (!isIdentifierNode(path.node.property) || path.node.property.name !== "value") return;
-               path.replaceWith(identifier(vv.name));
-           }
-        });
+        if (!skipSelfValueAssignment) {
+            body.traverse({
+               MemberExpression:(path)=>{
+                   if (path.node.computed) return;
+                   if (!isIdentifierNode(path.node.object) || path.node.object.name !== vv.name) return;
+                   if (!isIdentifierNode(path.node.property) || path.node.property.name !== "value") return;
+                   path.replaceWith(identifier(vv.name));
+               }
+            });
+        }
         const arr:TYPE.Statement[] = [];
         for (let i = 2; i < bodyStatements.length; i++) {
             if (i === 2 && skipSelfValueAssignment) continue;

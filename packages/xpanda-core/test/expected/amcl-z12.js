@@ -302,8 +302,7 @@ local_0_20 = function (p0) {
         return v1;
       }
       for (v4 of p0.controlGroups) {
-        v4 = v4.id;
-        acc = local_1_2.add(v4);
+        acc = local_1_2.add(v4.id);
       }
       if (!Array.isArray(p0.requiredCapabilities) || p0.requiredCapabilities.length > 2 || p0.requiredCapabilities.indexOf(v1357) < 0) {
         return "groups.capabilities";
@@ -476,8 +475,7 @@ local_0_20 = function (p0) {
       return v1;
     }
     for (v4 of p0.controlGroups) {
-      v4 = v4.id;
-      acc = local_1_2.add(v4);
+      acc = local_1_2.add(v4.id);
     }
     if (!Array.isArray(p0.requiredCapabilities) || p0.requiredCapabilities.length > 2 || p0.requiredCapabilities.indexOf(v1357) < 0) {
       return "groups.capabilities";
