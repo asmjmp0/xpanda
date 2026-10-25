@@ -219,11 +219,22 @@ c1268 = async function (p0, p1, p2, p3) {
         }
       };
       v19.files = v20;
-      await local_1_3.createAndWait(v19, function (p0) {
-        if (local_1_1 != null) {
-          local_1_1(p0);
+      acc = local_1_3.createAndWait(v19, function (p0) {
+        local_1_0 = p0.taskId;
+        try {
+          if (local_1_1 != null) {
+            local_1_1(p0);
+          }
+        } catch (catchAcc) {
+          if (local_1_2.length === 0) {
+            local_1_2.push(catchAcc);
+          }
+          if (local_1_0 /*p1272*/ > 0) {
+            local_1_3.cancel(local_1_0 /*p1272*/);
+          }
         }
       });
+      await acc;
       if (local_1_2.length > 0) {
         throw local_1_2[0];
       }
@@ -281,7 +292,7 @@ c1268 = async function (p0, p1, p2, p3) {
   local_1_0 = 0;
   local_1_2 = [];
   try {
-    v19 = {
+    acc = local_1_3.createAndWait({
       "name": "Forge client mappings " + p1,
       "files": [{
         "localPath": v3,
@@ -292,12 +303,22 @@ c1268 = async function (p0, p1, p2, p3) {
           "size": v8
         }
       }]
-    };
-    await local_1_3.createAndWait(v19, function (p0) {
-      if (local_1_1 != null) {
-        local_1_1(p0);
+    }, function (p0) {
+      local_1_0 = p0.taskId;
+      try {
+        if (local_1_1 != null) {
+          local_1_1(p0);
+        }
+      } catch (catchAcc) {
+        if (local_1_2.length === 0) {
+          local_1_2.push(catchAcc);
+        }
+        if (local_1_0 /*p1272*/ > 0) {
+          local_1_3.cancel(local_1_0 /*p1272*/);
+        }
       }
     });
+    await acc;
     if (local_1_2.length > 0) {
       throw local_1_2[0];
     }
@@ -312,7 +333,7 @@ d1268 = function (p0, p1) {
   y.info(local_0_0, "Copied " + local_0_12(p0, p1) + " files from maven/ to libraries/", a32);
 };
 e1268 = async function (p0, p1, p2, p3) {
-  let v0, v3, v6, v9, v14, v15, v16, v21, v22;
+  let v0, v3, v6, v9, v14, v15, v16, v19, v21, v22;
   v3 = local_0_8(p2);
   if (v3 === null) {
     throw new Error("无法读取旧版 Forge 内嵌库来源清单");
@@ -347,28 +368,35 @@ e1268 = async function (p0, p1, p2, p3) {
       v14 = p1 + "/" + v16;
     }
     v15 = p3 + "/" + v15;
-    v21 = g50.lstatSync(v14);
-    v22 = g50.lstatSync(v15);
-    if (!v21.isFile() || v21.isSymbolicLink() || !v22.isFile() || v22.isSymbolicLink() || v21.size !== v22.size || !p1205(v14)) {
-      throw new Error("源或复制后的 JAR 不完整");
+    try {
+      v21 = g50.lstatSync(v14);
+      v22 = g50.lstatSync(v15);
+      if (!v21.isFile() || v21.isSymbolicLink() || !v22.isFile() || v22.isSymbolicLink() || v21.size !== v22.size || !p1205(v14)) {
+        throw new Error("源或复制后的 JAR 不完整");
+      }
+      if (!p1205(v15)) {
+        throw new Error("源或复制后的 JAR 不完整");
+      }
+      v14 = await f1097(v14);
+      v0 = await f1097(v15);
+      if (!new RegExp("^[0-9a-fA-F]{40}$").test(v14) || v14 !== v0) {
+        throw new Error("复制前后 SHA-1 不一致或无法取得来源摘要");
+      }
+      if (v9.sha1 !== undefined && v9.sha1.length > 0 && v9.sha1.toLowerCase() !== v14) {
+        throw new Error("声明的摘要或大小与已验证内嵌工件冲突");
+      }
+      if (v9.size !== undefined && v9.size > 0 && v9.size !== v21.size) {
+        throw new Error("声明的摘要或大小与已验证内嵌工件冲突");
+      }
+      v9.sha1 = v14;
+      v9.size = v21.size;
+      v14 = "Legacy bundled library verified: " + v9.name + " size=" + v9.size + " sha1=" + v14;
+      v19 = v9;
+      y.info(local_0_0, v14, a32);
+    } catch (catchAcc) {
+      throw new Error("旧版 Forge 内嵌库校验失败：" + v19.name + "；" + catchAcc.message);
     }
-    if (!p1205(v15)) {
-      break;
-    }
-    v14 = await f1097(v14);
-    v0 = await f1097(v15);
-    if (!new RegExp("^[0-9a-fA-F]{40}$").test(v14) || v14 !== v0) {
-      throw new Error("复制前后 SHA-1 不一致或无法取得来源摘要");
-    }
-    if (v9.sha1 !== undefined && v9.sha1.length > 0 && v9.sha1.toLowerCase() !== v14) break;
-    if (v9.size !== undefined && v9.size > 0 && v9.size !== v21.size) {
-      break;
-    }
-    v9.sha1 = v14;
-    v9.size = v21.size;
-    y.info(local_0_0, "Legacy bundled library verified: " + v9.name + " size=" + v9.size + " sha1=" + v14, a32);
   }
-  throw new Error("声明的摘要或大小与已验证内嵌工件冲突");
 };
 e771 = function (p0) {
   let v0, v4, v6, v7 /*a104*/;
@@ -439,9 +467,17 @@ f1268 = function (p0, p1, p2, p3, p4, p5, p6, p7) {
         }
         v3 = v3.length > 0 ? p5 + "/" + v3 : "";
         if (v3.length > 0 && a104(v3)) {
-          g50.copyFileSync(v3, v2);
-          v2 = "Copied forge jar: " + v2 + "";
-          y.info(local_0_0, v2, a32);
+          try {
+            g50.copyFileSync(v3, v2);
+            v3 = y;
+            v2 = "Copied forge jar: " + v2 + "";
+            y.info(local_0_0, v2, a32);
+          } catch (catchAcc) {
+            v3 = "copyFileSync " + v3 + " -> ";
+            v2 = v3 + v2 + " failed";
+            y.error(local_0_0, v2, catchAcc, a32);
+            throw catchAcc;
+          }
         }
       }
       v0 = v0.versionInfo;
@@ -502,24 +538,37 @@ local_0_12 = function (p0, p1, p2) {
         if (!v11.isDirectory()) {
           if (v11.isFile()) {
             v12 = true;
-            v14 = g50.lstatSync(v6);
-            if (!v14.isSymbolicLink()) {
-              if (!v14.isFile()) {
-                throw new Error("复制目标存在非普通文件: " + v6);
+            try {
+              v14 = g50.lstatSync(v6);
+              if (!v14.isSymbolicLink()) {
+                if (!v14.isFile()) {
+                  throw new Error("复制目标存在非普通文件: " + v6);
+                }
+                if (v14.size === v11.size && v14.size > 0) {
+                  v12 = false;
+                }
+                if (v12) {
+                  g50.mkdirSync(v6.substring(0, v6.lastIndexOf("/")), true);
+                  g50.copyFileSync(v10, v6);
+                  v5 += 1;
+                }
+                continue;
               }
-              if (v14.size === v11.size && v14.size > 0) {
-                v12 = false;
+              throw new Error("复制目标存在非普通文件: " + v6);
+            } catch (catchAcc) {
+              if (catchAcc.message.indexOf("复制目标存在非普通文件") >= 0) {
+                throw catchAcc;
               }
-              if (v12) {
+              {
                 g50.mkdirSync(v6.substring(0, v6.lastIndexOf("/")), true);
                 g50.copyFileSync(v10, v6);
                 v5 += 1;
               }
               continue;
             }
-            throw new Error("复制目标存在非普通文件: " + v6);
+          } else {
+            throw new Error("拒绝复制非普通文件: " + v10);
           }
-          throw new Error("拒绝复制非普通文件: " + v10);
         }
         v5 += local_0_12(v10, v6, p2 + 1);
       }

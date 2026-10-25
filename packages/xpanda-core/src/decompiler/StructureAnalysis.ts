@@ -758,7 +758,11 @@ export class StructureAnalysis {
             this.regionGraph.putEdgeValue(region, destSRegion, false);
             region.setType("Linear");
             return true;
-        } else if (destRegion.getType() === "Tail" && nextRegion.getType() === "Tail") {
+        } else if ((destRegion.getType() === "Tail" && nextRegion.getType() === "Tail")
+            || (this.regionGraph.outDegree(destRegion) === 0 && this.regionGraph.outDegree(nextRegion) === 0)) {
+            // 两条分支都已终止(return/throw)。区域类型可能不是 Tail:顺序归约
+            // 吸收过后继、后继又被删掉时会留下 outDegree === 0 的 Linear 区域,
+            // 这里按终止分支处理,try/catch 整体成为 Tail。
             region.addStatement(new IfPandaStatement(region, nextRegion, destRegion));
             region.tryCatchHelperRegion = false;
             this.regionGraph.removeEdge(region, nextRegion);

@@ -29,12 +29,11 @@ export class RegionGraphBuilder {
             // TryFinally 在 AST 上还原成 try/finally,不能接进区域图
             // (landing pad 会破坏可归约性)。
             const finallyStartPCs = new Set(buildFinallyPlans(pandaIRCFG).map((plan) => plan.startPC));
-            // 24.0.0.0 起 try 表把真正的 catch 处理器也写成 codeSize === 0,
-            // 旧行为会把 catch 体整段剪掉(LogExport.readLogTail 的 hilog.error
-            // 分支曾完全消失)。ArkTS 13 的 codeSize 语义相同,但那里的处理器
-            // 与 for-of / await resume 派发混在一起,接入区域图会破坏已验证的
-            // 归约结果,因此只在 24+ 上启用按 handler 特征注册。
-            const registerZeroSizeCatch = isNewHandlerEncoding(pandaIRCFG);
+            // ArkTS 13 / 24 的 try 表都可能有 codeSize === 0 的处理器;旧行为会把
+            // 真正的 catch 体整段剪掉(LogExport.readLogTail 的 hilog.error 分支、
+            // Petrelgram 的 305 个 catch 都曾消失)。这里按 handler 结构注册真正的
+            // catch;始终不可达的 handler 由下面的迭代接线跳过。
+            const registerFinallyHandlers = isNewHandlerEncoding(pandaIRCFG);
             for (const tryBlock of pandaIRCFG.getPandaMethod().methodCode!.pandaMethodTryBlocks!) {
                 // fixme 与 Java 一致只取第一个 catch
                 const catchBlock = tryBlock.pandaMethodCatchBlocks[0];
@@ -64,13 +63,20 @@ export class RegionGraphBuilder {
                 //  - 经典 finally(正常完成块里写 hole 哨兵再跳到 cleanup)交给
                 //    TryFinally 还原。
                 if (handleCodeLength === 0) {
-                    if (!registerZeroSizeCatch) continue;
                     if (this.isPureRethrowHandler(handleEntryBlock)) continue;
                     if (finallyStartPCs.has(tryBlock.startPC)) continue;
-                    // finally 处理器也要接进来:24.0.0.0 把 finally 内联在出口前,
-                    // 异常路径的清理只能靠它的 handler 输出,再由
-                    // foldEagerCatchToFinally 还原成 try/finally。
-                    if (!this.isFinallyHandler(handleEntryBlock) && !this.isCatchHandler(handleEntryBlock)) continue;
+                    if (this.isFinallyHandler(handleEntryBlock)) {
+                        // 24.0.0.0 把 finally 内联在出口前,异常路径的清理只能靠它的
+                        // handler 输出,再由 foldEagerCatchToFinally 还原成 try/finally。
+                        // 13.0.1.0 的 handler-based finally 保持旧行为(内联 cleanup)。
+                        if (!registerFinallyHandlers) continue;
+                    } else {
+                        if (!this.isCatchHandler(handleEntryBlock)) continue;
+                        // 13.0.1.0 的经典 finally 收尾还留在 try 体里(`if (hole == X)
+                        // throw X`)。把外层 catch 接进区域图会把这段重抛卷进 catch,
+                        // 归约结果会膨胀成另一套循环/try 结构,先保持旧行为。
+                        if (!registerFinallyHandlers && this.hasSentinelGuard(tryBlock)) continue;
+                    }
                 }
                 this.exceptionHandleBlocks.set(handleEntryBlock, tryEntryBlock);
             }
@@ -174,19 +180,39 @@ export class RegionGraphBuilder {
             }
         }
 
-        for (const [handleEntry, tryEntry] of this.exceptionHandleBlocks) {
-            const tryEntryRegion = this.btor.get(tryEntry)!;
-            const handleEntryRegion = this.btor.get(handleEntry)!;
-            const tryCatchRegion = new TryCatchHelperRegion(tryEntryRegion, handleEntryRegion);
-            this.regionGraph.addNode(tryCatchRegion);
-            for (const predecessor of this.regionGraph.predecessors(tryEntryRegion).slice()) {
-                const value = this.regionGraph.edgeValueOrThrow(predecessor, tryEntryRegion);
-                this.regionGraph.removeEdge(predecessor, tryEntryRegion);
-                this.regionGraph.putEdgeValue(predecessor, tryCatchRegion, value);
+        // 嵌套 try 的 handler 可能只在另一个 handler 的区域里才能到达(例如 catch
+        // 里再套 try)。先连能到达的,再反复扫描:外层 handler 接进图之后,内层
+        // try 入口才变成可达。始终不可达的(外层 finally/派发 handler 被跳过)
+        // 不接进图,避免留下不可达的 landing pad 把整个方法逼到降级路径。
+        const entryRegion = this.btor.get(this.entryBlock)!;
+        const pending = new Map(this.exceptionHandleBlocks);
+        let progress = true;
+        while (pending.size > 0 && progress) {
+            progress = false;
+            for (const [handleEntry, tryEntry] of Array.from(pending)) {
+                const tryEntryRegion = this.btor.get(tryEntry);
+                const handleEntryRegion = this.btor.get(handleEntry);
+                if (!tryEntryRegion || !handleEntryRegion || tryEntryRegion === entryRegion) {
+                    // 区域已被裁掉,或者是入口区域本身(没有前驱可以改接给 helper)
+                    pending.delete(handleEntry);
+                    this.exceptionHandleBlocks.delete(handleEntry);
+                    continue;
+                }
+                if (!this.isReachableRegion(entryRegion, tryEntryRegion)) continue;
+                const tryCatchRegion = new TryCatchHelperRegion(tryEntryRegion, handleEntryRegion);
+                this.regionGraph.addNode(tryCatchRegion);
+                for (const predecessor of this.regionGraph.predecessors(tryEntryRegion).slice()) {
+                    const value = this.regionGraph.edgeValueOrThrow(predecessor, tryEntryRegion);
+                    this.regionGraph.removeEdge(predecessor, tryEntryRegion);
+                    this.regionGraph.putEdgeValue(predecessor, tryCatchRegion, value);
+                }
+                this.regionGraph.putEdgeValue(tryCatchRegion, tryEntryRegion, false);
+                this.regionGraph.putEdgeValue(tryCatchRegion, handleEntryRegion, true);
+                pending.delete(handleEntry);
+                progress = true;
             }
-            this.regionGraph.putEdgeValue(tryCatchRegion, tryEntryRegion, false);
-            this.regionGraph.putEdgeValue(tryCatchRegion, handleEntryRegion, true);
         }
+        for (const handleEntry of pending.keys()) this.exceptionHandleBlocks.delete(handleEntry);
 
         // 只经由被跳过的异常处理器才能到达的块在正常控制流里是不可达的:
         // ArkTS 13 的 finally handler 带 codeSize === 0(RegionGraphBuilder 跳过),
@@ -196,18 +222,31 @@ export class RegionGraphBuilder {
         // 永远遍历不到孤岛,图就再也收不成一个节点,最后抛 "can not reduce the graph"
         // 降级到 SimpleAnalysis(amcl1.0.6.abc 的 commons/h1/w1 w91)。
         // 归约本身只可能产出从 entryRegion 可达的语句,所以按可达性再清理一遍。
-        const entryRegion = this.btor.get(this.entryBlock)!;
         const reachable = new Set(this.regionGraph.depthFirstPostOrder(entryRegion));
         const unreachableRegions = this.regionGraph.nodes().filter((region) => !reachable.has(region));
-        // 不可达集合里出现异常 landing pad 说明这里是真的 catch 代码(只是 helper 也
-        // 不在 entry 可达集里),删掉会丢失分支语义;保持旧行为降级 SimpleAnalysis 更安全。
-        if (unreachableRegions.some((region) => region.isExceptionLandingPad())) {
+        // 已经接进图的 landing pad 仍然不可达说明 helper 连错了(正常不应发生);
+        // 被主动跳过的 handler 已经从 exceptionHandleBlocks 移除,其区域随其他
+        // 不可达块一起剪掉。
+        if (unreachableRegions.some((region) => region.block && this.exceptionHandleBlocks.has(region.block))) {
             throw new PandaDecompileException(
                 this.pandaIRCFG.getPandaMethod().name.content + " unreachable exception handler regions");
         }
         for (const region of unreachableRegions) this.regionGraph.removeNode(region);
 
         return { regionGraph: this.regionGraph, entryRegion: this.btor.get(this.entryBlock)! };
+    }
+
+    private isReachableRegion(entry: Region, target: Region): boolean {
+        const visited = new Set<Region>();
+        const stack: Region[] = [entry];
+        while (stack.length > 0) {
+            const current = stack.pop()!;
+            if (current === target) return true;
+            if (visited.has(current)) continue;
+            visited.add(current);
+            for (const successor of this.regionGraph.successors(current)) stack.push(successor);
+        }
+        return false;
     }
 
     private createRegion(block: PandaIRBasicBlock): Region {
@@ -292,6 +331,20 @@ export class RegionGraphBuilder {
             if (instruction.kind === "call") return true;
             return instruction.opcode.name === "ldexternalmodulevar" || instruction.opcode.name === "newobjrange";
         });
+    }
+
+    /** try 范围内是否有经典 finally 的 hole 哨兵(13.0.1.0 的收尾残留) */
+    private hasSentinelGuard(tryBlock: { startPC: number; length: number }): boolean {
+        const start = tryBlock.startPC;
+        const end = start + tryBlock.length;
+        for (const block of this.pandaIRCFG.pandaIRBasicBlocks) {
+            const pc = block.getStartPC();
+            if (pc < start || pc >= end) continue;
+            if (block.pandaInstructions.some((instruction) => instruction.kind === "load" && instruction.loadType === "HOLE")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private checkIsForInException(block: PandaIRBasicBlock): boolean {

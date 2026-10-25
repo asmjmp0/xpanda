@@ -1708,9 +1708,13 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     }
   }
   notifySegmentLikeFailure() {
-    this.getUIContext().getPromptAction().showToast({
-      "message": "操作失败，请稍后重试"
-    });
+    try {
+      this.getUIContext().getPromptAction().showToast({
+        "message": "操作失败，请稍后重试"
+      });
+    } catch (catchAcc) {
+      hilog.warn(53249, "SegmentReaction", "toast failed message=%{public}s", catchAcc instanceof Error ? catchAcc.message : "" + catchAcc + "");
+    }
   }
   extractSegmentInfos(p0) {
     if (p0 === undefined || p0.kind === ContentDetailKind.QUESTION) {
@@ -4127,15 +4131,24 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     if (!this.gripMotionSupported || this.gripMotionSubscribed) {
       return;
     }
-    motion.on("holdingHandChanged", this.onHoldingHandChanged);
-    this.gripMotionSubscribed = true;
+    try {
+      motion.on("holdingHandChanged", this.onHoldingHandChanged);
+      this.gripMotionSubscribed = true;
+    } catch (catchAcc) {
+      console.error("subscribeHoldingHand failed, code=" + catchAcc.code + "");
+      this.gripMotionSubscribed = false;
+    }
     return;
   }
   unsubscribeHoldingHand() {
     if (!this.gripMotionSubscribed) {
       return;
     }
-    motion.off("holdingHandChanged", this.onHoldingHandChanged);
+    try {
+      motion.off("holdingHandChanged", this.onHoldingHandChanged);
+    } catch (catchAcc) {
+      console.error("unsubscribeHoldingHand failed, code=" + catchAcc.code + "");
+    }
     this.gripMotionSubscribed = false;
     return;
   }

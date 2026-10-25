@@ -175,59 +175,70 @@ b763 = async function (p0, p1, p2, p3) {
   }
 };
 c763 = async function (p0, p1, p2, p3) {
-  let v0, v4 /*g50*/, v5 /*g50*/, v6, v14 /*g50*/, v15 /*cryptoFramework*/, v16 /*g50*/, v17, v19 /*g50*/;
+  let v0, v4 /*g50*/, v5 /*g50*/, v6, v11 /*g50*/, v14 /*g50*/, v15 /*cryptoFramework*/, v16 /*g50*/, v17, v18 /*g50*/, v19 /*g50*/, acc;
   local_0_0(p2);
   v4 = await local_0_3(p0);
-  v5 = await g50.stat(v4.fd);
-  if (!v5.isFile()) {
-    throw new Error("导出归档不是普通文件");
-  }
-  l763(v5.size);
-  v0 = await g50.open(p1, g50.OpenMode.READ_WRITE);
-  v14 = v0;
-  if ((await g50.stat(v0.fd)).size === 0) {
-    v15 = cryptoFramework.createMd("SHA256");
-    for (v17 = 0; v17 < v5.size; p3(v17)) {
-      local_0_0(p2);
-      v6 = new ArrayBuffer(Math.min(h763, v5.size - v17));
-      v0 = await g50.read(v4.fd, v6, {
-        "length": v6.byteLength
-      });
-      if (v0 <= 0 || v0 > v6.byteLength) {
-        throw new Error("归档复制读取不完整");
+  v6 = false;
+  try {
+    v5 = await g50.stat(v4.fd);
+    if (!v5.isFile()) {
+      throw new Error("导出归档不是普通文件");
+    }
+    l763(v5.size);
+    v0 = await g50.open(p1, g50.OpenMode.READ_WRITE);
+    v14 = v0;
+    if ((await g50.stat(v0.fd)).size === 0) {
+      v15 = cryptoFramework.createMd("SHA256");
+      for (v17 = 0; v17 < v5.size; p3(v17)) {
+        local_0_0(p2);
+        v6 = new ArrayBuffer(Math.min(h763, v5.size - v17));
+        v18 = await g50.read(v4.fd, v6, {
+          "length": v6.byteLength
+        });
+        if (v18 <= 0 || v18 > v6.byteLength) {
+          throw new Error("归档复制读取不完整");
+        }
+        v19 = new Uint8Array(v6, 0, v18);
+        v6 = true;
+        await local_0_8(v14.fd, v19, p2);
+        await v15.update({
+          "data": v19
+        });
+        v17 += v18;
       }
-      v19 = new Uint8Array(v6, 0, v0);
-      await local_0_8(v14.fd, v19, p2);
-      await v15.update({
-        "data": v19
-      });
-      v17 += v0;
-    }
-    local_0_0(p2);
-    await g50.fsync(v14.fd);
-    v0 = await g50.stat(v14.fd);
-    v16 = v0.size !== v17;
-    if (v0.size === v17) {
-      v16 = local_0_1(v5) !== local_0_1(await g50.stat(v4.fd));
-    }
-    if (v16) {
-      throw new Error("复制期间归档或目标大小发生变化");
-    }
-    if (local_0_1(v5) === local_0_1(await g50.stat(p0))) {
-      await g50.close(v14);
-      v14 = {
-        "size": v17,
-        "sha256": local_0_2((await v15.digest()).data),
-        "readbackVerified": false
-      };
-      try {} finally {
-        await g50.close(v4);
+      local_0_0(p2);
+      await g50.fsync(v14.fd);
+      v0 = await g50.stat(v14.fd);
+      v16 = v0.size !== v17;
+      if (v0.size === v17) {
+        v16 = local_0_1(v5) !== local_0_1(await g50.stat(v4.fd));
+      }
+      if (!v16) {
+        v5 = local_0_1(v5);
+        if (v5 === local_0_1(await g50.stat(p0))) {
+          await g50.close(v14);
+          v14 = {
+            "size": v17,
+            "sha256": null,
+            "readbackVerified": false
+          };
+          v11 = v6;
+          v14.sha256 = local_0_2((await v15.digest()).data);
+          try {} finally {
+            await g50.close(v4);
+          }
+        } else {
+          throw new Error("复制期间归档或目标大小发生变化");
+        }
+      } else {
+        throw new Error("复制期间归档或目标大小发生变化");
       }
     } else {
-      throw new Error("复制期间归档或目标大小发生变化");
+      throw new Error("目标文件已有内容，请另选新文件；未覆盖原文件");
     }
-  } else {
-    throw new Error("目标文件已有内容，请另选新文件；未覆盖原文件");
+  } catch (catchAcc) {
+    acc = new Error(catchAcc.message + (v11 ? "；目标可能留下未完成文件，请在文件管理器删除后重新另存" : ""));
+    throw acc;
   }
 };
 local_0_0 = function (p0) {

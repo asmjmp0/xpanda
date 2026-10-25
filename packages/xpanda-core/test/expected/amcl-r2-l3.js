@@ -265,7 +265,8 @@ e190 = class panda_jmp0_reserved_anonymous_2 {
     return p0.parser.finish();
   }
   async loadEvidence(p0, p1, p2, p3, p4) {
-    let v3, v4, v5 /*a190*/, v6, v7, v10, v11, v12, v14, v15, v16, v19 /*r115*/, v20 /*a90*/, acc;
+    let v2, v3, v4, v5 /*a190*/, v6, v7, v8, v10, v11, v12, v14, v15, v16, v19 /*r115*/, v20 /*a90*/, acc;
+    v2 = 0;
     v3 = p3 === undefined ? 0 : p3;
     if (p4 === undefined) {
       p4 = 0;
@@ -273,20 +274,25 @@ e190 = class panda_jmp0_reserved_anonymous_2 {
     this.releaseLive_();
     v4 = this.generation + 1;
     this.generation = this.generation + 1;
+    v5 = this.activeCursor;
     if (this.activeCursor !== null && this.activeCursor !== undefined) {
       this.activeCursor.cancel();
     }
-    acc = p0.map(function (p0) {
-      return p0.path + ":" + p0.compressed + ":" + q51(p0.path);
-    });
-    v6 = JSON.stringify(acc) + ":" + p1 + ":" + p2.toLowerCase() + ":" + p4;
-    if (v6 !== this.scanKey) {
-      this.discardIdle_();
-      this.pageCache.clear();
-      this.scanKey = v6;
-    }
-    v5 = this.pageCache.get(v3);
-    if (v5 === undefined) {
+    try {
+      acc = p0.map(function (p0) {
+        return p0.path + ":" + p0.compressed + ":" + q51(p0.path);
+      });
+      v6 = JSON.stringify(acc) + ":" + p1 + ":" + p2.toLowerCase() + ":" + p4;
+      if (v6 !== this.scanKey) {
+        this.discardIdle_();
+        this.pageCache.clear();
+        this.scanKey = v6;
+      }
+      v5 = this.pageCache.get(v3);
+      if (v5 !== undefined) {
+        this.publishPage_(v5);
+        return true;
+      }
       if (this.idleScan !== undefined && this.idleScan.nextSkip === v3) {
         v5 = this.idleScan;
         this.idleScan = undefined;
@@ -294,12 +300,60 @@ e190 = class panda_jmp0_reserved_anonymous_2 {
         this.discardIdle_();
         v5 = new local_0_2();
       }
+      v6 = 1024;
+      v7 = 16;
+      v8 = 300;
       v10 = [];
       v11 = p2.toLowerCase();
       v12 = false;
       v14 = 0;
       v15 = 0;
-      for (v16 = 0; v5.sourceIndex < p0.length; this.appendEvent_(v10, v20, v19.path, v11)) {
+      v16 = 0;
+    } catch (catchAcc) {
+      this.discardIdle_();
+      this.pageCache.clear();
+      throw catchAcc;
+    }
+    while (true) {
+      try {
+        if (v5.sourceIndex >= p0.length) {
+          if (v4 === this.generation) {
+            v7 = {
+              "rows": v10,
+              "lineCount": v5.lineNumber,
+              "matchingLines": v15,
+              "matchingEvents": v14,
+              "hasNext": v12,
+              "pageStart": v3
+            };
+            if (v16 <= v6 * v6) {
+              if (this.pageCache.size >= 4) {
+                v2 = Array.from(this.pageCache.keys())[v2];
+                this.pageCache.delete(v2);
+              }
+              this.pageCache.set(v3, v7);
+            }
+            this.publishPage_(v7);
+            if (v12) {
+              v5.nextSkip = v3 + v14;
+              this.idleScan = v5;
+            }
+            if (this.activeCursor === v5.cursor) {
+              this.activeCursor = undefined;
+            }
+            if (this.idleScan !== v5 && v5.cursor !== undefined) {
+              await v5.cursor.close();
+            }
+            return true;
+          }
+          if (this.activeCursor === v5.cursor) {
+            this.activeCursor = undefined;
+          }
+          if (this.idleScan !== v5 && v5.cursor !== undefined) {
+            await v5.cursor.close();
+          }
+          return false;
+        }
         v19 = p0[v5.sourceIndex];
         if (v5.cursor === undefined) {
           v5.cursor = new a90();
@@ -323,7 +377,7 @@ e190 = class panda_jmp0_reserved_anonymous_2 {
           v5.cursor = undefined;
           this.activeCursor = undefined;
           v5.sourceIndex = v5.sourceIndex + 1;
-          v5.sourceLineNumber = 0;
+          v5.sourceLineNumber = v2;
           v5.pending = "";
           v5.eof = false;
           v5.parser = new r115();
@@ -335,10 +389,44 @@ e190 = class panda_jmp0_reserved_anonymous_2 {
         if (!k115(v20, p1, v11)) {
           continue;
         }
-        if (v14 >= 300) {
+        if (v14 >= v8) {
           v5.queued = v20;
-          v12 = true;
-          break;
+          if (v4 === this.generation) {
+            v7 = {
+              "rows": v10,
+              "lineCount": v5.lineNumber,
+              "matchingLines": v15,
+              "matchingEvents": v14,
+              "hasNext": true,
+              "pageStart": v3
+            };
+            if (v16 <= v6 * v6) {
+              if (this.pageCache.size >= 4) {
+                v2 = Array.from(this.pageCache.keys())[v2];
+                this.pageCache.delete(v2);
+              }
+              this.pageCache.set(v3, v7);
+            }
+            this.publishPage_(v7);
+            {
+              v5.nextSkip = v3 + v14;
+              this.idleScan = v5;
+            }
+            if (this.activeCursor === v5.cursor) {
+              this.activeCursor = undefined;
+            }
+            if (this.idleScan !== v5 && v5.cursor !== undefined) {
+              await v5.cursor.close();
+            }
+            return true;
+          }
+          if (this.activeCursor === v5.cursor) {
+            this.activeCursor = undefined;
+          }
+          if (this.idleScan !== v5 && v5.cursor !== undefined) {
+            await v5.cursor.close();
+          }
+          return false;
         }
         v5.matched = v5.matched + 1;
         if (v5.matched <= v3) {
@@ -346,32 +434,16 @@ e190 = class panda_jmp0_reserved_anonymous_2 {
         }
         v16 += v20.lines.reduce(function (p0, p1) {
           return p0 + p1.text.length;
-        }, 0);
-        if (v16 > 16 * 1024 * 1024) {
+        }, v2);
+        if (v16 > v7 * v6 * v6) {
           throw new Error("本页完整事件超过阅读预算，请缩小搜索范围或导出 ZIP");
         }
         v14 += 1;
         v15 += v20.lines.length;
-      }
-      if (v4 === this.generation) {
-        v7 = {
-          "rows": v10,
-          "lineCount": v5.lineNumber,
-          "matchingLines": v15,
-          "matchingEvents": v14,
-          "hasNext": v12,
-          "pageStart": v3
-        };
-        if (v16 <= 1024 * 1024) {
-          if (this.pageCache.size >= 4) {
-            this.pageCache.delete(Array.from(this.pageCache.keys())[0]);
-          }
-          this.pageCache.set(v3, v7);
-        }
-        this.publishPage_(v7);
-        if (v12) {
-          v5.nextSkip = v3 + v14;
-          this.idleScan = v5;
+        this.appendEvent_(v10, v20, v19.path, v11);
+      } catch (catchAcc) {
+        if (v4 === this.generation) {
+          throw catchAcc;
         }
         if (this.activeCursor === v5.cursor) {
           this.activeCursor = undefined;
@@ -379,18 +451,9 @@ e190 = class panda_jmp0_reserved_anonymous_2 {
         if (this.idleScan !== v5 && v5.cursor !== undefined) {
           await v5.cursor.close();
         }
-        return true;
+        return false;
       }
-      if (this.activeCursor === v5.cursor) {
-        this.activeCursor = undefined;
-      }
-      if (this.idleScan !== v5 && v5.cursor !== undefined) {
-        await v5.cursor.close();
-      }
-      return false;
     }
-    this.publishPage_(v5);
-    return true;
   }
   releaseLive_() {
     let v0;
@@ -407,7 +470,7 @@ e190 = class panda_jmp0_reserved_anonymous_2 {
     return;
   }
   async loadLive(p0, p1, p2) {
-    let v0, v4, v5, v6, v19, v20, v21, v23, v24, v25, v27;
+    let v0, v4, v5, v6, v13, v14, v15, v19, v20, v21, v22, v23, v24, v25, v27;
     if (p0.compressed) {
       throw new Error("压缩归档不能跟随，请选择正在写入的日志");
     }
@@ -424,93 +487,43 @@ e190 = class panda_jmp0_reserved_anonymous_2 {
       this.live = v6;
       this.liveBytesRead = 0;
       this.activeCursor = v6.cursor;
-      await v6.cursor.open(p0.path, false, true);
-      if (v5 !== this.generation || this.live !== v6) {
-        await v6.cursor.close();
-        if (this.activeCursor === v6.cursor) {
-          this.activeCursor = undefined;
-        }
-        return false;
-      }
-    }
-    if (this.live === undefined) {
-      return false;
-    }
-    this.activeCursor = this.live.cursor;
-    await this.live.cursor.refreshLive();
-    v19 = 4;
-    v20 = 299;
-    v21 = 1024;
-    v0 = await this.live.cursor.read();
-    v23 = v0.eof;
-    if (v5 !== this.generation) {
-      if (this.activeCursor === this.live.cursor) {
-        this.activeCursor = undefined;
-      }
-      if (this.live !== this.live) {
-        await this.live.cursor.close();
-      }
-      return false;
-    }
-    this.liveBytesRead = this.liveBytesRead + v0.bytesRead;
-    this.live.pending = this.live.pending + v0.text;
-    if (this.live.pending.length > 8 * v21 * v21) {
-      throw new Error("追加日志单行过长，请导出 ZIP 查看");
-    }
-    v24 = this.live.pending.indexOf("\n");
-    while (true) {
-      if (v24 >= v4) {
-        v25 = this.live.pending.substring(v4, v24);
-        this.live.pending = this.live.pending.substring(v24 + 1);
-        if (v25.endsWith("\r")) {
-          v25 = v25.substring(v4, v25.length - 1);
-        }
-        v27 = this.live.lineNumber + 1;
-        this.live.lineNumber = this.live.lineNumber + 1;
-        v24 = this.live.parser.feed(v25, v27);
-        if (v24 !== undefined) {
-          this.live.events.push(v24);
-          this.live.characters = this.live.characters + v24.lines.reduce(function (p0, p1) {
-            return p0 + p1.text.length;
-          }, v4);
-          while (true) {
-            if (this.live.events.length > v20) {
-              v24 = this.live.events.shift();
-              if (v24 !== undefined) {
-                this.live.characters = this.live.characters - v24.lines.reduce(function (p0, p1) {
-                  return p0 + p1.text.length;
-                }, v4);
-              }
-              continue;
-            }
-            if (this.live.events.length > 1 && this.live.characters > v19 * v21 * v21) {
-              v24 = this.live.events.shift();
-              if (v24 !== undefined) {
-                this.live.characters = this.live.characters - v24.lines.reduce(function (p0, p1) {
-                  return p0 + p1.text.length;
-                }, v4);
-              }
-              continue;
-            }
-            break;
-          }
-        }
-        if (this.live.lineNumber % v21 === v4) {
-          await new Promise(function (p0) {
-            setTimeout(p0, 0);
-          });
-        }
-        if (v5 !== this.generation) {
-          if (this.activeCursor === this.live.cursor) {
+      try {
+        await v6.cursor.open(p0.path, false, true);
+        if (v5 !== this.generation || this.live !== v6) {
+          await v6.cursor.close();
+          if (this.activeCursor === v6.cursor) {
             this.activeCursor = undefined;
-          }
-          if (this.live !== this.live) {
-            await this.live.cursor.close();
           }
           return false;
         }
-        v24 = this.live.pending.indexOf("\n");
-      } else {
+        if (this.live === undefined) {
+          return false;
+        }
+        v6 = this.live;
+        this.activeCursor = this.live.cursor;
+        try {
+          await this.live.cursor.refreshLive();
+          v19 = 4;
+          v20 = 299;
+          v21 = 1024;
+          v22 = 8;
+          v13 = this;
+          v14 = v5;
+          v15 = this.live;
+          v23 = false;
+        } catch (catchAcc) {
+          if (v14 === v13.generation) {
+            v13.releaseLive_();
+            throw catchAcc;
+          }
+          if (v13.activeCursor === v15.cursor) {
+            v13.activeCursor = undefined;
+          }
+          if (v13.live !== v15) {
+            await v15.cursor.close();
+          }
+          return false;
+        }
         if (v23) {
           v19 = this.live.events.slice();
           v20 = this.live.parser.snapshot(this.live.pending, this.live.lineNumber + 1);
@@ -520,7 +533,7 @@ e190 = class panda_jmp0_reserved_anonymous_2 {
           v20 = [];
           v19 = v19[Symbol.iterator]();
           v21 = v19.next;
-          v23 = v4;
+          v23 = 0;
           while (true) {
             v24 = v21.call(v19);
             if (v24.done) break;
@@ -548,6 +561,7 @@ e190 = class panda_jmp0_reserved_anonymous_2 {
           return true;
         }
         v0 = await this.live.cursor.read();
+        v23 = v0.eof;
         if (v5 !== this.generation) {
           if (this.activeCursor === this.live.cursor) {
             this.activeCursor = undefined;
@@ -559,10 +573,308 @@ e190 = class panda_jmp0_reserved_anonymous_2 {
         }
         this.liveBytesRead = this.liveBytesRead + v0.bytesRead;
         this.live.pending = this.live.pending + v0.text;
-        if (this.live.pending.length > 8 * v21 * v21) {
+        if (this.live.pending.length > v22 * v21 * v21) {
           throw new Error("追加日志单行过长，请导出 ZIP 查看");
         }
         v24 = this.live.pending.indexOf("\n");
+        while (true) {
+          if (v24 >= v4) {
+            v25 = this.live.pending.substring(v4, v24);
+            this.live.pending = this.live.pending.substring(v24 + 1);
+            if (v25.endsWith("\r")) {
+              v25 = v25.substring(v4, v25.length - 1);
+            }
+            v27 = this.live.lineNumber + 1;
+            this.live.lineNumber = this.live.lineNumber + 1;
+            v24 = this.live.parser.feed(v25, v27);
+            if (v24 !== undefined) {
+              this.live.events.push(v24);
+              this.live.characters = this.live.characters + v24.lines.reduce(function (p0, p1) {
+                return p0 + p1.text.length;
+              }, v4);
+              while (true) {
+                if (this.live.events.length > v20) {
+                  v24 = this.live.events.shift();
+                  if (v24 !== undefined) {
+                    this.live.characters = this.live.characters - v24.lines.reduce(function (p0, p1) {
+                      return p0 + p1.text.length;
+                    }, v4);
+                  }
+                  continue;
+                }
+                if (this.live.events.length > 1 && this.live.characters > v19 * v21 * v21) {
+                  v24 = this.live.events.shift();
+                  if (v24 !== undefined) {
+                    this.live.characters = this.live.characters - v24.lines.reduce(function (p0, p1) {
+                      return p0 + p1.text.length;
+                    }, v4);
+                  }
+                  continue;
+                }
+                break;
+              }
+            }
+            if (this.live.lineNumber % v21 === v4) {
+              await new Promise(function (p0) {
+                setTimeout(p0, 0);
+              });
+            }
+            if (v5 !== this.generation) {
+              if (this.activeCursor === this.live.cursor) {
+                this.activeCursor = undefined;
+              }
+              if (this.live !== this.live) {
+                await this.live.cursor.close();
+              }
+              return false;
+            }
+            v24 = this.live.pending.indexOf("\n");
+          } else {
+            if (v23) {
+              v19 = this.live.events.slice();
+              v20 = this.live.parser.snapshot(this.live.pending, this.live.lineNumber + 1);
+              if (v20 !== undefined) {
+                v19.push(v20);
+              }
+              v20 = [];
+              v19 = v19[Symbol.iterator]();
+              v21 = v19.next;
+              v23 = v4;
+              while (true) {
+                v24 = v21.call(v19);
+                if (v24.done) break;
+                v24 = v24.value;
+                if (k115(v24, p1, p2)) {
+                  this.appendEvent_(v20, v24, p0.path, p2.toLowerCase());
+                  v4 += 1;
+                  v23 += v24.lines.length;
+                }
+              }
+              this.publishPage_({
+                "rows": v20,
+                "lineCount": this.live.lineNumber,
+                "matchingLines": v23,
+                "matchingEvents": v4,
+                "hasNext": false,
+                "pageStart": 0
+              });
+              if (this.activeCursor === this.live.cursor) {
+                this.activeCursor = undefined;
+              }
+              if (this.live !== this.live) {
+                await this.live.cursor.close();
+              }
+              return true;
+            }
+            v0 = await this.live.cursor.read();
+            if (v5 !== this.generation) {
+              if (this.activeCursor === this.live.cursor) {
+                this.activeCursor = undefined;
+              }
+              if (this.live !== this.live) {
+                await this.live.cursor.close();
+              }
+              return false;
+            }
+            this.liveBytesRead = this.liveBytesRead + v0.bytesRead;
+            this.live.pending = this.live.pending + v0.text;
+            if (this.live.pending.length > v22 * v21 * v21) {
+              throw new Error("追加日志单行过长，请导出 ZIP 查看");
+            }
+            v24 = this.live.pending.indexOf("\n");
+          }
+        }
+      } catch (catchAcc) {
+        this.releaseLive_();
+        await v6.cursor.close();
+      }
+    } else {
+      if (this.live === undefined) {
+        return false;
+      }
+      this.activeCursor = this.live.cursor;
+      try {
+        await this.live.cursor.refreshLive();
+        v19 = 4;
+        v20 = 299;
+        v21 = 1024;
+        v22 = 8;
+        v13 = this;
+        v14 = v5;
+        v15 = this.live;
+        v23 = false;
+      } catch (catchAcc) {
+        if (v14 === v13.generation) {
+          v13.releaseLive_();
+          throw catchAcc;
+        }
+        if (v13.activeCursor === v15.cursor) {
+          v13.activeCursor = undefined;
+        }
+        if (v13.live !== v15) {
+          await v15.cursor.close();
+        }
+        return false;
+      }
+      if (v23) {
+        v19 = this.live.events.slice();
+        v20 = this.live.parser.snapshot(this.live.pending, this.live.lineNumber + 1);
+        if (v20 !== undefined) {
+          v19.push(v20);
+        }
+        v20 = [];
+        v19 = v19[Symbol.iterator]();
+        v21 = v19.next;
+        v23 = 0;
+        while (true) {
+          v24 = v21.call(v19);
+          if (v24.done) break;
+          v24 = v24.value;
+          if (k115(v24, p1, p2)) {
+            this.appendEvent_(v20, v24, p0.path, p2.toLowerCase());
+            v4 += 1;
+            v23 += v24.lines.length;
+          }
+        }
+        this.publishPage_({
+          "rows": v20,
+          "lineCount": this.live.lineNumber,
+          "matchingLines": v23,
+          "matchingEvents": v4,
+          "hasNext": false,
+          "pageStart": 0
+        });
+        if (this.activeCursor === this.live.cursor) {
+          this.activeCursor = undefined;
+        }
+        if (this.live !== this.live) {
+          await this.live.cursor.close();
+        }
+        return true;
+      }
+      v0 = await this.live.cursor.read();
+      v23 = v0.eof;
+      if (v5 !== this.generation) {
+        if (this.activeCursor === this.live.cursor) {
+          this.activeCursor = undefined;
+        }
+        if (this.live !== this.live) {
+          await this.live.cursor.close();
+        }
+        return false;
+      }
+      this.liveBytesRead = this.liveBytesRead + v0.bytesRead;
+      this.live.pending = this.live.pending + v0.text;
+      if (this.live.pending.length > v22 * v21 * v21) {
+        throw new Error("追加日志单行过长，请导出 ZIP 查看");
+      }
+      v24 = this.live.pending.indexOf("\n");
+      while (true) {
+        if (v24 >= v4) {
+          v25 = this.live.pending.substring(v4, v24);
+          this.live.pending = this.live.pending.substring(v24 + 1);
+          if (v25.endsWith("\r")) {
+            v25 = v25.substring(v4, v25.length - 1);
+          }
+          v27 = this.live.lineNumber + 1;
+          this.live.lineNumber = this.live.lineNumber + 1;
+          v24 = this.live.parser.feed(v25, v27);
+          if (v24 !== undefined) {
+            this.live.events.push(v24);
+            this.live.characters = this.live.characters + v24.lines.reduce(function (p0, p1) {
+              return p0 + p1.text.length;
+            }, v4);
+            while (true) {
+              if (this.live.events.length > v20) {
+                v24 = this.live.events.shift();
+                if (v24 !== undefined) {
+                  this.live.characters = this.live.characters - v24.lines.reduce(function (p0, p1) {
+                    return p0 + p1.text.length;
+                  }, v4);
+                }
+                continue;
+              }
+              if (this.live.events.length > 1 && this.live.characters > v19 * v21 * v21) {
+                v24 = this.live.events.shift();
+                if (v24 !== undefined) {
+                  this.live.characters = this.live.characters - v24.lines.reduce(function (p0, p1) {
+                    return p0 + p1.text.length;
+                  }, v4);
+                }
+                continue;
+              }
+              break;
+            }
+          }
+          if (this.live.lineNumber % v21 === v4) {
+            await new Promise(function (p0) {
+              setTimeout(p0, 0);
+            });
+          }
+          if (v5 !== this.generation) {
+            if (this.activeCursor === this.live.cursor) {
+              this.activeCursor = undefined;
+            }
+            if (this.live !== this.live) {
+              await this.live.cursor.close();
+            }
+            return false;
+          }
+          v24 = this.live.pending.indexOf("\n");
+        } else {
+          if (v23) {
+            v19 = this.live.events.slice();
+            v20 = this.live.parser.snapshot(this.live.pending, this.live.lineNumber + 1);
+            if (v20 !== undefined) {
+              v19.push(v20);
+            }
+            v20 = [];
+            v19 = v19[Symbol.iterator]();
+            v21 = v19.next;
+            v23 = v4;
+            while (true) {
+              v24 = v21.call(v19);
+              if (v24.done) break;
+              v24 = v24.value;
+              if (k115(v24, p1, p2)) {
+                this.appendEvent_(v20, v24, p0.path, p2.toLowerCase());
+                v4 += 1;
+                v23 += v24.lines.length;
+              }
+            }
+            this.publishPage_({
+              "rows": v20,
+              "lineCount": this.live.lineNumber,
+              "matchingLines": v23,
+              "matchingEvents": v4,
+              "hasNext": false,
+              "pageStart": 0
+            });
+            if (this.activeCursor === this.live.cursor) {
+              this.activeCursor = undefined;
+            }
+            if (this.live !== this.live) {
+              await this.live.cursor.close();
+            }
+            return true;
+          }
+          v0 = await this.live.cursor.read();
+          if (v5 !== this.generation) {
+            if (this.activeCursor === this.live.cursor) {
+              this.activeCursor = undefined;
+            }
+            if (this.live !== this.live) {
+              await this.live.cursor.close();
+            }
+            return false;
+          }
+          this.liveBytesRead = this.liveBytesRead + v0.bytesRead;
+          this.live.pending = this.live.pending + v0.text;
+          if (this.live.pending.length > v22 * v21 * v21) {
+            throw new Error("追加日志单行过长，请导出 ZIP 查看");
+          }
+          v24 = this.live.pending.indexOf("\n");
+        }
       }
     }
   }

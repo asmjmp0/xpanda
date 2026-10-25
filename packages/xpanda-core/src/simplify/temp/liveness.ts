@@ -188,7 +188,6 @@ export class LivenessAnalyzer extends TempVariablePass {
                 return this.transferNested(stmt.body, liveOut, ctx, loop, cleanup);
             case "TryStatement": {
                 const finalizerReads = stmt.finalizer ? tempReads(stmt.finalizer, ctx) : new Set<string>();
-                const after = union(liveOut, finalizerReads);
                 // finally 会在 try/handler 的 return/throw/break/continue 出口上执行,
                 // try 里一旦有 finally 就可能在任何位置抛异常。出口活跃集必须并入
                 // finally 的读取,否则 finally 之前最后一次赋值会被当成死存储删掉
@@ -203,10 +202,17 @@ export class LivenessAnalyzer extends TempVariablePass {
                         finallyLive,
                     };
                 }
-                const blockIn = this.transferNested(stmt.block, after, ctx, nestedLoop, cleanup);
+                const handlerAfter = union(liveOut, finalizerReads);
+                // catch 体在 try 体任意语句抛异常时都可能执行,所以它的“进入活跃集”
+                // (在 catch 内被写之前就读取的变量)必须在 try 体出口是活跃的。
+                // 否则异常路径需要的临时量(await 前保存的 this/generation/live 等)
+                // 会被当成死存储删掉,catch 里只剩未定义引用。只取 live-in,不能把
+                // catch 内先写后读的临时量也算进 try 体的出口活跃集。
                 const handlerIn = stmt.handler
-                    ? this.transferNested(stmt.handler.body, after, ctx, nestedLoop, cleanup)
-                    : after;
+                    ? this.transferNested(stmt.handler.body, handlerAfter, ctx, nestedLoop, cleanup)
+                    : new Set<string>();
+                const after = union(handlerAfter, handlerIn);
+                const blockIn = this.transferNested(stmt.block, after, ctx, nestedLoop, cleanup);
                 const finalizerIn = stmt.finalizer
                     ? this.transferNested(stmt.finalizer, liveOut, ctx, loop, cleanup)
                     : liveOut;
