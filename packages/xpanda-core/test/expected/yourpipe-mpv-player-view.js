@@ -38,11 +38,7 @@ MpvPlayerView = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     v2.sizeTimer = -1;
     v2.setInitiallyProvidedValue(p1);
     v2.finalizeConstruction();
-    try {
-      return v2;
-    } catch (catchAcc) {
-      throw catchAcc;
-    }
+    return v2;
   }
   setInitiallyProvidedValue(p0) {
     if (p0.controller !== undefined) {

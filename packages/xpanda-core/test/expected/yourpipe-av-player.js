@@ -276,11 +276,7 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     local_1_0.declareWatch("curIndex", local_1_0.onIndexChange);
     local_1_0.declareWatch("controller", local_1_0.onControllerChanged);
     local_1_0.finalizeConstruction();
-    try {
-      return local_1_0;
-    } catch (catchAcc) {
-      throw catchAcc;
-    }
+    return local_1_0;
   }
   setInitiallyProvidedValue(p0) {
     if (p0.isFullLandscapeScreen === undefined) {

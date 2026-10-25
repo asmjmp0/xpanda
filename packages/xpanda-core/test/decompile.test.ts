@@ -2756,14 +2756,19 @@ function verifyYourpipeHttpDownloaderRetryTryCatch(): void {
         throw new Error(`HttpDownloader: 反编译降级或残留伪语句\n${code}`);
     }
 
-    const requestStart = code.indexOf("async request(p0");
-    const requestEnd = code.indexOf("\n      sleep(p0) {", requestStart);
-    if (requestStart < 0 || requestEnd < 0) throw new Error(`HttpDownloader: 未找到 request\n${code}`);
-    const request = code.slice(requestStart, requestEnd);
-    const retryStart = code.indexOf("async postBinaryWithRetry(p0");
-    const retryEnd = code.indexOf("\n      postBinaryStreamOnce(p0", retryStart);
-    if (retryStart < 0 || retryEnd < 0) throw new Error(`HttpDownloader: 未找到 postBinaryWithRetry\n${code}`);
-    const retry = code.slice(retryStart, retryEnd);
+    // 方法切片按“下一个方法头”定位,不写死缩进:纯 rethrow 的 try 被拆掉后,
+    // 模块级 class 定义少了一层 try,方法缩进也跟着变。
+    const sliceFrom = (header: string, next: RegExp): string => {
+        const start = code.indexOf(header);
+        if (start < 0) return "";
+        const rest = code.slice(start);
+        const end = rest.search(next);
+        return end < 0 ? "" : rest.slice(0, end);
+    };
+    const request = sliceFrom("async request(p0", /\n\s*sleep\(p0\) \{/);
+    const retry = sliceFrom("async postBinaryWithRetry(p0", /\n\s*postBinaryStreamOnce\(p0/);
+    if (request.length === 0) throw new Error(`HttpDownloader: 未找到 request\n${code}`);
+    if (retry.length === 0) throw new Error(`HttpDownloader: 未找到 postBinaryWithRetry\n${code}`);
 
     // request 的常量 test + 守卫已提成 `while (v10 < v12)`(守卫前是纯表达式,
     // 不会挡住 for/for-of 还原);postBinaryWithRetry 的守卫前还有三元物化的 if/else,
@@ -3377,6 +3382,80 @@ function f(A, B, sec) {
     if (!code.includes("if (A && B && (x = 1, y = 2, sec !== -1)) {")
         || !code.includes("} else {\n    other();\n  }")) {
         throw new Error(`带 else 的条件未被保留\n${code}`);
+    }
+}
+
+/**
+ * 回归:纯 rethrow 的 catch(`try { B } catch (e) { throw e }`)只是噪音 ——
+ * 同一个异常原样抛出,控制流不变。编译器用它做 finally 的异常跳板、构造器的
+ * super 检查、模块初始化的词法环境清理;整块拆掉后输出少一层缩进。
+ * 带实际工作的 catch 必须保留;try 体顶层有块级声明时只能去掉 try 外壳、
+ * 保留 body 的块,否则 `let` 会泄漏到外层/与同名外层声明冲突。
+ */
+function verifyRedundantRethrowCatchRemoval(): void {
+    const nested = NodeFactory.parse(`
+function f(p0) {
+  let v0;
+  v0 = 0;
+  while (v0 < p0) {
+    try {
+      try {
+        v0 += 1;
+        if (v0 > 3) continue;
+      } catch (e) {
+        throw e;
+      }
+    } catch (e2) {
+      throw e2;
+    }
+  }
+  try {
+    p0(v0);
+  } catch (acc) {
+    throw acc;
+  }
+  try {
+    p0(v0, 2);
+  } catch (e) {
+    p0(e);
+  }
+  return v0;
+}
+`);
+    SimplifyExport.simplify(nested);
+    const code = NodeFactory.generate(nested);
+    NodeFactory.parse(code);
+    if (code.split("catch (").length - 1 !== 1) {
+        throw new Error(`纯 rethrow catch 未拆干净(应只剩真实 catch)\n${code}`);
+    }
+    if (!code.includes("while (v0 < p0)") || !code.includes("v0 += 1;") || !code.includes("continue;")) {
+        throw new Error(`拆 catch 破坏了循环结构\n${code}`);
+    }
+    if (!/catch \(\w+\) \{\n\s+p0\(/.test(code)) {
+        throw new Error(`真实 catch 被误删\n${code}`);
+    }
+
+    const scoped = NodeFactory.parse(`
+function g(p0) {
+  let v1;
+  try {
+    let v1;
+    v1 = p0;
+    p0(v1);
+  } catch (e) {
+    throw e;
+  }
+  return v1;
+}
+`);
+    SimplifyExport.simplify(scoped);
+    const scopedCode = NodeFactory.generate(scoped);
+    NodeFactory.parse(scopedCode);
+    if (scopedCode.includes("catch")) {
+        throw new Error(`块级声明场景的纯 rethrow catch 未拆掉\n${scopedCode}`);
+    }
+    if (!scopedCode.includes("p0(v1)")) {
+        throw new Error(`块级声明场景的 try 体语句丢失\n${scopedCode}`);
     }
 }
 
@@ -4196,6 +4275,10 @@ async function main(): Promise<void> {
 
     console.log("[test] simplify switch transform completeness");
     verifySwitchTransformRequiresAllCases();
+    console.log("    ok");
+
+    console.log("[test] simplify redundant rethrow catch");
+    verifyRedundantRethrowCatchRemoval();
     console.log("    ok");
 
     console.log("[test] simplify hole sentinel cleanup");

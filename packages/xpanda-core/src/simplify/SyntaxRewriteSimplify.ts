@@ -262,6 +262,66 @@ export class SyntaxRewriteSimplify implements ISimplify {
     }
 
     /**
+     * 拆掉纯 rethrow 的 catch:`try { B } catch (e) { throw e }` 与直接执行 B
+     * 完全等价 —— 异常被原样抛出(同一个对象、同一条栈),控制流不变。编译器用它
+     * 做 finally 的异常跳板、构造器的 `throw.ifsupernotcorrectcall` 检查、模块
+     * 初始化的词法环境清理(poplexenv),反编译出来只是噪音,还会把整段正确代码
+     * 缩进一层(模块里的类定义被整个包进 try)。
+     *
+     * 只在 AST 尾部拆,不在构图时丢 handler:handler 里带 `poplexenv` 时,那层 try
+     * 同时也是词法环境的块切分边界,构图时去掉会让 `acc` 的赋值链被块边界隔断,
+     * 模块变量赋值退化成 `X = acc`(acc 无人赋值)。拆 try 时保留原有语句顺序:
+     * body 顶层没有块级声明就把语句直接接进外层语句表,否则保留 body 的块
+     * (let/const/function 的作用域不能变)。
+     */
+    public static removeRedundantRethrowCatches(node: Program): boolean {
+        let changed = false;
+        traverse(file(node), {
+            noScope: true,
+            TryStatement(path) {
+                const handler = path.node.handler;
+                if (!handler || path.node.finalizer) return;
+                const param = handler.param;
+                if (!isIdentifier(param)) return;
+                const catchBody = handler.body.body;
+                if (catchBody.length === 0 || catchBody.length > 2) return;
+                const throwStatement = catchBody[catchBody.length - 1];
+                if (!isThrowStatement(throwStatement)) return;
+                const thrown = throwStatement.argument;
+                if (!isIdentifier(thrown)) return;
+                // 允许的前缀只有 TryCatchPandaStatement 开头搬运异常的 `acc = catchAcc`
+                // (复制传播还没折掉的等价形态)
+                const prefix = catchBody.slice(0, -1);
+                if (prefix.length === 1) {
+                    const prologue = prefix[0];
+                    if (!isExpressionStatementNode(prologue)) return;
+                    const assignment = prologue.expression;
+                    if (!isAssignmentExpression(assignment) || assignment.operator !== "=") return;
+                    if (!isIdentifier(assignment.left, { name: "acc" })
+                        || !isIdentifier(assignment.right, { name: param.name })) return;
+                }
+                if (thrown.name !== param.name && !(thrown.name === "acc" && prefix.length === 1)) return;
+                const statements = path.node.block.body;
+                if (statements.length === 0) {
+                    path.remove();
+                } else if (statements.some((statement) => SyntaxRewriteSimplify.isBlockScopedDeclaration(statement))) {
+                    path.replaceWith(path.node.block);
+                } else {
+                    path.replaceWithMultiple(statements);
+                }
+                changed = true;
+            },
+        });
+        return changed;
+    }
+
+    /** try body 顶层的块级声明:直接摊进外层语句表会改变它们的作用域 */
+    private static isBlockScopedDeclaration(statement: TYPE.Statement): boolean {
+        if (isFunctionDeclaration(statement) || isClassDeclaration(statement)) return true;
+        return isVariableDeclaration(statement) && statement.kind !== "var";
+    }
+
+    /**
      * 删除终止语句(return/throw/break/continue)之后永远执行不到的兄弟语句。
      * ArkTS 13 的哨兵守卫 `if (hole == X) { continue; } throw X;` 在
      * `hole == hole` 被常量折叠后会留下 `continue; throw hole;`,

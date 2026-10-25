@@ -125,6 +125,10 @@ export class SimplifyExport {
         SyntaxRewriteSimplify.foldSentinelGuards(node);
         // 上面两步可能留下不可达语句(如 `continue; throw hole;`)
         SyntaxRewriteSimplify.removeUnreachableStatements(node);
+        // 只剩重新抛出捕获异常的 catch(`try { B } catch (e) { throw e }`)与没有
+        // try 完全等价:构造器 super 检查、模块初始化的词法环境清理都靠它落地,
+        // 拆掉免得整段代码被多包一层。放在不可达语句清理之后(catch 体可能刚被清空)。
+        SyntaxRewriteSimplify.removeRedundantRethrowCatches(node);
         // 24.0.0.0 把 finally 内联在出口前、异常路径写成 eager catch:
         //   try { A; cleanup; return v } catch (e) { cleanup; throw e }
         // 与 `try { A; return v } finally { cleanup }` 等价,还原成源码结构。
