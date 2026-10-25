@@ -11,12 +11,9 @@ import { ObjectLiteralSimplify } from "./ObjectLiteralSimplify";
 import { NullishCoalescingSimplify } from "./NullishCoalescingSimplify";
 import { CallResultSimplify } from "./CallResultSimplify";
 import { AccCallSimplify } from "./AccCallSimplify";
+import { TailMergeSimplify } from "./TailMergeSimplify";
 import { normalizeDeclarations } from "./NormalizeDeclarations";
 
-/**
- * @Author: jmp0
- * @Email: jmp0@qq.com
- */
 export class SimplifyExport {
     private static simplifyALL(node: TYPE.Program): boolean {
         const simplifyArr: Array<ISimplify> = [
@@ -89,6 +86,9 @@ export class SimplifyExport {
         // 再跑一次条件折叠(只做条件赋值/别名,不做整轮复制传播)并归一化 test。
         TempVariableSimplify.foldConditionAssignments(node);
         SyntaxRewriteSimplify.normalizeConditionTests(node);
+        // normalizeConditionTests 可能把 `acc = 比较表达式; if (acc ...)` 重新物化进 test,
+        // 再把测试序列里的取反链/死保存清一遍(与定点迭代前的同名步骤对应)。
+        ConditionSimplify.foldMaterializedTestArtifacts(node);
         // if (A || (v1 = 0, v2 = 2, B)) 里的纯常量前缀提到 if 前,
         // 避免条件里出现一串只给累加器/临时变量赋常量的 sequence
         SyntaxRewriteSimplify.hoistTestPrefixes(node);
@@ -98,6 +98,11 @@ export class SimplifyExport {
         // (`acc = E; v14 = acc`)与 while(true)+break 形态的 for-of(含 `it.next`
         // 提升为临时方法量的 lowering)都在条件折叠之后才物化,这里统一还原。
         new HighLevelGrammarSimplify().simplifyTail(node);
+        // 区域归约把共享尾块复制到每条路径:到这里各路径的语句形状已经归一化
+        // (else 已展开、守卫链已合成 switch、可选链/for-of 已还原),再做重复
+        // 尾块消除。必须放在 simplifyTail 之后:守卫链→switch 需要分支体保留
+        // 末尾的 return,提前删掉会让 switch 合成失去形态。
+        new TailMergeSimplify().simplify(node);
         // 静态可判定的 if 条件(如 finally 收尾被常量传播后的 `undefined == undefined`)
         SyntaxRewriteSimplify.foldConstantConditions(node);
         // ArkTS 13 try/finally / for...of 收尾残留的 `hole` 哨兵守卫
@@ -108,5 +113,10 @@ export class SimplifyExport {
         SyntaxRewriteSimplify.removeOrphanJumps(node);
         // newLexEnv 预留但从未读写的块级槽,以及随之变空的块
         TempVariableSimplify.removeUnusedLexicalDeclarations(node);
+        // 所有结构改写(尾块合并/守卫三目/常量折叠)结束后,测试序列里的取反物化
+        // 残渣可能才最终成形,最后清一遍。
+        ConditionSimplify.foldMaterializedTestArtifacts(node);
+        // 尾块消除/结构展开后,前面已经稳定的死存储可能重新变成死代码,补一轮清理。
+        TempVariableSimplify.cleanupDeadStores(node);
     }
 }

@@ -22,6 +22,8 @@ export interface PassState {
     accumulatorOnly: boolean;
     /** true:只折叠 `X = E; if (X/!X/E/!E) { X = B }` 短路链 */
     shortCircuitOnly: boolean;
+    /** true:只做活跃性死存储消除 + 未用声明清理 */
+    cleanupOnly: boolean;
 }
 
 /** 单个函数内登记过的临时变量及其尚未被替换的引用。 */
@@ -47,6 +49,8 @@ export interface EnvEntry {
 
 /** 一个函数(或 Program)在一次优化中共享的上下文。 */
 export interface FunctionContext {
+    /** 末尾清理轮:允许更激进但只删不改的活跃性判定(见 LivenessAnalyzer.transfer) */
+    aggressiveCleanup?: boolean;
     infos: Map<string, BindingInfo>;
     /** 被搬移的表达式 -> 当前承载它的语句(用于区分中间副本和最终落点) */
     moved: Map<TYPE.Node, TYPE.Statement>;
@@ -107,5 +111,6 @@ export function createPassState(): PassState {
         returnsOnly: false,
         accumulatorOnly: false,
         shortCircuitOnly: false,
+        cleanupOnly: false,
     };
 }

@@ -102,7 +102,6 @@ try {
       }
     }
     analyzeErrorType(p0) {
-      let acc;
       if (!p0) {
         return {
           "errorType": HttpErrorType.NETWORK_ERROR,
@@ -168,7 +167,7 @@ try {
           "isRecoverable": true
         };
       }
-      if (p0 !== 502 && (acc = p0 !== 503, p0 !== 503) && p0 !== 504) {
+      if (p0 !== 502 && (p0 !== 503) && p0 !== 504) {
         return {
           "errorType": HttpErrorType.SERVER_ERROR,
           "isRecoverable": true
@@ -602,7 +601,6 @@ try {
               };
               local_1_2_0 /*HttpDownloader*/.notifySetCookie(v3, local_2_3);
               local_3_10(v3);
-              return;
             }
             return;
           };
@@ -734,7 +732,6 @@ try {
           } catch (catchAcc) {
             local_0_3 /*logger*/.error("Set-Cookie observer threw");
           }
-          return;
         }
         return;
       }

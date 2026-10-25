@@ -1242,7 +1242,6 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
       this.syncPlaybackStateFromController();
       this.playbackStateListener(this.controller.getPlaybackState());
       try {
-        v5 = this.controller;
         acc = !!this.controller.surfaceID;
         if (!acc && (v5 = this.x_componentController.getXComponentSurfaceId(), acc)) {
           this.controller.setSurfaceID(v5);
@@ -1377,7 +1376,6 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
           local_1_1.clearGestureHints();
         }
       }, local_0_4 /*CONTROLS_HIDE_DELAY*/);
-      return;
     }
     return;
   }
@@ -2152,8 +2150,6 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
   calculateSurfaceSize() {
     let v4, v5, v6, v7;
     if (this.containerWidthPX > 0) {
-      v5 = this;
-      v4 = this.containerHeightPX;
       if (this.containerHeightPX > 0) {
         this.calculateSurfaceSizeByArea(this.containerWidthPX, this.containerHeightPX);
         return;
@@ -2162,7 +2158,6 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     try {
       v5 = this.getUIContext().getComponentUtils();
       v7 = v5;
-      v6 = v7.getRectangleById;
       v4 = v7.getRectangleById("PlayerContainer");
       if (v4 && v4.size && (v7 = Number(v4.size.width), v6 = Number(v4.size.height), v7 > 0) && v6 > 0) {
         this.calculateSurfaceSizeByArea(v7, v6);

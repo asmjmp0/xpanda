@@ -8,11 +8,11 @@ import {
     isIdentifier,
     isStatement as isStatementNode,
 } from "@babel/types";
-import { isDeclarationValue, isPureExpression, isTempName } from "../AstUtils";
+import { isDeclarationValue, isPureExpression, isTempName, writesOnTakenPath } from "../AstUtils";
 import { TempVariablePass } from "./base";
 import { FunctionContext, LoopLive } from "./types";
 import { doWhileKillsTestReads, loopLive, sameSet, union } from "./queries";
-import { removeRefs, tempReadWrites, tempReads, tempWrites } from "./context";
+import { removeRefs, tempReadWrites, tempReadWritesBeforeStore, tempReads, tempReadsBeforeWrite, tempWrites } from "./context";
 
 /**
  * 反向活跃性分析与死存储删除。
@@ -89,7 +89,12 @@ export class LivenessAnalyzer extends TempVariablePass {
         switch (stmt.type) {
             case "ExpressionStatement":
             case "VariableDeclaration": {
-                const { reads, writes } = tempReadWrites(stmt, ctx);
+                // 读取只算“确定写入之前”发生的那些:语句内部的序列/短路表达式
+                // 常常先写临时变量再读(`v7 = acc, ... && v7.avatar`),那部分读取
+                // 不依赖语句执行前的旧值,否则前面的前置装载永远不会被删。
+                // 只在末尾清理轮启用:中途轮次沿用整语句读取集合,避免改变
+                // 复制传播/条件折叠的轨迹(其他类的既有形态依赖它)。
+                const { reads, writes } = this.readsAndWrites(stmt, ctx);
                 const result = new Set(reads);
                 for (const name of liveOut) if (!writes.has(name)) result.add(name);
                 return result;
@@ -97,7 +102,7 @@ export class LivenessAnalyzer extends TempVariablePass {
             case "IfStatement": {
                 // 分支的 live-out 就是 if 之后的 live-out。清理模式不能减去 test 的写入:
                 // test 里的临时赋值不会让分支里的同名赋值变成死代码。
-                const testReads = tempReads(stmt.test, ctx);
+                const testReads = this.reads(stmt.test, ctx);
                 let branchOut: Set<string>;
                 if (cleanup) {
                     branchOut = new Set(liveOut);
@@ -110,12 +115,24 @@ export class LivenessAnalyzer extends TempVariablePass {
                 const alternateIn = stmt.alternate
                     ? this.transferNested(stmt.alternate, branchOut, ctx, loop, cleanup)
                     : branchOut;
+                // 清理模式额外吃掉“test 在进入分支的路径上一定写过”的名字:
+                // `if ((v13 = f(), cond)) { ... v13.x ... }` 的分支读到的是 test
+                // 刚写入的新值,分支前的 `v13 = ...` 死预装载可以删除。只在清理
+                // 模式做,避免改变复制传播依赖的分析结果。
+                if (cleanup && ctx.aggressiveCleanup) {
+                    for (const name of [...consequentIn]) {
+                        if (writesOnTakenPath(stmt.test, name, true)) consequentIn.delete(name);
+                    }
+                    for (const name of [...alternateIn]) {
+                        if (writesOnTakenPath(stmt.test, name, false)) alternateIn.delete(name);
+                    }
+                }
                 ctx.branchLive.set(stmt, union(consequentIn, alternateIn));
                 return union(testReads, consequentIn, alternateIn);
             }
             case "WhileStatement":
             case "DoWhileStatement": {
-                const testReads = tempReads(stmt.test, ctx);
+                const testReads = this.reads(stmt.test, ctx);
                 const initialOut = union(liveOut, testReads);
                 const body = this.analyzeLoopBody(stmt.body, initialOut, ctx, liveOut);
                 if (!cleanup) ctx.loopBodyIn.set(stmt, new Set(body.bodyIn));
@@ -133,8 +150,8 @@ export class LivenessAnalyzer extends TempVariablePass {
                 return result;
             }
             case "ForStatement": {
-                const testReads = stmt.test ? tempReads(stmt.test, ctx) : new Set<string>();
-                const updateReads = stmt.update ? tempReads(stmt.update, ctx) : new Set<string>();
+                const testReads = stmt.test ? this.reads(stmt.test, ctx) : new Set<string>();
+                const updateReads = stmt.update ? this.reads(stmt.update, ctx) : new Set<string>();
                 const body = this.analyzeLoopBody(
                     stmt.body,
                     union(liveOut, testReads, updateReads),
@@ -145,7 +162,7 @@ export class LivenessAnalyzer extends TempVariablePass {
                 const resultIn = cleanup
                     ? this.cleanupNested(stmt.body, ctx, body.bodyOut, loopLive(liveOut, body.bodyOut))
                     : body.bodyIn;
-                const initReads = stmt.init ? tempReads(stmt.init, ctx) : new Set<string>();
+                const initReads = stmt.init ? this.reads(stmt.init, ctx) : new Set<string>();
                 const initWrites = stmt.init ? tempWrites(stmt.init, ctx) : new Set<string>();
                 const afterInit = union(resultIn, testReads, updateReads, liveOut);
                 const result = new Set(initReads);
@@ -192,7 +209,7 @@ export class LivenessAnalyzer extends TempVariablePass {
                 return union(blockIn, handlerIn, finalizerIn, liveOut);
             }
             case "SwitchStatement": {
-                const result = tempReads(stmt.discriminant, ctx);
+                const result = this.reads(stmt.discriminant, ctx);
                 const caseLoop: LoopLive = {
                     breakLive: liveOut,
                     continueLive: loop?.continueLive ?? liveOut,
@@ -212,7 +229,7 @@ export class LivenessAnalyzer extends TempVariablePass {
                 // return/throw 之后没有代码,只有返回表达式里的读取需要保留;
                 // 外层 try/finally 的 finally 读取在出口处也仍然活跃。
                 return union(
-                    tempReads(stmt.argument, ctx),
+                    this.reads(stmt.argument, ctx),
                     loop?.finallyLive ?? new Set<string>(),
                 );
             case "ExportNamedDeclaration":
@@ -241,6 +258,23 @@ export class LivenessAnalyzer extends TempVariablePass {
                 return new Set(liveOut);
         }
     }
+    /**
+     * 语句/表达式对“语句执行前的旧值”的读取集合。
+     * 末尾清理轮按求值顺序只看“确定写入之前”的读取;中途轮次用整语句读取集合
+     * (与历史实现一致,避免改变复制传播/条件折叠的轨迹)。
+     */
+    private reads(node: TYPE.Node | null | undefined, ctx: FunctionContext): Set<string> {
+        return ctx.aggressiveCleanup ? tempReadsBeforeWrite(node, ctx) : tempReads(node, ctx);
+    }
+
+    /** 语句的读取(见 reads)+ 全部写入。 */
+    private readsAndWrites(
+        node: TYPE.Node | null | undefined,
+        ctx: FunctionContext,
+    ): { reads: Set<string>; writes: Set<string> } {
+        return ctx.aggressiveCleanup ? tempReadWritesBeforeStore(node, ctx) : tempReadWrites(node, ctx);
+    }
+
     private transferNested(
         stmt: TYPE.Statement,
         liveOut: Set<string>,

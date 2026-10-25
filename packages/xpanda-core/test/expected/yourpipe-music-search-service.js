@@ -158,7 +158,6 @@ try {
       acc = v8?.items;
       if (acc) {
         v18 = acc[Symbol.iterator]();
-        acc = false;
         do {
           v19 = v18.next();
           if (v19.done) {

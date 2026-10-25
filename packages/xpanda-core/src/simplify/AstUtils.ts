@@ -17,7 +17,9 @@ const {
     isClassDeclaration,
     isClassExpression,
     isArrowFunctionExpression,
+    isConditionalExpression,
     isIdentifier,
+    isLogicalExpression,
     isMemberExpression,
     isNodesEquivalent,
     isObjectPattern,
@@ -25,8 +27,10 @@ const {
     isOptionalMemberExpression,
     isReferenced,
     isRestElement,
+    isSequenceExpression,
     isSpreadElement,
     isStringLiteral,
+    isUnaryExpression,
     isUpdateExpression,
     isVariableDeclaration,
     isVariableDeclarator,
@@ -557,27 +561,254 @@ export function scanCapturedRead(
 }
 
 /**
- * from 起的线性代码里,name 是否在无条件写入前被读取(扁平保守版:块内写入不参与 kill,
- * 任何嵌套函数体内的读取视为危险)。用于"删除会改变变量值的语句"前的安全确认。
+ * 按求值顺序收集“在确定写入之前被读取”的名字,跳过嵌套函数/类。
+ *
+ * 语句粒度收集读取会把“先写后读”的读取也算成对旧值的依赖:
+ *
+ *   return v5 && (v7 = f()) && v7.avatar ? ... : "";
+ *
+ * 这里按求值顺序推进“确定已写入”集合,只有写入之前发生的读取才进 reads。
+ * 短路/条件表达式右侧可能不执行:其读取仍可能看到旧值(保留),但写入不算
+ * 确定写入;未展开的结构保守地保留读取、不记写入(宁可多留活跃性)。
  */
-export function tempReadBeforeWrite(stmts: TYPE.Statement[], from: number, name: string): boolean {
-    let killed = false;
-    for (let j = from; j < stmts.length; j++) {
-        const stmt = stmts[j];
-        let read = false;
-        walkStatementSkipFunctions(stmt, (node, parent) => {
-            if (isIdentifier(node) && node.name === name
-                && parent && isReferenced(node, parent)) {
-                read = true;
+export function collectReadsBeforeDefiniteWrite(
+    node: TYPE.Node | null | undefined,
+): { reads: Set<string>; allWrites: Set<string>; definiteWrites: Set<string> } {
+    const collector = new ReadsBeforeWriteCollector();
+    collector.visit(node);
+    return {
+        reads: collector.reads,
+        allWrites: collector.allWrites,
+        definiteWrites: collector.written,
+    };
+}
+
+/**
+ * 求值顺序上的读写收集器。
+ * written 是“当前路径上一定已经写过的名字”,reads 是“写入之前发生的读取”。
+ */
+class ReadsBeforeWriteCollector {
+    readonly reads = new Set<string>();
+    readonly allWrites = new Set<string>();
+    written = new Set<string>();
+    /** 写入顺序日志:短路表达式的右操作数要能看到左侧全部写入 */
+    private writesLog: string[] = [];
+
+    private read(name: string): void {
+        if (this.written.has(name)) return;
+        this.reads.add(name);
+    }
+
+    private write(name: string): void {
+        this.written.add(name);
+        this.allWrites.add(name);
+        this.writesLog.push(name);
+    }
+
+    visit(node: TYPE.Node | null | undefined): void {
+        if (!node) return;
+        switch (node.type) {
+            case "Identifier":
+                this.read(node.name);
+                return;
+            case "AssignmentExpression": {
+                const left = node.left;
+                if (isIdentifier(left)) {
+                    // 复合赋值(x += y)读取旧值;Babel 对赋值左值不判读
+                    if (node.operator !== "=") this.read(left.name);
+                } else {
+                    // 成员/解构目标里的读取(对象、下标、默认值)保守算读取
+                    this.visit(left);
+                }
+                this.visit(node.right);
+                this.writeTargets(left);
+                return;
             }
-        });
-        if (read && !killed) return true;
-        if (isExpressionStatement(stmt) && isAssignmentExpression(stmt.expression)
-            && stmt.expression.operator === "="
-            && isIdentifier(stmt.expression.left)
-            && stmt.expression.left.name === name) {
-            killed = true;
+            case "UpdateExpression":
+                if (isIdentifier(node.argument)) {
+                    this.read(node.argument.name);
+                    this.write(node.argument.name);
+                } else {
+                    this.visit(node.argument);
+                }
+                return;
+            case "SequenceExpression":
+                for (const expression of node.expressions) this.visit(expression);
+                return;
+            case "LogicalExpression": {
+                // 左操作数一定先求值,右侧看到左侧的写入;而右侧只在左侧“求值完成”
+                // (&& 为真 / || 为假)时才执行,所以左侧任意位置的写入对它都可见。
+                // 右侧自己的写入不算确定写入(它可能被短路跳过)。
+                const mark = this.writesLog.length;
+                this.visit(node.left);
+                const afterLeft = new Set(this.written);
+                for (let i = mark; i < this.writesLog.length; i++) this.written.add(this.writesLog[i]);
+                this.visit(node.right);
+                this.written = afterLeft;
+                return;
+            }
+            case "ConditionalExpression": {
+                const before = new Set(this.written);
+                this.visit(node.test);
+                const afterTest = new Set(this.written);
+                this.written = afterTest;
+                this.visit(node.consequent);
+                this.written = afterTest;
+                this.visit(node.alternate);
+                this.written = afterTest;
+                return;
+            }
+            case "UnaryExpression":
+            case "AwaitExpression":
+            case "YieldExpression":
+            case "SpreadElement":
+            case "ParenthesizedExpression":
+                this.visit((node as any).argument ?? (node as any).expression);
+                return;
+            case "BinaryExpression":
+                this.visit(node.left);
+                this.visit(node.right);
+                return;
+            case "MemberExpression":
+                this.visit(node.object);
+                if (node.computed) this.visit(node.property);
+                return;
+            case "OptionalMemberExpression":
+                this.visit((node as any).object);
+                if ((node as any).computed) this.visit((node as any).property);
+                return;
+            case "CallExpression":
+            case "NewExpression":
+            case "OptionalCallExpression": {
+                this.visit(node.callee);
+                for (const argument of node.arguments as TYPE.Node[]) this.visit(argument);
+                return;
+            }
+            case "TaggedTemplateExpression":
+                this.visit(node.tag);
+                this.visit(node.quasi);
+                return;
+            case "TemplateLiteral":
+                for (const expression of node.expressions) this.visit(expression);
+                return;
+            case "ArrayExpression":
+                for (const element of node.elements) this.visit(element);
+                return;
+            case "ObjectExpression":
+                for (const property of node.properties) {
+                    if (property.type === "ObjectProperty") {
+                        if (property.computed) this.visit(property.key);
+                        this.visit(property.value);
+                    } else if (property.type === "SpreadElement") {
+                        this.visit(property.argument);
+                    }
+                }
+                return;
+            case "VariableDeclaration":
+                for (const declarator of node.declarations) {
+                    this.visit(declarator.init);
+                    this.writeTargets(declarator.id);
+                }
+                return;
+            case "ExpressionStatement":
+                this.visit(node.expression);
+                return;
+            case "BlockStatement":
+                for (const statement of node.body) this.visit(statement);
+                return;
+            case "LabeledStatement":
+                this.visit(node.body);
+                return;
+            case "IfStatement": {
+                // test 一定求值;两个分支都可能执行(也都不写的名字才不算确定写入)
+                this.visit(node.test);
+                const afterTest = new Set(this.written);
+                this.written = new Set(afterTest);
+                this.visit(node.consequent);
+                const consequentWrites = this.written;
+                this.written = new Set(afterTest);
+                if (node.alternate) this.visit(node.alternate);
+                const alternateWrites = this.written;
+                const merged = new Set<string>();
+                for (const name of consequentWrites) if (alternateWrites.has(name)) merged.add(name);
+                this.written = merged;
+                return;
+            }
+            case "ReturnStatement":
+            case "ThrowStatement":
+                this.visit(node.argument);
+                return;
+            case "FunctionExpression":
+            case "ArrowFunctionExpression":
+            case "ClassExpression":
+            case "FunctionDeclaration":
+            case "ClassDeclaration":
+                // 函数体不在当前语句求值时执行
+                return;
+            default:
+                // 未展开的结构:读取按子节点收集(不记写入),保守保留活跃性
+                for (const name of collectReadNames(node)) this.read(name);
+                return;
         }
+    }
+
+    private writeTargets(pattern: TYPE.Node | null | undefined): void {
+        if (!pattern) return;
+        if (isIdentifier(pattern)) {
+            this.write(pattern.name);
+        } else if (pattern.type === "RestElement") {
+            this.writeTargets(pattern.argument);
+        } else if (pattern.type === "AssignmentPattern") {
+            this.writeTargets(pattern.left);
+        } else if (pattern.type === "ArrayPattern") {
+            for (const element of pattern.elements) this.writeTargets(element);
+        } else if (pattern.type === "ObjectPattern") {
+            for (const property of pattern.properties) {
+                if (property.type === "RestElement") this.writeTargets(property.argument);
+                else if (property.type === "ObjectProperty") this.writeTargets(property.value);
+            }
+        }
+    }
+}
+
+/**
+ * test 按 truthy(或 falsy)路径求值时,name 是否一定会被写入。
+ * 只覆盖短路/条件表达式;其它节点保守返回 false。
+ * 用于条件归约与活跃性:test 在进入分支之前一定重写了 name 时,分支里对它的
+ * 读取看到的是新值,不等于“旧值仍然活跃”。
+ */
+export function writesOnTakenPath(test: TYPE.Expression, name: string, truthy: boolean): boolean {
+    if (isSequenceExpression(test)) {
+        return test.expressions.some((e) => writesOnTakenPath(e as TYPE.Expression, name, true));
+    }
+    if (isAssignmentExpression(test)) {
+        const writesLeft = isIdentifier(test.left) && test.left.name === name;
+        return writesLeft || writesOnTakenPath(test.right, name, true);
+    }
+    if (isUpdateExpression(test)) {
+        return isIdentifier(test.argument) && test.argument.name === name;
+    }
+    if (isUnaryExpression(test) && test.operator === "!") {
+        return writesOnTakenPath(test.argument as TYPE.Expression, name, !truthy);
+    }
+    if (isLogicalExpression(test)) {
+        const left = test.left as TYPE.Expression;
+        const right = test.right as TYPE.Expression;
+        if (test.operator === "&&") {
+            // truthy:两边都执行;falsy:左侧为假时右侧短路
+            return truthy
+                ? writesOnTakenPath(left, name, true) || writesOnTakenPath(right, name, true)
+                : writesOnTakenPath(left, name, false);
+        }
+        // truthy:左侧为真时右侧短路;falsy:两边都执行
+        return truthy
+            ? writesOnTakenPath(left, name, true)
+            : writesOnTakenPath(left, name, false) || writesOnTakenPath(right, name, false);
+    }
+    if (isConditionalExpression(test)) {
+        return writesOnTakenPath(test.consequent, name, truthy)
+            && writesOnTakenPath(test.alternate, name, truthy);
     }
     return false;
 }
+

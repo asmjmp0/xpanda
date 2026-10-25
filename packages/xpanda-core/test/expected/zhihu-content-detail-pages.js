@@ -1565,7 +1565,6 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
         });
       }
       local_1_0.answersController.activate();
-      return;
     }
     return;
   }
@@ -2991,7 +2990,6 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
             } else {
               local_1_1.updateArticleTitleScrolled(local_1_0, p0);
             }
-            return;
           }
           return;
         };
@@ -3002,7 +3000,6 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
             }
             local_1_1.contentAtBottom = p0;
             local_1_1.revealChromeAtBottom(p0);
-            return;
           }
           return;
         };
@@ -3012,7 +3009,6 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
               return;
             }
             local_1_1.contentAtTop = p0;
-            return;
           }
           return;
         };
@@ -3092,7 +3088,6 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
               } else {
                 local_1_1.updateArticleTitleScrolled(local_1_0, p0);
               }
-              return;
             }
             return;
           };
@@ -3103,7 +3098,6 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
               }
               local_1_1.contentAtBottom = p0;
               local_1_1.revealChromeAtBottom(p0);
-              return;
             }
             return;
           };
@@ -3113,7 +3107,6 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
                 return;
               }
               local_1_1.contentAtTop = p0;
-              return;
             }
             return;
           };
@@ -4799,7 +4792,6 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
           }, Column);
           local_1_1.observeComponentCreation2(function (p0, p1) {
             let v0;
-            v0 = If;
             If.create();
             if (!local_1_1.pinAnswerDate && (v0 = 0, contentCreatedAtText(local_1_0).length > 0)) {
               local_1_1.ifElseBranchUpdateFunction(v0, function () {
@@ -4832,7 +4824,6 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
           If.pop();
           local_1_1.observeComponentCreation2(function (p0, p1) {
             let v0;
-            v0 = If;
             If.create();
             if (!local_1_1.pinAnswerDate && (v0 = 0, contentUpdatedAtText(local_1_0).length > 0)) {
               local_1_1.ifElseBranchUpdateFunction(v0, function () {
@@ -5252,9 +5243,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
             publishAnswerTitle(v1);
           });
         }
-        return;
       }
-      return;
     }
     return;
   }
@@ -5313,9 +5302,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
             publishArticleTitle(v1);
           });
         }
-        return;
       }
-      return;
     }
     return;
   }

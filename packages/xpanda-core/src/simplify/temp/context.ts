@@ -10,6 +10,7 @@ import {
     collectAssignedNames,
     collectReadNames,
     collectReadWriteNames,
+    collectReadsBeforeDefiniteWrite,
     isClassLike,
     isFunctionLike,
     isTempName,
@@ -66,6 +67,33 @@ export function tempReadWrites(node: TYPE.Node | null | undefined, ctx: Function
     for (const name of reads) if (ctx.infos.has(name)) tempReads.add(name);
     for (const name of writes) if (ctx.infos.has(name)) tempWrites.add(name);
     return { reads: tempReads, writes: tempWrites };
+}
+
+/**
+ * 按求值顺序收集“在确定写入之前”被读取的临时变量名(见 AstUtils 同名工具)。
+ *
+ * 活跃性分析是按语句粒度做的:一条语句里既写又读同一个临时变量时
+ *
+ *   return v5 && (v7 = this.asRecord(...)) && v7.avatar ? ... : "";
+ *
+ * 按整条语句收集读取,会把“写入之后才发生的读取”也算成对旧值的依赖,前面
+ * `v7 = this.asRecord` 这类为调用序列预装载寄存器的赋值就永远删不掉。
+ */
+export function tempReadsBeforeWrite(node: TYPE.Node | null | undefined, ctx: FunctionContext): Set<string> {
+    return tempReadWritesBeforeStore(node, ctx).reads;
+}
+
+/** tempReadsBeforeWrite + 整条语句的全部写入(跳过嵌套函数/类)。 */
+export function tempReadWritesBeforeStore(
+    node: TYPE.Node | null | undefined,
+    ctx: FunctionContext,
+): { reads: Set<string>; writes: Set<string> } {
+    const { reads, allWrites } = collectReadsBeforeDefiniteWrite(node);
+    const filteredReads = new Set<string>();
+    const filteredWrites = new Set<string>();
+    for (const name of reads) if (ctx.infos.has(name)) filteredReads.add(name);
+    for (const name of allWrites) if (ctx.infos.has(name)) filteredWrites.add(name);
+    return { reads: filteredReads, writes: filteredWrites };
 }
 
 /** 复制传播后按当前 AST 重建临时变量的引用集合,修正被克隆/移动/删除的节点。 */

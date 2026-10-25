@@ -31,7 +31,9 @@ import traverse from "@babel/traverse";
  *  14. 校验 yourpipe0.7.0.abc 的 HttpDownloader 循环体内嵌套 try/catch 的区域归约与条件极性;
  *  15. 校验 yourpipe0.7.0.abc 的 MusicSearchService 的真值守卫三目到可选链、`it.next` 提升形态
  *      的 for-of 还原与累加器死枢纽拷贝折叠;
- *  16. 校验 yourpipe0.7.0.abc 的 AVPlayer 资源对象(LiteralTag.ACCESSOR 字面量)不再生成非法 JS。
+ *  16. 校验 yourpipe0.7.0.abc 的 AVPlayer 资源对象(LiteralTag.ACCESSOR 字面量)不再生成非法 JS;
+ *  17. 校验 yourpipe0.7.0.abc 的 ChannelInfoService 共享返回尾块收敛为一份、
+ *      预装载寄存器的死赋值与测试序列物化残渣清零。
  */
 
 interface Sample {
@@ -2142,6 +2144,90 @@ function verifyYourpipeHttpDownloaderRetryTryCatch(): void {
 }
 
 /**
+ * 回归:共享返回尾块被区域归约复制到每条路径,以及预装载寄存器的死赋值残留。
+ *
+ * `extractAvatarUrl` 的分派链(c4 / interactive / carousel / pageHeader)每个分支
+ * 失败后都落到同一个"从 metadata 兜底"的返回尾块。区域图里这个尾块有几十个前驱,
+ * 没有 goto 只能按前驱复制;而 reduceSequence/归约缓存还会让同一段语句在多条
+ * 嵌套路径上重复输出,最终整类输出 1029 行(尾块被展开 49 次)。
+ *
+ * 修复覆盖三层:
+ *   1. TailMergeSimplify:分支末尾与"紧接着会执行到的语句"逐字相同且以
+ *      return/throw/break/continue 结尾时删除分支内副本,逐层收敛后尾块只剩一份;
+ *   2. 活跃性按求值顺序只看"确定写入之前"的读取(`v7 = this.asRecord` 这类为调用
+ *      序列预装载寄存器的赋值在 test 里先被重写,不再算作活跃读取);
+ *   3. ConditionSimplify 清理布尔位置的序列尾部自取反物化对
+ *      `..., acc = !acc, !acc`,以及 test 尾部冗余读取。
+ *
+ * 断言尾块唯一、死预装载/物化残渣清零,并与整类输出快照比对。
+ */
+function verifyYourpipeChannelInfoService(): void {
+    const abcPath = path.join(__dirname, "resources", "yourpipe0.7.0.abc");
+    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
+    const clazz = pandaFile.getAllClasses().find((c) =>
+        c.name.content.includes("features/user/ChannelInfoService"));
+    if (!clazz) throw new Error("yourpipe: 未找到 ChannelInfoService");
+
+    const code = new PandaDecompiler().decompileClass(clazz);
+    NodeFactory.parse(code);
+    if (code.includes("created by SimpleAnalysis") || code.includes("decompiler_")) {
+        throw new Error(`ChannelInfoService: 反编译降级或残留伪语句\n${code}`);
+    }
+
+    const start = code.indexOf("extractAvatarUrl(p0) {");
+    const end = code.indexOf("extractSubscriberText(p0) {", start);
+    if (start < 0 || end < 0) throw new Error(`ChannelInfoService: 未找到 extractAvatarUrl\n${code}`);
+    const avatar = code.slice(start, end);
+
+    // 元数据兜底尾块只允许出现一次(修复前被展开 49 次)
+    const tail = "return v5 && (v7 = this.asRecord(v5.channelMetadataRenderer))";
+    if (avatar.split(tail).length - 1 !== 1) {
+        throw new Error(`ChannelInfoService.extractAvatarUrl: 元数据兜底尾块被重复展开\n${avatar}`);
+    }
+    // 四条分派链的守卫子句与唯一的尾部返回
+    for (const fragment of [
+        "v7 = this.asRecord(v4.c4TabbedHeaderRenderer);",
+        "v9 = this.asRecord(v4.interactiveTabbedHeaderRenderer);",
+        "v8 = this.asRecord(v4.carouselHeaderRenderer);",
+        "v10 = this.asRecord(v4.pageHeaderRenderer);",
+        "v10 = \"metadata\";",
+        "v5 = this.asRecord(p0.metadata);",
+    ]) {
+        if (!avatar.includes(fragment)) {
+            throw new Error(`ChannelInfoService.extractAvatarUrl: 缺少 ${fragment}\n${avatar}`);
+        }
+    }
+    // 为调用序列预装载寄存器的死赋值必须被清掉(`v11 = this.asRecord;` 这类
+    // 在 test 里先被重写再读取的赋值)
+    for (const dead of ["v12 = this;", "v11 = this.asRecord;", "v7 = this.asRecord;", "v8 = this;"]) {
+        if (avatar.includes(dead)) {
+            throw new Error(`ChannelInfoService.extractAvatarUrl: 死预装载残留 ${JSON.stringify(dead)}\n${avatar}`);
+        }
+    }
+    // 元数据兜底入口只执行一次
+    if (avatar.split('v10 = "metadata";').length - 1 !== 1) {
+        throw new Error(`ChannelInfoService.extractAvatarUrl: metadata 兜底语句重复\n${avatar}`);
+    }
+    // 测试序列里的自取反/自拷贝物化残渣必须清零
+    if (/acc = acc\b|\bacc = !acc\b/.test(avatar)) {
+        throw new Error(`ChannelInfoService.extractAvatarUrl: acc 物化残渣残留\n${avatar}`);
+    }
+    // 条件链保持 && 形态,不再被物化序列打散
+    if (!avatar.includes("if (v8 && (v11 = this.asArray(v8.contents)) && v11.length > 0 &&")) {
+        throw new Error(`ChannelInfoService.extractAvatarUrl: carousel 条件未还原\n${avatar}`);
+    }
+    if (!avatar.includes("if (v10) {") || !avatar.includes("v17 = this.pickLargestImageUrl(this.asArray(acc));")) {
+        throw new Error(`ChannelInfoService.extractAvatarUrl: pageHeader 分派链缺失\n${avatar}`);
+    }
+
+    const expectedPath = path.join(__dirname, "expected", "yourpipe-channel-info-service.js");
+    const expected = fs.readFileSync(expectedPath, "utf-8");
+    if (code !== expected) {
+        throw new Error(`ChannelInfoService: 输出与快照不一致\n${firstDifference(expected, code)}`);
+    }
+}
+
+/**
  * 回归:if 条件尾部多条赋值序列还原成嵌套 if。
  * `if (A && B && (x = 1, y = 2, C))` 中序列只在 A/B 为真时求值,可安全搬进分支体;
  * 有 else 时外层条件为假也必须执行 else,因此不能用同一变换(否则 else 丢失)。
@@ -2686,6 +2772,10 @@ async function main(): Promise<void> {
 
     console.log("[test] yourpipe HttpDownloader retry try/catch (yourpipe0.7.0.abc)");
     verifyYourpipeHttpDownloaderRetryTryCatch();
+    console.log("    ok");
+
+    console.log("[test] yourpipe ChannelInfoService shared tail merge (yourpipe0.7.0.abc)");
+    verifyYourpipeChannelInfoService();
     console.log("    ok");
 
     console.log("[test] simplify sequenced test prefix fold");

@@ -89,6 +89,25 @@ export class TempVariableSimplify implements ISimplify {
     }
 
     /**
+     * 只做活跃性死存储消除和未用声明清理(不做复制传播/条件折叠)。
+     *
+     * 流水线末尾的整结构改写(重复尾块消除、else 展开、三目合成、条件 test
+     * 归一化)会暴露出新的死存储:区域归约预装载寄存器的 `v7 = this.asRecord`
+     * 在最终形态里往往“先在 test 里被重写、再被读取”,定点迭代阶段的活跃性
+     * 看不到这种语句内部的求值顺序,轮到末尾时已经没有新一轮清理了。
+     */
+    public static cleanupDeadStores(node: Program): boolean {
+        const pass = new TempVariableSimplify();
+        pass.state.changed = false;
+        pass.state.cleanupOnly = true;
+        traverse(file(node), {
+            Program: (path) => pass.processScope(path),
+            Function: (path) => pass.processScope(path),
+        });
+        return pass.state.changed;
+    }
+
+    /**
      * 删除完全未使用的块级词法变量声明(local_X_Y / sendable_X_Y)以及随之为空的块。
      *
      * newLexEnv 会为编译器预留的每个槽生成 `let local_X_Y`,但循环变量未被闭包捕获时
@@ -236,6 +255,18 @@ export class TempVariableSimplify implements ISimplify {
         }
         if (this.state.accumulatorOnly) {
             this.assignments.foldAccumulatorChainsDeep(body, ctx);
+            return;
+        }
+        if (this.state.cleanupOnly) {
+            ctx.aggressiveCleanup = true;
+            // 末尾结构改写后补一轮死存储清理:先分析活跃性再删(级联最多 3 轮)
+            this.liveness.analyzeList(body, new Set(), ctx);
+            for (let i = 0; i < 3; i++) {
+                const version = this.state.cleanupVersion;
+                this.liveness.cleanupStatements(body, ctx, new Set());
+                if (this.state.cleanupVersion === version) break;
+            }
+            this.removeUnusedDeclarations(body, ctx);
             return;
         }
         if (this.state.shortCircuitOnly) {

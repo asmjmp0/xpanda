@@ -10,8 +10,8 @@ import {
     isFunctionLike,
     isPureExpression,
     isTempName,
+    collectReadsBeforeDefiniteWrite,
     scanCapturedRead,
-    tempReadBeforeWrite,
     walkNode,
 } from "./AstUtils";
 import { SyntaxRewriteSimplify } from "./SyntaxRewriteSimplify";
@@ -218,7 +218,7 @@ export class ConditionSimplify implements ISimplify {
         const scope: TYPE.Node = fnParent ? fnParent.node : ConditionSimplify.enclosingScopeNode(stmtPath);
         if (scanCapturedRead(scope, null, new Set([name]), new Set(), false)) return false;
         const tails = this.collectStatementsAfter(stmtPath);
-        if (tempReadBeforeWrite(tails, 0, name)) return false;
+        if (this.readsNameBeforeWriteInStatements(tails, name)) return false;
 
         // 用官方 path API 删除链语句:从后往前删,避免索引偏移。
         // 注意不能用 getSibling(它取的是"父节点所在数组"的兄弟,不是块内语句)。
@@ -499,6 +499,11 @@ export class ConditionSimplify implements ISimplify {
             if (isSequenceExpression(n)) sequences.push(n);
             return true;
         });
+        // 规则D:布尔位置的序列尾部自取反物化对 `..., X = !X, !X`
+        // (只在这里安全:序列值只取真值性,删掉取反对后值变回 X 的旧值)
+        for (const seq of this.collectBooleanSequences(ctx.test)) {
+            if (this.foldSelfNegationTail(seq, ctx)) return true;
+        }
         for (const seq of sequences) {
             if (this.foldAliasChainInSequence(seq, ctx)) return true;
         }
@@ -507,6 +512,132 @@ export class ConditionSimplify implements ISimplify {
         }
         for (const seq of sequences) {
             if (this.dropDeadSaveElement(seq, ctx)) return true;
+        }
+        // 规则E:尾部冗余读取 `..., X = E, X`(赋值表达式的值就是 X 的新值)
+        for (const seq of sequences) {
+            if (this.dropTrailingValueRead(seq)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * 收集布尔位置的序列:if/三元的 test、`&&`/`||` 的操作数、`!` 的参数。
+     * 这些位置的序列值只用于真值判断,改写成等真值的表达式是安全的。
+     * 序列元素的中间项(g 在 `(f(), g(), h())` 里)值被丢弃,同样安全。
+     */
+    private collectBooleanSequences(root: TYPE.Expression): TYPE.SequenceExpression[] {
+        const out: TYPE.SequenceExpression[] = [];
+        const visit = (node: TYPE.Expression): void => {
+            if (isSequenceExpression(node)) {
+                out.push(node);
+                for (const element of node.expressions as TYPE.Expression[]) visit(element);
+                return;
+            }
+            if (isLogicalExpression(node)) {
+                visit(node.left as TYPE.Expression);
+                visit(node.right as TYPE.Expression);
+                return;
+            }
+            if (isConditionalExpression(node)) {
+                visit(node.test);
+                visit(node.consequent);
+                visit(node.alternate);
+                return;
+            }
+            if (isUnaryExpression(node) && node.operator === "!") {
+                visit(node.argument as TYPE.Expression);
+                return;
+            }
+            if (isParenthesizedExpression(node)) {
+                visit((node as any).expression as TYPE.Expression);
+            }
+        };
+        visit(root);
+        return out;
+    }
+
+    /**
+     * 规则D:序列尾部的自取反物化对。
+     *
+     * 编译器把条件取反物化进序列:`(v7 = acc, acc = acc, acc = !acc, !acc)`,
+     * 序列值 = X 取反若干次后的真值。序列处在布尔位置时真值性等于旧值 X 的真值性,
+     * 取反对可以整体删除,让 X 直接回到旧值。
+     *
+     * 要求取反对之前紧邻的元素“值就是 X 当前的值”:
+     *   - `X = E`(赋值表达式的值就是 X 的新值,与 E 是否读取 X 无关);
+     *   - `Y = X`(值就是 X 的当前值)。
+     * 另外 X 必须在语句之后不可观察、未被闭包捕获,且 test 后续/分支不再读它。
+     */
+    private foldSelfNegationTail(seq: TYPE.SequenceExpression, ctx: TestFoldContext): boolean {
+        const elements = seq.expressions as TYPE.Expression[];
+        if (elements.length < 3) return false;
+        const last = elements[elements.length - 1];
+        if (!isUnaryExpression(last) || last.operator !== "!" || !isIdentifier(last.argument)) return false;
+        const name = last.argument.name;
+        if (!isTempName(name)) return false;
+        let i = elements.length - 2;
+        let negations = 0;
+        while (i >= 0 && this.isSelfNegationElement(elements[i], name)) {
+            negations++;
+            i--;
+        }
+        if (negations === 0) return false;
+        // 取反对之前没有元素:旧值不在序列里,删掉后序列值无从表达
+        if (i < 0) return false;
+        if (!this.producesNameValue(elements[i], name)) return false;
+
+        if (scanCapturedRead(ctx.scope, null, new Set([name]), new Set(), false)) return false;
+        // 序列之后(同一 test 里)可能在写入之前读取 X:用锚点感知的求值顺序检查,
+        // 后续项里“先写后读”的读取不算依赖(`acc = E, v8 = acc` 读的是新值)。
+        if (this.readsNameBeforeWriteAfterAnchor(ctx.test, seq as any, name, seq as any, false, false).readBefore) {
+                return false;
+        }
+        if (this.branchDependsOnValue(ctx, name, elements[elements.length - 2])) return false;
+        if (!this.nameDeadAfterStatement(ctx.path, name)) return false;
+
+        elements.splice(i + 1, elements.length - i - 1);
+        return true;
+    }
+
+    private isSelfNegationElement(node: TYPE.Expression, name: string): boolean {
+        return isAssignmentExpression(node)
+            && node.operator === "="
+            && isIdentifier(node.left)
+            && node.left.name === name
+            && isUnaryExpression(node.right)
+            && node.right.operator === "!"
+            && isIdentifier(node.right.argument)
+            && node.right.argument.name === name;
+    }
+
+    /** 元素求值后 X 的值是否就是该元素的值(供取反对的旧值来源)。 */
+    private producesNameValue(node: TYPE.Expression, name: string): boolean {
+        if (!isAssignmentExpression(node) || node.operator !== "=" || !isIdentifier(node.left)) return false;
+        if (node.left.name === name) return true;
+        return isIdentifier(node.right) && node.right.name === name;
+    }
+
+    /**
+     * 规则E:删除尾部冗余读取 `..., X = E, X`。
+     * 简单赋值的值就是 X 的新值,末尾再读一次 X 恒等,删除后序列值不变。
+     * 尾部的自赋值 `X = X` 同样可以删除(赋值表达式的值就是 X 本身)。
+     */
+    private dropTrailingValueRead(seq: TYPE.SequenceExpression): boolean {
+        const elements = seq.expressions as TYPE.Expression[];
+        if (elements.length < 2) return false;
+        const last = elements[elements.length - 1];
+        if (isIdentifier(last)) {
+            // `X = E, X` 与 `Y = X, X` 两种形态:前一个元素的值都等于 X 的当前值
+            if (!this.producesNameValue(elements[elements.length - 2], last.name)) return false;
+            elements.pop();
+            return true;
+        }
+        // 末尾 `X = X` 是恒等自拷贝(对象取反链清理后的残留)
+        if (isAssignmentExpression(last) && last.operator === "="
+            && isIdentifier(last.left) && isIdentifier(last.right)
+            && last.left.name === last.right.name) {
+            elements.pop();
+            return true;
         }
         return false;
     }
@@ -559,8 +690,11 @@ export class ConditionSimplify implements ISimplify {
             }
             if (blocked) continue;
             if (scanCapturedRead(scope, null, new Set([xName]), new Set(), false)) continue;
-            const last = elements[elements.length - 1];
-            if (this.testReadsNameAfter(ctx.test, last, xName)) continue;
+            // 序列之后(同一 test 的后续项)若在确定写入之前读取 X,删除 `X = E`
+            // 会让它读到更旧的值;后续项里“先写后读”的读取不算依赖。
+            if (this.readsNameBeforeWriteAfterAnchor(ctx.test, seq as any, xName, seq as any, false, false).readBefore) {
+                continue;
+            }
             if (!this.nameDeadAfterStatement(ctx.path, xName)) continue;
             if (this.branchDependsOnValue(ctx, xName, elements[i])) continue;
 
@@ -600,7 +734,11 @@ export class ConditionSimplify implements ISimplify {
             }
             if (blocked) continue;
             if (scanCapturedRead(scope, null, new Set([yName]), new Set(), false)) continue;
-            if (this.testReadsNameAfter(ctx.test, next, yName)) continue;
+            // 序列之后(同一 test 的后续项)若在确定写入之前读取 Y,删除 `Y = E`
+            // 会让它读到更旧的值;后续项里“先写后读”的读取不算依赖。
+            if (this.readsNameBeforeWriteAfterAnchor(ctx.test, seq as any, yName, seq as any, false, false).readBefore) {
+                continue;
+            }
             if (!this.nameDeadAfterStatement(ctx.path, yName)) continue;
             // 分支里的读取发生在整条 test 之后:若 test 在该路径上一定重写了
             // yName,分支读到的是新值,删除这里的赋值不会影响它。
@@ -946,9 +1084,31 @@ export class ConditionSimplify implements ISimplify {
     /** 语句之后(含循环回边前缀)name 是否在确定写入前被读取;是则值仍可观察。 */
     private nameDeadAfterStatement(path: NodePath<TYPE.Statement>, name: string): boolean {
         for (const segment of this.collectTailSegments(path)) {
-            if (tempReadBeforeWrite(segment, 0, name)) return false;
+            if (this.readsNameBeforeWriteInStatements(segment, name)) return false;
         }
         return true;
+    }
+    private nameDeadAfterStatementOld(path: NodePath<TYPE.Statement>, name: string): boolean {
+        for (const segment of this.collectTailSegments(path)) {
+            if (this.readsNameBeforeWriteInStatements(segment, name)) return false;
+        }
+        return true;
+    }
+
+    /**
+     * 线性语句段里 name 是否在确定写入前被读取。
+     * 单条语句内部按求值顺序判断(先写后读的读取看的是新值),与整条语句的
+     * “读后写”区分开:区域归约的尾块 `return v5 && (v7 = ...) && v7.avatar ...`
+     * 里 v7 先被重写再读,不能算作对旧值的依赖。
+     */
+    private readsNameBeforeWriteInStatements(stmts: TYPE.Statement[], name: string): boolean {
+        let killed = false;
+        for (const stmt of stmts) {
+            const info = collectReadsBeforeDefiniteWrite(stmt);
+            if (!killed && info.reads.has(name)) return true;
+            if (info.definiteWrites.has(name)) killed = true;
+        }
+        return false;
     }
 
     /**

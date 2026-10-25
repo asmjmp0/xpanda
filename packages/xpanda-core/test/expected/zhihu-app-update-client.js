@@ -121,7 +121,6 @@ local_0_5 = 4000;
             local_3_0 = true;
             v1 = new Error(local_3_5 > 0 ? "静态更新数据格式错误" : "静态更新源不可用");
             local_3_4(v1);
-            return;
           }
           return;
         };

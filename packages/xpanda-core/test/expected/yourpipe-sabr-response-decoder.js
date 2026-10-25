@@ -365,8 +365,6 @@ SabrPartProcessor = class panda_jmp0_reserved_anonymous_3 {
         this.open.set(v6.headerId, new local_0_0 /*OpenMediaAssembly*/(v6));
       } else if (p0.type !== PART_MEDIA) {
         if (p0.type === PART_MEDIA_END) {
-          v7 = p0.data;
-          v6 = p0.data.length;
           if (p0.data.length > 0) {
             v7 = p0.data[0];
             this.decoded.mediaEndHeaderIds.push(p0.data[0]);
@@ -437,7 +435,7 @@ SabrPartProcessor = class panda_jmp0_reserved_anonymous_3 {
   deliverSegment(p0) {
     let acc;
     if (p0.header.contentLength >= 0) {
-      acc = p0.getLength();
+      p0.getLength();
       if (p0.header.contentLength !== p0.header.contentLength) {
         local_0_11 /*logger*/.warn("[SABR-DECODE] withhold incomplete segment itag=" + p0.header.itag + " " + ("seq=" + p0.header.sequenceNumber + " expected=" + p0.header.contentLength + " actual=" + p0.getLength() + ""));
         return;
