@@ -49,6 +49,7 @@ const {
     logicalExpression: logicalExpressionBuilder,
     returnStatement: returnStatementBuilder,
     switchStatement: switchStatementBuilder,
+    throwStatement: throwStatementBuilder,
 } = TYPE;
 
 /**
@@ -692,6 +693,60 @@ export class HighLevelGrammarSimplify implements ISimplify {
             && isIdentifierNode(assign.right.property) && assign.right.property.name === "value";
     }
 
+    /** iterator close 的守卫:`it.return != undefined` / `it.return !== undefined`。 */
+    private isIteratorReturnGuard(test: TYPE.Expression, itName: string): boolean {
+        if (!isBinaryExpressionNode(test)) return false;
+        if (test.operator !== "!=" && test.operator !== "!==") return false;
+        const left = test.left;
+        if (!isMemberExpression(left) || left.computed) return false;
+        if (!isIdentifierNode(left.object) || left.object.name !== itName) return false;
+        if (!isIdentifierNode(left.property) || left.property.name !== "return") return false;
+        return isIdentifierNode(test.right) && test.right.name === "undefined";
+    }
+
+    /** `it.return();`(iterator close 调用)。 */
+    private isIteratorReturnCall(stmt: TYPE.Statement, itName: string): boolean {
+        if (!isExpressionStatementNode(stmt)) return false;
+        const call = stmt.expression;
+        if (!isCallExpression(call) || call.arguments.length !== 0) return false;
+        const callee = call.callee;
+        if (!isMemberExpression(callee) || callee.computed) return false;
+        if (!isIdentifierNode(callee.object) || callee.object.name !== itName) return false;
+        return isIdentifierNode(callee.property) && callee.property.name === "return";
+    }
+
+    /**
+     * 收集循环体提前退出分支里内联的 iterator close:
+     *
+     *   if (cond) { if (it.return != undefined) { it.return() } return E; }
+     *
+     * 这是 ArkTS 对 `while (true)` 形态 for-of 的 lowering 残留:源码的 for...of 在
+     * return/throw 退出时由运行时自动 close。删除后这些读取不再阻止 for-of 还原。
+     * 只接受紧跟“确定离开函数”的语句(return/throw,含其块/if 形态)的 close;
+     * break/continue 不处理(break 可能属于外层结构,continue 不会 close)。
+     */
+    private collectInlinedIteratorCloses(loop: NodePath<TYPE.WhileStatement>, itName: string): NodePath<TYPE.Statement>[] {
+        const closes: NodePath<TYPE.Statement>[] = [];
+        const body = loop.get('body');
+        if (!isBlockStatementNode(body.node)) return closes;
+        body.traverse({
+            Function: (path) => path.skip(),
+            IfStatement: (path) => {
+                if (path.node.alternate) return;
+                if (!this.isIteratorReturnGuard(path.node.test, itName)) return;
+                const consequent = path.node.consequent;
+                const statements = isBlockStatementNode(consequent)
+                    ? (consequent as TYPE.BlockStatement).body
+                    : [consequent as TYPE.Statement];
+                if (statements.length !== 1 || !this.isIteratorReturnCall(statements[0], itName)) return;
+                const next = path.getNextSibling();
+                if (!next.node || !this.statementAlwaysExits(next.node as TYPE.Statement)) return;
+                closes.push(path as NodePath<TYPE.Statement>);
+            },
+        });
+        return closes;
+    }
+
     /** 语句是否是无条件的 `name = ...`。 */
     private isDirectAssignmentTo(stmt: TYPE.Node, name: string): boolean {
         return isExpressionStatementNode(stmt)
@@ -765,6 +820,9 @@ export class HighLevelGrammarSimplify implements ISimplify {
         // 循环之前的读取不受删除初始化影响。
         if (refIndex < loopIndex) return true;
         if (refIndex === loopIndex) return false;
+        // 循环出口紧接着 return/throw 时,common 之后(含外层分支之后)的读取
+        // 根本执行不到;这类“读取排在循环后面”只是语句顺序上的,不是执行顺序。
+        if (this.loopExitSkipsCommonTail(loop, common)) return true;
 
         // 从读取处向上逐层看同一语句块里是否有前置的直接赋值;
         // 最外层只认循环之后的赋值(循环前的会被本轮迭代覆盖)。
@@ -795,6 +853,30 @@ export class HighLevelGrammarSimplify implements ISimplify {
                         if (this.isDirectAssignmentTo(siblings[i], name)) return true;
                     }
                 }
+            }
+            current = parent;
+        }
+        return false;
+    }
+
+    /**
+     * 循环正常结束后是否立即离开函数(同层下一条语句就是 return/throw)。
+     * 若是,循环出口之后排在相同语句块/外层分支后面的读取不会被执行到,
+     * 删除循环前的迭代器初始化或提升方法量不会影响它们。
+     */
+    private loopExitSkipsCommonTail(loop: NodePath, common: NodePath): boolean {
+        if (!(loop.isWhileStatement() || loop.isDoWhileStatement() || loop.isForStatement()
+            || loop.isForOfStatement() || loop.isForInStatement())) return false;
+        let current: NodePath = loop;
+        while (current.parentPath && current.parentPath.node !== common.node) {
+            const parent = current.parentPath;
+            if (!isBlockStatementNode(parent.node) && !isProgram(parent.node)) return false;
+            const body = (parent.node as { body?: TYPE.Node[] }).body;
+            if (!body) return false;
+            const index = body.indexOf(current.node);
+            if (index < 0) return false;
+            if (index + 1 < body.length) {
+                return this.statementAlwaysExits(body[index + 1] as TYPE.Statement);
             }
             current = parent;
         }
@@ -947,6 +1029,11 @@ export class HighLevelGrammarSimplify implements ISimplify {
         if (!iterable) return false;
         const iterBinding = value.scope.getBinding(init.left.name);
         if (!iterBinding) return false;
+        // 提前退出分支里内联的 `if (it.return != undefined) it.return();` 在转换后
+        // 由 for...of 自己 close;收集起来供下面忽略其读取,并在全部校验通过后删除。
+        const inlinedCloses = this.collectInlinedIteratorCloses(value, init.left.name);
+        const insideInlinedClose = (path: NodePath) =>
+            inlinedCloses.some((close) => path.findParent((parent) => parent.node === close.node));
 
         const test = value.get('test');
         if (!isBooleanLiteral(test.node)) return false;
@@ -984,6 +1071,8 @@ export class HighLevelGrammarSimplify implements ISimplify {
         for (const ref of iterBinding.referencePaths) {
             if (!ref.node || ref.node === iterObjectNode) continue;
             if (!liveNodes.has(ref.node)) continue;
+            // 内联的 close 语句(及其守卫)稍后会随转换删除,不算循环体内的读取。
+            if (insideInlinedClose(ref)) continue;
             if (loopNodes.has(ref.node)) return false;
             if (!this.hasNewerValueBefore(ref, value, init.left.name)) return false;
         }
@@ -1014,6 +1103,9 @@ export class HighLevelGrammarSimplify implements ISimplify {
         if (!isDoneMember(btest.node)) return false;
         const doneObject = (btest.node as TYPE.MemberExpression).object;
         if (!isIdentifierNode(doneObject) || doneObject.name !== vv.name) return false;
+
+        // 全部校验通过后才删除内联 close,避免中途放弃时留下未收尾的迭代器。
+        for (const close of inlinedCloses) close.remove();
 
         // `vv = vv.value` 由 for-of 的循环变量赋值替代。先判定再替换,
         // 否则 `vv.value` 已被改写后这条赋值就认不出来了。
@@ -1134,13 +1226,15 @@ export class HighLevelGrammarSimplify implements ISimplify {
      *     acc = ...;                 // 循环 test 的物化
      *   } while (acc);
      *   close(it);
-     *   return E;                    // A: test 为假时提前 return
+     *   return E;                    // A: test 为假时提前 return / throw E
      *   // 或 break 形态:B: EXIT 是 break 路径的前缀,EXIT 之后是 close,
      *   // close 之后是循环耗尽与 break 共用的续接代码(AFTER)
+     *   // 循环体没有提前退出时编译器不生成 close:A 形态的出口语句直接跟在
+     *   // 循环之后,且是语句列表的最后一条。
      *
      * → for (const v of arr) {
      *     ...;
-     *     if (!TEST) return E;       // A:原来的提前 return
+     *     if (!TEST) return E;       // A:原来的提前 return / throw
      *     if (TEST) { EXIT; break; } // B:原来的 break
      *   }
      *   DONE                        // 仅 A:DONE 搬到 for-of 之后
@@ -1208,11 +1302,13 @@ export class HighLevelGrammarSimplify implements ISimplify {
         }
 
         // 循环之后有两种出口形态:
-        //   A) iterator.close 之后紧跟 `return E`:循环体里是提前 return;
+        //   A) iterator.close 之后紧跟 `return E` / `throw E`:循环体里是提前 return;
         //   B) iterator.close 之前是 break 路径的前缀语句(EXIT),close 之后是
         //      循环耗尽与 break 共用的续接代码。DONE 是同一块的副本:break
         //      还原后直接落到续接代码,耗尽路径也走续接代码,因此 DONE 丢弃。
         //      (典型: for (const x of xs) { ...; if (cond) { A = x; break; } })
+        // 循环体里没有任何提前退出时,编译器不生成 iterator close:循环之后直接
+        // 就是 test 为假时的出口语句,没有 close、也没有 EXIT 前缀。
         // getNextSibling() 在列表末尾返回 node 为 null 的 NodePath(对象本身非空),
         // 必须按 node 判空,否则循环永远前进不了、exitPaths 无限增长(直接 OOM)。
         let cursor = value.getNextSibling();
@@ -1226,11 +1322,23 @@ export class HighLevelGrammarSimplify implements ISimplify {
             extras.push(cursor as NodePath<TYPE.Statement>);
             cursor = cursor.getNextSibling();
         }
-        if (extras.length === 0) return false;
-        const exitReturnPath = exitPaths.length === 0 ? cursor as NodePath<TYPE.ReturnStatement> : null;
-        let exitReturn: TYPE.Expression | null = null;
+        let exitPath: NodePath<TYPE.ReturnStatement | TYPE.ThrowStatement> | null = null;
+        let exitValue: TYPE.Expression | null = null;
         let breakPath: TYPE.Statement[] | null = null;
-        if (!exitReturnPath) {
+        if (extras.length === 0) {
+            // 没有 close:出口语句就是循环之后的第一条,且必须是该语句列表的最后
+            // 一条(出口之后不会再有可执行语句,否则说明这不是该形态)。
+            if (exitPaths.length !== 1 || cursor.node) return false;
+            const only = exitPaths.pop() as NodePath<TYPE.ReturnStatement | TYPE.ThrowStatement>;
+            if ((!only.isReturnStatement() && !only.isThrowStatement()) || !only.node.argument) return false;
+            exitPath = only;
+        } else if (exitPaths.length === 0) {
+            const candidate = cursor as NodePath<TYPE.ReturnStatement | TYPE.ThrowStatement>;
+            if ((!candidate.isReturnStatement() && !candidate.isThrowStatement()) || !candidate.node.argument) {
+                return false;
+            }
+            exitPath = candidate;
+        } else {
             // break 路径:close 之后必须还有共享续接代码,前缀语句必须是直线代码
             // (搬进新循环的 if 分支后,声明会换作用域,break/continue/label 会
             // 绑定到新循环)。
@@ -1239,12 +1347,15 @@ export class HighLevelGrammarSimplify implements ISimplify {
                 if (!this.isBreakPathStatement(prefix.node)) return false;
             }
             breakPath = exitPaths.map((prefix) => prefix.node);
-        } else {
-            if (!exitReturnPath.isReturnStatement() || !exitReturnPath.node.argument) return false;
-            exitReturn = exitReturnPath.node.argument;
-            // E 会被搬进循环体按当前元素求值:只接受纯表达式(搬移不引入副作用),
-            // 且不能读取迭代器临时量(for-of 里迭代器已不存在)。
-            if (!isPureExpression(exitReturn) || collectIdentifierNames(exitReturn).has(iterName)) return false;
+        }
+        if (exitPath) {
+            exitValue = exitPath.node.argument;
+            // E 会被搬进循环体按当前元素求值:搬移不能引入副作用,且不能读取迭代器
+            // 临时量(for-of 里迭代器已不存在)。`throw new Error(...)` 的 `new` 不算
+            // 纯表达式,但出口表达式只在 test 为假时求值一次,搬进循环体不改变求值
+            // 顺序与次数,因此 throw 只检查迭代器临时量。
+            if ((exitPath.isReturnStatement() && !isPureExpression(exitValue))
+                || collectIdentifierNames(exitValue).has(iterName)) return false;
         }
 
         const body = value.get('body');
@@ -1278,7 +1389,7 @@ export class HighLevelGrammarSimplify implements ISimplify {
         // 循环耗尽分支必须自己离开函数(return/throw):它要么搬到 for-of 之后
         // (变体 A),要么是 close 之后续接代码的副本(变体 B)。
         if (!this.statementAlwaysExits(doneStatements[doneStatements.length - 1])) return false;
-        if (exitReturn) {
+        if (exitValue) {
             // 循环耗尽时 vv 还是上一轮的值(do-while 里刚赋的是 done 结果对象),
             // 搬到 for-of 之后 vv 停在最后一个元素上:要求 DONE 先写 vv 再读。
             if (!this.readsNameOnlyAfterWrite(doneStatements, vv.name)) return false;
@@ -1296,7 +1407,7 @@ export class HighLevelGrammarSimplify implements ISimplify {
             if (extras.some((e) => ref.findParent((parent) => parent.node === e.node))) continue;
             // break 形态下 DONE 整块丢弃,里面的引用(通常是被复制进来的续接
             // 代码又复用了同一个迭代器临时量)不再影响本循环。
-            if (!exitReturn && ref.findParent((parent) => parent.node === doneStmt.node)) continue;
+            if (!exitValue && ref.findParent((parent) => parent.node === doneStmt.node)) continue;
             // 循环之前的读取、以及同一个临时迭代器被后面的循环复用(done 分支里
             // 重新 `it = x[Symbol.iterator]()` 后内层循环再读 it)都不受删除初始化影响。
             if (this.hasNewerValueBefore(ref, value, iterName)) continue;
@@ -1322,11 +1433,11 @@ export class HighLevelGrammarSimplify implements ISimplify {
                 if (refParent && (isForOfStatementNode(refParent) || isForInStatementNode(refParent))
                     && refParent.left === ref.node) continue;
                 if (ref.findParent((parent) => parent.node === value.node)) continue;
-                if (exitReturnPath && ref.findParent((parent) => parent.node === exitReturnPath.node)) continue;
+                if (exitPath && ref.findParent((parent) => parent.node === exitPath.node)) continue;
                 // break 路径前缀会被搬进循环体,那里 vv 仍是当前元素。
                 if (exitPaths.some((prefix) => ref.findParent((parent) => parent.node === prefix.node))) continue;
                 // break 形态下 DONE 整块丢弃,里面的读取随块一起消失。
-                if (!exitReturn && ref.findParent((parent) => parent.node === doneStmt.node)) continue;
+                if (!exitValue && ref.findParent((parent) => parent.node === doneStmt.node)) continue;
                 // 循环之前的读取不受影响(外层循环还原后,内层循环的变量读取落在
                 // 它前面);循环之后的读取必须能看到后续赋值。
                 if (this.hasNewerValueBefore(ref, value, vv.name)) continue;
@@ -1390,7 +1501,7 @@ export class HighLevelGrammarSimplify implements ISimplify {
             const testExpr = (testAssign as TYPE.ExpressionStatement).expression as TYPE.AssignmentExpression;
             const testValue = testExpr.right as TYPE.Expression;
             // 出口路径(return E / break 前缀)不能在删掉物化赋值后还读 testName。
-            const exitConsumers: TYPE.Node[] = exitReturn ? [exitReturn] : (breakPath ?? []);
+            const exitConsumers: TYPE.Node[] = exitValue ? [exitValue] : (breakPath ?? []);
             const exitReadsTest = exitConsumers.some((node) => collectReadNames(node).has(testName));
             if (!collectReadNames(testValue).has(testName)
                 && !this.readsName(doneStatements, testName)
@@ -1403,8 +1514,9 @@ export class HighLevelGrammarSimplify implements ISimplify {
         // for-of 头部仍要读取的迭代器表达式(`acc = false; for (v of acc)`),
         // 那种情况下不删就会读错,直接放弃转换。
         if (!lastAssignsTest && mustDropTestInit) return false;
-        if (exitReturn) {
-            arr.push(TYPE.ifStatement(exitTest, returnStatementBuilder(exitReturn)));
+        if (exitValue) {
+            arr.push(TYPE.ifStatement(exitTest, exitPath!.isReturnStatement()
+                ? returnStatementBuilder(exitValue) : throwStatementBuilder(exitValue)));
         } else {
             // 源码形态:if (cond) { <break 路径前缀> break; }
             arr.push(TYPE.ifStatement(exitTest, blockStatementBuilder([...(breakPath ?? []), breakStatement()])));
@@ -1412,9 +1524,9 @@ export class HighLevelGrammarSimplify implements ISimplify {
         const forOfStatement = forOfStatementBuilder(vv, iterable as TYPE.Expression, blockStatementBuilder(arr));
         for (const extra of extras) extra.remove();
         for (const prefix of exitPaths) prefix.remove();
-        if (exitReturnPath) exitReturnPath.remove();
+        if (exitPath) exitPath.remove();
         value.replaceWith(forOfStatement);
-        if (exitReturn) {
+        if (exitValue) {
             // DONE 里可能有块级声明,包一层块避免与外部同名声明冲突。
             const hasDeclaration = doneStatements.some((stmt) =>
                 isVariableDeclarationNode(stmt) || stmt.type === "FunctionDeclaration" || stmt.type === "ClassDeclaration");
@@ -1718,14 +1830,30 @@ export class HighLevelGrammarSimplify implements ISimplify {
             },
         });
         if (this.foldDeadHubCopies(node)) changed = true;
+        if (this.restoreIteratorLoops(node)) changed = true;
+        // 同一语句列表里的连续 `if (disc === v) { return ...; }` 守卫链是
+        // ArkTS 对源码 switch 的 lowering(else-if 块先由 flattenElseAfterExit
+        // 展开成守卫子句),在流水线末尾按语句列表整体还原。
+        if (this.foldIfReturnChains(node)) changed = true;
+        this.removeUnusedTempDeclarations(node);
+        return changed;
+    }
+
+    /**
+     * 把迭代器 lowering 还原成 for-of:while(true)+break 形态与 do-while 形态
+     * (提前 return / break 两种出口)。只有到尾部(可选链/条件物化折叠完、close 块
+     * 归一化成 `if (it.return != undefined)`)之后才能识别,循环体的出口判断也要等
+     * 测试序列清理后才是 `testName = T`,因此也由 SimplifyExport 在哨兵守卫清理后
+     * 再调用一次 —— `hole` finally 残留会把 close 包成
+     * `if (false) {} else if (it.return != undefined) { ... }`,那时才露出标准形态。
+     */
+    public restoreIteratorLoops(node: Program): boolean {
+        let changed = false;
         traverse(file(node), {
             WhileStatement: (value) => {
                 if (this.checkAndTransformToForOfStatement(value)) changed = true;
             },
         });
-        // do-while 形态同样只有到尾部(可选链/条件物化折叠完、close 块归一化成
-        // `if (it.return != undefined)`)之后才能识别;循环体的出口判断也要等
-        // 测试序列清理后才是 `testName = T`。
         for (let round = 0; round < 8; round++) {
             let roundChanged = false;
             traverse(file(node), {
@@ -1738,10 +1866,6 @@ export class HighLevelGrammarSimplify implements ISimplify {
             });
             if (!roundChanged) break;
         }
-        // 同一语句列表里的连续 `if (disc === v) { return ...; }` 守卫链是
-        // ArkTS 对源码 switch 的 lowering(else-if 块先由 flattenElseAfterExit
-        // 展开成守卫子句),在流水线末尾按语句列表整体还原。
-        if (this.foldIfReturnChains(node)) changed = true;
         this.removeUnusedTempDeclarations(node);
         return changed;
     }

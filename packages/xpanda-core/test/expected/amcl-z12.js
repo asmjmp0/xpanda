@@ -321,7 +321,7 @@ d1360 = function (p0) {
   }
 };
 local_0_20 = function (p0) {
-  let v1 /*r1367*/, v2 /*c422*/, v4, v5, acc;
+  let v1 /*r1367*/, v4, v5, acc;
   let local_1_0, local_1_1, local_1_2, local_1_3, local_1_4, local_1_5;
   local_1_1 = p0.version === b422;
   if (local_1_1) {
@@ -342,15 +342,8 @@ local_0_20 = function (p0) {
         return "groups.capabilities";
       }
       v1 = new Set();
-      v2 = p0.requiredCapabilities[Symbol.iterator]();
-      while (true) {
-        v5 = v2.next();
-        if (v5.done) break;
-        v5 = v5.value;
+      for (v5 of p0.requiredCapabilities) {
         if (v5 !== v1357 && v5 !== c422 || v1.has(v5)) {
-          if (v2.return != undefined) {
-            v2.return();
-          }
           return "groups.capability";
         }
         acc = v1.add(v5);
@@ -523,15 +516,8 @@ local_0_20 = function (p0) {
       return "groups.capabilities";
     }
     v1 = new Set();
-    v2 = p0.requiredCapabilities[Symbol.iterator]();
-    while (true) {
-      v5 = v2.next();
-      if (v5.done) break;
-      v5 = v5.value;
+    for (v5 of p0.requiredCapabilities) {
       if (v5 !== v1357 && v5 !== c422 || v1.has(v5)) {
-        if (v2.return != undefined) {
-          v2.return();
-        }
         return "groups.capability";
       }
       acc = v1.add(v5);

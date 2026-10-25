@@ -326,15 +326,18 @@ function pick(p0) {
 }
 
 /**
- * 回归:do-while 迭代器循环位于语句列表末尾时,出口扫描不能越过末尾。
+ * 回归:do-while 迭代器循环位于语句列表末尾、循环体没有提前退出时,编译器不生成
+ * iterator close,循环之后只剩 test 为假时的出口 `throw E`。
  *
  *   it = p0[Symbol.iterator]();
  *   do { vv = it.next(); if (vv.done) return; ... } while (acc);
  *   throw E;                 // 循环之后没有 close/续接代码
  *
- * 循环后面没有迭代器 close 与续接代码,不能还原成 for...of;但 `getNextSibling()`
- * 在列表末尾返回的是 node 为 null 的 NodePath(对象非空),旧实现按对象判空会让
- * 出口扫描无限前进、exitPaths 无限增长,单类 simplify 直接 OOM
+ * → for (vv of p0) { ...; if (!T) throw E } return;
+ *
+ * 同时回归出口扫描不能越过语句列表末尾:`getNextSibling()` 在列表末尾返回的是
+ * node 为 null 的 NodePath(对象非空),旧实现按对象判空会让出口扫描无限前进、
+ * exitPaths 无限增长,单类 simplify 直接 OOM
  * (amcl1.0.6.abc 的 `L&entry/src/main/ets/r5/i8&;` 曾因此崩溃)。
  */
 function verifyDoWhileExitScanAtBlockEnd(): void {
@@ -362,15 +365,73 @@ function check(p0) {
 `);
     SimplifyExport.simplify(program);
     const code = NodeFactory.generate(program);
-    // 没有 close 的形态保持 do-while 迭代器循环,循环后的出口 throw 必须保留
-    if (!code.includes("do {") || !code.includes("it = p0[Symbol.iterator]();")) {
-        throw new Error(`simplify: 无 close 的迭代器循环被错误还原\n${code}`);
+    // 没有 close 的形态也要还原成 for...of:出口 throw 变成循环体内的 if (!T) throw
+    if (code.includes("do {") || code.includes("[Symbol.iterator]") || code.includes(".next()")) {
+        throw new Error(`simplify: 无 close 的迭代器循环未还原成 for...of\n${code}`);
     }
-    if (!/while \(acc\);/.test(code)) {
-        throw new Error(`simplify: 循环 test 的物化赋值被破坏\n${code}`);
+    if (!/for \(v1 of p0\) \{/.test(code)) {
+        throw new Error(`simplify: for...of 头部未还原\n${code}`);
     }
-    if (!/throw new Error\("no item"\);/.test(code)) {
-        throw new Error(`simplify: do-while 之后的出口语句被丢弃\n${code}`);
+    if (!/if \(!\/\^\[0-9a-f\]\{64\}\$\/\.test\(v1\)\) throw new Error\("no item"\);/.test(code)) {
+        throw new Error(`simplify: 循环后的出口语句未折成循环体内的 if (!T) throw\n${code}`);
+    }
+    if (!/return;/.test(code)) {
+        throw new Error(`simplify: 循环耗尽分支被丢弃\n${code}`);
+    }
+}
+
+/**
+ * 回归:迭代器临时量同时被复用为不相关值(`v2 = 65535`),且读取排在循环后面时,
+ * 只要循环出口紧接着 return/throw,该读取就不可能执行到,内层 for...of 仍应还原。
+ *
+ *   v2 = 65535;
+ *   do {
+ *     ...
+ *     if (done) {
+ *       v2 = p0.keys()[Symbol.iterator]();
+ *       while (true) { v6 = v2.next(); if (v6.done) break; ... }
+ *       return;                 // 循环出口直接 leave
+ *     }
+ *     if (compare(...) > v2) throw ...;   // 语句顺序上在循环之后,实际执行不到
+ *   } while (...);
+ *
+ * 旧 hasNewerValueBefore 只按语句顺序判断,认为读取 v2 需要更新的赋值,放弃还原。
+ */
+function verifyReusedIteratorTempForOf(): void {
+    const program = NodeFactory.parse(`
+function check(p0) {
+  let v2, v4, v6, v7;
+  v2 = 65535;
+  v4 = p0[Symbol.iterator]();
+  do {
+    v7 = v4.next();
+    if (v7.done) {
+      v2 = p0.keys()[Symbol.iterator]();
+      while (true) {
+        v6 = v2.next();
+        if (v6.done) break;
+        use(v6.value);
+      }
+      return;
+    }
+    if (compare(v7.value) > v2) {
+      throw new Error("too long");
+    }
+  } while (again(v7.value));
+  throw new Error("exhausted");
+}
+`);
+    SimplifyExport.simplify(program);
+    const code = NodeFactory.generate(program);
+    if (!code.includes("for (v6 of p0.keys()) {")) {
+        throw new Error(`simplify: 复用的迭代器临时量阻断 for...of 还原\n${code}`);
+    }
+    if (code.includes("while (true)") || code.includes("p0.keys()[Symbol.iterator]")) {
+        throw new Error(`simplify: 迭代器 lowering 残留\n${code}`);
+    }
+    // 另一个 live range 的读取必须保留原值(65535),不能改成迭代器
+    if (!code.includes("if (compare(v7.value) > v2) {") || !code.includes("v2 = 65535;")) {
+        throw new Error(`simplify: 复用临时量的另一处读取被破坏\n${code}`);
     }
 }
 
@@ -982,7 +1043,10 @@ function f(local_2_0, local_3_9) {
         throw new Error(`for...of 还原: 迭代器循环残留\n${positiveCode}`);
     }
 
-    const negative = NodeFactory.parse(`
+    // 提前 return 分支里内联的 iterator close 也是 lowering 残留:
+    //   if (v3 === undefined) { if (v0.return != undefined) v0.return(); return; }
+    // 源码的 for...of 在 return 退出时由运行时自己 close,删掉内联 close 后照常还原。
+    const inlinedClose = NodeFactory.parse(`
 function g(p0) {
   let v0, v3;
   v0 = p0[Symbol.iterator]();
@@ -999,13 +1063,16 @@ function g(p0) {
   }
 }
 `);
-    SimplifyExport.simplify(negative);
-    const negativeCode = NodeFactory.generate(negative);
-    if (negativeCode.includes("for (v3 of p0)")) {
-        throw new Error(`for...of 还原: 循环体读取 it.return 时不应转换\n${negativeCode}`);
+    SimplifyExport.simplify(inlinedClose);
+    const inlinedCloseCode = NodeFactory.generate(inlinedClose);
+    if (!inlinedCloseCode.includes("for (v3 of p0)")) {
+        throw new Error(`for...of 还原: 内联 close 分支阻止了还原\n${inlinedCloseCode}`);
     }
-    if (!negativeCode.includes("while (true)") || !negativeCode.includes("v0.return")) {
-        throw new Error(`for...of 还原: 负例输出被破坏\n${negativeCode}`);
+    if (inlinedCloseCode.includes("while (true)") || inlinedCloseCode.includes("v0.return")) {
+        throw new Error(`for...of 还原: 内联 close 残留\n${inlinedCloseCode}`);
+    }
+    if (!/if \(v3 === undefined\) \{\s*return;/.test(inlinedCloseCode)) {
+        throw new Error(`for...of 还原: 提前 return 分支被破坏\n${inlinedCloseCode}`);
     }
 
     // 提前 return 的 for...of 的另一形态是 do-while:done 分支是循环耗尽后的代码,
@@ -2608,11 +2675,13 @@ function verifyYourpipeChannelInfoService(): void {
  * 回归:amcl1.0.6.abc 的两个结构化/简化内存问题。
  *
  * 1) `L&entry/src/main/ets/r5/i8&;` 的 local_0_5 是 do-while lowering 的
- *    for...of:迭代器循环后面没有 close/续接代码,只剩出口 `throw`。
+ *    for...of:循环体没有提前退出,迭代器循环后面没有 close/续接代码,只剩
+ *    test 为假时的出口 `throw`。
  *    `checkAndTransformDoWhileToForOfStatement` 的出口扫描按对象判空
  *    (`while (cursor && ...)`),而 babel 的 getNextSibling() 在列表末尾返回
  *    node 为 null 的 NodePath(对象非空),扫描永远前进不了、exitPaths 无限
- *    增长,单类 simplify 直接 OOM。修复后保持 do-while 形态且出口 throw 不丢。
+ *    增长,单类 simplify 直接 OOM。修复后仍要还原成 for...of(出口 throw 折成
+ *    循环体内的 `if (!T) throw`)。
  *
  * 2) `L&gamecontrol/src/main/ets/z12&1.0.0;` 的 #*#w1359 / #*#t1359 在区域归约
  *    里把共享后继按引用指数展开(39.3 万 / 7.5 万条语句,283MB / 63MB AST,
@@ -2634,16 +2703,24 @@ function verifyAmclStructureMemory(): void {
     if (forOfCode.includes("created by SimpleAnalysis") || forOfCode.includes("decompiler_")) {
         throw new Error(`amcl i8: 反编译降级或残留伪语句\n${forOfCode.slice(0, 500)}`);
     }
-    // 没有 close 的迭代器循环保持 do-while(local_0_5),不能错误还原成 for...of
+    // 没有 close 的迭代器循环也要还原成 for...of(local_0_5),出口 throw 折进循环体
     for (const fragment of [
-        "v4 = p0[Symbol.iterator]();",
-        "v7 = v4.next();",
-        "if (v7.done) {",
-        "} while (acc);",
-        'throw new Error("归档快照缺少可信SHA256");',
+        "for (v7 of p0) {",
+        'if (!new RegExp("^[0-9a-f]{64}$").test(v7.sha256)) throw new Error("归档快照缺少可信SHA256");',
+        "for (v6 of v1.keys()) {",
     ]) {
         if (!forOfCode.includes(fragment)) {
             throw new Error(`amcl i8: 缺少 ${JSON.stringify(fragment)}\n${forOfCode}`);
+        }
+    }
+    for (const leftover of [
+        "p0[Symbol.iterator]()",
+        "v4.next()",
+        "if (v7.done) {",
+        "} while (acc);",
+    ]) {
+        if (forOfCode.includes(leftover)) {
+            throw new Error(`amcl i8: 迭代器 lowering 残留 ${JSON.stringify(leftover)}\n${forOfCode}`);
         }
     }
 
@@ -2666,6 +2743,25 @@ function verifyAmclStructureMemory(): void {
         const line = expandedCode.split("\n").find((l) => l.includes(name));
         if (!line || !line.includes("created by SimpleAnalysis")) {
             throw new Error(`amcl z12: ${name} 未按展开规模上限降级\n${expandedCode}`);
+        }
+    }
+    // while(true)+break 的 for-of lowering:`hole` 哨兵守卫清理后才露出标准 close 形态,
+    // 由 SimplifyExport 末尾补跑的 restoreIteratorLoops 还原,提前 return 分支里内联的
+    // iterator close(`if (v2.return != undefined) v2.return();`)一并删除。
+    for (const fragment of [
+        "for (v5 of p0.requiredCapabilities) {",
+        'return "groups.capability";',
+    ]) {
+        if (!expandedCode.includes(fragment)) {
+            throw new Error(`amcl z12: 缺少 ${JSON.stringify(fragment)}\n${expandedCode}`);
+        }
+    }
+    for (const leftover of [
+        "v2 = p0.requiredCapabilities[Symbol.iterator]();",
+        "if (v2.return != undefined)",
+    ]) {
+        if (expandedCode.includes(leftover)) {
+            throw new Error(`amcl z12: 迭代器 lowering 残留 ${JSON.stringify(leftover)}\n${expandedCode}`);
         }
     }
     if (expandedCode.length > 500_000) {
@@ -3171,6 +3267,10 @@ async function main(): Promise<void> {
 
     console.log("[test] simplify do-while exit scan at block end");
     verifyDoWhileExitScanAtBlockEnd();
+    console.log("    ok");
+
+    console.log("[test] simplify reused iterator temp for...of");
+    verifyReusedIteratorTempForOf();
     console.log("    ok");
 
     console.log("[test] simplify else-after-exit flatten");

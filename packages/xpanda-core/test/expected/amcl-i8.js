@@ -301,34 +301,13 @@ local_0_11 = function (p0, p1) {
   return false;
 };
 local_0_5 = function (p0) {
-  let v1, v2 /*i763*/, v4, v6, v7, v8, v9 /*k763*/, v10 /*h13*/, acc;
+  let v1, v2 /*i763*/, v6, v7, v8, v9 /*k763*/, v10 /*h13*/;
   if (p0.length === 0 || p0.length > i763) {
     throw new Error("归档条目数必须介于1与200000之间");
   }
   v1 = new Map();
   v2 = 65535;
-  v4 = p0[Symbol.iterator]();
-  acc = false;
-  do {
-    v7 = v4.next();
-    if (v7.done) {
-      v2 = v1.keys()[Symbol.iterator]();
-      while (true) {
-        v6 = v2.next();
-        if (v6.done) break;
-        v6 = v6.value.split("/");
-        v8 = "";
-        for (v9 = 0; v9 < v6.length - 1; v9 += 1) {
-          v10 = v9 === 0 ? "" : "/";
-          v8 += v10 + v6[v9];
-          if (v1.get(v8) === false) {
-            throw new Error("归档中的文件与目录前缀冲突");
-          }
-        }
-      }
-      return;
-    }
-    v7 = v7.value;
+  for (v7 of p0) {
     v9 = k763(v7.archivePath, v7.directory);
     v10 = (v7.directory ? v9.substring(0, v9.length - 1) : v9).toLowerCase();
     if (v1.has(v10)) {
@@ -342,13 +321,23 @@ local_0_5 = function (p0) {
     if (v7.directory && v7.size !== 0) {
       throw new Error("空目录不能携带文件字节");
     }
-    acc = !!v7.directory;
-    if (acc) {
+    if (v7.directory) {
       continue;
     }
-    acc = !!new RegExp("^[0-9a-f]{64}$").test(v7.sha256);
-  } while (acc);
-  throw new Error("归档快照缺少可信SHA256");
+    if (!new RegExp("^[0-9a-f]{64}$").test(v7.sha256)) throw new Error("归档快照缺少可信SHA256");
+  }
+  for (v6 of v1.keys()) {
+    v6 = v6.split("/");
+    v8 = "";
+    for (v9 = 0; v9 < v6.length - 1; v9 += 1) {
+      v10 = v9 === 0 ? "" : "/";
+      v8 += v10 + v6[v9];
+      if (v1.get(v8) === false) {
+        throw new Error("归档中的文件与目录前缀冲突");
+      }
+    }
+  }
+  return;
 };
 local_0_7 = async function (p0, p1, p2) {
   let v0, v3 /*g50*/, v4 /*k763*/;

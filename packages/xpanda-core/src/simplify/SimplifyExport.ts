@@ -119,6 +119,10 @@ export class SimplifyExport {
         SyntaxRewriteSimplify.removeUnreachableStatements(node);
         // 循环归约残留的、落在循环外的 continue/break
         SyntaxRewriteSimplify.removeOrphanJumps(node);
+        // `hole` 哨兵守卫清理后才露出标准 close 形态(`if (false) {} else if (it.return
+        // != undefined) ...`),while(true) 形态的 for-of 到这里才能还原(含它内联的
+        // close 删除);随后失去使用者的临时声明一起清掉。
+        new HighLevelGrammarSimplify().restoreIteratorLoops(node);
         // newLexEnv 预留但从未读写的块级槽,以及随之变空的块
         TempVariableSimplify.removeUnusedLexicalDeclarations(node);
         // 所有结构改写(尾块合并/守卫三目/常量折叠)结束后,测试序列里的取反物化
