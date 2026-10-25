@@ -38,7 +38,9 @@ import traverse from "@babel/traverse";
  *  18. 校验 yourpipe0.7.0.abc 的 SabrOfflineDownloader 里 findFollowLatch 兜底的
  *      `label + xpanda_goto` 还原成 while (true) 循环,停顿计数器不再被常量传播;
  *  19. 校验 yourpipe0.7.0.abc 的 YoutubePageAttestationBootstrap 里 switch case 体
- *      的不可达 break 被清掉(case 体裁剪同时服务于还原出来的循环)。
+ *      的不可达 break 被清掉(case 体裁剪同时服务于还原出来的循环);
+ *  20. 校验 amcl1.0.6.abc 的 i8 类 do-while 出口扫描不越界(旧实现无限增长 OOM)
+ *      与 z12 类共享后继指数展开的结构上限降级。
  */
 
 interface Sample {
@@ -320,6 +322,55 @@ function pick(p0) {
     }
     if (!/if \(found\) \{\s*return \[found, v3\];/.test(code)) {
         throw new Error(`simplify: close 之后的续接代码被破坏\n${code}`);
+    }
+}
+
+/**
+ * 回归:do-while 迭代器循环位于语句列表末尾时,出口扫描不能越过末尾。
+ *
+ *   it = p0[Symbol.iterator]();
+ *   do { vv = it.next(); if (vv.done) return; ... } while (acc);
+ *   throw E;                 // 循环之后没有 close/续接代码
+ *
+ * 循环后面没有迭代器 close 与续接代码,不能还原成 for...of;但 `getNextSibling()`
+ * 在列表末尾返回的是 node 为 null 的 NodePath(对象非空),旧实现按对象判空会让
+ * 出口扫描无限前进、exitPaths 无限增长,单类 simplify 直接 OOM
+ * (amcl1.0.6.abc 的 `L&entry/src/main/ets/r5/i8&;` 曾因此崩溃)。
+ */
+function verifyDoWhileExitScanAtBlockEnd(): void {
+    const program = NodeFactory.parse(`
+function check(p0) {
+  let v1, v2, v3, acc;
+  let it;
+  it = p0[Symbol.iterator]();
+  acc = false;
+  do {
+    v1 = it.next();
+    if (v1.done) {
+      return;
+    }
+    v2 = v1.value;
+    v3 = directory(v2);
+    acc = !v3;
+    if (acc) {
+      continue;
+    }
+    acc = /^[0-9a-f]{64}$/.test(v2);
+  } while (!!acc);
+  throw new Error("no item");
+}
+`);
+    SimplifyExport.simplify(program);
+    const code = NodeFactory.generate(program);
+    // 没有 close 的形态保持 do-while 迭代器循环,循环后的出口 throw 必须保留
+    if (!code.includes("do {") || !code.includes("it = p0[Symbol.iterator]();")) {
+        throw new Error(`simplify: 无 close 的迭代器循环被错误还原\n${code}`);
+    }
+    if (!/while \(acc\);/.test(code)) {
+        throw new Error(`simplify: 循环 test 的物化赋值被破坏\n${code}`);
+    }
+    if (!/throw new Error\("no item"\);/.test(code)) {
+        throw new Error(`simplify: do-while 之后的出口语句被丢弃\n${code}`);
     }
 }
 
@@ -2554,6 +2605,80 @@ function verifyYourpipeChannelInfoService(): void {
 }
 
 /**
+ * 回归:amcl1.0.6.abc 的两个结构化/简化内存问题。
+ *
+ * 1) `L&entry/src/main/ets/r5/i8&;` 的 local_0_5 是 do-while lowering 的
+ *    for...of:迭代器循环后面没有 close/续接代码,只剩出口 `throw`。
+ *    `checkAndTransformDoWhileToForOfStatement` 的出口扫描按对象判空
+ *    (`while (cursor && ...)`),而 babel 的 getNextSibling() 在列表末尾返回
+ *    node 为 null 的 NodePath(对象非空),扫描永远前进不了、exitPaths 无限
+ *    增长,单类 simplify 直接 OOM。修复后保持 do-while 形态且出口 throw 不丢。
+ *
+ * 2) `L&gamecontrol/src/main/ets/z12&1.0.0;` 的 #*#w1359 / #*#t1359 在区域归约
+ *    里把共享后继按引用指数展开(39.3 万 / 7.5 万条语句,283MB / 63MB AST,
+ *    simplify 需要 10GB+ 内存且跑几分钟)。超过 MAX_STRUCTURED_STATEMENTS 的
+ *    方法按设计降级到 SimpleAnalysis,整个类必须快速产出且可被 Babel 解析。
+ *
+ * 两个类的完整输出分别锁定在 expected/amcl-i8.js / expected/amcl-z12.js。
+ */
+function verifyAmclStructureMemory(): void {
+    const abcPath = path.join(__dirname, "resources", "amcl1.0.6.abc");
+    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
+    const decompiler = new PandaDecompiler();
+
+    const forOfClass = pandaFile.getAllClasses().find((c) =>
+        c.name.content === "L&entry/src/main/ets/r5/i8&;");
+    if (!forOfClass) throw new Error("amcl: 未找到 L&entry/src/main/ets/r5/i8&;");
+    const forOfCode = decompiler.decompileClass(forOfClass);
+    NodeFactory.parse(forOfCode);
+    if (forOfCode.includes("created by SimpleAnalysis") || forOfCode.includes("decompiler_")) {
+        throw new Error(`amcl i8: 反编译降级或残留伪语句\n${forOfCode.slice(0, 500)}`);
+    }
+    // 没有 close 的迭代器循环保持 do-while(local_0_5),不能错误还原成 for...of
+    for (const fragment of [
+        "v4 = p0[Symbol.iterator]();",
+        "v7 = v4.next();",
+        "if (v7.done) {",
+        "} while (acc);",
+        'throw new Error("归档快照缺少可信SHA256");',
+    ]) {
+        if (!forOfCode.includes(fragment)) {
+            throw new Error(`amcl i8: 缺少 ${JSON.stringify(fragment)}\n${forOfCode}`);
+        }
+    }
+
+    const forOfExpected = fs.readFileSync(path.join(__dirname, "expected", "amcl-i8.js"), "utf-8");
+    if (forOfCode !== forOfExpected) {
+        throw new Error(`amcl i8: 输出与快照不一致\n${firstDifference(forOfExpected, forOfCode)}`);
+    }
+
+    const expandedClass = pandaFile.getAllClasses().find((c) =>
+        c.name.content === "L&gamecontrol/src/main/ets/z12&1.0.0;");
+    if (!expandedClass) throw new Error("amcl: 未找到 L&gamecontrol/src/main/ets/z12&1.0.0;");
+    const expandedCode = decompiler.decompileClass(expandedClass);
+    NodeFactory.parse(expandedCode);
+    // 两个指数展开的方法降级;标记挂在函数表达式上,其他方法仍保持结构化输出
+    const degraded = expandedCode.match(/created by SimpleAnalysis/g) ?? [];
+    if (degraded.length !== 2) {
+        throw new Error(`amcl z12: 期望 2 个方法降级,实际 ${degraded.length}\n${expandedCode}`);
+    }
+    for (const name of ["w1359 = function", "local_0_18 = function"]) {
+        const line = expandedCode.split("\n").find((l) => l.includes(name));
+        if (!line || !line.includes("created by SimpleAnalysis")) {
+            throw new Error(`amcl z12: ${name} 未按展开规模上限降级\n${expandedCode}`);
+        }
+    }
+    if (expandedCode.length > 500_000) {
+        throw new Error(`amcl z12: 输出仍异常膨胀 (${expandedCode.length} chars)`);
+    }
+
+    const expandedExpected = fs.readFileSync(path.join(__dirname, "expected", "amcl-z12.js"), "utf-8");
+    if (expandedCode !== expandedExpected) {
+        throw new Error(`amcl z12: 输出与快照不一致\n${firstDifference(expandedExpected, expandedCode)}`);
+    }
+}
+
+/**
  * 回归:if 条件尾部多条赋值序列还原成嵌套 if。
  * `if (A && B && (x = 1, y = 2, C))` 中序列只在 A/B 为真时求值,可安全搬进分支体;
  * 有 else 时外层条件为假也必须执行 else,因此不能用同一变换(否则 else 丢失)。
@@ -3044,6 +3169,10 @@ async function main(): Promise<void> {
     verifyDoWhileBreakForOf();
     console.log("    ok");
 
+    console.log("[test] simplify do-while exit scan at block end");
+    verifyDoWhileExitScanAtBlockEnd();
+    console.log("    ok");
+
     console.log("[test] simplify else-after-exit flatten");
     verifyElseAfterExitFlatten();
     console.log("    ok");
@@ -3194,6 +3323,10 @@ async function main(): Promise<void> {
 
     console.log("[test] yourpipe ChannelInfoService shared tail merge (yourpipe0.7.0.abc)");
     verifyYourpipeChannelInfoService();
+    console.log("    ok");
+
+    console.log("[test] amcl structure/simplify memory (amcl1.0.6.abc)");
+    verifyAmclStructureMemory();
     console.log("    ok");
 
     console.log("[test] simplify sequenced test prefix fold");

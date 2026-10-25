@@ -1213,14 +1213,16 @@ export class HighLevelGrammarSimplify implements ISimplify {
         //      循环耗尽与 break 共用的续接代码。DONE 是同一块的副本:break
         //      还原后直接落到续接代码,耗尽路径也走续接代码,因此 DONE 丢弃。
         //      (典型: for (const x of xs) { ...; if (cond) { A = x; break; } })
+        // getNextSibling() 在列表末尾返回 node 为 null 的 NodePath(对象本身非空),
+        // 必须按 node 判空,否则循环永远前进不了、exitPaths 无限增长(直接 OOM)。
         let cursor = value.getNextSibling();
         const exitPaths: NodePath<TYPE.Statement>[] = [];
-        while (cursor && !collectIdentifierNames(cursor.node).has(iterName)) {
+        while (cursor.node && !collectIdentifierNames(cursor.node).has(iterName)) {
             exitPaths.push(cursor as NodePath<TYPE.Statement>);
             cursor = cursor.getNextSibling();
         }
         const extras: NodePath<TYPE.Statement>[] = [];
-        while (cursor && cursor.isIfStatement() && collectIdentifierNames(cursor.node).has(iterName)) {
+        while (cursor.node && cursor.isIfStatement() && collectIdentifierNames(cursor.node).has(iterName)) {
             extras.push(cursor as NodePath<TYPE.Statement>);
             cursor = cursor.getNextSibling();
         }
@@ -1232,7 +1234,7 @@ export class HighLevelGrammarSimplify implements ISimplify {
             // break 路径:close 之后必须还有共享续接代码,前缀语句必须是直线代码
             // (搬进新循环的 if 分支后,声明会换作用域,break/continue/label 会
             // 绑定到新循环)。
-            if (!cursor) return false;
+            if (!cursor.node) return false;
             for (const prefix of exitPaths) {
                 if (!this.isBreakPathStatement(prefix.node)) return false;
             }

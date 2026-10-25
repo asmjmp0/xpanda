@@ -9,15 +9,28 @@ import {
     AndLogicalExpressionStatement,
     BreakStatement,
     ContinueStatement,
+    DoWhileStatement,
     GotoStatement,
     IfPandaStatement,
     LabelStatement,
+    LogicalExpressionStatement,
     OrLogicalExpressionStatement,
+    TryCatchPandaStatement,
     WhileStatement,
-    DoWhileStatement,
 } from "./statements";
 import type { IPandaDecompileAble } from "./statements";
 import type { PandaDecompilerMethodHandler } from "./MethodHandler";
+
+/**
+ * 结构化输出展开规模上限(语句数)。
+ *
+ * 区域归约把共享 Tail 保留为 DAG 上的同一个 Region,decompile 时每条引用都会
+ * 重新展开一遍,声明层数一多就是指数级放大:区域图只有 164 个节点、200 个
+ * 基本块的方法也可能产出 283MB AST(amcl1.0.6.abc 的 `L&gamecontrol/.../z12`,
+ * simplify 需要 10GB+ 内存且几分钟不结束)。超过上限时按设计降级到
+ * SimpleAnalysis 线性输出,避免单类拖垮整个文件。
+ */
+const MAX_STRUCTURED_STATEMENTS = 30_000;
 
 /**
  * 基于 Region 归约的结构化分析(移植自 Java StructureAnalysis,701 行核心算法)
@@ -168,6 +181,65 @@ export class StructureAnalysis {
         }
     }
 
+    /**
+     * 估算一棵 Region 结构按 decompile() 展开后的语句数量(超过 limit 时提前返回
+     * limit + 1)。语句对象与 Region 都按引用共享,所以按出现次数累加、对同一
+     * 节点做记忆化:区域图节点数很小,但展开后的树可以是指数级的。
+     * `test` 区域只在生成条件表达式时读取,不参与结构展开;`Block` 等字段不是
+     * IPandaDecompileAble,自然被忽略。
+     */
+    private estimateStructuredStatements(root: Region, limit: number): number {
+        const memo = new Map<object, number>();
+        const statementSize = (statement: any): number => {
+            if (!statement) return 0;
+            if (statement instanceof Region) return regionSize(statement);
+            const cached = memo.get(statement);
+            if (cached !== undefined) return cached;
+            // 先占位,防止异常的自引用结构把估算拖进无限递归
+            memo.set(statement, 0);
+            let total = 1;
+            if (statement instanceof TryCatchPandaStatement) {
+                total += statementSize((statement as any).tryBody) + statementSize((statement as any).catchBody);
+            }
+            if (statement instanceof IfPandaStatement) {
+                total += statementSize((statement as any).consequent) + statementSize((statement as any).alternate);
+                total += statementSize((statement as any).tryCatchPandaStatement);
+            } else if (statement instanceof WhileStatement) {
+                total += listSize((statement as any).headStms) + listSize((statement as any).bodyStms);
+            } else if (statement instanceof DoWhileStatement) {
+                total += listSize((statement as any).bodyStms);
+            } else if (statement instanceof LogicalExpressionStatement) {
+                total += statementSize((statement as any).first) + statementSize((statement as any).second);
+            }
+            total = Math.min(total, limit + 1);
+            memo.set(statement, total);
+            return total;
+        };
+        const listSize = (statements: IPandaDecompileAble[] | null | undefined): number => {
+            if (!statements) return 0;
+            let total = 0;
+            for (const statement of statements) {
+                total += statementSize(statement);
+                if (total > limit) break;
+            }
+            return total;
+        };
+        const regionSize = (region: Region): number => {
+            const cached = memo.get(region);
+            if (cached !== undefined) return cached;
+            memo.set(region, 0);
+            let total = 0;
+            for (const statement of region.getStatements()) {
+                total += statementSize(statement);
+                if (total > limit) break;
+            }
+            total = Math.min(total, limit + 1);
+            memo.set(region, total);
+            return total;
+        };
+        return regionSize(root);
+    }
+
     analysis(methodHandler: PandaDecompilerMethodHandler, pandaLexical: PandaLexical, astNode: any): void {
         let count = this.pandaIRCFG.pandaIRBasicBlocks.length;
         if (count > 500) {
@@ -210,6 +282,11 @@ export class StructureAnalysis {
                 }
             }
             this.doms = new DominatorGraph(this.regionGraph, this.entryRegion);
+        }
+        const structuredStatements = this.estimateStructuredStatements(this.regionGraph.nodes()[0], MAX_STRUCTURED_STATEMENTS);
+        if (structuredStatements > MAX_STRUCTURED_STATEMENTS) {
+            throw new PandaDecompileException(
+                this.pandaIRCFG.getPandaMethod().name.content + " structured output too large");
         }
         this.regionGraph.nodes()[0].decompile(methodHandler, pandaLexical, astNode);
     }
