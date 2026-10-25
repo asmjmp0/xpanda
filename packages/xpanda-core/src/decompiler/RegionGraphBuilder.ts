@@ -1,5 +1,6 @@
 import type { PandaIRBasicBlock } from "../disasm/PandaIRBasicBlock";
 import type { PandaIRCFG } from "../disasm/PandaIRCFG";
+import { PandaDecompileException } from "../PandaParseException";
 import { ValueGraph } from "./ValueGraph";
 import { Region, TryCatchHelperRegion } from "./Region";
 
@@ -156,6 +157,25 @@ export class RegionGraphBuilder {
             this.regionGraph.putEdgeValue(tryCatchRegion, tryEntryRegion, false);
             this.regionGraph.putEdgeValue(tryCatchRegion, handleEntryRegion, true);
         }
+
+        // 只经由被跳过的异常处理器才能到达的块在正常控制流里是不可达的:
+        // ArkTS 13 的 finally handler 带 codeSize === 0(RegionGraphBuilder 跳过),
+        // 其下游清理代码没有来自区域图的前驱。上面的 inDegree 死代码删除删不掉它们
+        // ——若这段代码内部带环(例如 finally 里的 for-of 关闭循环),环上的节点
+        // inDegree > 0,于是作为孤岛留在图里;而 analysis 只从 entryRegion 出发归约,
+        // 永远遍历不到孤岛,图就再也收不成一个节点,最后抛 "can not reduce the graph"
+        // 降级到 SimpleAnalysis(amcl1.0.6.abc 的 commons/h1/w1 w91)。
+        // 归约本身只可能产出从 entryRegion 可达的语句,所以按可达性再清理一遍。
+        const entryRegion = this.btor.get(this.entryBlock)!;
+        const reachable = new Set(this.regionGraph.depthFirstPostOrder(entryRegion));
+        const unreachableRegions = this.regionGraph.nodes().filter((region) => !reachable.has(region));
+        // 不可达集合里出现异常 landing pad 说明这里是真的 catch 代码(只是 helper 也
+        // 不在 entry 可达集里),删掉会丢失分支语义;保持旧行为降级 SimpleAnalysis 更安全。
+        if (unreachableRegions.some((region) => region.isExceptionLandingPad())) {
+            throw new PandaDecompileException(
+                this.pandaIRCFG.getPandaMethod().name.content + " unreachable exception handler regions");
+        }
+        for (const region of unreachableRegions) this.regionGraph.removeNode(region);
 
         return { regionGraph: this.regionGraph, entryRegion: this.btor.get(this.entryBlock)! };
     }

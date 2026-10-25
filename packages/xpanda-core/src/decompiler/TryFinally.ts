@@ -5,8 +5,12 @@ import type { PandaIRBasicBlock } from "../disasm/PandaIRBasicBlock";
 /**
  * ArkTS 13(字节码 13.0.1.0)的 try/finally 还原。
  *
- * 该版本编译器给 catch 块写的 codeSize 恒为 0,RegionGraphBuilder 会跳过这些
- * try 块,于是 finally 的异常分支不在区域图里,线性输出退化成:
+ * 一些 es2panda 构建把 catch 块的 codeSize 全部写成 0(amcl1.0.6.abc 7422/7422、
+ * zhihupp0.59.hap 1359/1359,而 yourpipe0.7.0.abc 是 1845/1846 非 0,abc 版本都是
+ * 13.0.1.0,所以这是 SDK/编译器差异而非格式变化)。codeSize 只是 handler 代码范围的
+ * 元数据,异常派发只用 handler_pc,所以写 0 不影响执行;但 RegionGraphBuilder 无法
+ * 用它界定 handler,会跳过这些 try 块,于是 finally 的异常分支不在区域图里,
+ * 线性输出退化成:
  *
  *   <body>
  *   X = hole;                 // try 结束

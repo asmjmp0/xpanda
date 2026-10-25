@@ -40,7 +40,9 @@ import traverse from "@babel/traverse";
  *  19. 校验 yourpipe0.7.0.abc 的 YoutubePageAttestationBootstrap 里 switch case 体
  *      的不可达 break 被清掉(case 体裁剪同时服务于还原出来的循环);
  *  20. 校验 amcl1.0.6.abc 的 i8 类 do-while 出口扫描不越界(旧实现无限增长 OOM)
- *      与 z12 类的共享后继指数展开在结构分析里收敛成线性结构。
+ *      与 z12 类的共享后继指数展开在结构分析里收敛成线性结构;
+ *  21. 校验 amcl1.0.6.abc 的 commons/h1/w1 类不再因 finally handler 下游的带环孤岛
+ *      整方法降级 SimpleAnalysis。
  */
 
 interface Sample {
@@ -2778,6 +2780,56 @@ function verifyAmclStructureMemory(): void {
 }
 
 /**
+ * 回归:amcl1.0.6.abc 的 `L&commons/src/main/ets/h1/w1&1.0.0;` 里 #*#w91 曾整方法降级
+ * SimpleAnalysis。
+ *
+ * w91 覆盖整个函数体的大 try 的 finally handler 在 ArkTS 13 里带 codeSize === 0,
+ * RegionGraphBuilder 按设计跳过它;但 handler 下游的清理代码里有一个 for-of 关闭循环
+ * (`for (const f of openFiles) g50.closeSync(f)`),它只能经由这个被跳过的 handler
+ * 到达,在区域图里形成带环的孤岛(inDegree > 0,躲过上一步的 inDegree 死代码删除);
+ * analysis 只从 entryRegion 出发归约,永远遍历不到孤岛,3000 轮后抛
+ * "can not reduce the graph" 降级。
+ *
+ * 修复:helper 区域接好后按 entryRegion 可达性再清一遍死代码;不可达集合里出现真正的
+ * 异常 landing pad 时仍然降级(删掉会丢 catch 语义)。同一方法还暴露出 popLexEnv 落在
+ * 条件 test 的 SequenceExpression 里时按块切分会读 node.body 抛 TypeError。
+ *
+ * 整个类的输出锁定在 expected/amcl-commons-w1.js。
+ */
+function verifyAmclUnreachableHandlerIsland(): void {
+    const abcPath = path.join(__dirname, "resources", "amcl1.0.6.abc");
+    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
+    pandaFile.parseAssembly();
+    const decompiler = new PandaDecompiler();
+    const pandaClass = pandaFile.getAllClasses().find((c) =>
+        c.name.content === "L&commons/src/main/ets/h1/w1&1.0.0;");
+    if (!pandaClass) throw new Error("amcl: 未找到 L&commons/src/main/ets/h1/w1&1.0.0;");
+    const code = decompiler.decompileClass(pandaClass);
+    NodeFactory.parse(code);
+    if (code.includes("created by SimpleAnalysis") || code.includes("decompiler_")) {
+        throw new Error(`amcl commons/w1: 仍在降级或残留伪语句\n${code.slice(0, 800)}`);
+    }
+    for (const fragment of [
+        // 最外层的文件校验与 for-of 主循环(后面是正常的 for 循环,不是线性输出)
+        "if (b92(v22, v3).length === new Set(v3).size) {",
+        "if (v6.length === 0) {",
+        // 既有 try/finally 还原能力不能被这次结构分析改动破坏
+        "        } finally {\n          await g50.close(v34);\n        }",
+        // 正常路径上的 openFiles 关闭循环(结构分析里被剪掉的是异常路径的同一段副本)
+        "g50.closeSync(v23);",
+        "local_0_2(v5, m92, v4);",
+    ]) {
+        if (!code.includes(fragment)) {
+            throw new Error(`amcl commons/w1: 缺少 ${JSON.stringify(fragment)}\n${code}`);
+        }
+    }
+    const expected = fs.readFileSync(path.join(__dirname, "expected", "amcl-commons-w1.js"), "utf-8");
+    if (code !== expected) {
+        throw new Error(`amcl commons/w1: 输出与快照不一致\n${firstDifference(expected, code)}`);
+    }
+}
+
+/**
  * 回归:if 条件尾部多条赋值序列还原成嵌套 if。
  * `if (A && B && (x = 1, y = 2, C))` 中序列只在 A/B 为真时求值,可安全搬进分支体;
  * 有 else 时外层条件为假也必须执行 else,因此不能用同一变换(否则 else 丢失)。
@@ -3430,6 +3482,10 @@ async function main(): Promise<void> {
 
     console.log("[test] amcl structure/simplify memory (amcl1.0.6.abc)");
     verifyAmclStructureMemory();
+    console.log("    ok");
+
+    console.log("[test] amcl unreachable handler island (amcl1.0.6.abc)");
+    verifyAmclUnreachableHandlerIsland();
     console.log("    ok");
 
     console.log("[test] simplify sequenced test prefix fold");

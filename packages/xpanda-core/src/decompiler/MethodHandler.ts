@@ -675,7 +675,13 @@ const HANDLES: Record<string, Handle> = {
         return false;
     },
     popLexEnv: (_ins, _b, mh, _l, node) => {
-        mh.getCodeGenerator().getNodeUtils().covert2SingleBlock(node);
+        // poplexenv 只负责关闭词法作用域(把块里后续语句收进嵌套块)。
+        // 结构化归约也可能把它放进条件 test 的 SequenceExpression,那里没有语句块
+        // 可切;环境名本身按实例唯一,跳过即可,否则 node.body 未定义会抛
+        // TypeError 让整个方法降级 SimpleAnalysis。
+        if (node.type === "BlockStatement" || node.type === "Program") {
+            mh.getCodeGenerator().getNodeUtils().covert2SingleBlock(node);
+        }
         return false;
     },
     // ------------------------------------------------ 迭代器/异步/生成器
