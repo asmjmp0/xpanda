@@ -459,7 +459,7 @@ packages/xpanda-core/test/expected/aes.js
 ## 已知限制
 
 - 以下情况会降级为 `SimpleAnalysis` 线性输出(带 `decompiler_goto` 模拟):
-  - 单方法超过 500 个基本块;
+  - 单方法超过 2000 个基本块;
   - 区域级共享尾块消除后结构化展开规模仍超过 `MAX_STRUCTURED_STATEMENTS`(见 `docs/ARCHITECTURE.zh-CN.md` §7.3);
   - `jeq/jne/jstricteq/jnstricteq` 指令;
   - 指令 kind 未注册 handle。

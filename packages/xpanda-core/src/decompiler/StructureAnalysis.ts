@@ -39,6 +39,27 @@ const MAX_STRUCTURED_STATEMENTS = 30_000;
 const MAX_TAIL_PRUNE_ROUNDS = 64;
 
 /**
+ * 单个方法参与结构化归约的基本块数上限。
+ *
+ * 超过上限的方法按设计降级到 SimpleAnalysis 线性输出:块数越多,归约和后续
+ * simplify 的代价越高,而超大方法往往是编译器展开出来的巨型状态机,线性输出
+ * 反而更容易读。上限取 2000:实测 969 个基本块的方法(Petrelgram 的
+ * `entry/src/main/ets/util/formatMsgContent`)归约只需约 0.1s、输出规模也在
+ * MAX_STRUCTURED_STATEMENTS 之内;真正病态的方法(嵌套 try/finally 展开、
+ * 上千块的状态机)仍会在输出规模或轮数保护处降级。
+ */
+const MAX_STRUCTURED_BLOCKS = 2_000;
+
+/**
+ * 区域归约的最大轮数(与基本块数无关的兜底保护)。
+ *
+ * 每轮通常至少合并一个区域,轮数与块数同量级;但 `coalesceTailRegion` 这类
+ * "重写区域图但不减少节点"的路径不会推进归约,必须在卡死前中止(方法降级
+ * SimpleAnalysis),否则整个类会一直转下去。
+ */
+const MAX_REDUCTION_ROUNDS = 3_000;
+
+/**
  * 基于 Region 归约的结构化分析(移植自 Java StructureAnalysis,701 行核心算法)
  * @Author: jmp0
  */
@@ -315,12 +336,13 @@ export class StructureAnalysis {
     }
 
     analysis(methodHandler: PandaDecompilerMethodHandler, pandaLexical: PandaLexical, astNode: any): void {
-        let count = this.pandaIRCFG.pandaIRBasicBlocks.length;
-        if (count > 500) {
+        const blockCount = this.pandaIRCFG.pandaIRBasicBlocks.length;
+        if (blockCount > MAX_STRUCTURED_BLOCKS) {
             throw new PandaDecompileException("too many blocks！");
         }
+        let rounds = 0;
         while (this.regionGraph.nodes().length !== 1 || this.isCyclic(this.regionGraph.nodes()[0])) {
-            count++;
+            rounds++;
             const originNodeCount = this.regionGraph.nodes().length;
             const regions = this.regionGraph.depthFirstPostOrder(this.entryRegion);
             let result = false;
@@ -349,7 +371,7 @@ export class StructureAnalysis {
                                 break;
                             }
                         }
-                        if (!result && !this.fixIrreducibleByTailRegion() && count > 3000) {
+                        if (!result && !this.fixIrreducibleByTailRegion() && rounds > MAX_REDUCTION_ROUNDS) {
                             throw new PandaDecompileException(this.pandaIRCFG.getPandaMethod().name.content + " can not reduce the graph");
                         }
                     }

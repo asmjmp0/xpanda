@@ -133,7 +133,7 @@ decompile pipeline therefore never leak into the protocol layer.
 
 When structured analysis fails, it degrades to `SimpleAnalysis` linear output, recognizable by `decompiler_goto` in the source.
 `abc_decompile_class` returns `degraded=true/false` in the header comment, so agents can automatically switch to
-`abc_disassemble_method` to read the bytecode. Degradation is by design (three paths: single method > 500 basic blocks,
+`abc_disassemble_method` to read the bytecode. Degradation is by design (three paths: single method > 2000 basic blocks,
 unimplemented jeq/jne family instructions, unregistered instruction kind handles).
 
 ### Minimal Changes to Core

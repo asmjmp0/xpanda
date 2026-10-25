@@ -462,7 +462,7 @@ The output for `md5.abc` is executed, and `md5("admin")` is checked against Node
 ## Known limitations
 
 - The following cases degrade to the `SimpleAnalysis` linear output (emulated with `decompiler_goto`):
-  - a single method with more than 500 basic blocks;
+  - a single method with more than 2000 basic blocks;
   - an estimated structured expansion above `MAX_STRUCTURED_STATEMENTS` even after the region-level shared-tail pruning (see `docs/ARCHITECTURE.md` §7.3);
   - the `jeq/jne/jstricteq/jnstricteq` instructions;
   - an instruction kind with no registered handle.
