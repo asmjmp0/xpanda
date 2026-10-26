@@ -5,7 +5,7 @@
 */
 import { AppLog } from "@normalized:N&&&entry/src/main/ets/common/AppLog&";
 import { FeedServiceProvider } from "@normalized:N&&&entry/src/main/ets/common/FeedServiceProvider&";
-let PlayQueueManager, QueueSourceType;
+let QueueSourceType;
 let local_0_0;
 QueueSourceType = undefined;
 local_0_0 = AppLog.getInstance("PlayQueueManager");
@@ -20,8 +20,8 @@ class QueueChangeListener {
   onQueueChanged() {}
   onCurrentIndexChanged(p0) {}
 }
-let local_1_0;
-local_1_0 = class panda_jmp0_reserved_anonymous_1 {
+class PlayQueueManager {
+  static instance = undefined;
   constructor() {
     this.queue = [];
     this.currentIndex = -1;
@@ -352,10 +352,10 @@ local_1_0 = class panda_jmp0_reserved_anonymous_1 {
     }
   }
   static getInstance() {
-    if (!local_1_0 /*PlayQueueManager*/.instance) {
-      local_1_0 /*PlayQueueManager*/.instance = new local_1_0 /*PlayQueueManager*/();
+    if (!PlayQueueManager.instance) {
+      PlayQueueManager.instance = new PlayQueueManager();
     }
-    return local_1_0 /*PlayQueueManager*/.instance;
+    return PlayQueueManager.instance;
   }
   get isLoadingNextPage() {
     return this.isLoadingMore;
@@ -540,11 +540,7 @@ local_1_0 = class panda_jmp0_reserved_anonymous_1 {
     this.notifyCurrentIndexChanged(this.currentIndex);
     return;
   }
-};
-(function () {
-  this.instance = undefined;
-}).call(local_1_0);
-PlayQueueManager = local_1_0;
+}
 export { PlayQueueManager };
 export { QueueChangeListener };
 export { QueueSourceType };

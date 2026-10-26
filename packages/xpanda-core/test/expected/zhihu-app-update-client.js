@@ -10,7 +10,7 @@ import { decodeReleaseDetail } from "@normalized:N&&&data/src/main/ets/update/Ap
 import http from "@ohos:net.http";
 import { proxiedCatalogUrls } from "@normalized:N&&&data/src/main/ets/update/AppUpdateSources&1.0.0";
 import { resolveAppUpdateCheck } from "@normalized:N&&&data/src/main/ets/update/AppUpdateParser&1.0.0";
-let AppUpdateClient, GITHUB_RELEASES_ATOM, catalogUrlWaves;
+let GITHUB_RELEASES_ATOM, catalogUrlWaves;
 let acc;
 let local_0_0, local_0_1, local_0_2, local_0_3, local_0_4, local_0_5, local_0_6;
 catalogUrlWaves = function (p0) {
@@ -36,226 +36,219 @@ local_0_4 = 10000;
 local_0_0 = 10 * 60 * 1000;
 local_0_1 = "zhuoyi233/zhihu-plus-plus-HMOS";
 local_0_5 = 4000;
-{
-  let local_1_0;
-  acc = class panda_jmp0_reserved_anonymous_0 {
-    constructor() {
-      this.requestHandle = http.createHttp();
+class AppUpdateClient {
+  static latestJson = "";
+  static latestFetchedAt = 0;
+  static releasesJson = "";
+  static releasesFetchedAt = 0;
+  static bundledLatestJson = "";
+  static bundledReleasesJson = "";
+  constructor() {
+    this.requestHandle = http.createHttp();
+  }
+  async checkLatestRelease(p0, p1) {
+    let v0, v3 /*resolveAppUpdateCheck*/, v4 /*resolveAppUpdateCheck*/;
+    if (p1 === undefined) {
+      p1 = false;
     }
-    async checkLatestRelease(p0, p1) {
-      let v0, v3 /*resolveAppUpdateCheck*/, v4 /*resolveAppUpdateCheck*/;
-      if (p1 === undefined) {
-        p1 = false;
+    v4 = decodeLatestRelease(await this.latestCatalog(p1));
+    if (v4 === undefined) {
+      v0 = await this.requestAtomFallback();
+      if (v0 === undefined) {
+        v3 = decodeLatestRelease(AppUpdateClient.bundledLatestJson);
+        return v3 !== undefined && v3.versionName === p0 ? resolveAppUpdateCheck(p0, v3, "") : resolveAppUpdateCheck(p0, undefined, "检查更新失败：静态更新源与 Releases 备用源均不可用");
       }
-      v4 = decodeLatestRelease(await this.latestCatalog(p1));
-      if (v4 === undefined) {
-        v0 = await this.requestAtomFallback();
-        if (v0 === undefined) {
-          v3 = decodeLatestRelease(local_1_0.bundledLatestJson);
-          return v3 !== undefined && v3.versionName === p0 ? resolveAppUpdateCheck(p0, v3, "") : resolveAppUpdateCheck(p0, undefined, "检查更新失败：静态更新源与 Releases 备用源均不可用");
-        }
-        v3 = decodeLatestRelease(local_1_0.bundledLatestJson);
-        return v3 !== undefined && v3.versionName === v0.versionName ? resolveAppUpdateCheck(p0, v3, "") : resolveAppUpdateCheck(p0, v0, "");
-      }
-      this.enrichSha256FromBundled(v4);
-      return resolveAppUpdateCheck(p0, v4, "");
+      v3 = decodeLatestRelease(AppUpdateClient.bundledLatestJson);
+      return v3 !== undefined && v3.versionName === v0.versionName ? resolveAppUpdateCheck(p0, v3, "") : resolveAppUpdateCheck(p0, v0, "");
     }
-    enrichSha256FromBundled(p0) {
-      let v0 /*decodeLatestRelease*/;
-      if (p0.assetSha256 !== undefined && p0.assetSha256.length > 0) {
-        return;
-      }
-      v0 = decodeLatestRelease(local_1_0.bundledLatestJson);
-      if (v0 !== undefined && v0.versionName === p0.versionName && v0.assetSha256 !== undefined) {
-        p0.assetSha256 = v0.assetSha256;
-      }
+    this.enrichSha256FromBundled(v4);
+    return resolveAppUpdateCheck(p0, v4, "");
+  }
+  enrichSha256FromBundled(p0) {
+    let v0 /*decodeLatestRelease*/;
+    if (p0.assetSha256 !== undefined && p0.assetSha256.length > 0) {
       return;
     }
-    async requestStatic(p0) {
-      let v0, v2 /*http*/;
-      v2 = http.createHttp();
-      v0 = await v2.request(p0, {
-        "method": http.RequestMethod.GET,
-        "header": {
-          "Accept": "application/json",
-          "User-Agent": "zhihu-plus-plus-hmos"
-        },
-        "expectDataType": http.HttpDataType.STRING,
-        "connectTimeout": local_0_3,
-        "readTimeout": local_0_4,
-        "usingCache": true
-      });
-      Number(v0.responseCode);
-      if (v0 !== 200 || typeof v0.result !== "string") {
-        throw new Error("静态源响应码 " + v0.responseCode + "");
-      }
-      v2.destroy();
-      return v0.result;
+    v0 = decodeLatestRelease(AppUpdateClient.bundledLatestJson);
+    if (v0 !== undefined && v0.versionName === p0.versionName && v0.assetSha256 !== undefined) {
+      p0.assetSha256 = v0.assetSha256;
     }
-    fetchStatic(p0, p1) {
-      let acc;
-      let local_2_0, local_2_1, local_2_2;
-      local_2_2 = this;
-      local_2_1 = p1;
-      local_2_0 = catalogUrlWaves(p0);
-      acc = new Promise(function (p0, p1) {
-        let v3;
-        let local_3_0, local_3_1, local_3_2, local_3_3, local_3_4, local_3_5, local_3_6, local_3_7, local_3_8, local_3_9;
-        local_3_7 = p0;
-        local_3_4 = p1;
-        local_3_1 = 0;
-        local_3_2 = local_2_0[0].length;
-        local_3_5 = 0;
-        local_3_0 = false;
-        local_3_3 = false;
-        local_3_6 = function () {
-          let v1 /*total*/;
-          if (!local_3_0 /*settled*/ && local_3_1 >= local_3_2) {
-            if (!local_3_3 && local_2_0[1].length > 0) {
-              return;
-            }
-            local_3_0 = true;
-            v1 = new Error(local_3_5 > 0 ? "静态更新数据格式错误" : "静态更新源不可用");
-            local_3_4(v1);
-          }
-          return;
-        };
-        local_3_8 = function () {
-          local_3_1 += 1;
-          local_3_6();
-        };
-        local_3_9 = function (p0) {
-          let acc;
-          acc = local_2_2.requestStatic(p0).then(function (p0) {
-            if (local_3_0 /*settled*/) {
-              return;
-            }
-            if (local_2_1(p0)) {
-              local_3_0 = true;
-              local_3_7(p0);
-              return;
-            }
-            local_3_5 += 1;
-            local_3_8();
+    return;
+  }
+  async requestStatic(p0) {
+    let v0, v2 /*http*/;
+    v2 = http.createHttp();
+    v0 = await v2.request(p0, {
+      "method": http.RequestMethod.GET,
+      "header": {
+        "Accept": "application/json",
+        "User-Agent": "zhihu-plus-plus-hmos"
+      },
+      "expectDataType": http.HttpDataType.STRING,
+      "connectTimeout": local_0_3,
+      "readTimeout": local_0_4,
+      "usingCache": true
+    });
+    Number(v0.responseCode);
+    if (v0 !== 200 || typeof v0.result !== "string") {
+      throw new Error("静态源响应码 " + v0.responseCode + "");
+    }
+    v2.destroy();
+    return v0.result;
+  }
+  fetchStatic(p0, p1) {
+    let acc;
+    let local_2_0, local_2_1, local_2_2;
+    local_2_2 = this;
+    local_2_1 = p1;
+    local_2_0 = catalogUrlWaves(p0);
+    acc = new Promise(function (p0, p1) {
+      let v3;
+      let local_3_0, local_3_1, local_3_2, local_3_3, local_3_4, local_3_5, local_3_6, local_3_7, local_3_8, local_3_9;
+      local_3_7 = p0;
+      local_3_4 = p1;
+      local_3_1 = 0;
+      local_3_2 = local_2_0[0].length;
+      local_3_5 = 0;
+      local_3_0 = false;
+      local_3_3 = false;
+      local_3_6 = function () {
+        let v1 /*total*/;
+        if (!local_3_0 /*settled*/ && local_3_1 >= local_3_2) {
+          if (!local_3_3 && local_2_0[1].length > 0) {
             return;
-          });
-          acc.catch(function (p0) {
-            local_3_8();
-          });
-        };
-        for (v3 of local_2_0[0]) {
+          }
+          local_3_0 = true;
+          v1 = new Error(local_3_5 > 0 ? "静态更新数据格式错误" : "静态更新源不可用");
+          local_3_4(v1);
+        }
+        return;
+      };
+      local_3_8 = function () {
+        local_3_1 += 1;
+        local_3_6();
+      };
+      local_3_9 = function (p0) {
+        let acc;
+        acc = local_2_2.requestStatic(p0).then(function (p0) {
+          if (local_3_0 /*settled*/) {
+            return;
+          }
+          if (local_2_1(p0)) {
+            local_3_0 = true;
+            local_3_7(p0);
+            return;
+          }
+          local_3_5 += 1;
+          local_3_8();
+          return;
+        });
+        acc.catch(function (p0) {
+          local_3_8();
+        });
+      };
+      for (v3 of local_2_0[0]) {
+        local_3_9(v3);
+      }
+      setTimeout(function () {
+        let v3;
+        if (local_3_0) {
+          return;
+        }
+        local_3_2 += local_2_0[1].length;
+        local_3_3 = true;
+        for (v3 of local_2_0[1]) {
           local_3_9(v3);
         }
-        setTimeout(function () {
-          let v3;
-          if (local_3_0) {
-            return;
-          }
-          local_3_2 += local_2_0[1].length;
-          local_3_3 = true;
-          for (v3 of local_2_0[1]) {
-            local_3_9(v3);
-          }
-          local_3_6();
-          return;
-        }, local_0_5);
-      });
-      return acc;
+        local_3_6();
+        return;
+      }, local_0_5);
+    });
+    return acc;
+  }
+  async latestCatalog(p0) {
+    let v0, v2 /*AppUpdateClient*/, acc;
+    v2 = !p0 && AppUpdateClient.latestJson.length > 0;
+    if (v2 && (acc = Date.now(), !v2 - AppUpdateClient.latestFetchedAt < local_0_0)) {
+      return AppUpdateClient.latestJson;
     }
-    async latestCatalog(p0) {
-      let v0, v2 /*AppUpdateClient*/, acc;
-      v2 = !p0 && local_1_0.latestJson.length > 0;
-      if (v2 && (acc = Date.now(), !v2 - local_1_0.latestFetchedAt < local_0_0)) {
-        return local_1_0.latestJson;
-      }
-      v0 = await this.fetchStatic("version.json", function (p0) {
-        return decodeLatestRelease(p0) !== undefined;
-      });
-      local_1_0.latestJson = v0;
-      local_1_0.latestFetchedAt = Date.now();
-      return v0;
+    v0 = await this.fetchStatic("version.json", function (p0) {
+      return decodeLatestRelease(p0) !== undefined;
+    });
+    AppUpdateClient.latestJson = v0;
+    AppUpdateClient.latestFetchedAt = Date.now();
+    return v0;
+  }
+  async releasesCatalog() {
+    let v0, acc;
+    if (AppUpdateClient.releasesJson.length > 0 && (acc = Date.now(), !(AppUpdateClient.releasesJson.length > 0) - AppUpdateClient.releasesFetchedAt < local_0_0)) {
+      return AppUpdateClient.releasesJson;
     }
-    async releasesCatalog() {
-      let v0, acc;
-      if (local_1_0.releasesJson.length > 0 && (acc = Date.now(), !(local_1_0.releasesJson.length > 0) - local_1_0.releasesFetchedAt < local_0_0)) {
-        return local_1_0.releasesJson;
-      }
-      v0 = await this.fetchStatic("releases.json", function (p0) {
-        return Array.isArray(JSON.parse(p0));
-      });
-      local_1_0.releasesJson = v0;
-      local_1_0.releasesFetchedAt = Date.now();
-      return v0;
-    }
-    async requestAtomFallback() {
-      let v0;
-      v0 = await this.requestHandle.request(GITHUB_RELEASES_ATOM, {
-        "method": http.RequestMethod.GET,
-        "header": {
-          "Accept": "application/atom+xml",
-          "User-Agent": "zhihu-plus-plus-hmos"
-        },
-        "expectDataType": http.HttpDataType.STRING,
-        "connectTimeout": local_0_3,
-        "readTimeout": local_0_4,
-        "usingCache": false
-      });
-      Number(v0.responseCode);
-      return v0 !== 200 || typeof v0.result !== "string" ? undefined : decodeLatestReleaseAtom(v0.result);
-    }
-    async fetchReleaseDetail(p0) {
-      let v5, v6, v8;
-      v5 = JSON.parse(await this.releasesCatalog())[Symbol.iterator]();
-      v6 = v5.next;
-      do {
-        v8 = v6.call(v5);
-        if (v8.done) {
-          if (local_1_0.bundledReleasesJson.length <= 0) {
-            return local_0_6("静态更新清单中暂无 HMOSv" + p0 + " 的发布说明");
-          }
-          for (v6 of JSON.parse(local_1_0.bundledReleasesJson)) {
-            if ((v6 = decodeReleaseDetail(JSON.stringify(v6)), v6 !== undefined) && v6.versionName === p0) return {
-              "status": AppReleaseDetailStatus.OK,
-              "detail": v6,
-              "message": ""
-            };
-          }
+    v0 = await this.fetchStatic("releases.json", function (p0) {
+      return Array.isArray(JSON.parse(p0));
+    });
+    AppUpdateClient.releasesJson = v0;
+    AppUpdateClient.releasesFetchedAt = Date.now();
+    return v0;
+  }
+  async requestAtomFallback() {
+    let v0;
+    v0 = await this.requestHandle.request(GITHUB_RELEASES_ATOM, {
+      "method": http.RequestMethod.GET,
+      "header": {
+        "Accept": "application/atom+xml",
+        "User-Agent": "zhihu-plus-plus-hmos"
+      },
+      "expectDataType": http.HttpDataType.STRING,
+      "connectTimeout": local_0_3,
+      "readTimeout": local_0_4,
+      "usingCache": false
+    });
+    Number(v0.responseCode);
+    return v0 !== 200 || typeof v0.result !== "string" ? undefined : decodeLatestReleaseAtom(v0.result);
+  }
+  async fetchReleaseDetail(p0) {
+    let v5, v6, v8;
+    v5 = JSON.parse(await this.releasesCatalog())[Symbol.iterator]();
+    v6 = v5.next;
+    do {
+      v8 = v6.call(v5);
+      if (v8.done) {
+        if (AppUpdateClient.bundledReleasesJson.length <= 0) {
           return local_0_6("静态更新清单中暂无 HMOSv" + p0 + " 的发布说明");
         }
-        v8 = v8.value;
-      } while ((v8 = decodeReleaseDetail(JSON.stringify(v8)), v8 === undefined) || v8.versionName !== p0);
-      if (v5.return != undefined) {
-        v5.return();
+        for (v6 of JSON.parse(AppUpdateClient.bundledReleasesJson)) {
+          if ((v6 = decodeReleaseDetail(JSON.stringify(v6)), v6 !== undefined) && v6.versionName === p0) return {
+            "status": AppReleaseDetailStatus.OK,
+            "detail": v6,
+            "message": ""
+          };
+        }
+        return local_0_6("静态更新清单中暂无 HMOSv" + p0 + " 的发布说明");
       }
-      return {
-        "status": AppReleaseDetailStatus.OK,
-        "detail": v8,
-        "message": ""
-      };
+      v8 = v8.value;
+    } while ((v8 = decodeReleaseDetail(JSON.stringify(v8)), v8 === undefined) || v8.versionName !== p0);
+    if (v5.return != undefined) {
+      v5.return();
     }
-    destroy() {
-      this.requestHandle.destroy();
+    return {
+      "status": AppReleaseDetailStatus.OK,
+      "detail": v8,
+      "message": ""
+    };
+  }
+  destroy() {
+    this.requestHandle.destroy();
+  }
+  static seedBundledCatalog(p0, p1) {
+    if (decodeLatestRelease(p0) !== undefined) {
+      AppUpdateClient.bundledLatestJson = p0;
     }
-    static seedBundledCatalog(p0, p1) {
-      if (decodeLatestRelease(p0) !== undefined) {
-        local_1_0.bundledLatestJson = p0;
-      }
-      if (Array.isArray(JSON.parse(p1))) {
-        local_1_0.bundledReleasesJson = p1;
-      }
+    if (Array.isArray(JSON.parse(p1))) {
+      AppUpdateClient.bundledReleasesJson = p1;
     }
-  };
-  local_1_0 = acc;
-  (function () {
-    this.latestJson = "";
-    this.latestFetchedAt = 0;
-    this.releasesJson = "";
-    this.releasesFetchedAt = 0;
-    this.bundledLatestJson = "";
-    this.bundledReleasesJson = "";
-  }).call(acc);
+  }
 }
-AppUpdateClient = acc;
 export { AppUpdateClient };
 export { GITHUB_RELEASES_ATOM };
 export { catalogUrlWaves };

@@ -12,6 +12,7 @@ const {
     classProperty,
     file,
     identifier,
+    isEmptyStatement,
     isAssignmentExpression,
     isBlockStatement,
     isClassExpression,
@@ -87,6 +88,51 @@ function resolveClassForTarget(name: string, statement: NodePath<TYPE.Statement>
             current = expression.right.name;
             continue;
         }
+        return null;
+    }
+    return null;
+}
+
+/**
+ * 静态初始化折叠专用的接收者解析:从 `.call(接收者)` 语句向前找 `current` 的
+ * 最后一次赋值(getAllPrevSiblings 按最近优先返回),沿途只允许不影响 `current`
+ * 取值的语句:
+ *  - 写到链外名字的纯标识符拷贝(`local_1_0 = acc`,编译器的 lexenv/寄存器搬运),
+ *  - 无初始化的 `let X;` 声明 / 空语句。
+ * 出现任何潜在副作用语句(调用、有初始化的声明、非赋值表达式)一律放弃——
+ * 这保证类定义与调用之间没有副作用,右值(可以不纯,如 `new Set()`)搬进
+ * 类体后求值顺序不变。
+ * chainOut 收集链上全部名字(接收者 + 别名),用于右值引用检查。
+ */
+function resolveStaticInitReceiver(
+    name: string, statement: NodePath<TYPE.Statement>, chainOut: Set<string>,
+): TYPE.ClassExpression | null {
+    let current = name;
+    chainOut.add(current);
+    for (const pre of statement.getAllPrevSiblings()) {
+        const node = pre.node;
+        if (node == null) break;
+        if (isEmptyStatement(node)) continue;
+        if (isVariableDeclaration(node)) {
+            if (node.declarations.some((d) => d.init != null)) return null;
+            continue;
+        }
+        if (!isExpressionStatement(node)) return null;
+        const expression = node.expression;
+        if (!isAssignmentExpression(expression) || expression.operator !== "="
+            || !isIdentifier(expression.left)) return null;
+        if (expression.left.name !== current) {
+            // 写到链外名字:只有纯标识符拷贝才不影响 current 的取值
+            if (!isIdentifier(expression.right)) return null;
+            continue;
+        }
+        if (isClassExpression(expression.right)) return expression.right;
+        if (isIdentifier(expression.right)) {
+            current = expression.right.name;
+            chainOut.add(current);
+            continue;
+        }
+        // current 被覆盖成其它值,接收者不再是类
         return null;
     }
     return null;
@@ -395,6 +441,99 @@ export class ClassSyntaxSimplify implements ISimplify {
             }
         });
         return changed;
+    }
+
+    /**
+     * 类静态字段初始化还原:defineclasswithbuffer 之后,编译器把源码的静态字段
+     * 初始化收集成 #static_initializer 方法,用 callthis0 以类为 this 调用:
+     *
+     *   acc = class R{...}; local_1_0 = acc;
+     *   (function () { this.dir = ""; this.tags = new Set(); ... }).call(acc);
+     *
+     * 函数体只含 `this.NAME = 右值` 时还原成类的 static 字段并删除调用。
+     * 这条调用插在类定义与模块名赋值之间,不是别名赋值,会让模块级类定义折叠
+     * (foldModuleClassDeclarations)的别名链扫描失败;先折掉它,后面才能把
+     * `class R{}` + `Name = acc` 折叠成 `class Name {}`。
+     */
+    public static foldClassStaticInitializers(program: Program): boolean {
+        let changed = false;
+        traverse(file(program), {
+            // 只用到祖先关系,不需要 scope:跳过 Babel 的逐作用域 crawl
+            noScope: true,
+            CallExpression: (value: NodePath<TYPE.CallExpression>) => {
+                const call = value.node;
+                if (!isMemberExpression(call.callee) || call.callee.computed) return;
+                if (!isIdentifier(call.callee.property) || call.callee.property.name !== "call") return;
+                if (!isFunctionExpression(call.callee.object)) return;
+                if (call.arguments.length !== 1 || !isIdentifier(call.arguments[0])) return;
+                const statement = value.getStatementParent();
+                if (!statement.isExpressionStatement()
+                    || (statement.node as TYPE.ExpressionStatement).expression !== call) return;
+                // 接收者必须向前解析到类表达式,且沿途只有纯别名拷贝/声明
+                // (保证类定义与调用之间没有副作用语句,右值搬进类体后求值顺序不变)。
+                const receiverNames = new Set<string>();
+                const clazz = resolveStaticInitReceiver(call.arguments[0].name, statement, receiverNames);
+                if (!clazz) return;
+                const props = this.buildStaticInitProperties(clazz, call.callee.object, receiverNames);
+                if (!props) return;
+                clazz.body.body.unshift(...props);
+                statement.remove();
+                changed = true;
+            },
+        });
+        return changed;
+    }
+
+    /**
+     * 静态初始化函数体 → static 字段列表。每个语句都必须是 `this.NAME = 右值`;
+     * 右值不能引用 this(保守)、类接收者链上的名字(搬进类体后读到正在初始化的
+     * 类绑定,TDZ/undefined 语义会变)、arguments 与 new.target(函数体内的绑定,
+     * 字段初始化器里语义不同);与类体已有成员同名时保守放弃。
+     * 右值允许不纯:解析器已保证求值位置与原调用一致,副作用顺序不变。
+     */
+    private static buildStaticInitProperties(
+        clazz: TYPE.ClassExpression,
+        fn: TYPE.FunctionExpression,
+        receiverNames: Set<string>,
+    ): TYPE.ClassProperty[] | null {
+        const props: TYPE.ClassProperty[] = [];
+        for (const stmt of fn.body.body) {
+            if (!isExpressionStatement(stmt) || !isAssignmentExpression(stmt.expression)
+                || stmt.expression.operator !== "=") return null;
+            const left = stmt.expression.left;
+            if (!isMemberExpression(left) || !isThisExpression(left.object) || left.computed) return null;
+            const property = left.property;
+            const name = isIdentifier(property) ? property.name
+                : (isStringLiteral(property) ? property.value : null);
+            if (name === null || name === "") return null;
+            const rhs = stmt.expression.right;
+            let blocked = false;
+            walkNode(rhs, (node) => {
+                if (isThisExpression(node) || node.type === "MetaProperty"
+                    || (isIdentifier(node) && node.name === "arguments")) {
+                    blocked = true;
+                    return false;
+                }
+                return true;
+            });
+            if (blocked) return null;
+            for (const ref of collectIdentifierNames(rhs)) {
+                if (receiverNames.has(ref)) return null;
+            }
+            const exists = clazz.body.body.some((member) => {
+                if (!isClassProperty(member) && !isClassMethod(member)) return false;
+                const key = member.key;
+                const keyName = isIdentifier(key) ? key.name : (isStringLiteral(key) ? key.value : null);
+                return keyName === name;
+            });
+            if (exists) return null;
+            const key = /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name)
+                ? identifier(name) : stringLiteral(name);
+            const prop = classProperty(key, rhs);
+            prop.static = true;
+            props.push(prop);
+        }
+        return props.length > 0 ? props : null;
     }
 
     /**

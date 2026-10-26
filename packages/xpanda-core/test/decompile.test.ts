@@ -2784,7 +2784,8 @@ function verifyYourpipeHttpDownloaderRetryTryCatch(): void {
         throw new Error(`HttpDownloader.postBinaryWithRetry: 响应码判断极性错误\n${retry}`);
     }
     // `if (!isRecoverable || attempt >= MAX_RETRIES) throw err;`
-    if (!/if \(!v17\.isRecoverable \|\| v12 >= local_\S+ \/\*HttpDownloader\*\/\.MAX_RETRIES\) \{/.test(retry)) {
+    // (静态初始化还原后类名是 HttpDownloader;还原前是 lexenv 槽 local_*/*HttpDownloader*)
+    if (!/if \(!v17\.isRecoverable \|\| v12 >= (?:local_\S+ \/\*HttpDownloader\*\/|HttpDownloader)\.MAX_RETRIES\) \{/.test(retry)) {
         throw new Error(`HttpDownloader.postBinaryWithRetry: 重试上限判断丢失\n${retry}`);
     }
 
@@ -3312,6 +3313,55 @@ function verifyHx360eExceptionStructure(): void {
         path.join(__dirname, "expected", "hx360e-log-export.js"), "utf-8");
     if (code !== expected) {
         throw new Error(`LogExport: 输出与快照不一致\n${firstDifference(expected, code)}`);
+    }
+}
+
+/**
+ * 回归:字节码 24.0.0.0 的类静态字段初始化还原(hx360e1.0.2.abc 的 AppLog)。
+ *
+ * defineclasswithbuffer 之后,编译器把源码的静态字段初始化收集成
+ * #static_initializer 方法,用 callthis0 以类为 this 调用;旧实现把它输出成
+ * `(function () { this.dir = ""; ... }).call(acc);`,插在类定义与模块名赋值
+ * 之间——不是别名赋值,模块级类定义折叠的别名链扫描在这里放弃,整类停在
+ * 匿名类 + lexenv 自引用槽(local_1_0)的搬运形态。
+ * 现在先由 foldClassStaticInitializers 折成类的 static 字段,模块级类定义折叠
+ * 接着把 `acc = class R{...}; local_1_0 = acc; ... AppLog = acc` 还原成
+ * `class AppLog {}`,类方法里的 local_1_0 读取同步改名为 AppLog。
+ * 整类输出锁定在 expected/hx360e-app-log.js。
+ */
+function verifyHx360eAppLogClass(): void {
+    const abcPath = path.join(__dirname, "resources", "hx360e1.0.2.abc");
+    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
+    const clazz = pandaFile.getAllClasses().find(
+        (c) => c.name.content === "L&entry/src/main/ets/common/AppLog&;");
+    if (!clazz) throw new Error("hx360e: 未找到 AppLog");
+    const code = new PandaDecompiler().decompileClass(clazz);
+    NodeFactory.parse(code);
+    if (code.includes("created by SimpleAnalysis") || code.includes("decompiler_")) {
+        throw new Error(`AppLog: 反编译降级或残留伪语句\n${code}`);
+    }
+    for (const fragment of [
+        "class AppLog {",
+        '  static dir = "";',
+        '  static file = "";',
+        '  static prevFile = "";',
+        "  static started = false;",
+        "  static init(p0) {",
+        "    AppLog.started = true;",
+    ]) {
+        if (!code.includes(fragment)) {
+            throw new Error(`AppLog: 缺少 ${JSON.stringify(fragment)}\n${code}`);
+        }
+    }
+    for (const residue of ["local_1_0", ".call(acc)", "panda_jmp0_reserved_anonymous"]) {
+        if (code.includes(residue)) {
+            throw new Error(`AppLog: 类定义未还原(残留 ${JSON.stringify(residue)})\n${code}`);
+        }
+    }
+    const expected = fs.readFileSync(
+        path.join(__dirname, "expected", "hx360e-app-log.js"), "utf-8");
+    if (code !== expected) {
+        throw new Error(`AppLog: 输出与快照不一致\n${firstDifference(expected, code)}`);
     }
 }
 
@@ -4373,6 +4423,10 @@ async function main(): Promise<void> {
 
     console.log("[test] hx360e 24.0.0.0 try/catch/finally structure (hx360e1.0.2.abc)");
     verifyHx360eExceptionStructure();
+    console.log("    ok");
+
+    console.log("[test] hx360e 24.0.0.0 class static field init (hx360e1.0.2.abc)");
+    verifyHx360eAppLogClass();
     console.log("    ok");
 
     console.log("[test] simplify sequenced test prefix fold");
