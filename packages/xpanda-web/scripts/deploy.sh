@@ -2,8 +2,9 @@
 #
 # xpanda-web deploy script (local static hosting):
 #   1) remove packages/xpanda-web/dist
-#   2) empty /var/www/xpanda (rm -rf of non-hidden entries; the directory itself is kept)
-#   3) build with vite (npm run build)
+#   2) build with vite (npm run build)
+#   3) empty /var/www/xpanda (rm -rf of non-hidden entries; the directory itself is kept)
+#  -- only reached after a successful build, so a failed build never touches the live site
 #   4) copy dist contents into /var/www/xpanda
 #
 # Run with sudo if /var/www/xpanda is not writable by the current user.
@@ -18,10 +19,6 @@ DEST_DIR="/var/www/xpanda"
 echo "==> Cleaning $DIST_DIR"
 rm -rf "$DIST_DIR"
 
-echo "==> Cleaning $DEST_DIR"
-rm -rf "$DEST_DIR"/*
-mkdir -p "$DEST_DIR"
-
 echo "==> Building xpanda-web"
 (cd "$PKG_DIR" && npm run build)
 
@@ -29,6 +26,10 @@ if [ ! -d "$DIST_DIR" ]; then
     echo "error: build produced no $DIST_DIR" >&2
     exit 1
 fi
+
+echo "==> Cleaning $DEST_DIR"
+rm -rf "$DEST_DIR"/*
+mkdir -p "$DEST_DIR"
 
 echo "==> Copying $DIST_DIR -> $DEST_DIR"
 # "/." copies dotfiles too (e.g. .vite/ if present)
