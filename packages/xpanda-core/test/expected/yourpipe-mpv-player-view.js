@@ -4,7 +4,7 @@
 * powered by xpanda decompiler, author: jmp0
 */
 import { MpvPlayerController } from "@normalized:N&&&@yourpipe/libmpv-napi/src/main/ets/controller/MpvPlayerController&0.2.0";
-let MpvPlayerView, VideoFit;
+let VideoFit;
 VideoFit = undefined;
 if (!("finalizeConstruction" in ViewPU.prototype)) {
   Reflect.set(ViewPU.prototype, "finalizeConstruction", function () {});
@@ -17,7 +17,7 @@ VideoFit = {
   Fill: 2,
   2: "Fill"
 };
-MpvPlayerView = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
+class MpvPlayerView extends ViewPU {
   constructor(p0, p1, p2, p3, p4, p5) {
     let v2, v6, v7;
     v6 = p3 === undefined ? -1 : p3;
@@ -228,6 +228,6 @@ MpvPlayerView = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
   rerender() {
     this.updateDirtyElements();
   }
-};
+}
 export { MpvPlayerView };
 export { VideoFit };

@@ -10,9 +10,7 @@ import { VideoItem } from "@normalized:N&&&youtube_core/Index&1.0.0";
 import { getMusicContinuationToken } from "@normalized:N&&&entry/src/main/ets/features/home/utils/ContinuationUtils&";
 import { getTextFromRuns } from "@normalized:N&&&entry/src/main/ets/features/home/utils/TextUtils&";
 import { getThumbnailUrlFromThumbnailObject } from "@normalized:N&&&entry/src/main/ets/features/home/utils/ThumbnailUtils&";
-let MusicSearchService;
-let local_0_0;
-local_0_0 = class panda_jmp0_reserved_anonymous_0 {
+class MusicSearchService {
   constructor() {}
   static isMusicSearch(p0) {
     let v5;
@@ -28,7 +26,7 @@ local_0_0 = class panda_jmp0_reserved_anonymous_0 {
     for (v22 of v9 ? v9.contents : []) {
       if (v22.musicShelfRenderer) {
         if (v22.musicShelfRenderer.contents && v22.musicShelfRenderer.contents.length > 0) {
-          v7 = v7.concat(local_0_0 /*MusicSearchService*/.buildMusicSearchItemsFromContents(v22.musicShelfRenderer.contents, p1 + v7.length, p2));
+          v7 = v7.concat(MusicSearchService.buildMusicSearchItemsFromContents(v22.musicShelfRenderer.contents, p1 + v7.length, p2));
         }
         v28 = getMusicContinuationToken(v22.musicShelfRenderer.continuations);
         if (v28) {
@@ -48,7 +46,7 @@ local_0_0 = class panda_jmp0_reserved_anonymous_0 {
     acc = p0.continuationContents?.musicShelfContinuation;
     if (acc) {
       if (acc.contents && acc.contents.length > 0) {
-        v7 = local_0_0 /*MusicSearchService*/.buildMusicSearchItemsFromContents(acc.contents, p1, p2);
+        v7 = MusicSearchService.buildMusicSearchItemsFromContents(acc.contents, p1, p2);
       }
       v13 = getMusicContinuationToken(acc.continuations);
       if (v13) {
@@ -73,25 +71,25 @@ local_0_0 = class panda_jmp0_reserved_anonymous_0 {
       if ((p0.musicResponsiveListItemRenderer.musicItemRendererDisplayPolicy || "") === "MUSIC_ITEM_RENDERER_DISPLAY_POLICY_GREY_OUT") {
         return;
       }
-      v8 = local_0_0 /*MusicSearchService*/.getMusicTextFromFlexColumn(p0.musicResponsiveListItemRenderer.flexColumns, 0)
+      v8 = MusicSearchService.getMusicTextFromFlexColumn(p0.musicResponsiveListItemRenderer.flexColumns, 0)
         || "Untitled";
-      v4 = local_0_0 /*MusicSearchService*/.getMusicDescriptionRuns(p0.musicResponsiveListItemRenderer);
+      v4 = MusicSearchService.getMusicDescriptionRuns(p0.musicResponsiveListItemRenderer);
       if (local_1_0 /*searchType*/ === "music_songs" || local_1_0 /*searchType*/ === "music_videos") {
-        v13 = local_0_0 /*MusicSearchService*/.getMusicVideoId(p0.musicResponsiveListItemRenderer);
+        v13 = MusicSearchService.getMusicVideoId(p0.musicResponsiveListItemRenderer);
         if (!v13) {
           return;
         }
-        v10 = local_0_0 /*MusicSearchService*/.getMusicAuthorFromRuns(v4) || "Unknown";
-        v15 = local_1_0 /*searchType*/ === "music_videos" ? local_0_0 /*MusicSearchService*/.getMusicViewCountFromRuns(v4) : "";
-        v12 = local_0_0 /*MusicSearchService*/.getMusicThumbnailUrl(p0.musicResponsiveListItemRenderer);
+        v10 = MusicSearchService.getMusicAuthorFromRuns(v4) || "Unknown";
+        v15 = local_1_0 /*searchType*/ === "music_videos" ? MusicSearchService.getMusicViewCountFromRuns(v4) : "";
+        v12 = MusicSearchService.getMusicThumbnailUrl(p0.musicResponsiveListItemRenderer);
         local_1_2 /*items*/.push(new SearchStreamItem(local_1_1 /*idCounter*/, new VideoItem(local_1_1 /*idCounter*/, v13, v8, v10, v15, v12, false, ThumbnailPlaceholder.pickColor(v13 || v8, local_1_1 /*idCounter*/), "", "", "", "")));
         local_1_1 += 1;
         return;
       }
       if (local_1_0 /*searchType*/ === "music_albums" || local_1_0 /*searchType*/ === "music_playlists") {
-        v12 = local_0_0 /*MusicSearchService*/.getMusicPlaylistId(p0.musicResponsiveListItemRenderer);
-        v13 = local_0_0 /*MusicSearchService*/.getMusicUploaderFromRuns(v4, local_1_0 /*searchType*/);
-        v10 = local_0_0 /*MusicSearchService*/.getMusicThumbnailUrl(p0.musicResponsiveListItemRenderer);
+        v12 = MusicSearchService.getMusicPlaylistId(p0.musicResponsiveListItemRenderer);
+        v13 = MusicSearchService.getMusicUploaderFromRuns(v4, local_1_0 /*searchType*/);
+        v10 = MusicSearchService.getMusicThumbnailUrl(p0.musicResponsiveListItemRenderer);
         local_1_2 /*items*/.push(new SearchPlaylistItem(local_1_1 /*idCounter*/, v12, v8, v13, "", v10, "", ThumbnailPlaceholder.pickColor(v12 || v8, local_1_1 /*idCounter*/)));
         local_1_1 += 1;
       }
@@ -160,6 +158,5 @@ local_0_0 = class panda_jmp0_reserved_anonymous_0 {
     v5 = p0.thumbnail?.musicThumbnailRenderer;
     return getThumbnailUrlFromThumbnailObject(v5?.thumbnail);
   }
-};
-MusicSearchService = local_0_0;
+}
 export { MusicSearchService };

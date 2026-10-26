@@ -8,11 +8,9 @@ import { PlayerModel } from "@normalized:N&&&mediaservice/src/main/ets/model/Pla
 import { SabrProtocolException } from "@normalized:N&&&youtube_core/Index&1.0.0";
 import { SabrTrackBuffer } from "@normalized:N&&&mediaservice/src/main/ets/sabr/SabrTrackBuffer&1.0.0";
 import { sabrSessionStore } from "@normalized:N&&&mediaservice/src/main/ets/sabr/SabrSessionStore&1.0.0";
-let SabrOfflineDownloader;
 let local_0_0;
 local_0_0 = "[SabrOfflineDownloader]";
-let local_1_0;
-local_1_0 = class panda_jmp0_reserved_anonymous_0 {
+class SabrOfflineDownloader {
   constructor() {}
   static isSabrStream(p0) {
     return PlayerModel.isSabrStream(p0);
@@ -27,8 +25,8 @@ local_1_0 = class panda_jmp0_reserved_anonymous_0 {
       if (p0.video.itag === undefined || p0.audio.itag === undefined) {
         throw new Error("SABR download: missing itags");
       }
-      v10 = local_1_0 /*SabrOfflineDownloader*/.resolveVideoFormat(v7, p0.video, p0.video.itag);
-      v4 = local_1_0 /*SabrOfflineDownloader*/.resolveAudioFormat(v7, p0.audio, p0.audio.itag);
+      v10 = SabrOfflineDownloader.resolveVideoFormat(v7, p0.video, p0.video.itag);
+      v4 = SabrOfflineDownloader.resolveAudioFormat(v7, p0.audio, p0.audio.itag);
       v6 = p0.durationMs || p0.video.approxDurationMs || p0.audio.approxDurationMs || 0;
       v9 = !!p0.useAuth;
       Logger.info(local_0_0 /*TAG*/, "download start dual-track video=" + p0.video.itag + " audio=" + p0.audio.itag + " " + ("track=" + (p0.audio.audioTrackId || v4.audioTrackId || "-") + " ") + ("durationMs=" + v6 + " useAuth=" + v9 + ""));
@@ -45,7 +43,7 @@ local_1_0 = class panda_jmp0_reserved_anonymous_0 {
         if (p0.isCancelled !== null && p0.isCancelled !== undefined ? p0.isCancelled() : undefined) {
           throw new Error("cancelled");
         }
-        await local_1_0 /*SabrOfflineDownloader*/.dumpDualTrack(v15, v14, v8, p0.writeVideo, p0.writeAudio, p0.onProgress, p0.isCancelled);
+        await SabrOfflineDownloader.dumpDualTrack(v15, v14, v8, p0.writeVideo, p0.writeAudio, p0.onProgress, p0.isCancelled);
         Logger.info(local_0_0 /*TAG*/, "download complete dual-track video=" + p0.video.itag + " audio=" + p0.audio.itag + "");
       } catch (catchAcc) {
         v14 = catchAcc;
@@ -206,7 +204,7 @@ local_1_0 = class panda_jmp0_reserved_anonymous_0 {
           v19 = false;
           if (!v18) {
             if (!local_2_7 /*audioDone*/) {
-              acc = local_1_0 /*SabrOfflineDownloader*/.tryWriteNext(p1, local_2_6 /*nextAudioSeq*/, p4, function (p0, p1) {
+              acc = SabrOfflineDownloader.tryWriteNext(p1, local_2_6 /*nextAudioSeq*/, p4, function (p0, p1) {
                 local_2_4 += p0;
                 local_2_5 = p1;
                 local_2_6 = p1 + 1;
@@ -216,7 +214,7 @@ local_1_0 = class panda_jmp0_reserved_anonymous_0 {
               v19 = await acc;
             }
           } else if (!local_2_3 /*videoDone*/) {
-            acc = local_1_0 /*SabrOfflineDownloader*/.tryWriteNext(p0, local_2_2 /*nextVideoSeq*/, p3, function (p0, p1) {
+            acc = SabrOfflineDownloader.tryWriteNext(p0, local_2_2 /*nextVideoSeq*/, p3, function (p0, p1) {
               local_2_0 += p0;
               local_2_1 = p1;
               local_2_2 = p1 + 1;
@@ -225,7 +223,7 @@ local_1_0 = class panda_jmp0_reserved_anonymous_0 {
             });
             v19 = await acc;
           } else if (!local_2_7 /*audioDone*/) {
-            acc = local_1_0 /*SabrOfflineDownloader*/.tryWriteNext(p1, local_2_6 /*nextAudioSeq*/, p4, function (p0, p1) {
+            acc = SabrOfflineDownloader.tryWriteNext(p1, local_2_6 /*nextAudioSeq*/, p4, function (p0, p1) {
               local_2_4 += p0;
               local_2_5 = p1;
               local_2_6 = p1 + 1;
@@ -236,7 +234,7 @@ local_1_0 = class panda_jmp0_reserved_anonymous_0 {
           }
           if (!v19 && !v18) {
             if (!local_2_3 /*videoDone*/) {
-              acc = local_1_0 /*SabrOfflineDownloader*/.tryWriteNext(p0, local_2_2 /*nextVideoSeq*/, p3, function (p0, p1) {
+              acc = SabrOfflineDownloader.tryWriteNext(p0, local_2_2 /*nextVideoSeq*/, p3, function (p0, p1) {
                 local_2_0 += p0;
                 local_2_1 = p1;
                 local_2_2 = p1 + 1;
@@ -246,7 +244,7 @@ local_1_0 = class panda_jmp0_reserved_anonymous_0 {
               v19 = await acc;
             } else if (!v19 && v18) {
               if (!local_2_7 /*audioDone*/) {
-                acc = local_1_0 /*SabrOfflineDownloader*/.tryWriteNext(p1, local_2_6 /*nextAudioSeq*/, p4, function (p0, p1) {
+                acc = SabrOfflineDownloader.tryWriteNext(p1, local_2_6 /*nextAudioSeq*/, p4, function (p0, p1) {
                   local_2_4 += p0;
                   local_2_5 = p1;
                   local_2_6 = p1 + 1;
@@ -258,7 +256,7 @@ local_1_0 = class panda_jmp0_reserved_anonymous_0 {
             }
           } else if (!v19 && v18) {
             if (!local_2_7 /*audioDone*/) {
-              acc = local_1_0 /*SabrOfflineDownloader*/.tryWriteNext(p1, local_2_6 /*nextAudioSeq*/, p4, function (p0, p1) {
+              acc = SabrOfflineDownloader.tryWriteNext(p1, local_2_6 /*nextAudioSeq*/, p4, function (p0, p1) {
                 local_2_4 += p0;
                 local_2_5 = p1;
                 local_2_6 = p1 + 1;
@@ -273,7 +271,7 @@ local_1_0 = class panda_jmp0_reserved_anonymous_0 {
             v26 = local_2_1 /*videoSeq*/ > 0 ? p0.getSegmentEndMs(local_2_1 /*videoSeq*/) : 0;
             v22 = Math.min(v26, local_2_5 /*audioSeq*/ > 0 ? p1.getSegmentEndMs(local_2_5 /*audioSeq*/) : 0);
             v22 > 0 && sabrSessionStore.setPlayHeadMs(p2.key, v22);
-            v23 = local_1_0 /*SabrOfflineDownloader*/.overallPercent(local_2_1 /*videoSeq*/, local_2_5 /*audioSeq*/, p0.getEndSegment(), p1.getEndSegment(), local_2_0 /*videoBytes*/, local_2_4 /*audioBytes*/);
+            v23 = SabrOfflineDownloader.overallPercent(local_2_1 /*videoSeq*/, local_2_5 /*audioSeq*/, p0.getEndSegment(), p1.getEndSegment(), local_2_0 /*videoBytes*/, local_2_4 /*audioBytes*/);
             if (p5 != null) {
               acc = {
                 "track": "both",
@@ -388,7 +386,7 @@ local_1_0 = class panda_jmp0_reserved_anonymous_0 {
       v19 = false;
       if (!v18) {
         if (!local_2_7 /*audioDone*/) {
-          acc = local_1_0 /*SabrOfflineDownloader*/.tryWriteNext(p1, local_2_6 /*nextAudioSeq*/, p4, function (p0, p1) {
+          acc = SabrOfflineDownloader.tryWriteNext(p1, local_2_6 /*nextAudioSeq*/, p4, function (p0, p1) {
             local_2_4 += p0;
             local_2_5 = p1;
             local_2_6 = p1 + 1;
@@ -398,7 +396,7 @@ local_1_0 = class panda_jmp0_reserved_anonymous_0 {
           v19 = await acc;
         }
       } else if (!local_2_3 /*videoDone*/) {
-        acc = local_1_0 /*SabrOfflineDownloader*/.tryWriteNext(p0, local_2_2 /*nextVideoSeq*/, p3, function (p0, p1) {
+        acc = SabrOfflineDownloader.tryWriteNext(p0, local_2_2 /*nextVideoSeq*/, p3, function (p0, p1) {
           local_2_0 += p0;
           local_2_1 = p1;
           local_2_2 = p1 + 1;
@@ -407,7 +405,7 @@ local_1_0 = class panda_jmp0_reserved_anonymous_0 {
         });
         v19 = await acc;
       } else if (!local_2_7 /*audioDone*/) {
-        acc = local_1_0 /*SabrOfflineDownloader*/.tryWriteNext(p1, local_2_6 /*nextAudioSeq*/, p4, function (p0, p1) {
+        acc = SabrOfflineDownloader.tryWriteNext(p1, local_2_6 /*nextAudioSeq*/, p4, function (p0, p1) {
           local_2_4 += p0;
           local_2_5 = p1;
           local_2_6 = p1 + 1;
@@ -418,7 +416,7 @@ local_1_0 = class panda_jmp0_reserved_anonymous_0 {
       }
       if (!v19 && !v18) {
         if (!local_2_3 /*videoDone*/) {
-          acc = local_1_0 /*SabrOfflineDownloader*/.tryWriteNext(p0, local_2_2 /*nextVideoSeq*/, p3, function (p0, p1) {
+          acc = SabrOfflineDownloader.tryWriteNext(p0, local_2_2 /*nextVideoSeq*/, p3, function (p0, p1) {
             local_2_0 += p0;
             local_2_1 = p1;
             local_2_2 = p1 + 1;
@@ -428,7 +426,7 @@ local_1_0 = class panda_jmp0_reserved_anonymous_0 {
           v19 = await acc;
         } else if (!v19 && v18) {
           if (!local_2_7 /*audioDone*/) {
-            acc = local_1_0 /*SabrOfflineDownloader*/.tryWriteNext(p1, local_2_6 /*nextAudioSeq*/, p4, function (p0, p1) {
+            acc = SabrOfflineDownloader.tryWriteNext(p1, local_2_6 /*nextAudioSeq*/, p4, function (p0, p1) {
               local_2_4 += p0;
               local_2_5 = p1;
               local_2_6 = p1 + 1;
@@ -440,7 +438,7 @@ local_1_0 = class panda_jmp0_reserved_anonymous_0 {
         }
       } else if (!v19 && v18) {
         if (!local_2_7 /*audioDone*/) {
-          acc = local_1_0 /*SabrOfflineDownloader*/.tryWriteNext(p1, local_2_6 /*nextAudioSeq*/, p4, function (p0, p1) {
+          acc = SabrOfflineDownloader.tryWriteNext(p1, local_2_6 /*nextAudioSeq*/, p4, function (p0, p1) {
             local_2_4 += p0;
             local_2_5 = p1;
             local_2_6 = p1 + 1;
@@ -455,7 +453,7 @@ local_1_0 = class panda_jmp0_reserved_anonymous_0 {
         v26 = local_2_1 /*videoSeq*/ > 0 ? p0.getSegmentEndMs(local_2_1 /*videoSeq*/) : 0;
         v22 = Math.min(v26, local_2_5 /*audioSeq*/ > 0 ? p1.getSegmentEndMs(local_2_5 /*audioSeq*/) : 0);
         v22 > 0 && sabrSessionStore.setPlayHeadMs(p2.key, v22);
-        v23 = local_1_0 /*SabrOfflineDownloader*/.overallPercent(local_2_1 /*videoSeq*/, local_2_5 /*audioSeq*/, p0.getEndSegment(), p1.getEndSegment(), local_2_0 /*videoBytes*/, local_2_4 /*audioBytes*/);
+        v23 = SabrOfflineDownloader.overallPercent(local_2_1 /*videoSeq*/, local_2_5 /*audioSeq*/, p0.getEndSegment(), p1.getEndSegment(), local_2_0 /*videoBytes*/, local_2_4 /*audioBytes*/);
         if (p5 != null) {
           acc = {
             "track": "both",
@@ -534,6 +532,5 @@ local_1_0 = class panda_jmp0_reserved_anonymous_0 {
     }
     return Math.min(99, Math.max(2, Math.round((p4 + p5) / (1024 * 1024))));
   }
-};
-SabrOfflineDownloader = local_1_0;
+}
 export { SabrOfflineDownloader };

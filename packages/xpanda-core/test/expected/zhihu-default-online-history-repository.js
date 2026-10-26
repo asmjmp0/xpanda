@@ -5,7 +5,7 @@
 */
 import { ZhihuHttpMethod } from "@normalized:N&&&data/src/main/ets/network/ZhihuHttpClient&1.0.0";
 import { decodeOnlineHistoryPage } from "@normalized:N&&&data/src/main/ets/domain/ZhihuOnlineHistoryDecoder&1.0.0";
-let DefaultOnlineHistoryRepository, ONLINE_HISTORY_BASE_URL, ONLINE_HISTORY_BATCH_DEL_URL, ONLINE_HISTORY_LIMIT, ONLINE_HISTORY_MAX_OFFSET, OnlineHistoryRepositoryFailure, OnlineHistoryRepositoryFailureKind, buildBatchDelBody, buildOnlineHistoryUrl, canonicalOnlineHistoryCursorKey, isOnlineHistoryCursorUrl, onlineHistoryDeletePairOf, onlineHistoryOffsetOf;
+let ONLINE_HISTORY_BASE_URL, ONLINE_HISTORY_BATCH_DEL_URL, ONLINE_HISTORY_LIMIT, ONLINE_HISTORY_MAX_OFFSET, OnlineHistoryRepositoryFailureKind, buildBatchDelBody, buildOnlineHistoryUrl, canonicalOnlineHistoryCursorKey, isOnlineHistoryCursorUrl, onlineHistoryDeletePairOf, onlineHistoryOffsetOf;
 let local_0_0, local_0_1, local_0_2;
 buildBatchDelBody = function (p0, p1) {
   return "{\"pairs\":[" + p0.map(function (p0) {
@@ -140,7 +140,7 @@ OnlineHistoryRepositoryFailureKind = {
   INVALID_CONTENT_KEY: "invalid_content_key",
   CANCELLED: "cancelled"
 };
-OnlineHistoryRepositoryFailure = class panda_jmp0_reserved_anonymous_0 extends Error {
+class OnlineHistoryRepositoryFailure extends Error {
   constructor(p0) {
     let v0;
     v0 = "在线历史请求已取消";
@@ -160,8 +160,8 @@ OnlineHistoryRepositoryFailure = class panda_jmp0_reserved_anonymous_0 extends E
     v0.kind = p0;
     return v0;
   }
-};
-DefaultOnlineHistoryRepository = class panda_jmp0_reserved_anonymous_1 {
+}
+class DefaultOnlineHistoryRepository {
   constructor(p0, p1) {
     this.requestedCursors = new Set();
     this.deliveredIdentities = new Set();
@@ -317,7 +317,7 @@ DefaultOnlineHistoryRepository = class panda_jmp0_reserved_anonymous_1 {
     }
     throw new OnlineHistoryRepositoryFailure(OnlineHistoryRepositoryFailureKind.CANCELLED);
   }
-};
+}
 export { DefaultOnlineHistoryRepository };
 export { ONLINE_HISTORY_BASE_URL };
 export { ONLINE_HISTORY_BATCH_DEL_URL };

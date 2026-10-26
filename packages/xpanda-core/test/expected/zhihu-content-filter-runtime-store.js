@@ -5,10 +5,9 @@
 */
 import { contentIdentityKey } from "@normalized:N&&&data/src/main/ets/data/BlockingRuleStore&1.0.0";
 import relationalStore from "@ohos:data.relationalStore";
-let ContentFilterRuntimeStore;
 let local_0_0;
 local_0_0 = "content_filter_views";
-ContentFilterRuntimeStore = class panda_jmp0_reserved_anonymous_0 {
+class ContentFilterRuntimeStore {
   constructor(p0, p1) {
     this.mutationQueue = Promise.resolve();
     this.database = p0;
@@ -156,5 +155,5 @@ ContentFilterRuntimeStore = class panda_jmp0_reserved_anonymous_0 {
     v3.close();
     return v10;
   }
-};
+}
 export { ContentFilterRuntimeStore };

@@ -2,26 +2,37 @@ import { Program } from "@babel/types";
 import { ISimplify } from "./ISimplify";
 import traverse, { NodePath } from "@babel/traverse";
 import * as TYPE from "@babel/types";
-import { collectIdentifierNames, isPureExpression, walkNode } from "./AstUtils";
+import { collectIdentifierNames, isPureExpression, isTempName, walkNode } from "./AstUtils";
 
 
 const {
+    VISITOR_KEYS,
     classDeclaration,
     classMethod,
     classProperty,
     file,
     identifier,
     isAssignmentExpression,
+    isBlockStatement,
+    isClassExpression,
     isClassMethod,
+    isClassProperty,
     isExpressionStatement,
+    isForInStatement,
+    isForOfStatement,
     isFunctionExpression,
     isIdentifier,
     isMemberExpression,
+    isObjectMethod,
+    isObjectProperty,
+    isOptionalMemberExpression,
     isReturnStatement,
     isStringLiteral,
     isThisExpression,
+    isUpdateExpression,
+    isVariableDeclaration,
+    isVariableDeclarator,
     stringLiteral,
-    isClassExpression: isClassExpressionNode,
 } = TYPE;
 
 /**
@@ -71,7 +82,7 @@ function resolveClassForTarget(name: string, statement: NodePath<TYPE.Statement>
         const expression = pre.node.expression;
         if (!isAssignmentExpression(expression) || !isIdentifier(expression.left)) continue;
         if (expression.left.name !== current) continue;
-        if (isClassExpressionNode(expression.right)) return expression.right;
+        if (isClassExpression(expression.right)) return expression.right;
         if (isIdentifier(expression.right)) {
             current = expression.right.name;
             continue;
@@ -184,7 +195,7 @@ export class ClassSyntaxSimplify implements ISimplify {
             if (!isExpressionStatement(pre.node)) continue;
             const expression = pre.node.expression;
             // 到达 __defineGetter__/__defineSetter__ 的作用域边界
-            if (isAssignmentExpression(expression) && isClassExpressionNode(expression.right)) {
+            if (isAssignmentExpression(expression) && isClassExpression(expression.right)) {
                 gsd.clazz = expression.right;
                 return;
             }
@@ -236,7 +247,7 @@ export class ClassSyntaxSimplify implements ISimplify {
                 }
                 // Q = class ...
                 if (ownerName !== null && isIdentifier(assign.left) && assign.left.name === ownerName) {
-                    if (isClassExpressionNode(assign.right)) {
+                    if (isClassExpression(assign.right)) {
                         clazz = assign.right;
                     }
                     break;
@@ -385,4 +396,443 @@ export class ClassSyntaxSimplify implements ISimplify {
         });
         return changed;
     }
+
+    /**
+     * 把模块级类定义的寄存器/别名链折叠回 `class Name {}` 声明(见文件尾部的形态说明)。
+     * 在管线尾部调用:此时 acc 枢纽、原型装载残留已被定点迭代清干净,定义语句与
+     * 目标赋值之间只剩别名搬运语句,链上出现任何其它语句都保守放弃。
+     */
+    public static foldModuleClassDeclarations(program: Program): boolean {
+        let changed = false;
+        // 每次折叠都会移除一个定义语句(替换成类声明),类声明不会再被匹配,循环必然终止
+        while (true) {
+            const contexts = new Map<TYPE.Node, StatementListContext>();
+            buildListContexts(program.body, program, null, contexts);
+            let folded = false;
+            for (const [owner, ctx] of contexts) {
+                for (let i = 0; i < ctx.list.length; i++) {
+                    const fold = buildFold(program, contexts, owner, ctx, i);
+                    if (!fold) continue;
+                    applyFold(program, contexts, fold);
+                    folded = true;
+                    changed = true;
+                    break;
+                }
+                if (folded) break;
+            }
+            if (!folded) break;
+        }
+        return changed;
+    }
+}
+
+// ---------------------------------------------------------------- 模块级类声明还原
+//
+// ArkTS 把源码的 `class Name {}` 编译成「匿名类表达式 + 寄存器/词法环境搬运」:
+//
+//   { let local_1_0; acc = class <匿名>{}; local_1_0 = acc; }   // lexenv 自引用槽
+//   Name = acc;                                                 // stmodulevar
+//   export { Name };
+//
+// 复制传播后还会出现 `T = class <匿名>{}; Name = T;`(T 为 lexenv 临时)、
+// `Name = class <匿名>{};`(模块名直赋)与 `let Name = class <匿名>{};` 三种变体。
+// 这里在管线尾部把它们统一折叠回 `class Name {}` 类声明,类方法里对
+// lexenv 自引用槽的读取同步改名为 Name。
+//
+// 语义等价性:`let Name;` + `Name = class{}` 与 `class Name {}` 一样都是
+// 块级 TDZ 绑定,类头(extends)仍在原执行位置求值;改名后类体内部的自引用
+// 从外部槽读取变成类名绑定,取值相同。
+
+/** 语句列表上下文:只登记「作为列表元素出现的块」(lexenv 块的形态),链扫描只沿它们跨越作用域 */
+interface StatementListContext {
+    list: TYPE.Statement[];
+    parent: { owner: TYPE.Node; index: number } | null;
+}
+
+/** 类定义落点描述与折叠所需信息 */
+interface ModuleClassFold {
+    stmt: TYPE.Statement;
+    list: TYPE.Statement[];
+    listOwner: TYPE.Node;
+    listParent: { owner: TYPE.Node; index: number } | null;
+    classExpr: TYPE.ClassExpression;
+    /** 定义语句的赋值目标(可能是 acc/lexenv 临时/模块名) */
+    holder: string;
+    /** 别名链上的临时名(不含 acc),读取要改名为 target */
+    aliases: string[];
+    /** 要删除的别名赋值语句及其所在列表 */
+    chain: Array<{ stmt: TYPE.Statement; list: TYPE.Statement[] }>;
+    /** 最终模块级绑定名 */
+    target: string;
+    /** 用类声明替换的目标语句;null 表示直接在 stmt 原位替换 */
+    targetStmt: TYPE.Statement | null;
+    targetList: TYPE.Statement[] | null;
+    /** 目标语句所在列表的宿主节点(targetStmt 为 null 时是 listOwner) */
+    targetOwner: TYPE.Node;
+    /**
+     * 非 null 时类声明插到 program.body 中该块元素之后(锚点在块内,类绑定必须落到
+     * 模块作用域);null 时锚点本身就在 program.body,原位替换即可。
+     */
+    programInsertAfter: TYPE.Node | null;
+    /** 校验阶段收集的待删 no-init declarator(别名槽 + 目标模块名的 `let` 声明) */
+    declarators: TYPE.VariableDeclarator[];
+}
+
+function isValidBindingName(name: string): boolean {
+    return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name) && !isTempName(name)
+        && !name.startsWith("panda_jmp0_reserved_");
+}
+
+function buildListContexts(
+    list: TYPE.Statement[],
+    owner: TYPE.Node,
+    parent: StatementListContext["parent"],
+    contexts: Map<TYPE.Node, StatementListContext>,
+): void {
+    contexts.set(owner, { list, parent });
+    for (let i = 0; i < list.length; i++) {
+        const stmt = list[i];
+        if (isBlockStatement(stmt)) buildListContexts(stmt.body, stmt, { owner, index: i }, contexts);
+    }
+}
+
+/** 从 (owner, index) 之后按执行顺序枚举语句,只经由「列表元素块」向上跨越作用域 */
+function* forwardStatements(
+    contexts: Map<TYPE.Node, StatementListContext>,
+    startOwner: TYPE.Node,
+    startIndex: number,
+): Generator<{ stmt: TYPE.Statement; owner: TYPE.Node }> {
+    let owner: TYPE.Node | null = startOwner;
+    let index = startIndex;
+    while (owner) {
+        const ctx = contexts.get(owner);
+        if (!ctx) return;
+        while (index < ctx.list.length) {
+            yield { stmt: ctx.list[index], owner };
+            index++;
+        }
+        owner = ctx.parent ? ctx.parent.owner : null;
+        index = ctx.parent ? ctx.parent.index + 1 : 0;
+    }
+}
+
+interface NameUsage {
+    total: number;
+    declaratorsNoInit: TYPE.VariableDeclarator[];
+    declaratorsWithInit: number;
+    writes: number;
+    /** 自增/复合赋值/for-in-of 头部等非普通赋值写入 */
+    otherWrites: number;
+    /** 参数/函数·类名/import 本地名/catch 参数/标签等绑定位置 */
+    bindings: number;
+    /** export specifier 引用(对目标模块名合法) */
+    exportSpecs: number;
+}
+
+function scanNameUsage(program: TYPE.Program, name: string, skipNode: TYPE.Node): NameUsage {
+    const usage: NameUsage = {
+        total: 0, declaratorsNoInit: [], declaratorsWithInit: 0,
+        writes: 0, otherWrites: 0, bindings: 0, exportSpecs: 0,
+    };
+    walkNode(program, (node, parent, key) => {
+        if (node === skipNode) return false;
+        if (!isIdentifier(node) || node.name !== name) return true;
+        usage.total++;
+        const p = parent as TYPE.Node | null;
+        if (p && isVariableDeclarator(p) && key === "id") {
+            if (p.init == null) usage.declaratorsNoInit.push(p);
+            else usage.declaratorsWithInit++;
+            return true;
+        }
+        if (p && isAssignmentExpression(p) && p.left === node) {
+            if (p.operator === "=") usage.writes++;
+            else usage.otherWrites++;
+            return true;
+        }
+        if (p && isUpdateExpression(p)) { usage.otherWrites++; return true; }
+        if (p && (isForInStatement(p) || isForOfStatement(p)) && p.left === node) { usage.otherWrites++; return true; }
+        if (p && (p.type === "LabeledStatement" || p.type === "BreakStatement" || p.type === "ContinueStatement") && key === "label") {
+            usage.bindings++;
+            return true;
+        }
+        if (p && (p.type === "ImportSpecifier" || p.type === "ImportDefaultSpecifier" || p.type === "ImportNamespaceSpecifier")) {
+            usage.bindings++;
+            return true;
+        }
+        if (p && p.type === "ExportSpecifier") { usage.exportSpecs++; return true; }
+        if (p && (p.type === "FunctionDeclaration" || p.type === "FunctionExpression"
+            || p.type === "ArrowFunctionExpression" || p.type === "ObjectMethod" || p.type === "ClassMethod")
+            && key === "params") {
+            usage.bindings++;
+            return true;
+        }
+        if (p && (p.type === "FunctionDeclaration" || p.type === "FunctionExpression"
+            || p.type === "ClassDeclaration" || p.type === "ClassExpression") && key === "id") {
+            usage.bindings++;
+            return true;
+        }
+        if (p && p.type === "CatchClause" && key === "param") { usage.bindings++; return true; }
+        return true;
+    });
+    return usage;
+}
+
+function countPlainWrites(stmts: TYPE.Statement[], name: string): number {
+    let count = 0;
+    for (const stmt of stmts) {
+        walkNode(stmt, (node) => {
+            if (isAssignmentExpression(node) && node.operator === "=" && isIdentifier(node.left) && node.left.name === name) count++;
+            return true;
+        });
+    }
+    return count;
+}
+
+/** 匹配 `X = class R{}` / 单 declarator `let X = class R{}`;返回 null 表示不是定义点 */
+function matchClassDeclSite(stmt: TYPE.Statement): { classExpr: TYPE.ClassExpression; holder: string } | null {
+    if (isExpressionStatement(stmt) && isAssignmentExpression(stmt.expression)
+        && stmt.expression.operator === "=" && isIdentifier(stmt.expression.left)
+        && isClassExpression(stmt.expression.right)) {
+        return { classExpr: stmt.expression.right, holder: stmt.expression.left.name };
+    }
+    if (isVariableDeclaration(stmt) && stmt.declarations.length === 1) {
+        const declarator = stmt.declarations[0];
+        if (isIdentifier(declarator.id) && isClassExpression(declarator.init)) {
+            return { classExpr: declarator.init, holder: declarator.id.name };
+        }
+    }
+    return null;
+}
+
+function buildFold(
+    program: TYPE.Program,
+    contexts: Map<TYPE.Node, StatementListContext>,
+    owner: TYPE.Node,
+    ctx: StatementListContext,
+    index: number,
+): ModuleClassFold | null {
+    const site = matchClassDeclSite(ctx.list[index]);
+    if (!site) return null;
+    const fold: ModuleClassFold = {
+        stmt: ctx.list[index],
+        list: ctx.list,
+        listOwner: owner,
+        listParent: ctx.parent,
+        classExpr: site.classExpr,
+        holder: site.holder,
+        aliases: [],
+        chain: [],
+        target: "",
+        targetStmt: null,
+        targetList: null,
+        targetOwner: owner,
+        programInsertAfter: null,
+        declarators: [],
+    };
+    if (!isValidBindingName(site.holder)) {
+        // holder 是临时名:沿执行顺序向后收集别名链,直到第一个非临时赋值目标
+        const holders = new Set<string>([site.holder]);
+        if (site.holder !== "acc") fold.aliases.push(site.holder);
+        for (const { stmt, owner: stepOwner } of forwardStatements(contexts, owner, index + 1)) {
+            const expression = isExpressionStatement(stmt) ? stmt.expression : null;
+            if (!expression || !isAssignmentExpression(expression) || expression.operator !== "="
+                || !isIdentifier(expression.left) || !isIdentifier(expression.right)
+                || !holders.has(expression.right.name)) return null;
+            const left = expression.left;
+            if (holders.has(left.name)) {
+                // 冗余枢纽恢复(`acc = v1`):链上没有其它读取,一并删除
+                fold.chain.push({ stmt, list: contexts.get(stepOwner)!.list });
+                continue;
+            }
+            if (isTempName(left.name) && !left.name.startsWith("panda_jmp0_reserved_")) {
+                holders.add(left.name);
+                fold.aliases.push(left.name);
+                fold.chain.push({ stmt, list: contexts.get(stepOwner)!.list });
+                continue;
+            }
+            if (!isValidBindingName(left.name)) return null;
+            fold.target = left.name;
+            fold.targetStmt = stmt;
+            fold.targetList = contexts.get(stepOwner)!.list;
+            fold.targetOwner = stepOwner;
+            break;
+        }
+        if (!fold.target) return null;
+    } else {
+        // holder 本身就是模块级绑定名(`Name = class R{}` / `let Name = class R{}`):原位替换
+        fold.target = site.holder;
+    }
+    // 类声明必须落到模块作用域(program.body)。锚点在块内时沿块链向上攀升:
+    // 每一层「锚点之后」的语句只允许是本折叠的链上语句(它们会被删除,等效于
+    // 锚点就是该块的结尾);攀升成功后类声明插到最外层块元素之后。
+    const anchorOwner = fold.targetStmt ? fold.targetOwner : fold.listOwner;
+    if (anchorOwner !== program) {
+        const chainSet = new Set(fold.chain.map((c) => c.stmt));
+        let ownerNode: TYPE.Node = anchorOwner;
+        let ctx = contexts.get(ownerNode)!;
+        let idx = ctx.list.indexOf(fold.targetStmt ?? fold.stmt);
+        for (;;) {
+            for (let j = idx + 1; j < ctx.list.length; j++) {
+                if (!chainSet.has(ctx.list[j])) return null;
+            }
+            if (!ctx.parent || ctx.parent.owner === program) break;
+            idx = ctx.parent.index;
+            ownerNode = ctx.parent.owner;
+            ctx = contexts.get(ownerNode)!;
+        }
+        fold.programInsertAfter = ownerNode;
+    }
+    return validateFold(program, fold) ? fold : null;
+}
+
+function validateFold(program: TYPE.Program, fold: ModuleClassFold): boolean {
+    const chainStmts = fold.chain.map((c) => c.stmt);
+    // 目标名:至多一个 no-init `let` 声明(折叠后删掉),不得与 import/参数/标签等绑定冲突;
+    // 对它的其它赋值(`Name = other`)在类声明下仍然合法,不检查
+    const targetUsage = scanNameUsage(program, fold.target, fold.stmt);
+    if (targetUsage.declaratorsWithInit > 0 || targetUsage.declaratorsNoInit.length > 1) return false;
+    if (targetUsage.bindings > 0 || targetUsage.otherWrites > 0) return false;
+    fold.declarators.push(...targetUsage.declaratorsNoInit);
+    // 别名槽:唯一 no-init 声明;全部写入都在链上;无其它绑定;无自增/for-of 头等写入
+    for (const alias of fold.aliases) {
+        const usage = scanNameUsage(program, alias, fold.stmt);
+        if (usage.declaratorsWithInit > 0 || usage.declaratorsNoInit.length !== 1) return false;
+        if (usage.bindings > 0 || usage.otherWrites > 0) return false;
+        if (usage.writes !== countPlainWrites(chainStmts, alias)) return false;
+        fold.declarators.push(...usage.declaratorsNoInit);
+    }
+    // 编译器生成的类名(匿名/保留名):类体之外的引用无法随之改名,保守放弃
+    const classId = fold.classExpr.id;
+    if (classId && isIdentifier(classId) && scanNameUsage(program, classId.name, fold.stmt).total > 0) return false;
+    return true;
+}
+
+/** 整棵树内把名为 name 的引用标识符替换为 replacement(跳过非引用的 key/label 位置) */
+function replaceNameRefs(node: TYPE.Node, name: string, replacement: TYPE.Identifier): void {
+    const keys = (VISITOR_KEYS as any)[node.type] as string[] | undefined;
+    if (!keys) return;
+    for (const k of keys) {
+        const value = (node as any)[k];
+        if (Array.isArray(value)) {
+            for (let i = 0; i < value.length; i++) {
+                const child = value[i];
+                if (!child || typeof child.type !== "string") continue;
+                if (isReferenceIdentifier(child, node, k, name)) {
+                    value[i] = identifier(replacement.name);
+                    continue;
+                }
+                replaceNameRefs(child, name, replacement);
+            }
+        } else if (value && typeof value.type === "string") {
+            if (isReferenceIdentifier(value, node, k, name)) {
+                (node as any)[k] = identifier(replacement.name);
+                continue;
+            }
+            replaceNameRefs(value, name, replacement);
+        }
+    }
+}
+
+function isReferenceIdentifier(child: TYPE.Node, parent: TYPE.Node, key: string, name: string): boolean {
+    if (!isIdentifier(child) || child.name !== name) return false;
+    // 非计算成员/属性 key 不是变量引用
+    if ((isMemberExpression(parent) || isOptionalMemberExpression(parent)) && key === "property" && !parent.computed) return false;
+    if ((isObjectProperty(parent) || isObjectMethod(parent) || isClassProperty(parent)) && key === "key" && !parent.computed) return false;
+    // `{alias}` 简写:保留旧 key,只改值(`{alias: Name}`)
+    if (isObjectProperty(parent) && parent.shorthand) {
+        parent.shorthand = false;
+        return false;
+    }
+    if (key === "label") return false;
+    return true;
+}
+
+function removeFromList(list: TYPE.Statement[], stmt: TYPE.Statement): void {
+    const index = list.indexOf(stmt);
+    if (index >= 0) list.splice(index, 1);
+}
+
+/** 从整棵树里删掉指定 declarator;声明清空且宿主是语句列表时整条删除 */
+function removeFromListsRecursively(node: TYPE.Node, set: Set<TYPE.VariableDeclarator>): void {
+    const keys = (VISITOR_KEYS as any)[node.type] as string[] | undefined;
+    if (!keys) return;
+    for (const k of keys) {
+        const value = (node as any)[k];
+        if (!Array.isArray(value)) {
+            if (value && typeof value.type === "string") removeFromListsRecursively(value, set);
+            continue;
+        }
+        for (let i = 0; i < value.length; i++) {
+            const child = value[i];
+            if (!child || typeof child.type !== "string") continue;
+            if (isVariableDeclaration(child) && child.declarations.some((d) => set.has(d))) {
+                child.declarations = child.declarations.filter((d) => !set.has(d));
+                // for 头部等非语句列表位置只能保留空声明(实际不会出现)
+                if (child.declarations.length === 0
+                    && ((node.type === "Program" || node.type === "BlockStatement") && k === "body"
+                        || (node.type === "SwitchCase" && k === "consequent"))) {
+                    value.splice(i, 1);
+                    i--;
+                    continue;
+                }
+            }
+            removeFromListsRecursively(child, set);
+        }
+    }
+}
+
+function applyFold(program: TYPE.Program, contexts: Map<TYPE.Node, StatementListContext>, fold: ModuleClassFold): void {
+    const classExpr = fold.classExpr;
+    // 无 extends 的类表达式父类是 hole 哨兵,转声明时一并清掉
+    if (classExpr.superClass && isIdentifier(classExpr.superClass) && classExpr.superClass.name === "hole") {
+        classExpr.superClass = null;
+    }
+    const reservedIdName = classExpr.id && isIdentifier(classExpr.id) ? classExpr.id.name : null;
+    classExpr.id = identifier(fold.target);
+    const classDecl = classDeclaration(classExpr.id, classExpr.superClass, classExpr.body, classExpr.decorators);
+    if (fold.programInsertAfter) {
+        // 锚点在块内:定义语句/别名链/目标赋值全部删除,类声明插到 program.body
+        // 的最外层块元素之后(类绑定必须落在模块作用域,求值顺序不变)
+        removeFromList(fold.list, fold.stmt);
+        for (const c of fold.chain) removeFromList(c.list, c.stmt);
+        if (fold.targetStmt && fold.targetList) removeFromList(fold.targetList, fold.targetStmt);
+        const insertIdx = program.body.indexOf(fold.programInsertAfter as TYPE.Statement);
+        if (insertIdx >= 0) program.body.splice(insertIdx + 1, 0, classDecl);
+        else program.body.push(classDecl);
+    } else if (fold.targetStmt && fold.targetList) {
+        // A/B 形态:定义语句与别名链删除,类声明放到原目标赋值的位置(求值顺序不变)
+        removeFromList(fold.list, fold.stmt);
+        for (const c of fold.chain) removeFromList(c.list, c.stmt);
+        const targetIndex = fold.targetList.indexOf(fold.targetStmt);
+        if (targetIndex >= 0) fold.targetList.splice(targetIndex, 1, classDecl);
+    } else {
+        // C/D 形态:原位替换
+        const index = fold.list.indexOf(fold.stmt);
+        if (index >= 0) fold.list.splice(index, 1, classDecl);
+    }
+    // 删掉别名槽与模块名的 `let` 声明(与 class 声明重名会直接 SyntaxError)。
+    // 目标 `let` 通常在顶层而定义可能在块内,必须从整棵树找。
+    if (fold.declarators.length > 0) removeFromListsRecursively(program, new Set(fold.declarators));
+    // 被搬空的 lexenv 块整块删除(块可能嵌套成链,迭代到稳定)。
+    // 注意只有真正从父列表移除才置 pruned,否则已删除的空块会让循环永不终止。
+    for (;;) {
+        let pruned = false;
+        for (const [ownerNode, ctx] of contexts) {
+            if (ownerNode === program || !isBlockStatement(ownerNode) || !ctx.parent) continue;
+            if (ctx.list.length !== 0) continue;
+            const parentOwner = ctx.parent.owner;
+            const parentList = parentOwner.type === "Program"
+                ? (parentOwner as TYPE.Program).body
+                : isBlockStatement(parentOwner) ? parentOwner.body : null;
+            if (!parentList) continue;
+            const idx = parentList.indexOf(ownerNode as TYPE.Statement);
+            if (idx < 0) continue;
+            parentList.splice(idx, 1);
+            pruned = true;
+        }
+        if (!pruned) break;
+    }
+    // 类体内部对旧类名/别名槽的引用改成类名绑定
+    if (reservedIdName) replaceNameRefs(classExpr, reservedIdName, classExpr.id as TYPE.Identifier);
+    for (const alias of fold.aliases) replaceNameRefs(classExpr, alias, classExpr.id as TYPE.Identifier);
 }

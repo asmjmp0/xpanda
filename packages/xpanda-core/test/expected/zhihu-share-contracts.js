@@ -3,7 +3,7 @@
 * Source code created from a .abc file.
 * powered by xpanda decompiler, author: jmp0
 */
-let MAX_SHARE_SUMMARY_LENGTH, MAX_SHARE_TITLE_LENGTH, MAX_SHARE_URL_LENGTH, SHARE_PANEL_GRACE_MILLIS, SHARE_TEMPORARY_DIRECTORY, SHARE_TEMPORARY_MAX_AGE_MILLIS, ShareDispatchKind, ShareFailure, ShareFailureKind, ShareImageSourceKind, ShareOutcome, SharePayloadKind, createTemporaryShareLifecycle, markSharePanelOpened, prepareSharePayload, shouldCleanupTemporaryShareFile, toShareFailure;
+let MAX_SHARE_SUMMARY_LENGTH, MAX_SHARE_TITLE_LENGTH, MAX_SHARE_URL_LENGTH, SHARE_PANEL_GRACE_MILLIS, SHARE_TEMPORARY_DIRECTORY, SHARE_TEMPORARY_MAX_AGE_MILLIS, ShareDispatchKind, ShareFailureKind, ShareImageSourceKind, ShareOutcome, SharePayloadKind, createTemporaryShareLifecycle, markSharePanelOpened, prepareSharePayload, shouldCleanupTemporaryShareFile, toShareFailure;
 let local_0_0, local_0_1, local_0_2, local_0_3, local_0_4, local_0_5, local_0_6, local_0_7, local_0_8, local_0_9, local_0_10, local_0_11, local_0_12, local_0_13, local_0_14;
 createTemporaryShareLifecycle = function (p0) {
   if (!local_0_7(p0.createdAtMillis)) {
@@ -262,7 +262,7 @@ ShareOutcome = {
   OPENED: "opened",
   CANCELLED: "cancelled"
 };
-ShareFailure = class panda_jmp0_reserved_anonymous_0 extends Error {
+class ShareFailure extends Error {
   constructor(p0) {
     let v0;
     v0 = super(local_0_0(p0));
@@ -270,7 +270,7 @@ ShareFailure = class panda_jmp0_reserved_anonymous_0 extends Error {
     v0.kind = p0;
     return v0;
   }
-};
+}
 export { MAX_SHARE_SUMMARY_LENGTH };
 export { MAX_SHARE_TITLE_LENGTH };
 export { MAX_SHARE_URL_LENGTH };

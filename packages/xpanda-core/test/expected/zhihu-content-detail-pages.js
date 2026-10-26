@@ -66,7 +66,7 @@ import { stageQuestionAnswerNavigator } from "@normalized:N&&&entry/src/main/ets
 import { stageVideoPlaybackContext } from "@normalized:N&&&entry/src/main/ets/pages/VideoPlaybackHandoff&";
 import { takeQuestionAnswerNavigator } from "@normalized:N&&&entry/src/main/ets/pages/QuestionAnswerNavigator&";
 import { themeColorContainerColor } from "@normalized:N&&&data/Index&1.0.0";
-let AnswerDetailPage, ArticleDetailPage, QuestionDetailPage, contentAuthorAvatarUrl, contentAuthorBadge, contentAuthorHeadline, contentAuthorName, contentBlockingTitle, contentContextTitle, contentCreatedAtText, contentDetailPageTitle, contentEmptyMessage, contentEndorsements, contentHtml, contentIpInfo, contentShareSummary, contentShareThumbnailUrl, contentSpeechText, contentStatistics, contentTitle, contentUpdatedAtText, formatContentDateTime;
+let contentAuthorAvatarUrl, contentAuthorBadge, contentAuthorHeadline, contentAuthorName, contentBlockingTitle, contentContextTitle, contentCreatedAtText, contentDetailPageTitle, contentEmptyMessage, contentEndorsements, contentHtml, contentIpInfo, contentShareSummary, contentShareThumbnailUrl, contentSpeechText, contentStatistics, contentTitle, contentUpdatedAtText, formatContentDateTime;
 let local_0_0, local_0_1, local_0_2, local_0_3, local_0_4, local_0_5, local_0_6, local_0_7, local_0_8, local_0_9, local_0_10, local_0_11, local_0_12;
 local_0_12 = function (p0, p1) {
   let v0;
@@ -8451,7 +8451,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     this.updateDirtyElements();
   }
 };
-QuestionDetailPage = class panda_jmp0_reserved_anonymous_1 extends ViewPU {
+class QuestionDetailPage extends ViewPU {
   constructor(p0, p1, p2, p3, p4, p5) {
     let v0;
     if (p3 === undefined) {
@@ -8603,8 +8603,8 @@ QuestionDetailPage = class panda_jmp0_reserved_anonymous_1 extends ViewPU {
   rerender() {
     this.updateDirtyElements();
   }
-};
-AnswerDetailPage = class panda_jmp0_reserved_anonymous_2 extends ViewPU {
+}
+class AnswerDetailPage extends ViewPU {
   constructor(p0, p1, p2, p3, p4, p5) {
     let v0;
     if (p3 === undefined) {
@@ -8756,8 +8756,8 @@ AnswerDetailPage = class panda_jmp0_reserved_anonymous_2 extends ViewPU {
   rerender() {
     this.updateDirtyElements();
   }
-};
-ArticleDetailPage = class panda_jmp0_reserved_anonymous_3 extends ViewPU {
+}
+class ArticleDetailPage extends ViewPU {
   constructor(p0, p1, p2, p3, p4, p5) {
     let v0;
     if (p3 === undefined) {
@@ -8901,7 +8901,7 @@ ArticleDetailPage = class panda_jmp0_reserved_anonymous_3 extends ViewPU {
   rerender() {
     this.updateDirtyElements();
   }
-};
+}
 local_0_4 = 200;
 local_0_3 = 300;
 local_0_6 = 46;

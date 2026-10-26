@@ -27,7 +27,6 @@ import { UIConfig } from "@normalized:N&&&entry/src/main/ets/common/AppState&";
 import deviceInfo from "@ohos:deviceInfo";
 import i18n from "@ohos:i18n";
 import { secondToTime } from "@normalized:N&&&mediaservice/Index&1.0.0";
-let VideoPlayer;
 let local_0_0, local_0_1, local_0_2, local_0_3, local_0_4, local_0_5, local_0_6, local_0_7, local_0_8, local_0_9, local_0_10, local_0_11, local_0_12, local_0_13, local_0_14, local_0_15, local_0_16, local_0_17, local_0_18, local_0_19, local_0_20, local_0_21, local_0_22, local_0_23, local_0_24, local_0_25, local_0_26, local_0_27, local_0_28, local_0_29, local_0_30, local_0_31, local_0_32;
 local_0_2 = undefined;
 local_0_3 = undefined;
@@ -78,7 +77,7 @@ local_0_3 = {
   SLIDER: "slider",
   MENU: "menu"
 };
-VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
+class VideoPlayer extends ViewPU {
   constructor(p0, p1, p2, p3, p4, p5) {
     let v6, v7;
     let local_1_0;
@@ -4779,7 +4778,7 @@ VideoPlayer = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
   rerender() {
     this.updateDirtyElements();
   }
-};
+}
 local_0_0 = class panda_jmp0_reserved_anonymous_1 {
   constructor(p0) {
     this.owner = p0;

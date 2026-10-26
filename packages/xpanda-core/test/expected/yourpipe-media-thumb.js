@@ -3,12 +3,10 @@
 * Source code created from a .abc file.
 * powered by xpanda decompiler, author: jmp0
 */
-let MediaThumb;
 if (!("finalizeConstruction" in ViewPU.prototype)) {
   Reflect.set(ViewPU.prototype, "finalizeConstruction", function () {});
 }
-let local_0_0;
-local_0_0 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
+class MediaThumb extends ViewPU {
   constructor(p0, p1, p2, p3, p4, p5) {
     let v2, v6, v7;
     v6 = p3 === undefined ? -1 : p3;
@@ -258,13 +256,13 @@ local_0_0 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
     };
   }
   resetImageChain(p0) {
-    this.fallbackUrls = local_0_0 /*MediaThumb*/.buildFallbackChain(p0);
+    this.fallbackUrls = MediaThumb.buildFallbackChain(p0);
     this.fallbackIndex = 0;
     this.displayUrl = this.fallbackUrls.length > 0 ? this.fallbackUrls[0] : "";
   }
   static firstChoiceUrl(p0) {
     let v4;
-    v4 = local_0_0 /*MediaThumb*/.buildFallbackChain(p0);
+    v4 = MediaThumb.buildFallbackChain(p0);
     return v4.length > 0 ? v4[0] : "";
   }
   static buildFallbackChain(p0) {
@@ -589,6 +587,5 @@ local_0_0 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
   rerender() {
     this.updateDirtyElements();
   }
-};
-MediaThumb = local_0_0;
+}
 export { MediaThumb };

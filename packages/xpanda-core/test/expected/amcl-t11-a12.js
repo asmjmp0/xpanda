@@ -19,7 +19,7 @@ import { p1205 } from "@normalized:N&&&feature_core/src/main/ets/t11/w11&1.0.0";
 import { q36 } from "@normalized:N&&&commons/Index&1.0.0";
 import { y } from "@normalized:N&&&commons/Index&1.0.0";
 import zlib from "@ohos:zlib";
-let b1268, c1268, d1268, e1268, e771, f1268, m1268, n1268, r1267, s1267, t1267, u1267, v1267;
+let b1268, c1268, d1268, e1268, e771, f1268, r1267, s1267, t1267, u1267, v1267;
 let local_0_0, local_0_1, local_0_4, local_0_5, local_0_6, local_0_7, local_0_8, local_0_9, local_0_10, local_0_11, local_0_12;
 local_0_9 = function (p0) {
   return p0.downloads
@@ -718,13 +718,13 @@ local_0_8 = function (p0) {
 local_0_0 = q36.MOD_FORGE_INSTALLER;
 local_0_11 = f32 + "/mc/game/version_manifest_v2.json";
 local_0_10 = e32 + "/mc/game/version_manifest_v2.json";
-m1268 = class panda_jmp0_reserved_anonymous_0 {
+class m1268 {
   constructor() {
     this.sha1 = "";
     this.sourceIndex = -1;
   }
-};
-n1268 = class panda_jmp0_reserved_anonymous_1 {
+}
+class n1268 {
   constructor(p0, p1, p2) {
     if (p2 === undefined) {
       p2 = "";
@@ -736,7 +736,7 @@ n1268 = class panda_jmp0_reserved_anonymous_1 {
     this.versionId = p1;
     this.error = p2;
   }
-};
+}
 local_0_1 = [17, 21, 25];
 local_0_6 = class panda_jmp0_reserved_anonymous_2 {
   constructor() {

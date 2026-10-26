@@ -3,7 +3,7 @@
 * Source code created from a .abc file.
 * powered by xpanda decompiler, author: jmp0
 */
-let Test = class panda_jmp0_reserved_class_0 {
+class Test {
   c = 10;
   get c() {
     return "10";
@@ -11,5 +11,5 @@ let Test = class panda_jmp0_reserved_class_0 {
   test() {
     console.log("123");
   }
-};
+}
 new Test().test();

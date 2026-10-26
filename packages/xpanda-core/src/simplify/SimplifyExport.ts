@@ -147,5 +147,10 @@ export class SimplifyExport {
         ConditionSimplify.foldMaterializedTestArtifacts(node);
         // 尾块消除/结构展开后,前面已经稳定的死存储可能重新变成死代码,补一轮清理。
         TempVariableSimplify.cleanupDeadStores(node);
+        // 模块级类定义还原:`acc = class <匿名>{}; local_1_0 = acc; Name = acc;` /
+        // `T = class <匿名>{}; Name = T;` / `Name = class <匿名>{};` / `let Name = class <匿名>{};`
+        // 统一折叠成 `class Name {}` 声明,类方法里的 lexenv 自引用读取同步改名为 Name。
+        // 放在最后:定点迭代把 acc 枢纽清干净之后,定义与目标赋值之间才只剩纯别名链。
+        ClassSyntaxSimplify.foldModuleClassDeclarations(node);
     }
 }

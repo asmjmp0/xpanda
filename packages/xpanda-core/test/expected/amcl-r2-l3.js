@@ -8,7 +8,7 @@ import { h115 } from "@normalized:N&&&commons/Index&1.0.0";
 import { k115 } from "@normalized:N&&&commons/Index&1.0.0";
 import { q51 } from "@normalized:N&&&commons/Index&1.0.0";
 import { r115 } from "@normalized:N&&&commons/Index&1.0.0";
-let e190, u189, v189;
+let u189, v189;
 let local_0_1, local_0_2, local_0_3;
 local_0_1 = function (p0, p1, p2, p3) {
   let v1, v2, v3;
@@ -64,7 +64,7 @@ local_0_3 = class panda_jmp0_reserved_anonymous_1 {
   }
 };
 new RegExp("\\b\\d{2}:\\d{2}:\\d{2}(?:[.,]\\d+)?\\b|\\b(?:TRACE|DEBUG|INFO|WARN|WARNING|ERROR|FATAL)\\b|\\[[DIWEF]\\]|[\\w.$]+(?:Exception|Error)\\b|[\\w$]+\\.java:\\d+", "g");
-e190 = class panda_jmp0_reserved_anonymous_2 {
+class e190 {
   constructor() {
     this.rows = [];
     this.visible = [];
@@ -983,7 +983,7 @@ e190 = class panda_jmp0_reserved_anonymous_2 {
     }
     return -1;
   }
-};
+}
 export { e190 };
 export { u189 };
 export { v189 };

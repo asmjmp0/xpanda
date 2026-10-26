@@ -18,7 +18,7 @@ import { YTCoreLogger } from "@normalized:N&&&youtube_core/src/main/ets/common/Y
 import { readProtoVarint } from "@normalized:N&&&youtube_core/src/main/ets/common/ProtoUtil&1.0.0";
 import { sabrReadFields } from "@normalized:N&&&youtube_core/src/main/ets/extractor/sabr/SabrProto&1.0.0";
 import { umpReadAll } from "@normalized:N&&&youtube_core/src/main/ets/extractor/sabr/UmpReader&1.0.0";
-let PART_FORMAT_INITIALIZATION_METADATA, PART_MEDIA, PART_MEDIA_END, PART_MEDIA_HEADER, PART_NEXT_REQUEST_POLICY, PART_RELOAD_PLAYER_RESPONSE, PART_SABR_CONTEXT_SENDING_POLICY, PART_SABR_CONTEXT_UPDATE, PART_SABR_ERROR, PART_SABR_REDIRECT, PART_SABR_SEEK, PART_STREAM_PROTECTION_STATUS, SabrPartProcessor, isRecoverableIntegrityIssues, requireUmpContentType, sabrDecodeBody, sabrDecodeParts;
+let PART_FORMAT_INITIALIZATION_METADATA, PART_MEDIA, PART_MEDIA_END, PART_MEDIA_HEADER, PART_NEXT_REQUEST_POLICY, PART_RELOAD_PLAYER_RESPONSE, PART_SABR_CONTEXT_SENDING_POLICY, PART_SABR_CONTEXT_UPDATE, PART_SABR_ERROR, PART_SABR_REDIRECT, PART_SABR_SEEK, PART_STREAM_PROTECTION_STATUS, isRecoverableIntegrityIssues, requireUmpContentType, sabrDecodeBody, sabrDecodeParts;
 let local_0_0, local_0_1, local_0_2, local_0_3, local_0_4, local_0_5, local_0_6, local_0_7, local_0_8, local_0_9, local_0_10, local_0_11, local_0_12, local_0_13, local_0_14, local_0_15;
 local_0_12 = function (p0, p1, p2) {
   let v6, v7, v14, v17;
@@ -334,7 +334,7 @@ local_0_15 = class panda_jmp0_reserved_anonymous_2 {
     this.end = -1;
   }
 };
-SabrPartProcessor = class panda_jmp0_reserved_anonymous_3 {
+class SabrPartProcessor {
   constructor(p0, p1) {
     this.decoded = new SabrDecodedResponse();
     this.open = new Map();
@@ -439,7 +439,7 @@ SabrPartProcessor = class panda_jmp0_reserved_anonymous_3 {
     this.retainedSegments.push(p0);
     return;
   }
-};
+}
 export { PART_FORMAT_INITIALIZATION_METADATA };
 export { PART_MEDIA };
 export { PART_MEDIA_END };

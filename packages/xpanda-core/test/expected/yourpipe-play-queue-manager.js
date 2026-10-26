@@ -5,7 +5,7 @@
 */
 import { AppLog } from "@normalized:N&&&entry/src/main/ets/common/AppLog&";
 import { FeedServiceProvider } from "@normalized:N&&&entry/src/main/ets/common/FeedServiceProvider&";
-let PlayQueueManager, QueueChangeListener, QueueSourceType;
+let PlayQueueManager, QueueSourceType;
 let local_0_0;
 QueueSourceType = undefined;
 local_0_0 = AppLog.getInstance("PlayQueueManager");
@@ -15,11 +15,11 @@ QueueSourceType = {
   LOCAL: "local",
   ADHOC: "adhoc"
 };
-QueueChangeListener = class panda_jmp0_reserved_anonymous_0 {
+class QueueChangeListener {
   constructor() {}
   onQueueChanged() {}
   onCurrentIndexChanged(p0) {}
-};
+}
 let local_1_0;
 local_1_0 = class panda_jmp0_reserved_anonymous_1 {
   constructor() {

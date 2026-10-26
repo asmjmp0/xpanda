@@ -6,7 +6,7 @@
 import { AppDestinationName } from "@normalized:N&&&core/src/main/ets/navigation/AppDestination&1.0.0";
 import { DeepLinkType } from "@normalized:N&&&core/src/main/ets/navigation/DeepLinkResolver&1.0.0";
 import { decodeAppDestination } from "@normalized:N&&&core/src/main/ets/navigation/AppDestination&1.0.0";
-let LatestOperationGuard, StartupDestinationChannel, appDestinationIdentity, findAppDestinationStackIndex, shouldPushAppDestination, startupDestinationChannel, toAppDestination;
+let appDestinationIdentity, findAppDestinationStackIndex, shouldPushAppDestination, startupDestinationChannel, toAppDestination;
 appDestinationIdentity = function (p0) {
   switch (p0.name) {
     case AppDestinationName.QUESTION:
@@ -96,7 +96,7 @@ toAppDestination = function (p0) {
       return;
   }
 };
-LatestOperationGuard = class panda_jmp0_reserved_anonymous_0 {
+class LatestOperationGuard {
   constructor() {
     this.generation = 0;
   }
@@ -110,8 +110,8 @@ LatestOperationGuard = class panda_jmp0_reserved_anonymous_0 {
   isCurrent(p0) {
     return p0 === this.generation;
   }
-};
-StartupDestinationChannel = class panda_jmp0_reserved_anonymous_1 {
+}
+class StartupDestinationChannel {
   constructor() {
     this.listeners = [];
     this.pending = undefined;
@@ -158,7 +158,7 @@ StartupDestinationChannel = class panda_jmp0_reserved_anonymous_1 {
       }
     };
   }
-};
+}
 startupDestinationChannel = new StartupDestinationChannel();
 export { LatestOperationGuard };
 export { StartupDestinationChannel };
