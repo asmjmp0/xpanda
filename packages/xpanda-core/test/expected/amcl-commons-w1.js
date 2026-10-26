@@ -23,9 +23,8 @@ import { l50 } from "@normalized:N&&&commons/src/main/ets/h1/c2&1.0.0";
 import { n50 } from "@normalized:N&&&commons/src/main/ets/h1/c2&1.0.0";
 import { n51 } from "@normalized:N&&&commons/src/main/ets/h1/u1&1.0.0";
 import { z51 } from "@normalized:N&&&commons/src/main/ets/h1/u1&1.0.0";
-let k92, l92, m92, u91, w91, x89, y91, z91;
 let local_0_0, local_0_1, local_0_2;
-u91 = function (p0) {
+export function u91(p0) {
   let v2;
   if (p0.startsWith("system/crash-report-")) {
     return "system/crash-report-evidence-" + b52(p0).substring(0, 16) + ".log";
@@ -41,7 +40,7 @@ u91 = function (p0) {
     v2 = "other";
   }
   return v2 + "/evidence-" + b52(p0).substring(0, 16) + ".log";
-};
+}
 local_0_1 = async function (p0, p1, p2) {
   let v0, v11 /*g50*/, v14 /*g50*/, v15, v16, v17, v18 /*j50*/;
   let v3 /*g50*/ = new a90();
@@ -81,7 +80,7 @@ local_0_1 = async function (p0, p1, p2) {
   } while (v5.length <= 8 * 1024 * 1024);
   throw new Error("单行日志超过 8 MiB，无法安全预览和脱敏");
 };
-w91 = async function (p0, p1, p2, p3) {
+export async function w91(p0, p1, p2, p3) {
   let v0, v4, v6, v21, v22, v23, v25, v31, v34, v35, v36, v44, v45, v50, v54, acc;
   let v3 = p2.selectedFileIds.slice();
   let v5 = {
@@ -233,8 +232,8 @@ w91 = async function (p0, p1, p2, p3) {
     }
   }
   throw new Error("所选证据已消失或不属于本次启动，请刷新文件清单");
-};
-x89 = function (p0) {
+}
+export function x89(p0) {
   let v0;
   p0.digest = b52(l92 + "\n" + k92 + "\n" + p0.files.map(function (p0) {
     return p0.name + ":" + p0.digest;
@@ -274,7 +273,7 @@ x89 = function (p0) {
     "lines": v0.split("\n").length,
     "state": "complete"
   });
-};
+}
 local_0_2 = function (p0, p1, p2) {
   h50(p0.directory + "/_amcl");
   n51(p0.directory + "/" + p1, p2);
@@ -291,7 +290,7 @@ local_0_2 = function (p0, p1, p2) {
     "verification": "snapshot-verified"
   });
 };
-y91 = async function (p0, p1, p2) {
+export async function y91(p0, p1, p2) {
   let v0, v8;
   let v3 = 0;
   let v4 = p0.files[Symbol.iterator]();
@@ -321,19 +320,11 @@ y91 = async function (p0, p1, p2) {
     });
   }
   return v3;
-};
-z91 = function (p0) {
+}
+export function z91(p0) {
   i50(p0.directory);
-};
-k92 = "game-v3";
-l92 = "session-diagnosis-v2";
-m92 = "_amcl/diagnosis.txt";
+}
+export const k92 = "game-v3";
+export const l92 = "session-diagnosis-v2";
+export const m92 = "_amcl/diagnosis.txt";
 local_0_0 = 0;
-export { k92 };
-export { l92 };
-export { m92 };
-export { u91 };
-export { w91 };
-export { x89 };
-export { y91 };
-export { z91 };

@@ -1533,9 +1533,9 @@ function verifyZhihuAppDestination(): void {
 
     const code = new PandaDecompiler().decompileClass(clazz);
     NodeFactory.parse(code);
-    const start = code.indexOf("shouldReloadAfterAuthentication = function");
+    const start = code.indexOf("export function shouldReloadAfterAuthentication(");
     if (start < 0) throw new Error(`逻辑条件链: 未找到 shouldReloadAfterAuthentication\n${code}`);
-    const body = code.slice(start, code.indexOf("\n};", start));
+    const body = code.slice(start, code.indexOf("\n}", start));
     if (!body.includes("return p0.name === AppDestinationName.QUESTION\n    || p0.name === AppDestinationName.ANSWER")) {
         throw new Error(`逻辑条件链: 未折成可读的多行 || 链\n${body}`);
     }
@@ -1547,8 +1547,8 @@ function verifyZhihuAppDestination(): void {
     }
 
     // if 的 test 读取是旧值最后用法 + HighLevel 合成的 `v0 = !X` 都要能继续折成短路表达式
-    const queryStart = code.indexOf("isSafeSearchDestinationQuery = function");
-    const queryBody = queryStart < 0 ? "" : code.slice(queryStart, code.indexOf("\n};", queryStart));
+    const queryStart = code.indexOf("export function isSafeSearchDestinationQuery(");
+    const queryBody = queryStart < 0 ? "" : code.slice(queryStart, code.indexOf("\n}", queryStart));
     if (!queryBody.includes('return typeof p0 === "string" && p0.length <= 200 && !new RegExp(')) {
         throw new Error(`逻辑条件链: isSafeSearchDestinationQuery 未折成短路表达式\n${queryBody}`);
     }
@@ -2171,9 +2171,9 @@ function verifyYourpipeSabrResponseDecoder(): void {
     // 应还原成 for...of,并把 `acc = !... ? ...` 布尔物化链折成已知类型判断的 || 链;
     // 曾经因为把 `acc = !acc` 折进 `if (acc) continue` 而没有同步 do-while test 的值,
     // 导致已知问题类型被误判成不可恢复。
-    const recStart = code.indexOf("isRecoverableIntegrityIssues =");
+    const recStart = code.indexOf("export function isRecoverableIntegrityIssues(");
     if (recStart < 0) throw new Error(`SabrResponseDecoder: 未找到 isRecoverableIntegrityIssues\n${code}`);
-    const recBody = code.slice(recStart, code.indexOf("\n};", recStart));
+    const recBody = code.slice(recStart, code.indexOf("\n}", recStart));
     if (!recBody.includes("for (v10 of p0)") || recBody.includes("[Symbol.iterator]()")) {
         throw new Error(`SabrResponseDecoder: isRecoverableIntegrityIssues 的 for...of 未还原\n${recBody}`);
     }
@@ -2236,10 +2236,65 @@ function verifyYourpipeMpvPlayerView(): void {
         throw new Error(`MpvPlayerView.tryFixVideoSize: 嵌套 if 未还原\n${tryFix}`);
     }
 
+    // 导出内联:VideoFit 枚举对象直接输出 `export const VideoFit = {...}`,
+    // 不再保留前置的 `let VideoFit = undefined;` 与文件尾部的 `export { VideoFit };`
+    if (!code.includes("export const VideoFit = {") || /\blet VideoFit\b|export \{ VideoFit \}/.test(code)) {
+        throw new Error(`MpvPlayerView: VideoFit 枚举未直接导出\n${code}`);
+    }
+
     const expectedPath = path.join(__dirname, "expected", "yourpipe-mpv-player-view.js");
     const expected = fs.readFileSync(expectedPath, "utf-8");
     if (code !== expected) {
         throw new Error(`MpvPlayerView: 输出与快照不一致\n${firstDifference(expected, code)}`);
+    }
+}
+
+/**
+ * 回归:导出语句内联(foldExportDeclarations 的 default 形态)。
+ *
+ * 字节码里 `export default <匿名值>` 会落在一个保留槽位模块变量上
+ * (panda_jmp0_reserved_export_default),旧输出是
+ *   let panda_jmp0_reserved_export_default = EnhancedLogger.getInstance(...);
+ *   export default panda_jmp0_reserved_export_default;
+ * 现在槽位除定义与导出语句外没有任何引用,直接内联成
+ *   export default EnhancedLogger.getInstance(...);
+ */
+function verifyYourpipeAnonymousDefaultExport(): void {
+    const abcPath = path.join(__dirname, "resources", "yourpipe0.7.0.abc");
+    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
+    const clazz = pandaFile.getAllClasses().find((c) =>
+        c.name.content.includes("mediaservice/src/main/ets/utils/Logger"));
+    if (!clazz) throw new Error("yourpipe: 未找到 mediaservice Logger");
+
+    const code = new PandaDecompiler().decompileClass(clazz);
+    NodeFactory.parse(code);
+    if (!code.includes('export default EnhancedLogger.getInstance("[Mediaservice]");')) {
+        throw new Error(`Logger: 匿名 default 导出未内联\n${code}`);
+    }
+    if (code.includes("panda_jmp0_reserved_export_default")) {
+        throw new Error(`Logger: 仍残留匿名导出槽位变量\n${code}`);
+    }
+}
+
+/**
+ * 回归:导出语句内联(foldExportDeclarations 的 default 类声明形态)。
+ * `export default EntryAbility;` + 顶层类声明要合并成
+ * `export default class EntryAbility extends UIAbility {}`。
+ */
+function verifyAmclDefaultClassExport(): void {
+    const abcPath = path.join(__dirname, "resources", "amcl1.0.6.abc");
+    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
+    const clazz = pandaFile.getAllClasses().find((c) =>
+        c.name.content.includes("entryability/EntryAbility"));
+    if (!clazz) throw new Error("amcl: 未找到 EntryAbility");
+
+    const code = new PandaDecompiler().decompileClass(clazz);
+    NodeFactory.parse(code);
+    if (!code.includes("export default class EntryAbility extends UIAbility {")) {
+        throw new Error(`EntryAbility: default 导出未合并进类声明\n${code}`);
+    }
+    if (/\bexport default\s+EntryAbility\b/.test(code)) {
+        throw new Error(`EntryAbility: 仍残留独立的 export default 语句\n${code}`);
     }
 }
 
@@ -2333,7 +2388,7 @@ function verifyYourpipeYoutubePageAttestationBootstrap(): void {
 
     // for...of + break 的 do-while lowering(第 2 个循环)要还原成 for-of,
     // `it.return()` 收尾由 for-of 的 break 隐式完成,耗尽分支的 DONE 副本丢弃。
-    const parseStart = code.indexOf("parseYoutubePageAttestationBootstrap = function");
+    const parseStart = code.indexOf("export function parseYoutubePageAttestationBootstrap(");
     const parseEnd = code.indexOf("local_0_11 = function", parseStart);
     if (parseStart < 0 || parseEnd < 0) {
         throw new Error(`YoutubePageAttestationBootstrap: 未找到 parseYoutubePageAttestationBootstrap\n${code}`);
@@ -3026,7 +3081,7 @@ function verifyAmclStructureMemory(): void {
         "local_0_18 = function (p0, p1, p2, p3) {",
         'return local_0_10(p2, p3, "depth");',
         "v3 = local_0_18(p0.children[v1], p1 + 1, p2, p3 + \".children[\" + v1.toString() + \"]\");",
-        "w1359 = function (p0) {",
+        "export function w1359(p0) {",
         "if (p0.profileId !== undefined) {",
         'return local_0_19("profile.identity");',
         // while(true)+break 的 for-of lowering:`hole` 哨兵守卫清理后才露出标准 close 形态,
@@ -3233,9 +3288,9 @@ function verifyAmclForOfCloseBlock(): void {
     if (code.includes("created by SimpleAnalysis") || code.includes("decompiler_")) {
         throw new Error(`amcl a12: 仍在降级或残留伪语句\n${code.slice(0, 800)}`);
     }
-    const start = code.indexOf("c1268 = async function");
+    const start = code.indexOf("export async function c1268(");
     if (start < 0) throw new Error(`amcl a12: 未找到 c1268\n${code.slice(0, 800)}`);
-    const body = code.slice(start, code.indexOf("\n};", start));
+    const body = code.slice(start, code.indexOf("\n}", start));
     // close 块、hole 哨兵与 goto 标签都随 for...of 还原消失
     for (const leftover of ["versions[Symbol.iterator]()", "label_5439", "v29.return", "v33 = hole"]) {
         if (body.includes(leftover)) {
@@ -4471,6 +4526,14 @@ async function main(): Promise<void> {
 
     console.log("[test] yourpipe MpvPlayerView (yourpipe0.7.0.abc)");
     verifyYourpipeMpvPlayerView();
+    console.log("    ok");
+
+    console.log("[test] yourpipe anonymous default export (yourpipe0.7.0.abc)");
+    verifyYourpipeAnonymousDefaultExport();
+    console.log("    ok");
+
+    console.log("[test] amcl default class export (amcl1.0.6.abc)");
+    verifyAmclDefaultClassExport();
     console.log("    ok");
 
     console.log("[test] yourpipe SabrOfflineDownloader goto loop (yourpipe0.7.0.abc)");

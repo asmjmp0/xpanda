@@ -18,7 +18,6 @@ import { YTCoreLogger } from "@normalized:N&&&youtube_core/src/main/ets/common/Y
 import { readProtoVarint } from "@normalized:N&&&youtube_core/src/main/ets/common/ProtoUtil&1.0.0";
 import { sabrReadFields } from "@normalized:N&&&youtube_core/src/main/ets/extractor/sabr/SabrProto&1.0.0";
 import { umpReadAll } from "@normalized:N&&&youtube_core/src/main/ets/extractor/sabr/UmpReader&1.0.0";
-let PART_FORMAT_INITIALIZATION_METADATA, PART_MEDIA, PART_MEDIA_END, PART_MEDIA_HEADER, PART_NEXT_REQUEST_POLICY, PART_RELOAD_PLAYER_RESPONSE, PART_SABR_CONTEXT_SENDING_POLICY, PART_SABR_CONTEXT_UPDATE, PART_SABR_ERROR, PART_SABR_REDIRECT, PART_SABR_SEEK, PART_STREAM_PROTECTION_STATUS, isRecoverableIntegrityIssues, requireUmpContentType, sabrDecodeBody, sabrDecodeParts;
 let local_0_2, local_0_3, local_0_4, local_0_5, local_0_6, local_0_9, local_0_10, local_0_11, local_0_13, local_0_14, local_0_15;
 let local_0_12 = function (p0, p1, p2) {
   let v14, v17;
@@ -257,7 +256,7 @@ local_0_6 = function (p0) {
   }
   return v4;
 };
-isRecoverableIntegrityIssues = function (p0) {
+export function isRecoverableIntegrityIssues(p0) {
   let v10;
   if (p0.length === 0) {
     return false;
@@ -269,24 +268,24 @@ isRecoverableIntegrityIssues = function (p0) {
     if (!v10.startsWith("truncated-ump-response:")) return false;
   }
   return true;
-};
-requireUmpContentType = function (p0, p1) {
+}
+export function requireUmpContentType(p0, p1) {
   if (!p0 || p0.toLowerCase().indexOf("application/vnd.yt-ump") < 0) {
     throw new SabrProtocolException("Expected UMP response, got content type: " + p0 + ", status=" + p1 + "");
   }
   return;
-};
-sabrDecodeBody = function (p0) {
+}
+export function sabrDecodeBody(p0) {
   return sabrDecodeParts(umpReadAll(p0));
-};
-sabrDecodeParts = function (p0) {
+}
+export function sabrDecodeParts(p0) {
   let v11;
   let v4 = new SabrPartProcessor();
   for (v11 of p0) {
     v4.acceptPart(v11);
   }
   return v4.finish();
-};
+}
 local_0_4 = function (p0, p1) {
   let v7, v13;
   try {
@@ -303,18 +302,18 @@ local_0_4 = function (p0, p1) {
     return "" + p1 + ":opaque(" + p0.length + ")";
   }
 };
-PART_MEDIA_HEADER = 20;
-PART_MEDIA = 21;
-PART_MEDIA_END = 22;
-PART_NEXT_REQUEST_POLICY = 35;
-PART_FORMAT_INITIALIZATION_METADATA = 42;
-PART_SABR_REDIRECT = 43;
-PART_SABR_ERROR = 44;
-PART_SABR_SEEK = 45;
-PART_RELOAD_PLAYER_RESPONSE = 46;
-PART_STREAM_PROTECTION_STATUS = 58;
-PART_SABR_CONTEXT_UPDATE = 57;
-PART_SABR_CONTEXT_SENDING_POLICY = 59;
+export const PART_MEDIA_HEADER = 20;
+export const PART_MEDIA = 21;
+export const PART_MEDIA_END = 22;
+export const PART_NEXT_REQUEST_POLICY = 35;
+export const PART_FORMAT_INITIALIZATION_METADATA = 42;
+export const PART_SABR_REDIRECT = 43;
+export const PART_SABR_ERROR = 44;
+export const PART_SABR_SEEK = 45;
+export const PART_RELOAD_PLAYER_RESPONSE = 46;
+export const PART_STREAM_PROTECTION_STATUS = 58;
+export const PART_SABR_CONTEXT_UPDATE = 57;
+export const PART_SABR_CONTEXT_SENDING_POLICY = 59;
 local_0_11 = YTCoreLogger.getInstance("SabrResponseDecoder");
 class OpenMediaAssembly {
   constructor(p0) {
@@ -440,19 +439,3 @@ export class SabrPartProcessor {
     return;
   }
 }
-export { PART_FORMAT_INITIALIZATION_METADATA };
-export { PART_MEDIA };
-export { PART_MEDIA_END };
-export { PART_MEDIA_HEADER };
-export { PART_NEXT_REQUEST_POLICY };
-export { PART_RELOAD_PLAYER_RESPONSE };
-export { PART_SABR_CONTEXT_SENDING_POLICY };
-export { PART_SABR_CONTEXT_UPDATE };
-export { PART_SABR_ERROR };
-export { PART_SABR_REDIRECT };
-export { PART_SABR_SEEK };
-export { PART_STREAM_PROTECTION_STATUS };
-export { isRecoverableIntegrityIssues };
-export { requireUmpContentType };
-export { sabrDecodeBody };
-export { sabrDecodeParts };

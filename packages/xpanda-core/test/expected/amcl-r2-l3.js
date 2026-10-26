@@ -8,7 +8,7 @@ import { h115 } from "@normalized:N&&&commons/Index&1.0.0";
 import { k115 } from "@normalized:N&&&commons/Index&1.0.0";
 import { q51 } from "@normalized:N&&&commons/Index&1.0.0";
 import { r115 } from "@normalized:N&&&commons/Index&1.0.0";
-let u189, v189;
+let v189;
 let local_0_1 = function (p0, p1, p2, p3) {
   let v1, v2, v3;
   if (p2 === undefined) {
@@ -34,9 +34,9 @@ let local_0_1 = function (p0, p1, p2, p3) {
   }
   return v1;
 };
-u189 = function (p0) {
+export function u189(p0) {
   return h115(p0);
-};
+}
 class a190 {
   constructor() {
     this.sourceIndex = 0;
@@ -978,5 +978,4 @@ export class e190 {
     return -1;
   }
 }
-export { u189 };
 export { v189 };

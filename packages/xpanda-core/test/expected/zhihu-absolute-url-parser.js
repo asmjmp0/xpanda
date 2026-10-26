@@ -3,12 +3,11 @@
 * Source code created from a .abc file.
 * powered by xpanda decompiler, author: jmp0
 */
-let parseAbsoluteUrl;
 let local_0_1;
 let local_0_0 = function (p0) {
   return decodeURIComponent(p0.replace(new RegExp("\\+", "g"), " "));
 };
-parseAbsoluteUrl = function (p0) {
+export function parseAbsoluteUrl(p0) {
   let v4, v5, v6, v7, v8, v9;
   let v0 = new RegExp("^([A-Za-z][A-Za-z0-9+.-]*):\\/\\/([^/?#]*)([^?#]*)(?:\\?([^#]*))?(?:#.*)?$").exec(p0);
   let v1 = 0;
@@ -64,7 +63,7 @@ parseAbsoluteUrl = function (p0) {
     "pathname": v0[3],
     "params": v1
   };
-};
+}
 local_0_1 = function (p0) {
   let v3, v4, v5, v6, v7;
   let v1 = new Map();
@@ -87,4 +86,3 @@ local_0_1 = function (p0) {
   }
   return v1;
 };
-export { parseAbsoluteUrl };

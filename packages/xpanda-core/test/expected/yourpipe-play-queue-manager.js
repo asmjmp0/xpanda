@@ -5,11 +5,9 @@
 */
 import { AppLog } from "@normalized:N&&&entry/src/main/ets/common/AppLog&";
 import { FeedServiceProvider } from "@normalized:N&&&entry/src/main/ets/common/FeedServiceProvider&";
-let QueueSourceType;
 let local_0_0;
-QueueSourceType = undefined;
 local_0_0 = AppLog.getInstance("PlayQueueManager");
-QueueSourceType = {
+export const QueueSourceType = {
   NONE: "none",
   REMOTE: "remote",
   LOCAL: "local",
@@ -533,4 +531,3 @@ export class PlayQueueManager {
     return;
   }
 }
-export { QueueSourceType };

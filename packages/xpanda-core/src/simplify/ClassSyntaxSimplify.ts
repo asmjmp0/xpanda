@@ -2,42 +2,68 @@ import { Program } from "@babel/types";
 import { ISimplify } from "./ISimplify";
 import traverse, { NodePath } from "@babel/traverse";
 import * as TYPE from "@babel/types";
-import { collectIdentifierNames, isPureExpression, isTempName, walkNode } from "./AstUtils";
+import {
+    collectIdentifierNames,
+    isPureExpression,
+    isTempName,
+    scanCapturedRead,
+    walkNode,
+    walkStatementSkipFunctions,
+} from "./AstUtils";
 
 
 const {
     VISITOR_KEYS,
+    blockStatement,
     classDeclaration,
     classMethod,
     classProperty,
-    file,
-    identifier,
+    exportDefaultDeclaration,
     exportNamedDeclaration,
+    file,
+    functionDeclaration,
+    identifier,
     isEmptyStatement,
     isAssignmentExpression,
+    isAwaitExpression,
     isBlockStatement,
+    isCallExpression,
     isClassDeclaration,
     isClassExpression,
     isClassMethod,
     isClassProperty,
+    isExportDefaultDeclaration,
     isExportNamedDeclaration,
     isExportSpecifier,
     isExpressionStatement,
     isForInStatement,
     isForOfStatement,
+    isFunctionDeclaration,
     isFunctionExpression,
+    isArrowFunctionExpression,
     isIdentifier,
     isMemberExpression,
+    isMetaProperty,
+    isNewExpression,
     isObjectMethod,
     isObjectProperty,
     isOptionalMemberExpression,
+    isParenthesizedExpression,
     isReturnStatement,
     isStringLiteral,
+    isSuper,
+    isTaggedTemplateExpression,
     isThisExpression,
+    isUnaryExpression,
     isUpdateExpression,
     isVariableDeclaration,
     isVariableDeclarator,
+    isYieldExpression,
+    isNullLiteral,
+    returnStatement,
     stringLiteral,
+    variableDeclaration,
+    variableDeclarator,
 } = TYPE;
 
 /**
@@ -609,55 +635,103 @@ export class ClassSyntaxSimplify implements ISimplify {
     }
 
     /**
-     * 把模块顶层的 `export { Name };`(decompileRaw 按字节码导出表原样输出的语句)
-     * 合并进顶层的 `class Name {}` 声明,输出 `export class Name {}`。
+     * 导出还原:把模块顶层的 `export { Name };` / `export default Name;`
+     * (decompileRaw 按字节码导出表原样输出的语句)合并进对应绑定的顶层定义:
      *
-     * `export { X }` 只是给绑定打导出标记,不在运行时求值,把它挪到类声明上
-     * 不改变任何求值顺序。约束:
-     *   - 只折 local 名与导出名相同的 specifier(`export { X as Y }` 无法内联进
-     *     类声明,连同非类导出一起保留在原语句里,只有全部折完才删除该语句);
-     *   - 类声明必须就在 program.body 顶层(export 只能出现在模块作用域);
-     *   - 每个类只合并一次。
+     *   - 类声明 → `export class Name {}` / `export default class Name {}`;
+     *   - 函数声明 → `export function Name() {}` / `export default function Name() {}`;
+     *   - `Name = function () {}` / `let Name = function () {}` → `export function Name() {}`
+     *     (右值改写成函数声明;箭头函数需要体内没有 this/arguments/new.target);
+     *   - `Name = <右值>;` / `let Name = <右值>;`(枚举对象、常量等)→
+     *     `export const/let Name = <右值>;`(整份输出只写一次用 const);
+     *   - `export default` 且 Name 除定义与导出语句外无任何引用(匿名导出槽
+     *     panda_jmp0_reserved_export_default 是典型)→ `export default <右值>;`,
+     *     槽位绑定本身删除。
      *
+     * 求值顺序安全:类/函数声明与 `export const` 都会把绑定初始化时刻提前
+     * (函数声明提升到模块顶部;const 把 `let Name = undefined` 的假值窗口变成
+     * 定义处的 TDZ),因此要求定义语句之前的窗口里没有对该名字的可执行读取;
+     * 窗口里有调用时,调用可能触发更早创建的闭包,还要求窗口前没有任何闭包
+     * 捕获读取该名字、且窗口内(含闭包体)不再出现该名字。条件不满足时退而
+     * 求其次:把导出标记挪到前置声明上(`export let Name;`),定义保持原样;
+     * default 形态没有等价落点,保持 `export default Name;` 不动。
+     *
+     * `export { X as Y }` 改名导出无法内联,连同折不掉的导出一起保留在原语句里。
      * 必须放在 foldModuleClassDeclarations 之后:它的 scanNameUsage 把 export
      * specifier 计作模块名的合法引用,提前删掉会让模块级类折叠放弃。
      */
     public static foldExportDeclarations(program: Program): boolean {
-        const topLevelClasses = new Map<string, TYPE.ClassDeclaration>();
+        // 顶层类/函数声明表:同名的 export specifier 可以直接内联成导出声明
+        const declarations = new Map<string, TYPE.ClassDeclaration | TYPE.FunctionDeclaration>();
         for (const stmt of program.body) {
-            if (isClassDeclaration(stmt) && stmt.id) topLevelClasses.set(stmt.id.name, stmt);
+            if (isClassDeclaration(stmt) && stmt.id) declarations.set(stmt.id.name, stmt);
+            else if (isFunctionDeclaration(stmt) && stmt.id) declarations.set(stmt.id.name, stmt);
         }
-        if (topLevelClasses.size === 0) return false;
+        const folded = new Set<string>();
         let changed = false;
-        // 倒序遍历(可能整条删除 export 语句);类声明的包装是原地替换,不受影响
+
+        // 先处理 `export default Name;`(倒序,可能整条删除语句)
+        for (let i = program.body.length - 1; i >= 0; i--) {
+            const stmt = program.body[i];
+            if (!isExportDefaultDeclaration(stmt)) continue;
+            if (!isIdentifier(stmt.declaration)) continue;
+            const name = stmt.declaration.name;
+            if (folded.has(name)) continue;
+            const decl = declarations.get(name);
+            if (decl) {
+                const index = program.body.indexOf(decl);
+                if (index < 0) continue; // 防御:同一绑定重复导出时只折第一次
+                program.body[index] = exportDefaultDeclaration(decl);
+                program.body.splice(i, 1);
+                folded.add(name);
+                changed = true;
+                continue;
+            }
+            if (foldDefaultExportValue(program, stmt, name)) {
+                folded.add(name);
+                changed = true;
+            }
+        }
+
+        // 再处理 `export { Name };`(倒序,可能整条删除 export 语句);
+        // 变量折叠会删除定义/声明语句,导出语句下标随之下移,每轮重新定位。
         for (let i = program.body.length - 1; i >= 0; i--) {
             const stmt = program.body[i];
             // source 非空是 re-export(`export { X } from "path"`),没有本地绑定;declaration 非空说明已内联
             if (!isExportNamedDeclaration(stmt) || stmt.source || stmt.declaration) continue;
             if (stmt.specifiers.length === 0) continue;
-            const folded: TYPE.ClassDeclaration[] = [];
+            const foldedDecls: Array<TYPE.ClassDeclaration | TYPE.FunctionDeclaration> = [];
             const keptSpecifiers: TYPE.ExportNamedDeclaration["specifiers"] = [];
             for (const spec of stmt.specifiers) {
                 const name = isExportSpecifier(spec) && isIdentifier(spec.local)
                     && isIdentifier(spec.exported) && spec.local.name === spec.exported.name
                     ? spec.local.name : null;
-                const clazz = name !== null ? topLevelClasses.get(name) : undefined;
-                if (clazz) {
-                    folded.push(clazz);
-                    topLevelClasses.delete(name!);
-                } else {
-                    keptSpecifiers.push(spec);
+                if (name !== null && !folded.has(name)) {
+                    const decl = declarations.get(name);
+                    if (decl && program.body.includes(decl)) {
+                        foldedDecls.push(decl);
+                        folded.add(name);
+                        continue;
+                    }
+                    if (!decl && foldVariableExport(program, name, program.body.indexOf(stmt))) {
+                        folded.add(name);
+                        changed = true;
+                        continue;
+                    }
                 }
+                keptSpecifiers.push(spec);
             }
-            if (folded.length === 0) continue;
-            for (const clazz of folded) {
-                const index = program.body.indexOf(clazz);
+            if (foldedDecls.length > 0) changed = true;
+            for (const decl of foldedDecls) {
+                const index = program.body.indexOf(decl);
                 if (index < 0) continue; // 防御:同一绑定重复导出时只折第一次
-                program.body[index] = exportNamedDeclaration(clazz, [], null);
+                program.body[index] = exportNamedDeclaration(decl, [], null);
             }
-            if (keptSpecifiers.length === 0) program.body.splice(i, 1);
+            const currentIndex = program.body.indexOf(stmt);
+            if (currentIndex < 0) continue; // 已被 default 内联路径删除
+            i = currentIndex;
+            if (keptSpecifiers.length === 0) program.body.splice(currentIndex, 1);
             else stmt.specifiers = keptSpecifiers;
-            changed = true;
         }
         return changed;
     }
@@ -1212,4 +1286,395 @@ function applyFold(program: TYPE.Program, contexts: Map<TYPE.Node, StatementList
         if (reservedIdName) replaceNameRefs(r.stmt, reservedIdName, classExpr.id as TYPE.Identifier);
         for (const alias of fold.aliases) replaceNameRefs(r.stmt, alias, classExpr.id as TYPE.Identifier);
     }
+}
+
+// ---------------------------------------------------------------- 导出语句折叠
+//
+// `export { Name };` / `export default Name;` 是 decompileRaw 按字节码导出表
+// 原样输出的语句,与被导出绑定的定义分散在文件头尾。这里把导出标记内联进
+// 定义本身(类/函数声明、函数表达式赋值、枚举/常量赋值),语义等价性:
+//   - `export { X }` 只给绑定打导出标记,不在运行时求值,挪到定义语句上
+//     不改变任何求值顺序——前提是定义语句的位置不变(`export const X = RHS`
+//     替换 `X = RHS`,右值仍在原处求值),同时删除的只有假值初始化
+//     (`let X;` / `let X = undefined;` / `X = undefined;`);
+//   - 函数表达式赋值改写成函数声明后,绑定初始化从定义处提升到模块顶部,
+//     与源码的函数声明一致,但要求定义之前没有任何对该名字的读取;
+//   - `export default <右值>` 在语句位置求值右值,与「先赋值给槽位再在文件
+//     尾部导出槽位」等价(槽位无其它引用时)。
+
+/** 顶层定义:赋值语句 `Name = RHS;` 或带初始化的 declarator */
+interface TopLevelDefinition {
+    stmt: TYPE.Statement;
+    index: number;
+    /** declarator 形态的定义(stmt 即声明语句);赋值形态为 null */
+    declarator: TYPE.VariableDeclarator | null;
+    value: TYPE.Expression;
+    /** 定义之前发现的 `Name = undefined;` 残留赋值,随折叠一起删除 */
+    staleWrites: Array<{ stmt: TYPE.Statement; index: number }>;
+}
+
+/** 顶层声明语句里与名字对应的 declarator(绑定引入位置) */
+interface TopLevelDeclaration {
+    stmt: TYPE.VariableDeclaration;
+    index: number;
+    declarator: TYPE.VariableDeclarator;
+}
+
+/** 无初始化 / `undefined` / `null` / 纯 void 表达式:删除后不产生副作用 */
+function isRemovableInit(init: TYPE.Expression | null | undefined): boolean {
+    if (!init) return true;
+    if (isIdentifier(init) && init.name === "undefined") return true;
+    if (isNullLiteral(init)) return true;
+    return isUnaryExpression(init) && init.operator === "void" && isPureExpression(init.argument);
+}
+
+/** 可能执行任意代码(进而触发闭包)的表达式节点 */
+function isInvocationNode(node: TYPE.Node): boolean {
+    return isCallExpression(node) || isNewExpression(node)
+        || isAwaitExpression(node) || isYieldExpression(node)
+        || isTaggedTemplateExpression(node);
+}
+
+/** 在 program.body 前缀里找 Name 的第一个顶层定义;`Name = undefined;` 记为 stale 不算定义 */
+function findTopLevelDefinition(program: Program, name: string, maxIndex: number): TopLevelDefinition | null {
+    const staleWrites: TopLevelDefinition["staleWrites"] = [];
+    for (let i = 0; i < maxIndex && i < program.body.length; i++) {
+        const stmt = program.body[i];
+        if (isExpressionStatement(stmt) && isAssignmentExpression(stmt.expression)
+            && stmt.expression.operator === "=" && isIdentifier(stmt.expression.left)
+            && stmt.expression.left.name === name) {
+            if (isRemovableInit(stmt.expression.right)) {
+                staleWrites.push({ stmt, index: i });
+                continue;
+            }
+            return { stmt, index: i, declarator: null, value: stmt.expression.right, staleWrites };
+        }
+        if (isVariableDeclaration(stmt)) {
+            for (const d of stmt.declarations) {
+                if (!isIdentifier(d.id) || d.id.name !== name || !d.init) continue;
+                // `let Name = undefined;` 形态:初始化随声明删除,不算定义
+                if (isRemovableInit(d.init)) continue;
+                return { stmt, index: i, declarator: d, value: d.init, staleWrites };
+            }
+        }
+    }
+    return null;
+}
+
+/** 在 program.body 前缀里找引入 Name 绑定的声明语句(declarator 带不带初始化都算) */
+function findTopLevelDeclaration(program: Program, name: string, maxIndex: number): TopLevelDeclaration | null {
+    for (let i = 0; i < maxIndex && i < program.body.length; i++) {
+        const stmt = program.body[i];
+        if (!isVariableDeclaration(stmt)) continue;
+        for (const d of stmt.declarations) {
+            if (isIdentifier(d.id) && d.id.name === name) return { stmt, index: i, declarator: d };
+        }
+    }
+    return null;
+}
+
+/** 全输出范围内统计对 Name 的写入次数(含嵌套函数体;skip 里的语句不计) */
+function countWritesOutside(program: Program, name: string, skip: Set<TYPE.Node>): number {
+    let count = 0;
+    for (const stmt of program.body) {
+        if (skip.has(stmt)) continue;
+        walkNode(stmt, (n) => {
+            if (isAssignmentExpression(n)) {
+                if (isIdentifier(n.left) && n.left.name === name) count++;
+            } else if (isUpdateExpression(n)) {
+                if (isIdentifier(n.argument) && n.argument.name === name) count++;
+            } else if (isVariableDeclarator(n)) {
+                if (isIdentifier(n.id) && n.id.name === name && n.init) count++;
+            }
+            return true;
+        });
+    }
+    return count;
+}
+
+/**
+ * 定义语句之前的窗口 [start, end) 是否允许「绑定初始化时刻提前」的折叠。
+ * 返回 "ok":窗口内既没有该名字的可执行出现,也没有调用,折叠无条件安全;
+ * 返回 "capture-check":窗口内有调用(可能触发闭包),调用方还要确认窗口之前
+ * 创建的闭包没有捕获读取该名字;返回 "blocked":直接放弃。
+ * skip 里的语句(stale 赋值)会被删除,不参与扫描。
+ */
+function analyzeWindow(
+    stmts: TYPE.Statement[], start: number, end: number, name: string, skip: Set<TYPE.Node>,
+): "ok" | "capture-check" | "blocked" {
+    let invocation = false;
+    for (let i = start; i < end && i < stmts.length; i++) {
+        const stmt = stmts[i];
+        if (!stmt || skip.has(stmt)) continue;
+        let refs = false;
+        walkStatementSkipFunctions(stmt, (n) => {
+            if (isIdentifier(n) && n.name === name) refs = true;
+            else if (isInvocationNode(n)) invocation = true;
+        });
+        if (refs) return "blocked";
+    }
+    if (!invocation) return "ok";
+    // 窗口里的调用可能执行闭包:窗口内任何位置(含闭包体)不得再出现该名字
+    for (let i = start; i < end && i < stmts.length; i++) {
+        const stmt = stmts[i];
+        if (!stmt || skip.has(stmt)) continue;
+        let refsDeep = false;
+        walkNode(stmt, (n) => {
+            if (isIdentifier(n) && n.name === name) refsDeep = true;
+            return !refsDeep;
+        });
+        if (refsDeep) return "blocked";
+    }
+    return "capture-check";
+}
+
+/** 窗口之前的语句里,是否有嵌套函数捕获读取 name(可能被窗口内的调用触发) */
+function hasCapturedReadBefore(stmts: TYPE.Statement[], end: number, name: string, skip: Set<TYPE.Node>): boolean {
+    for (let i = 0; i < end && i < stmts.length; i++) {
+        const stmt = stmts[i];
+        if (!stmt || skip.has(stmt)) continue;
+        if (scanCapturedRead(stmt, null, new Set([name]), new Set(), false)) return true;
+    }
+    return false;
+}
+
+/** 声明语句里其它 declarator 的初始化是否引用 name(删除该 declarator 后会踩 TDZ) */
+function otherDeclaratorsReference(decl: TopLevelDeclaration, name: string): boolean {
+    for (const d of decl.stmt.declarations) {
+        if (d === decl.declarator || !d.init) continue;
+        let ref = false;
+        walkNode(d.init, (n) => {
+            if (isIdentifier(n) && n.name === name) ref = true;
+            return true;
+        });
+        if (ref) return true;
+    }
+    return false;
+}
+
+/** 删除 stale 赋值语句与声明语句里的目标 declarator(声明语句搬空则整条删除) */
+function removeStaleWritesAndDeclarator(program: Program, def: TopLevelDefinition, decl: TopLevelDeclaration | null): void {
+    for (const stale of def.staleWrites) {
+        const index = program.body.indexOf(stale.stmt);
+        if (index >= 0) program.body.splice(index, 1);
+    }
+    if (!decl) return;
+    const rest = decl.stmt.declarations.filter((d) => d !== decl.declarator);
+    if (rest.length === 0) {
+        const index = program.body.indexOf(decl.stmt);
+        if (index >= 0) program.body.splice(index, 1);
+    } else {
+        decl.stmt.declarations = rest;
+    }
+}
+
+/** 用新语句替换定义语句;declarator 形态且同声明还有其它 declarator 时拆分插入 */
+function replaceDefinition(program: Program, def: TopLevelDefinition, newNode: TYPE.Statement): void {
+    if (!def.declarator) {
+        const index = program.body.indexOf(def.stmt);
+        if (index >= 0) program.body[index] = newNode;
+        return;
+    }
+    const declStmt = def.stmt as TYPE.VariableDeclaration;
+    const others = declStmt.declarations.filter((d) => d !== def.declarator);
+    const index = program.body.indexOf(declStmt);
+    if (index < 0) return;
+    if (others.length === 0) {
+        program.body[index] = newNode;
+    } else {
+        declStmt.declarations = others;
+        program.body.splice(index, 0, newNode);
+    }
+}
+
+/**
+ * 条件不满足时的退路:把前置声明里的目标 declarator 拆出来标成导出
+ * (`export let Name;`),定义保持原样。声明语句原位保留,求值顺序不变,
+ * 因此无条件安全。
+ */
+function exportDeclarationSlot(program: Program, decl: TopLevelDeclaration): void {
+    // 无初始化的 const 非法;保持 var,其余落到 let
+    const kind = decl.declarator.init ? decl.stmt.kind
+        : (decl.stmt.kind === "var" ? "var" : "let");
+    const exported = variableDeclaration(kind, [decl.declarator]);
+    const rest = decl.stmt.declarations.filter((d) => d !== decl.declarator);
+    const index = program.body.indexOf(decl.stmt);
+    if (index < 0) return;
+    if (rest.length === 0) {
+        program.body[index] = exportNamedDeclaration(exported, [], null);
+    } else {
+        decl.stmt.declarations = rest;
+        program.body.splice(index, 0, exportNamedDeclaration(exported, [], null));
+    }
+}
+
+/**
+ * 右值能否改写成 `function Name() {...}` 声明:函数表达式(id 只能是 Name 或没有)
+ * 或不捕获 this/arguments/new.target 的箭头函数(表达式体的箭头补 return)。
+ */
+function asFunctionDeclaration(value: TYPE.Expression, name: string): TYPE.FunctionDeclaration | null {
+    while (isParenthesizedExpression(value)) value = value.expression;
+    let fn: TYPE.FunctionExpression | TYPE.ArrowFunctionExpression;
+    if (isFunctionExpression(value)) {
+        if (value.id && value.id.name !== name) return null;
+        fn = value;
+    } else if (isArrowFunctionExpression(value)) {
+        // 箭头函数的 this/arguments 捕获外层作用域,改成函数声明后语义会变,出现即放弃
+        let bad = false;
+        walkNode(value, (n) => {
+            if (isThisExpression(n) || isMetaProperty(n) || isSuper(n)
+                || (isIdentifier(n) && n.name === "arguments")
+                || isYieldExpression(n)) {
+                bad = true;
+                return false;
+            }
+            return true;
+        });
+        if (bad) return null;
+        fn = value;
+    } else {
+        return null;
+    }
+    let body = fn.body;
+    if (!isBlockStatement(body)) {
+        if (!isArrowFunctionExpression(fn)) return null;
+        body = blockStatement([returnStatement(fn.body as TYPE.Expression)]);
+    }
+    return functionDeclaration(identifier(name), fn.params, body, fn.generator || false, fn.async || false);
+}
+
+/** 把所有 named export 语句里指向 name 的 specifier 清掉(整条空了则删除) */
+function purgeNamedExportSpecifiers(program: Program, name: string): void {
+    for (let i = program.body.length - 1; i >= 0; i--) {
+        const stmt = program.body[i];
+        if (!isExportNamedDeclaration(stmt) || stmt.source || stmt.declaration) continue;
+        const kept = stmt.specifiers.filter((spec) => !(isExportSpecifier(spec)
+            && isIdentifier(spec.local) && spec.local.name === name));
+        if (kept.length === stmt.specifiers.length) continue;
+        if (kept.length === 0) program.body.splice(i, 1);
+        else stmt.specifiers = kept;
+    }
+}
+
+/**
+ * `export default Name;` 的变量内联:Name 除定义语句、导出语句、将被删除的
+ * 假值初始化声明/stale 赋值、以及随后会被清理的 named export specifier 外
+ * 没有任何引用时,定义处直接替换成 `export default <右值>;`(右值求值位置
+ * 不变),导出语句与槽位绑定一并删除。匿名导出槽 panda_jmp0_reserved_export_default
+ * 是典型形态。引用不止这些时保持原样,返回 false。
+ */
+function foldDefaultExportValue(program: Program, exportStmt: TYPE.ExportDefaultDeclaration, name: string): boolean {
+    const exportIndex = program.body.indexOf(exportStmt);
+    if (exportIndex < 0) return false;
+    const def = findTopLevelDefinition(program, name, exportIndex);
+    if (!def) return false;
+    const decl = findTopLevelDeclaration(program, name, def.index);
+    const declSeparate = !!decl && decl.index !== def.index;
+    const declRemovable = !declSeparate || isRemovableInit(decl!.declarator.init);
+    if (declSeparate && declRemovable && otherDeclaratorsReference(decl!, name)) return false;
+    const stale = new Set<TYPE.Node>(def.staleWrites.map((s) => s.stmt));
+    const excluded = new Set<TYPE.Node>([exportStmt, def.stmt, ...stale]);
+    if (declSeparate) {
+        // 声明初始化有副作用时绑定必须保留,不能内联
+        if (!declRemovable) return false;
+        excluded.add(decl!.stmt);
+    }
+    // named export 里的 specifier 引用内联成功后会被清理,不计入
+    for (const stmt of program.body) {
+        if (isExportNamedDeclaration(stmt) && !stmt.source && !stmt.declaration) excluded.add(stmt);
+    }
+    let refs = 0;
+    for (const stmt of program.body) {
+        if (excluded.has(stmt)) continue;
+        walkNode(stmt, (n) => {
+            if (isIdentifier(n) && n.name === name) refs++;
+            return true;
+        });
+    }
+    if (refs > 0) return false;
+    removeStaleWritesAndDeclarator(program, def, declSeparate ? decl! : null);
+    replaceDefinition(program, def, exportDefaultDeclaration(def.value));
+    purgeNamedExportSpecifiers(program, name);
+    const currentExportIndex = program.body.indexOf(exportStmt);
+    if (currentExportIndex >= 0) program.body.splice(currentExportIndex, 1);
+    return true;
+}
+
+/**
+ * 把 `export { Name };` 折进 Name 的顶层定义(named 形态;default 形态由
+ * foldDefaultExportValue 与 foldExportDeclarations 的声明包装处理):
+ *   - 右值是函数表达式/箭头 → `export function Name() {...}`(绑定提升到模块
+ *     顶部,要求定义前没有可观察读取;声明槽删不掉时退化为导出声明槽);
+ *   - 其它右值 → `export const/let Name = RHS;`(右值求值位置不变,只删除
+ *     前置的假值初始化;整份输出只写一次用 const);
+ *   - 窗口检查不通过时退化为导出前置声明槽(`export let Name;`)。
+ * 找不到顶层定义,或所有落点都不可用时返回 false,导出语句保持原样。
+ */
+function foldVariableExport(program: Program, name: string, maxIndex: number): boolean {
+    if (!isValidBindingName(name)) return false;
+    const def = findTopLevelDefinition(program, name, maxIndex);
+    if (!def) return false;
+    const decl = findTopLevelDeclaration(program, name, def.index);
+    const declSeparate = !!decl && decl.index !== def.index;
+    const declRemovable = !declSeparate || isRemovableInit(decl!.declarator.init);
+    const stale = new Set<TYPE.Node>(def.staleWrites.map((s) => s.stmt));
+
+    const fnDecl = asFunctionDeclaration(def.value, name);
+    if (fnDecl) {
+        if (!declRemovable || (declSeparate && otherDeclaratorsReference(decl!, name))) {
+            // `let Name` 槽位与函数声明重名冲突:退化为导出声明槽
+            if (declSeparate) {
+                exportDeclarationSlot(program, decl!);
+                return true;
+            }
+            return false;
+        }
+        // 窗口扫描跳过将被删除/裁剪的语句:声明语句里的 declarator id 不是引用
+        const windowSkip = new Set<TYPE.Node>([...stale, ...(declSeparate ? [decl!.stmt] : [])]);
+        const verdict = analyzeWindow(program.body, 0, def.index, name, windowSkip);
+        const captureSafe = verdict === "ok"
+            || (verdict === "capture-check" && !hasCapturedReadBefore(program.body, def.index, name, windowSkip));
+        if (!captureSafe) {
+            if (declSeparate) {
+                exportDeclarationSlot(program, decl!);
+                return true;
+            }
+            return false;
+        }
+        removeStaleWritesAndDeclarator(program, def, declSeparate ? decl! : null);
+        replaceDefinition(program, def, exportNamedDeclaration(fnDecl, [], null));
+        return true;
+    }
+
+    const skipForCount = new Set<TYPE.Node>([def.stmt, ...stale]);
+    if (declSeparate && declRemovable) skipForCount.add(decl!.stmt);
+    const kind = countWritesOutside(program, name, skipForCount) === 0 ? "const" : "let";
+    if (!declSeparate) {
+        // 定义就是声明语句(可能带多个 declarator):拆出该 declarator 导出,
+        // 右值位置不变,无条件安全
+        const declStmt = def.stmt as TYPE.VariableDeclaration;
+        const exported = variableDeclaration(declStmt.kind === "const" ? "const" : kind, [def.declarator!]);
+        replaceDefinition(program, def, exportNamedDeclaration(exported, [], null));
+        return true;
+    }
+    if (!declRemovable || otherDeclaratorsReference(decl!, name)) {
+        // 声明初始化有副作用、删不掉:退化为导出声明槽
+        exportDeclarationSlot(program, decl!);
+        return true;
+    }
+    const verdict = analyzeWindow(program.body, decl!.index + 1, def.index, name, stale);
+    const captureSafe = verdict === "ok"
+        || (verdict === "capture-check"
+            && !hasCapturedReadBefore(program.body, decl!.index + 1, name, stale)
+            // 定义右值里的调用同样可能触发更早创建的闭包,一并检查
+            && !scanCapturedRead(def.stmt, null, new Set([name]), new Set(), false));
+    if (!captureSafe) {
+        exportDeclarationSlot(program, decl!);
+        return true;
+    }
+    removeStaleWritesAndDeclarator(program, def, decl!);
+    replaceDefinition(program, def,
+        exportNamedDeclaration(
+            variableDeclaration(kind, [variableDeclarator(identifier(name), def.value)]), [], null));
+    return true;
 }

@@ -6,9 +6,8 @@
 import { isSafeDecimalContentId } from "@normalized:N&&&core/src/main/ets/navigation/AppDestination&1.0.0";
 import { isSafeSearchDestinationQuery } from "@normalized:N&&&core/src/main/ets/navigation/AppDestination&1.0.0";
 import { parseAbsoluteUrl } from "@normalized:N&&&core/src/main/ets/navigation/AbsoluteUrlParser&1.0.0";
-let DeepLinkType, MAX_DEEP_LINK_INPUT_LENGTH, describeDeepLink, extractZhihuLinkFromText, resolveZhihuLink;
 let local_0_0;
-describeDeepLink = function (p0) {
+export function describeDeepLink(p0) {
   switch (p0.type) {
     case DeepLinkType.ANSWER:
       return "回答：" + p0.id + "";
@@ -29,8 +28,8 @@ describeDeepLink = function (p0) {
     default:
       return;
   }
-};
-extractZhihuLinkFromText = function (p0) {
+}
+export function extractZhihuLinkFromText(p0) {
   let v1, v2;
   if (p0.length === 0) {
     return undefined;
@@ -43,8 +42,8 @@ extractZhihuLinkFromText = function (p0) {
     }
   }
   return undefined;
-};
-resolveZhihuLink = function (p0) {
+}
+export function resolveZhihuLink(p0) {
   let v2;
   let v1 = 8192;
   if (p0.length === 0 || p0.length > 8192) {
@@ -52,7 +51,7 @@ resolveZhihuLink = function (p0) {
   }
   v2 = p0.trim();
   return v2.length === 0 || v2.length > v1 ? undefined : local_0_0(v2, 0);
-};
+}
 local_0_0 = function (p0, p1) {
   let v0 /*isSafeDecimalContentId*/, v2 /*parseAbsoluteUrl*/, v4 /*isSafeDecimalContentId*/, v5, v6;
   let v1 /*isSafeDecimalContentId*/ = 2;
@@ -210,7 +209,7 @@ local_0_0 = function (p0, p1) {
   }
   return undefined;
 };
-DeepLinkType = {
+export const DeepLinkType = {
   ANSWER: "answer",
   QUESTION: "question",
   ARTICLE: "article",
@@ -220,9 +219,4 @@ DeepLinkType = {
   SEARCH: "search",
   MAIN_TABS: "main_tabs"
 };
-MAX_DEEP_LINK_INPUT_LENGTH = 8192;
-export { DeepLinkType };
-export { MAX_DEEP_LINK_INPUT_LENGTH };
-export { describeDeepLink };
-export { extractZhihuLinkFromText };
-export { resolveZhihuLink };
+export const MAX_DEEP_LINK_INPUT_LENGTH = 8192;

@@ -4,12 +4,11 @@
 * powered by xpanda decompiler, author: jmp0
 */
 import { NGA_HOSTS } from "@bundle:com.example.nga_oh/entry/ets/common/constants/NgaDomains";
-let isNgaQrLoginUrl;
 let local_0_1, local_0_2;
 let local_0_0 = function (p0) {
   return decodeURIComponent(p0);
 };
-isNgaQrLoginUrl = function (p0) {
+export function isNgaQrLoginUrl(p0) {
   let v1, v3, v4, v5, v6;
   let v0 = p0.trim();
   if (!v0.toLowerCase().startsWith("https://")) {
@@ -51,7 +50,7 @@ isNgaQrLoginUrl = function (p0) {
   }
   v0 = v0.substring(v4 + 1, v5 < 0 ? v0.length : v5);
   return local_0_2(v0);
-};
+}
 local_0_1 = function (p0) {
   let v1;
   let v0 = 0;
@@ -110,4 +109,3 @@ local_0_2 = function (p0) {
   }
   return v4 && v6 && v5 && v7 === "login" && v3 === "qrlogin_ui" && v8.length > 0;
 };
-export { isNgaQrLoginUrl };

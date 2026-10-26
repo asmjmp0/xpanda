@@ -164,8 +164,11 @@ export class SimplifyExport {
         // 赋值语句是复制传播、模块类定义折叠(`local_1_0 = acc` 别名链)、静态初始化
         // 接收链回溯等 pass 的输入形态,提前合并会打断它们。
         TempVariableSimplify.mergeDeclarationInitializers(node);
-        // 导出还原:模块级类折叠之后,顶层 `export { Name };` 合并进对应的
-        // `class Name {}` 声明,输出 `export class Name {}`(改名/非类导出保留原语句)。
+        // 导出还原:模块级类折叠之后,顶层 `export { Name };` / `export default Name;`
+        // 合并进对应绑定的顶层定义:类/函数声明输出 `export class/function Name {}`,
+        // 函数表达式赋值改写成 `export function Name(){}`,枚举对象/常量赋值输出
+        // `export const Name = ...`,`export default` 同样内联(匿名导出槽直接变成
+        // `export default <右值>`)。改名列名/条件不满足的定义保留原语句。
         ClassSyntaxSimplify.foldExportDeclarations(node);
     }
 }

@@ -4,11 +4,10 @@
 * powered by xpanda decompiler, author: jmp0
 */
 import { MpvPlayerController } from "@normalized:N&&&@yourpipe/libmpv-napi/src/main/ets/controller/MpvPlayerController&0.2.0";
-let VideoFit = undefined;
 if (!("finalizeConstruction" in ViewPU.prototype)) {
   Reflect.set(ViewPU.prototype, "finalizeConstruction", function () {});
 }
-VideoFit = {
+export const VideoFit = {
   Contain: 0,
   0: "Contain",
   Cover: 1,
@@ -224,4 +223,3 @@ export class MpvPlayerView extends ViewPU {
     this.updateDirtyElements();
   }
 }
-export { VideoFit };

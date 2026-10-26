@@ -10,13 +10,12 @@ import { decodeReleaseDetail } from "@normalized:N&&&data/src/main/ets/update/Ap
 import http from "@ohos:net.http";
 import { proxiedCatalogUrls } from "@normalized:N&&&data/src/main/ets/update/AppUpdateSources&1.0.0";
 import { resolveAppUpdateCheck } from "@normalized:N&&&data/src/main/ets/update/AppUpdateParser&1.0.0";
-let GITHUB_RELEASES_ATOM, catalogUrlWaves;
 let acc;
 let local_0_0, local_0_1, local_0_2, local_0_3, local_0_4, local_0_5, local_0_6;
-catalogUrlWaves = function (p0) {
+export function catalogUrlWaves(p0) {
   let v0 = local_0_2(p0);
   return [v0, proxiedCatalogUrls(v0[0])];
-};
+}
 local_0_6 = function (p0) {
   return {
     "status": AppReleaseDetailStatus.FAILED,
@@ -28,7 +27,7 @@ local_0_2 = function (p0) {
   let v1 = Math.floor(Date.now() / local_0_0);
   return ["https://raw.githubusercontent.com/" + local_0_1 + "/main/" + ("assets/update/" + p0 + "") + "?v=" + v1 + "", "https://cdn.jsdelivr.net/gh/" + local_0_1 + "@main/" + ("assets/update/" + p0 + "") + "?v=" + v1 + "", "https://fastly.jsdelivr.net/gh/" + local_0_1 + "@main/" + ("assets/update/" + p0 + "") + "?v=" + v1 + ""];
 };
-GITHUB_RELEASES_ATOM = "https://github.com/zhuoyi233/zhihu-plus-plus-HMOS/releases.atom";
+export const GITHUB_RELEASES_ATOM = "https://github.com/zhuoyi233/zhihu-plus-plus-HMOS/releases.atom";
 local_0_3 = 8000;
 local_0_4 = 10000;
 local_0_0 = 10 * 60 * 1000;
@@ -242,5 +241,3 @@ export class AppUpdateClient {
     }
   }
 }
-export { GITHUB_RELEASES_ATOM };
-export { catalogUrlWaves };

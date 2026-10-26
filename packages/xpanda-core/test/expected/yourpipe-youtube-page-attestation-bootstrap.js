@@ -3,7 +3,6 @@
 * Source code created from a .abc file.
 * powered by xpanda decompiler, author: jmp0
 */
-let parseSabrAttChallengeData, parseYoutubePageAttestationBootstrap;
 let local_0_0, local_0_1, local_0_3, local_0_4, local_0_6, local_0_7, local_0_8, local_0_9, local_0_10, local_0_11;
 let local_0_5 = function (p0) {
   return typeof p0 === "string" && p0.length > 0 ? p0 : undefined;
@@ -177,7 +176,7 @@ local_0_4 = function (p0) {
     return undefined;
   }
 };
-parseSabrAttChallengeData = function (p0) {
+export function parseSabrAttChallengeData(p0) {
   let v5, v6, v7, v8, v9;
   let v4 = local_0_2(local_0_2(JSON.parse(p0))?.bgChallenge);
   if (!v4) {
@@ -208,8 +207,8 @@ parseSabrAttChallengeData = function (p0) {
     "interpreterJavascript": v6,
     "interpreterUrl": v7
   };
-};
-parseYoutubePageAttestationBootstrap = function (p0) {
+}
+export function parseYoutubePageAttestationBootstrap(p0) {
   let v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v24, v26, v27;
   let local_1_0;
   v10 = [];
@@ -311,7 +310,7 @@ parseYoutubePageAttestationBootstrap = function (p0) {
     throw new Error("Unsupported YouTube home client: " + v8 + "");
   }
   throw new Error("YouTube home has no initial attestation challenge");
-};
+}
 local_0_11 = function (p0, p1, p2) {
   let v6, v9, v10;
   if (p1 + p2 > p0.length) {
@@ -330,5 +329,3 @@ local_0_11 = function (p0, p1, p2) {
 local_0_1 = "ytcfg.set";
 local_0_3 = "window.ytAtN";
 local_0_7 = new RegExp("['\"]R['\"]\\s*:\\s*(['\"])");
-export { parseSabrAttChallengeData };
-export { parseYoutubePageAttestationBootstrap };

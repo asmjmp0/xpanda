@@ -19,7 +19,7 @@ import { p1205 } from "@normalized:N&&&feature_core/src/main/ets/t11/w11&1.0.0";
 import { q36 } from "@normalized:N&&&commons/Index&1.0.0";
 import { y } from "@normalized:N&&&commons/Index&1.0.0";
 import zlib from "@ohos:zlib";
-let b1268, c1268, d1268, e1268, e771, f1268, r1267, s1267, t1267, u1267, v1267;
+let v1267;
 let local_0_0, local_0_1, local_0_4, local_0_5, local_0_6, local_0_7, local_0_8, local_0_10, local_0_11, local_0_12;
 let local_0_9 = function (p0) {
   return p0.downloads
@@ -29,7 +29,7 @@ let local_0_9 = function (p0) {
     || p0.url !== undefined
     && p0.url.length > 0;
 };
-b1268 = function (p0, p1, p2, p3) {
+export function b1268(p0, p1, p2, p3) {
   let v8, v9, v10, v11, v12 /*c771*/;
   let v3 = [];
   let v4 = new Set();
@@ -147,8 +147,8 @@ b1268 = function (p0, p1, p2, p3) {
   }
   y.info(local_0_0, "Extracted " + v3.length + " libraries from installer JSON", a32);
   return v3;
-};
-c1268 = async function (p0, p1, p2, p3) {
+}
+export async function c1268(p0, p1, p2, p3) {
   let v3, v6, v7, v8, v9, v11, v12, v19, v20, v29, v30, v31, v33, acc;
   let local_1_0, local_1_2, local_1_3;
   let local_1_1 = p3;
@@ -327,12 +327,12 @@ c1268 = async function (p0, p1, p2, p3) {
       await local_1_3.awaitTaskReleased(local_1_0, true);
     }
   }
-};
-d1268 = function (p0, p1) {
+}
+export function d1268(p0, p1) {
   g50.statSync(p0);
   y.info(local_0_0, "Copied " + local_0_12(p0, p1) + " files from maven/ to libraries/", a32);
-};
-e1268 = async function (p0, p1, p2, p3) {
+}
+export async function e1268(p0, p1, p2, p3) {
   let v0, v6, v9, v14, v15, v16, v19, v21, v22;
   let v3 = local_0_8(p2);
   if (v3 === null) {
@@ -397,8 +397,8 @@ e1268 = async function (p0, p1, p2, p3) {
       throw new Error("旧版 Forge 内嵌库校验失败：" + v19.name + "；" + catchAcc.message);
     }
   }
-};
-e771 = function (p0) {
+}
+export function e771(p0) {
   let v4, v6, v7 /*a104*/;
   let v0 = [];
   for (v4 of local_0_1) {
@@ -409,8 +409,8 @@ e771 = function (p0) {
     }
   }
   return v0;
-};
-f1268 = function (p0, p1, p2, p3, p4, p5, p6, p7) {
+}
+export function f1268(p0, p1, p2, p3, p4, p5, p6, p7) {
   let v0 /*n1268*/, v2 /*a1*/, v3 /*y*/, v4 /*a32*/, v5 /*a32*/, v6 /*a32*/, v7 /*g50*/, acc;
   y.info(local_0_0, "Installing legacy Forge: " + p2 + "", a32);
   v0 = l786(p0);
@@ -500,7 +500,7 @@ f1268 = function (p0, p1, p2, p3, p4, p5, p6, p7) {
       return new n1268(false, p3, "旧版 Forge 安装器缺少有效的内嵌加载器 JAR");
     }
   }
-};
+}
 local_0_12 = function (p0, p1, p2) {
   let v1 /*g50*/, v5, v6, v10 /*l786*/, v11 /*g50*/, v12 /*g50*/, v14 /*g50*/;
   if (p2 === undefined) {
@@ -578,7 +578,7 @@ local_0_12 = function (p0, p1, p2) {
   }
   throw new Error("复制源不是普通目录: " + p0);
 };
-r1267 = function (p0) {
+export function r1267(p0) {
   let acc;
   if (p0.length === 0) {
     return "";
@@ -588,8 +588,8 @@ r1267 = function (p0) {
     p0 = acc;
   }
   return p0.length === 0 ? "" : c771(p0);
-};
-s1267 = async function (p0) {
+}
+export async function s1267(p0) {
   let v5, v6, v11, acc;
   let v3 = 0;
   let v4 = new m1268();
@@ -622,8 +622,8 @@ s1267 = async function (p0) {
     }
   }
   return v4;
-};
-t1267 = function (p0, p1) {
+}
+export function t1267(p0, p1) {
   let v1;
   let v0 = 0;
   if (p1 <= 0 || p1 >= p0.length) {
@@ -635,8 +635,8 @@ t1267 = function (p0, p1) {
     }
   }
   return v1;
-};
-u1267 = function (p0) {
+}
+export function u1267(p0) {
   let v0;
   let v1 = p0.indexOf(".");
   if (v1 >= 0) {
@@ -644,7 +644,7 @@ u1267 = function (p0) {
   }
   v0 = parseInt(p0);
   return isNaN(v0) || v0 >= 20;
-};
+}
 (function (p0, p1) {
   let v2 /*p1268*/;
   let v1 /*g50*/ = Math.min(local_0_4, Math.max(local_0_5, g50.statSync(p1).size * 200));
@@ -743,15 +743,5 @@ local_0_6 = class p1268 {
 };
 local_0_4 = 16 * 1024 * 1024 * 1024;
 local_0_5 = 2 * 1024 * 1024 * 1024;
-export { b1268 };
-export { c1268 };
-export { d1268 };
-export { e1268 };
-export { e771 };
-export { f1268 };
-export { r1267 };
-export { s1267 };
-export { t1267 };
-export { u1267 };
 export { v1267 };
 export { a104 } from "@normalized:N&&&commons/Index&1.0.0";

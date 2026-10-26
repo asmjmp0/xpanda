@@ -6,8 +6,7 @@
 import { AppDestinationName } from "@normalized:N&&&core/src/main/ets/navigation/AppDestination&1.0.0";
 import { DeepLinkType } from "@normalized:N&&&core/src/main/ets/navigation/DeepLinkResolver&1.0.0";
 import { decodeAppDestination } from "@normalized:N&&&core/src/main/ets/navigation/AppDestination&1.0.0";
-let startupDestinationChannel;
-let appDestinationIdentity = function (p0) {
+export function appDestinationIdentity(p0) {
   switch (p0.name) {
     case AppDestinationName.QUESTION:
     case AppDestinationName.ANSWER:
@@ -31,8 +30,8 @@ let appDestinationIdentity = function (p0) {
     default:
       return p0.name;
   }
-};
-let findAppDestinationStackIndex = function (p0, p1) {
+}
+export function findAppDestinationStackIndex(p0, p1) {
   let v2, v3 /*decodeAppDestination*/;
   let v1 = 0;
   for (v2 = appDestinationIdentity(p1); v1 < p0.length; v1 += 1) {
@@ -42,15 +41,15 @@ let findAppDestinationStackIndex = function (p0, p1) {
     }
   }
   return -1;
-};
-let shouldPushAppDestination = function (p0, p1) {
+}
+export function shouldPushAppDestination(p0, p1) {
   let v0 = p0 === undefined;
   if (p0 !== undefined) {
     v0 = appDestinationIdentity(p0) !== appDestinationIdentity(p1);
   }
   return v0;
-};
-let toAppDestination = function (p0) {
+}
+export function toAppDestination(p0) {
   switch (p0.type) {
     case DeepLinkType.MAIN_TABS:
       return {
@@ -94,7 +93,7 @@ let toAppDestination = function (p0) {
     default:
       return;
   }
-};
+}
 export class LatestOperationGuard {
   constructor() {
     this.generation = 0;
@@ -155,9 +154,4 @@ export class StartupDestinationChannel {
     };
   }
 }
-startupDestinationChannel = new StartupDestinationChannel();
-export { appDestinationIdentity };
-export { findAppDestinationStackIndex };
-export { shouldPushAppDestination };
-export { startupDestinationChannel };
-export { toAppDestination };
+export const startupDestinationChannel = new StartupDestinationChannel();

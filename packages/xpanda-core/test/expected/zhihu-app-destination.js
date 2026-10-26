@@ -7,9 +7,8 @@ import { JsonNumberValue } from "@normalized:N&&&core/src/main/ets/navigation/St
 import { JsonObjectValue } from "@normalized:N&&&core/src/main/ets/navigation/StrictJson&1.0.0";
 import { JsonStringValue } from "@normalized:N&&&core/src/main/ets/navigation/StrictJson&1.0.0";
 import { parseStrictJson } from "@normalized:N&&&core/src/main/ets/navigation/StrictJson&1.0.0";
-let AppDestinationName, LOCAL_DRAFT_ID_LENGTH, MAX_DECIMAL_CONTENT_ID_LENGTH, MAX_PEOPLE_IDENTIFIER_LENGTH, MAX_SEARCH_QUERY_LENGTH, decodeAppDestination, isAppDestinationName, isInfrastructureDestination, isSafeDecimalContentId, isSafeLocalDraftId, isSafePeopleIdentifier, isSafePinContentId, isSafeSearchDestinationQuery, isSafeWhatsNewVersion, shouldReloadAfterAuthentication;
 let local_0_0, local_0_1, local_0_2, local_0_3, local_0_4, local_0_5, local_0_6, local_0_7, local_0_8, local_0_9, local_0_10, local_0_11, local_0_12, local_0_13, local_0_14, local_0_15, local_0_16;
-decodeAppDestination = function (p0, p1) {
+export function decodeAppDestination(p0, p1) {
   let v0 /*parseStrictJson*/, v1 /*JsonObjectValue*/, v2, v3, v4, v5, v6, v7, v8, v10;
   if (!isAppDestinationName(p0)) {
     return undefined;
@@ -268,7 +267,7 @@ decodeAppDestination = function (p0, p1) {
     default:
       return undefined;
   }
-};
+}
 local_0_2 = function (p0, p1) {
   let v0 = local_0_0(p0, "id");
   let v1 = v0 === undefined;
@@ -418,7 +417,7 @@ local_0_11 = function (p0, p1) {
 local_0_9 = function (p0) {
   return typeof p0 === "string" && p0.trim().length > 0;
 };
-isAppDestinationName = function (p0) {
+export function isAppDestinationName(p0) {
   return p0 === AppDestinationName.HOME
     || p0 === AppDestinationName.FOLLOWING
     || p0 === AppDestinationName.HOT
@@ -463,8 +462,8 @@ isAppDestinationName = function (p0) {
     || p0 === AppDestinationName.WRITE_ANSWER
     || p0 === AppDestinationName.WRITE_PIN
     || p0 === AppDestinationName.PIN_DRAFTS;
-};
-isInfrastructureDestination = function (p0) {
+}
+export function isInfrastructureDestination(p0) {
   return p0.name === AppDestinationName.LOGIN
     || p0.name === AppDestinationName.SETTINGS
     || p0.name === AppDestinationName.APPEARANCE_SETTINGS
@@ -491,15 +490,15 @@ isInfrastructureDestination = function (p0) {
     || p0.name === AppDestinationName.BACKGROUND_TASK_PROBE
     || p0.name === AppDestinationName.DOMAIN_FIXTURE_PROBE
     || p0.name === AppDestinationName.PIN_DRAFTS;
-};
-isSafeDecimalContentId = function (p0) {
+}
+export function isSafeDecimalContentId(p0) {
   return typeof p0 === "string" && new RegExp("^\\d{1,30}$").test(p0);
-};
-isSafeLocalDraftId = function (p0) {
+}
+export function isSafeLocalDraftId(p0) {
   return typeof p0 === "string"
     && p0.length === 36
     && new RegExp("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$").test(p0);
-};
+}
 local_0_12 = function (p0) {
   return typeof p0 === "string" && new RegExp("^[a-z_]{1,40}$").test(p0);
 };
@@ -509,12 +508,12 @@ local_0_13 = function (p0) {
     && p0.length <= 60
     && !new RegExp("[\\u0000-\\u001F\\u007F-\\u009F]").test(p0);
 };
-isSafePeopleIdentifier = function (p0) {
+export function isSafePeopleIdentifier(p0) {
   return typeof p0 === "string" && new RegExp("^[A-Za-z0-9_-]{1,200}$").test(p0);
-};
-isSafePinContentId = function (p0) {
+}
+export function isSafePinContentId(p0) {
   return typeof p0 === "string" && new RegExp("^[1-9][0-9]{0,29}$").test(p0);
-};
+}
 local_0_16 = function (p0) {
   return typeof p0 === "string"
     && p0.length > 0
@@ -530,15 +529,15 @@ local_0_15 = function (p0) {
     && p0.length <= 60
     && !new RegExp("[\\u0000-\\u001F\\u007F-\\u009F]").test(p0);
 };
-isSafeSearchDestinationQuery = function (p0) {
+export function isSafeSearchDestinationQuery(p0) {
   return typeof p0 === "string" && p0.length <= 200 && !new RegExp("[\\u0000-\\u001F\\u007F-\\u009F]").test(p0);
-};
+}
 local_0_10 = function (p0) {
   return new RegExp("^[1-9][0-9]{0,29}(,[1-9][0-9]{0,29})*$").test(p0);
 };
-isSafeWhatsNewVersion = function (p0) {
+export function isSafeWhatsNewVersion(p0) {
   return typeof p0 === "string" && new RegExp("^\\d{1,4}(\\.\\d{1,4}){0,3}$").test(p0);
-};
+}
 local_0_8 = function (p0, p1) {
   let v0 = p0.get(p1);
   return v0 instanceof JsonNumberValue && Number.isSafeInteger(v0.value) && v0.value >= 0 ? v0.value : undefined;
@@ -547,7 +546,7 @@ local_0_0 = function (p0, p1) {
   let v0 = p0.get(p1);
   return v0 instanceof JsonStringValue ? v0.value : undefined;
 };
-shouldReloadAfterAuthentication = function (p0) {
+export function shouldReloadAfterAuthentication(p0) {
   return p0.name === AppDestinationName.QUESTION
     || p0.name === AppDestinationName.ANSWER
     || p0.name === AppDestinationName.ARTICLE
@@ -565,8 +564,8 @@ shouldReloadAfterAuthentication = function (p0) {
     || p0.name === AppDestinationName.WRITE_ANSWER
     || p0.name === AppDestinationName.WRITE_PIN
     || p0.name === AppDestinationName.PIN_DRAFTS;
-};
-AppDestinationName = {
+}
+export const AppDestinationName = {
   HOME: "Home",
   FOLLOWING: "Following",
   HOT: "Hot",
@@ -612,22 +611,7 @@ AppDestinationName = {
   WRITE_PIN: "WritePin",
   PIN_DRAFTS: "PinDrafts"
 };
-MAX_SEARCH_QUERY_LENGTH = 200;
-MAX_DECIMAL_CONTENT_ID_LENGTH = 30;
-MAX_PEOPLE_IDENTIFIER_LENGTH = 200;
-LOCAL_DRAFT_ID_LENGTH = 36;
-export { AppDestinationName };
-export { LOCAL_DRAFT_ID_LENGTH };
-export { MAX_DECIMAL_CONTENT_ID_LENGTH };
-export { MAX_PEOPLE_IDENTIFIER_LENGTH };
-export { MAX_SEARCH_QUERY_LENGTH };
-export { decodeAppDestination };
-export { isAppDestinationName };
-export { isInfrastructureDestination };
-export { isSafeDecimalContentId };
-export { isSafeLocalDraftId };
-export { isSafePeopleIdentifier };
-export { isSafePinContentId };
-export { isSafeSearchDestinationQuery };
-export { isSafeWhatsNewVersion };
-export { shouldReloadAfterAuthentication };
+export const MAX_SEARCH_QUERY_LENGTH = 200;
+export const MAX_DECIMAL_CONTENT_ID_LENGTH = 30;
+export const MAX_PEOPLE_IDENTIFIER_LENGTH = 200;
+export const LOCAL_DRAFT_ID_LENGTH = 36;

@@ -31,7 +31,10 @@ import { s374 } from "@normalized:N&&&gamecontrol/src/main/ets/u13&1.0.0";
 import { u1357 } from "@normalized:N&&&gamecontrol/src/main/ets/a13&1.0.0";
 import { v1357 } from "@normalized:N&&&gamecontrol/src/main/ets/a13&1.0.0";
 import { x421 } from "@normalized:N&&&gamecontrol/src/main/ets/a13&1.0.0";
-let a421, a422, b1360, b1361, b421, b474, c1359, c1360, c1361, c421, d1359, d1360, d1361, d421, e1360, e421, f1360, f421, g1359, g421, h1359, h421, i421, l50, n374, o301, o374, p301, p374, q301, q374, r301, r374, r421, s301, s421, t301, t421, u301, v301, v421, w1359, w1360, w301, w374, w412, w421, x1358, x1359, x301, x374, y1358, y301, y374, y420, y421, y473, z1359, z374, z420, z421;
+export let d1361;
+export let c1361;
+export let b1361;
+let v301, v421;
 let local_0_0, local_0_2, local_0_3, local_0_4, local_0_5, local_0_6, local_0_7, local_0_8, local_0_9, local_0_10, local_0_11, local_0_12, local_0_13, local_0_14, local_0_15, local_0_16, local_0_18, local_0_19, local_0_20, local_0_21, local_0_22;
 let local_0_1 = function (p0, p1) {
   return {
@@ -78,10 +81,10 @@ let local_0_1 = function (p0, p1) {
 let local_0_17 = function (p0) {
   return p0 === "⚔" || p0 === "🛡" || p0 === "▲" || p0 === "▼";
 };
-a421 = function (p0) {
+export function a421(p0) {
   return w1359(p0).profile;
-};
-a422 = function (p0, p1, p2) {
+}
+export function a422(p0, p1, p2) {
   let v0, v4;
   let local_1_2;
   let local_1_0 = p1;
@@ -167,7 +170,7 @@ a422 = function (p0, p1, p2) {
     return a421(v0);
   }
   return null;
-};
+}
 local_0_2 = function (p0) {
   let v0, v1, v2;
   if (!p0) {
@@ -194,7 +197,7 @@ local_0_2 = function (p0) {
     "lookScale": p0.lookScale
   };
 };
-b1360 = function (p0) {
+export function b1360(p0) {
   let v1, v2, v3;
   if (p0.id === "joystick") {
     return ["keyboard"];
@@ -220,8 +223,8 @@ b1360 = function (p0) {
     return ["keyboard"];
   }
   return [];
-};
-b474 = function (p0, p1) {
+}
+export function b474(p0, p1) {
   let v0, v1;
   let local_1_0 = p1;
   if (p0.controlGroups === undefined || local_1_0.controlGroupId === undefined) {
@@ -235,11 +238,11 @@ b474 = function (p0, p1) {
     v1 = true;
   }
   return v1;
-};
-c1359 = function (p0) {
+}
+export function c1359(p0) {
   return p0.controlGroups !== undefined ? b422 : p0.lookPolicies === undefined ? b421 : r374;
-};
-c1360 = function (p0, p1, p2) {
+}
+export function c1360(p0, p1, p2) {
   let v1;
   let v0 = p0.visibilityOverride ?? "auto";
   if (v0 === "force_show") {
@@ -261,8 +264,8 @@ c1360 = function (p0, p1, p2) {
     }
   }
   return false;
-};
-d1359 = function (p0) {
+}
+export function d1359(p0) {
   let v0 = (p0.groupActions === null || p0.groupActions === undefined ? undefined : p0.groupActions.some(function (p0) {
     return p0.targets.length > 0;
   })) ?? false;
@@ -272,8 +275,8 @@ d1359 = function (p0) {
     });
   }
   return v0;
-};
-d1360 = function (p0) {
+}
+export function d1360(p0) {
   switch (p0) {
     case "input":
       return b1361;
@@ -284,7 +287,7 @@ d1360 = function (p0) {
     default:
       return d1361;
   }
-};
+}
 local_0_20 = function (p0) {
   let v1 /*r1367*/, v4, v5, acc;
   let local_1_0, local_1_2, local_1_3, local_1_4, local_1_5;
@@ -633,7 +636,7 @@ local_0_20 = function (p0) {
   }
   return acc;
 };
-e1360 = function (p0, p1, p2, p3) {
+export function e1360(p0, p1, p2, p3) {
   return {
     "id": d1360(p0),
     "label": p0 === "input" ? "输入" : p0 === "edit" ? "设置" : p0 === "mouse" ? "鼠标" : "显示",
@@ -654,7 +657,7 @@ e1360 = function (p0, p1, p2, p3) {
     "grabbedOnly": p0 === "visibility",
     "menuOnly": false
   };
-};
+}
 local_0_3 = function (p0, p1) {
   let v1, v3;
   let local_1_0 = p1;
@@ -676,12 +679,12 @@ local_0_3 = function (p0, p1) {
     local_0_3(v3, local_1_0);
   }
 };
-f1360 = function () {
+export function f1360() {
   let v0 = e1360("mouse", 0.94, 0.9, 7);
   v0.alignGroup = p301.NONE;
   return v0;
-};
-g1359 = function (p0) {
+}
+export function g1359(p0) {
   let v3 /*w1366*/, v5;
   let local_1_1;
   let local_1_0 = r301(p0);
@@ -701,8 +704,8 @@ g1359 = function (p0) {
     return v0;
   });
   return local_1_0;
-};
-g421 = function (p0) {
+}
+export function g421(p0) {
   let v0 /*d421*/ = p0.style === null || p0.style === undefined ? undefined : p0.style.opacity;
   if (v0 === undefined) {
     return d421;
@@ -713,8 +716,8 @@ g421 = function (p0) {
     v0 = 1;
   }
   return v0;
-};
-h1359 = function (p0) {
+}
+export function h1359(p0) {
   let v0, v1 /*b422*/;
   if (p0.controlGroups !== undefined || p0.version === b422) {
     return null;
@@ -733,8 +736,8 @@ h1359 = function (p0) {
   v1.lookPolicies = undefined;
   v1.version = 3;
   return v1;
-};
-h421 = function (p0) {
+}
+export function h421(p0) {
   if (p0.menuOnly === true) {
     return "menu";
   }
@@ -742,7 +745,7 @@ h421 = function (p0) {
     return "game";
   }
   return "always";
-};
+}
 local_0_4 = function (p0, p1) {
   let v0;
   for (v0 = 0; v0 < p0.length; v0 += 1) {
@@ -752,7 +755,7 @@ local_0_4 = function (p0, p1) {
     }
   }
 };
-i421 = function (p0, p1) {
+export function i421(p0, p1) {
   if (p1 === "game") {
     p0.grabbedOnly = true;
     p0.menuOnly = false;
@@ -763,7 +766,7 @@ i421 = function (p0, p1) {
     p0.grabbedOnly = false;
     p0.menuOnly = false;
   }
-};
+}
 local_0_7 = function (p0) {
   let v2 /*u1360*/, v3 /*u1360*/, acc;
   do {} while ((local_0_5 += 1, acc = Date.now().toString(36), v2 = "c" + acc + local_0_6, v3 = local_0_5 /*u1360*/, acc = local_0_5 /*u1360*/.toString(36), v2 += acc, acc = p0.has(v2), acc) || (v3 = l50(v2), acc = !(v3 > 23), v3 > 23));
@@ -776,7 +779,7 @@ local_0_13 = function (p0, p1, p2) {
 local_0_8 = function (p0, p1, p2) {
   return Number.isFinite(p0) && Math.floor(p0) === p0 && p0 >= p1 && p0 <= p2;
 };
-l50 = function (p0) {
+export function l50(p0) {
   let v11, v12;
   let v10 = 0;
   for (v11 = 0; v11 < p0.length; v11 += 1) {
@@ -795,7 +798,7 @@ l50 = function (p0) {
     }
   }
   return v10;
-};
+}
 local_0_9 = function (p0) {
   return local_0_8(p0, 1, 512) || local_0_8(p0, -16, -1);
 };
@@ -820,7 +823,7 @@ local_0_15 = function (p0) {
 local_0_14 = function (p0) {
   return p0 === "press" || p0 === "toggle" || p0 === "doubleTap" || p0 === "longPress";
 };
-q301 = function () {
+export function q301() {
   let v9, acc;
   let v8 = [];
   v8[0] = {
@@ -890,11 +893,11 @@ q301 = function () {
     "hotbarAutoAdded": true,
     "controls": v8
   };
-};
+}
 local_0_16 = function (p0) {
   return p0 === undefined || typeof p0 === "boolean";
 };
-r301 = function (p0) {
+export function r301(p0) {
   let v1, v2;
   let v0 /*d285*/ = 0;
   for (v1 = []; v0 < p0.controls.length; v0 += 1) {
@@ -959,8 +962,8 @@ r301 = function (p0) {
   v2.gamepad = local_0_2(p0.gamepad);
   v2.controls = v1;
   return v2;
-};
-r421 = function (p0, p1, p2, p3) {
+}
+export function r421(p0, p1, p2, p3) {
   return {
     "id": "hotbar_sel",
     "label": "",
@@ -980,21 +983,21 @@ r421 = function (p0, p1, p2, p3) {
     "grabbedOnly": true,
     "hideOnInput": []
   };
-};
+}
 local_0_10 = function (p0, p1, p2) {
   if (p0.reason.length === 0) {
     p0.reason = p1 + "." + p2;
   }
   return null;
 };
-s421 = function (p0, p1) {
+export function s421(p0, p1) {
   let v3 = 1;
   while (true) {
     if (v3 >= p0 || v3 >= p1 || Math.floor(p0 / (v3 + 1)) < 320 || Math.floor(p1 / (v3 + 1)) < 240) break;
     v3 += 1;
   }
   return v3;
-};
+}
 local_0_18 = function (p0, p1, p2, p3) {
   let v1, v2, v3, v4, v5, v6, v7, v8, v9, acc;
   if (!p0) {
@@ -1247,7 +1250,7 @@ local_0_18 = function (p0, p1, p2, p3) {
   }
   return local_0_10(p2, p3, "position");
 };
-t301 = function (p0) {
+export function t301(p0) {
   if (p0.keys && p0.keys.length > 0) {
     return p0.keys;
   }
@@ -1255,8 +1258,8 @@ t301 = function (p0) {
     return [];
   }
   return [p0.keyOrMouse];
-};
-t421 = function (p0, p1, p2) {
+}
+export function t421(p0, p1, p2) {
   let v0, v1;
   if (p2 < 1) {
     p2 = 1;
@@ -1281,7 +1284,7 @@ t421 = function (p0, p1, p2) {
     "widthPx": 180 * p2,
     "heightPx": 22 * p2
   };
-};
+}
 local_0_21 = function (p0) {
   let v0, v1, v3;
   if (p0 === undefined) {
@@ -1353,7 +1356,7 @@ local_0_19 = function (p0) {
     "reason": p0
   };
 };
-w1359 = function (p0) {
+export function w1359(p0) {
   let v0 /*d285*/, v2, v3, v4 /*s374*/, v5 /*b422*/, v10, v11, v12, v13, v14, v15, acc;
   if (!p0) {
     return local_0_19("profile.not-object");
@@ -1497,8 +1500,8 @@ w1359 = function (p0) {
     return local_0_19("profile.flags");
   }
   return local_0_19("profile.defaults");
-};
-w301 = function (p0) {
+}
+export function w301(p0) {
   let v0 /*e421*/ = p0.style === null || p0.style === undefined ? undefined : p0.style.cornerRadius;
   if (v0 === undefined) {
     v0 = p0.style === null || p0.style === undefined ? undefined : p0.style.shape;
@@ -1523,8 +1526,8 @@ w301 = function (p0) {
     }
     return v0;
   }
-};
-w374 = function () {
+}
+export function w374() {
   return {
     "enabled": true,
     "buttonMap": x374(),
@@ -1534,8 +1537,8 @@ w374 = function () {
     "triggerThreshold": z374,
     "lookScale": 1
   };
-};
-x1358 = function (p0, p1) {
+}
+export function x1358(p0, p1) {
   let v0 = h421(p0);
   if (v0 === "always") {
     return true;
@@ -1544,8 +1547,8 @@ x1358 = function (p0, p1) {
     return p1;
   }
   return !p1;
-};
-x1359 = function (p0) {
+}
+export function x1359(p0) {
   let v0, v1, v2, v3;
   if (p0 && typeof p0 === "object") {
     if (!Array.isArray(p0.controls)) {
@@ -1569,8 +1572,8 @@ x1359 = function (p0) {
     };
   }
   return null;
-};
-x301 = function (p0) {
+}
+export function x301(p0) {
   let v1;
   if (p0.label && p0.label.length > 0) {
     return p0.label;
@@ -1591,8 +1594,8 @@ x301 = function (p0) {
     }).join("+");
   }
   return p1360(v1[0]);
-};
-x374 = function () {
+}
+export function x374() {
   let v0 = {};
   v0.A = {
     "kind": "key",
@@ -1654,8 +1657,8 @@ x374 = function () {
     "kind": "hotbarNext"
   };
   return v0;
-};
-y1358 = function (p0) {
+}
+export function y1358(p0) {
   let v0 /*f421*/ = p0.globalOpacity;
   if (p0.globalOpacity === undefined) {
     return f421;
@@ -1666,7 +1669,7 @@ y1358 = function (p0) {
     v0 = 1;
   }
   return v0;
-};
+}
 local_0_22 = function (p0, p1, p2, p3) {
   let v3;
   if (p1 > 8) {
@@ -1688,7 +1691,7 @@ local_0_22 = function (p0, p1, p2, p3) {
   }
   return;
 };
-y301 = function (p0, p1) {
+export function y301(p0, p1) {
   let v0 = 1;
   let v2 = g421(p0) * y1358(p1);
   if (v2 < 0.05) {
@@ -1697,8 +1700,8 @@ y301 = function (p0, p1) {
     v0 = v2;
   }
   return v0;
-};
-y420 = function (p0, p1) {
+}
+export function y420(p0, p1) {
   let v0;
   let local_1_0, local_1_1;
   v0 = y473(p0);
@@ -1715,8 +1718,8 @@ y420 = function (p0, p1) {
   };
   local_1_1(v0);
   return v0;
-};
-y421 = function (p0) {
+}
+export function y421(p0) {
   let v1, v5;
   let v0 = r301(p0);
   if (v0.controlGroups === undefined) {
@@ -1736,8 +1739,8 @@ y421 = function (p0) {
     }
   }
   return v0;
-};
-y473 = function (p0) {
+}
+export function y473(p0) {
   let v1;
   let v0 = p0.children === undefined ? undefined : [];
   if (p0.children && v0) {
@@ -1746,7 +1749,7 @@ y473 = function (p0) {
     }
   }
   return local_0_1(p0, v0);
-};
+}
 local_0_0 = function (p0, p1, p2, p3, p4, p5, p6) {
   return {
     "id": p0,
@@ -1767,15 +1770,15 @@ local_0_0 = function (p0, p1, p2, p3, p4, p5, p6) {
     "grabbedOnly": p6
   };
 };
-z1359 = function (p0) {
+export function z1359(p0) {
   return a421(p0);
-};
-z420 = function (p0) {
+}
+export function z420(p0) {
   let v0 = new Set();
   local_0_4(p0, v0);
   return local_0_7(v0);
-};
-z421 = function (p0, p1, p2) {
+}
+export function z421(p0, p1, p2) {
   let v0, v1, v2, v5;
   if (v1 === undefined) {
     return null;
@@ -1796,10 +1799,10 @@ z421 = function (p0, p1, p2) {
     }
   }
   return a421(v0);
-};
-b421 = 3;
-r374 = 4;
-o301 = {
+}
+export const b421 = 3;
+export const r374 = 4;
+export const o301 = {
   BUTTON: 0,
   0: "BUTTON",
   JOYSTICK: 1,
@@ -1811,7 +1814,7 @@ o301 = {
   HOTBAR_SELECTOR: 4,
   4: "HOTBAR_SELECTOR"
 };
-p301 = {
+export const p301 = {
   NONE: "none",
   HOTBAR: "hotbar",
   ACTION_RIGHT: "action_right",
@@ -1819,84 +1822,25 @@ p301 = {
   FUNC_TOP_RIGHT: "func_top_right",
   DEBUG_TOP_LEFT: "debug_top_left"
 };
-w421 = 5;
-n374 = 1;
-o374 = false;
-p374 = 0.6;
-q374 = 0;
-s301 = 0.18;
-f421 = 1;
-c421 = 48;
-d421 = 1;
-e421 = 0.12;
-y374 = 0.18;
-z374 = 0.5;
+export const w421 = 5;
+export const n374 = 1;
+export const o374 = false;
+export const p374 = 0.6;
+export const q374 = 0;
+export const s301 = 0.18;
+export const f421 = 1;
+export const c421 = 48;
+export const d421 = 1;
+export const e421 = 0.12;
+export const y374 = 0.18;
+export const z374 = 0.5;
 local_0_5 = 0;
 local_0_6 = Math.floor(Math.random() * 1679616).toString(36);
-w1360 = 256;
-w412 = 6;
-u301 = 9;
+export const w1360 = 256;
+export const w412 = 6;
+export const u301 = 9;
 b1361 = "ime_chat";
 c1361 = "sys_edit";
 d1361 = "sys_vis";
-export { a421 };
-export { a422 };
-export { b1360 };
-export { b1361 };
-export { b421 };
-export { b474 };
-export { c1359 };
-export { c1360 };
-export { c1361 };
-export { c421 };
-export { d1359 };
-export { d1360 };
-export { d1361 };
-export { d421 };
-export { e1360 };
-export { e421 };
-export { f1360 };
-export { f421 };
-export { g1359 };
-export { g421 };
-export { h1359 };
-export { h421 };
-export { i421 };
-export { l50 };
-export { n374 };
-export { o301 };
-export { o374 };
-export { p301 };
-export { p374 };
-export { q301 };
-export { q374 };
-export { r301 };
-export { r374 };
-export { r421 };
-export { s301 };
-export { s421 };
-export { t301 };
-export { t421 };
-export { u301 };
 export { v301 };
 export { v421 };
-export { w1359 };
-export { w1360 };
-export { w301 };
-export { w374 };
-export { w412 };
-export { w421 };
-export { x1358 };
-export { x1359 };
-export { x301 };
-export { x374 };
-export { y1358 };
-export { y301 };
-export { y374 };
-export { y420 };
-export { y421 };
-export { y473 };
-export { z1359 };
-export { z374 };
-export { z420 };
-export { z421 };

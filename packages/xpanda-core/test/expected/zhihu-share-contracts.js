@@ -3,9 +3,8 @@
 * Source code created from a .abc file.
 * powered by xpanda decompiler, author: jmp0
 */
-let MAX_SHARE_SUMMARY_LENGTH, MAX_SHARE_TITLE_LENGTH, MAX_SHARE_URL_LENGTH, SHARE_PANEL_GRACE_MILLIS, SHARE_TEMPORARY_DIRECTORY, SHARE_TEMPORARY_MAX_AGE_MILLIS, ShareDispatchKind, ShareFailureKind, ShareImageSourceKind, ShareOutcome, SharePayloadKind, createTemporaryShareLifecycle, markSharePanelOpened, prepareSharePayload, shouldCleanupTemporaryShareFile, toShareFailure;
 let local_0_0, local_0_1, local_0_2, local_0_3, local_0_4, local_0_5, local_0_6, local_0_7, local_0_8, local_0_9, local_0_10, local_0_11, local_0_12, local_0_13, local_0_14;
-createTemporaryShareLifecycle = function (p0) {
+export function createTemporaryShareLifecycle(p0) {
   if (!local_0_7(p0.createdAtMillis)) {
     throw new ShareFailure(ShareFailureKind.INVALID_PAYLOAD);
   }
@@ -14,7 +13,7 @@ createTemporaryShareLifecycle = function (p0) {
     "createdAtMillis": p0.createdAtMillis,
     "cleanupAfterMillis": p0.createdAtMillis + SHARE_TEMPORARY_MAX_AGE_MILLIS
   };
-};
+}
 local_0_12 = function (p0) {
   return local_0_11(p0) || p0 === "text/plain" || p0 === "application/pdf";
 };
@@ -47,7 +46,7 @@ local_0_13 = function (p0, p1) {
     && !new RegExp("(?:cookie|set-cookie|authorization)\\s*:", "i").test(p0)
     && !new RegExp("(?:cookie|authorization)=", "i").test(p0);
 };
-markSharePanelOpened = function (p0, p1) {
+export function markSharePanelOpened(p0, p1) {
   if (!local_0_7(p1) || p1 < p0.createdAtMillis) {
     throw new ShareFailure(ShareFailureKind.INVALID_PAYLOAD);
   }
@@ -57,7 +56,7 @@ markSharePanelOpened = function (p0, p1) {
     "panelOpenedAtMillis": p1,
     "cleanupAfterMillis": Math.min(p1 + SHARE_PANEL_GRACE_MILLIS, p0.createdAtMillis + SHARE_TEMPORARY_MAX_AGE_MILLIS)
   };
-};
+}
 local_0_9 = function (p0) {
   let v0 /*ShareFailure*/ = p0.replace(new RegExp("\\\\", "g"), "/").replace(new RegExp("\\/+$", "g"), "");
   if (!new RegExp("^\\/[A-Za-z0-9._/-]+$").test(v0) || v0.includes("..")) {
@@ -153,7 +152,7 @@ local_0_5 = function (p0, p1, p2, p3) {
     "source": local_0_4(p0.trustedImageUrl)
   };
 };
-prepareSharePayload = function (p0, p1) {
+export function prepareSharePayload(p0, p1) {
   let v2, v3, v4;
   let v0 = local_0_1(p0.title);
   let v1 = local_0_2(p0.summary);
@@ -185,7 +184,7 @@ prepareSharePayload = function (p0, p1) {
     return local_0_5(p0, p1, v0, v1);
   }
   return local_0_6(p0, p1, v0, v1);
-};
+}
 local_0_0 = function (p0) {
   switch (p0) {
     case ShareFailureKind.NO_HANDLER:
@@ -202,10 +201,10 @@ local_0_0 = function (p0) {
       return "暂时无法打开分享面板";
   }
 };
-shouldCleanupTemporaryShareFile = function (p0, p1) {
+export function shouldCleanupTemporaryShareFile(p0, p1) {
   return local_0_7(p1) && p1 >= p0.cleanupAfterMillis;
-};
-toShareFailure = function (p0) {
+}
+export function toShareFailure(p0) {
   let v0 /*ShareFailure*/;
   if (p0 instanceof ShareFailure) {
     return p0;
@@ -224,28 +223,28 @@ toShareFailure = function (p0) {
     return new ShareFailure(ShareFailureKind.FILE_UNAVAILABLE);
   }
   return new ShareFailure(ShareFailureKind.TEMPORARY_FAILURE);
-};
-MAX_SHARE_TITLE_LENGTH = 120;
-MAX_SHARE_SUMMARY_LENGTH = 1000;
-MAX_SHARE_URL_LENGTH = 2048;
-SHARE_TEMPORARY_DIRECTORY = "share";
-SHARE_PANEL_GRACE_MILLIS = 30 * 60 * 1000;
-SHARE_TEMPORARY_MAX_AGE_MILLIS = 24 * 60 * 60 * 1000;
-SharePayloadKind = {
+}
+export const MAX_SHARE_TITLE_LENGTH = 120;
+export const MAX_SHARE_SUMMARY_LENGTH = 1000;
+export const MAX_SHARE_URL_LENGTH = 2048;
+export const SHARE_TEMPORARY_DIRECTORY = "share";
+export const SHARE_PANEL_GRACE_MILLIS = 30 * 60 * 1000;
+export const SHARE_TEMPORARY_MAX_AGE_MILLIS = 24 * 60 * 60 * 1000;
+export const SharePayloadKind = {
   TEXT: "text",
   IMAGE: "image",
   FILE: "file"
 };
-ShareImageSourceKind = {
+export const ShareImageSourceKind = {
   TRUSTED_URL: "trusted_url",
   TEMPORARY_FILE: "temporary_file"
 };
-ShareDispatchKind = {
+export const ShareDispatchKind = {
   TEXT_LINK: "text_link",
   REMOTE_IMAGE_LINK: "remote_image_link",
   TEMPORARY_FILE: "temporary_file"
 };
-ShareFailureKind = {
+export const ShareFailureKind = {
   INVALID_PAYLOAD: "invalid_payload",
   NO_HANDLER: "no_handler",
   FILE_UNAVAILABLE: "file_unavailable",
@@ -253,7 +252,7 @@ ShareFailureKind = {
   CANCELLED: "cancelled",
   TEMPORARY_FAILURE: "temporary_failure"
 };
-ShareOutcome = {
+export const ShareOutcome = {
   OPENED: "opened",
   CANCELLED: "cancelled"
 };
@@ -265,19 +264,3 @@ export class ShareFailure extends Error {
     return v0;
   }
 }
-export { MAX_SHARE_SUMMARY_LENGTH };
-export { MAX_SHARE_TITLE_LENGTH };
-export { MAX_SHARE_URL_LENGTH };
-export { SHARE_PANEL_GRACE_MILLIS };
-export { SHARE_TEMPORARY_DIRECTORY };
-export { SHARE_TEMPORARY_MAX_AGE_MILLIS };
-export { ShareDispatchKind };
-export { ShareFailureKind };
-export { ShareImageSourceKind };
-export { ShareOutcome };
-export { SharePayloadKind };
-export { createTemporaryShareLifecycle };
-export { markSharePanelOpened };
-export { prepareSharePayload };
-export { shouldCleanupTemporaryShareFile };
-export { toShareFailure };

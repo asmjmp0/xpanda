@@ -20,7 +20,6 @@ import { o763 } from "@normalized:N&&&feature_core/Index&1.0.0";
 import { p763 } from "@normalized:N&&&feature_core/Index&1.0.0";
 import { q763 } from "@normalized:N&&&feature_core/Index&1.0.0";
 import { r763 } from "@normalized:N&&&feature_core/Index&1.0.0";
-let b763, c763, w762, x762, z762;
 let local_0_0, local_0_1, local_0_2, local_0_3, local_0_4, local_0_5, local_0_6, local_0_7, local_0_8, local_0_10, local_0_11;
 let local_0_9 = function (p0) {
   if (!p0) {
@@ -28,7 +27,7 @@ let local_0_9 = function (p0) {
   }
   return;
 };
-b763 = async function (p0, p1, p2, p3) {
+export async function b763(p0, p1, p2, p3) {
   let v0, v4, v14, v16, v17, v18, v21, v30, v46, v49, v50, v51, v58, v59, v60, v61, v62, v63, v64;
   local_0_5(p1);
   if (p3 !== undefined) {
@@ -173,8 +172,8 @@ b763 = async function (p0, p1, p2, p3) {
   } finally {
     await g50.close(v4);
   }
-};
-c763 = async function (p0, p1, p2, p3) {
+}
+export async function c763(p0, p1, p2, p3) {
   let v0, v4 /*g50*/, v5 /*g50*/, v6, v11 /*g50*/, v14 /*g50*/, v15 /*cryptoFramework*/, v16 /*g50*/, v17, v18 /*g50*/, v19 /*g50*/, acc;
   local_0_0(p2);
   v4 = await local_0_3(p0);
@@ -240,7 +239,7 @@ c763 = async function (p0, p1, p2, p3) {
     acc = new Error(catchAcc.message + (v11 ? "；目标可能留下未完成文件，请在文件管理器删除后重新另存" : ""));
     throw acc;
   }
-};
+}
 local_0_0 = function (p0) {
   if (p0()) {
     throw new Error("已取消导出");
@@ -481,22 +480,22 @@ local_0_4 = async function (p0, p1, p2, p3, p4) {
 local_0_1 = function (p0) {
   return String(p0.ino) + ":" + p0.size + ":" + String(p0.mtimeNs ?? p0.mtime) + ":" + String(p0.ctimeNs ?? p0.ctime);
 };
-w762 = async function (p0, p1) {
+export async function w762(p0, p1) {
   let v3, v7;
   local_0_0(p1);
   v3 = await local_0_3(p0);
   v7 = await local_0_4(v3, p0, p1);
   await g50.close(v3);
   return v7;
-};
-x762 = async function (p0, p1) {
+}
+export async function x762(p0, p1) {
   let v3, v7;
   local_0_0(p1);
   v3 = await local_0_3(p0);
   v7 = await local_0_4(v3, p0, p1, true, false);
   await g50.close(v3);
   return v7;
-};
+}
 local_0_6 = function (p0, p1, p2) {
   let v0 = p0.filesDir.replace(new RegExp("\\/+$"), "") + "/" + p0.workRelative;
   if (p1 !== v0 + "/snapshot" || p2 !== v0 + "/export.zip") {
@@ -504,7 +503,7 @@ local_0_6 = function (p0, p1, p2) {
   }
   return;
 };
-z762 = async function (p0, p1, p2, p3, p4, p5) {
+export async function z762(p0, p1, p2, p3, p4, p5) {
   let v0, v4, v14, v15, v16, v17, v18, v20, v21, v22, v23, v30, v31, v32, v74, v75, v76, v77, v78, v79, v89, acc;
   local_0_5(p2);
   local_0_0(p3);
@@ -624,9 +623,4 @@ z762 = async function (p0, p1, p2, p3, p4, p5) {
   } finally {
     await g50.close(v4);
   }
-};
-export { b763 };
-export { c763 };
-export { w762 };
-export { x762 };
-export { z762 };
+}

@@ -3,7 +3,6 @@
 * Source code created from a .abc file.
 * powered by xpanda decompiler, author: jmp0
 */
-let findActiveSubtitleText, parseVttSubtitles;
 let local_0_0, local_0_1, local_0_3;
 let local_0_2 = function (p0) {
   let v12;
@@ -13,7 +12,7 @@ let local_0_2 = function (p0) {
   }
   return v5.trim();
 };
-findActiveSubtitleText = function (p0, p1) {
+export function findActiveSubtitleText(p0, p1) {
   let v5, v6, v7, v8, v9, v12, v14;
   if (p0.length === 0) {
     return "";
@@ -46,11 +45,11 @@ findActiveSubtitleText = function (p0, p1) {
     v7 -= 1;
   }
   return v9.join("\n");
-};
+}
 local_0_1 = function (p0, p1, p2, p3) {
   return parseInt(p0, 10) * 3600000 + parseInt(p1, 10) * 60000 + parseInt(p2, 10) * 1000 + parseInt(p3, 10);
 };
-parseVttSubtitles = function (p0) {
+export function parseVttSubtitles(p0) {
   let v9, v11, v12, v13, v14;
   let v4 = [];
   let v7 = new RegExp("^" + local_0_0 /*VTT_TIMESTAMP*/ + "\\s+-->\\s+" + local_0_0 /*VTT_TIMESTAMP*/);
@@ -83,8 +82,6 @@ parseVttSubtitles = function (p0) {
     return p0.startMs - p1.startMs;
   });
   return v4;
-};
+}
 local_0_0 = "(\\d{2,}):(\\d{2}):(\\d{2})[.,](\\d{3})";
 local_0_3 = 60000;
-export { findActiveSubtitleText };
-export { parseVttSubtitles };

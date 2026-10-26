@@ -5,22 +5,21 @@
 */
 import { ZhihuHttpMethod } from "@normalized:N&&&data/src/main/ets/network/ZhihuHttpClient&1.0.0";
 import { decodeOnlineHistoryPage } from "@normalized:N&&&data/src/main/ets/domain/ZhihuOnlineHistoryDecoder&1.0.0";
-let ONLINE_HISTORY_BASE_URL, ONLINE_HISTORY_BATCH_DEL_URL, ONLINE_HISTORY_LIMIT, ONLINE_HISTORY_MAX_OFFSET, OnlineHistoryRepositoryFailureKind, buildBatchDelBody, buildOnlineHistoryUrl, canonicalOnlineHistoryCursorKey, isOnlineHistoryCursorUrl, onlineHistoryDeletePairOf, onlineHistoryOffsetOf;
 let local_0_0, local_0_1, local_0_2;
-buildBatchDelBody = function (p0, p1) {
+export function buildBatchDelBody(p0, p1) {
   return "{\"pairs\":[" + p0.map(function (p0) {
     return "{\"content_token\":\"" + p0.contentToken + "\",\"content_type\":\"" + p0.contentType + "\"}";
   }).join(",") + "],\"clear\":" + (p1 ? "true" : "false") + "}";
-};
-buildOnlineHistoryUrl = function (p0) {
+}
+export function buildOnlineHistoryUrl(p0) {
   if (!Number.isSafeInteger(p0) || p0 < 0 || p0 > 100000) {
     throw new OnlineHistoryRepositoryFailure(OnlineHistoryRepositoryFailureKind.INVALID_CURSOR);
   }
   return "" + ONLINE_HISTORY_BASE_URL + "?offset=" + p0 + "&limit=" + ONLINE_HISTORY_LIMIT + "";
-};
-canonicalOnlineHistoryCursorKey = function (p0) {
+}
+export function canonicalOnlineHistoryCursorKey(p0) {
   return "" + ONLINE_HISTORY_BASE_URL + "?" + p0.substring(p0.indexOf("?") + 1).split("&").slice().sort().join("&") + "";
-};
+}
 local_0_1 = function (p0) {
   let local_1_0 = new Set();
   p0.forEach(function (p0) {
@@ -28,7 +27,7 @@ local_0_1 = function (p0) {
   });
   return local_1_0;
 };
-isOnlineHistoryCursorUrl = function (p0) {
+export function isOnlineHistoryCursorUrl(p0) {
   let v0;
   let v1 = p0.length === 0;
   if (p0.length !== 0) {
@@ -51,8 +50,8 @@ isOnlineHistoryCursorUrl = function (p0) {
     return v1 !== undefined && v1 <= 100000 && v0 === 10;
   }
   return false;
-};
-onlineHistoryDeletePairOf = function (p0) {
+}
+export function onlineHistoryDeletePairOf(p0) {
   let v0 /*OnlineHistoryRepositoryFailure*/;
   let v1 = p0.indexOf(":");
   if (v1 <= 0 || v1 !== p0.lastIndexOf(":")) {
@@ -70,13 +69,13 @@ onlineHistoryDeletePairOf = function (p0) {
     };
   }
   throw new OnlineHistoryRepositoryFailure(OnlineHistoryRepositoryFailureKind.INVALID_CONTENT_KEY);
-};
-onlineHistoryOffsetOf = function (p0) {
+}
+export function onlineHistoryOffsetOf(p0) {
   if (!isOnlineHistoryCursorUrl(p0)) {
     throw new OnlineHistoryRepositoryFailure(OnlineHistoryRepositoryFailureKind.INVALID_CURSOR);
   }
   return local_0_0(p0.substring(p0.indexOf("?") + 1).split("&"), "offset") ?? 0;
-};
+}
 local_0_0 = function (p0, p1) {
   let v0, v5, v9, v10;
   let v2 = p0[Symbol.iterator]();
@@ -129,11 +128,11 @@ local_0_2 = function (p0) {
     }
   };
 };
-ONLINE_HISTORY_BASE_URL = "https://www.zhihu.com/api/v4/unify-consumption/read_history";
-ONLINE_HISTORY_BATCH_DEL_URL = "https://api.zhihu.com/read_history/batch_del";
-ONLINE_HISTORY_LIMIT = 10;
-ONLINE_HISTORY_MAX_OFFSET = 100000;
-OnlineHistoryRepositoryFailureKind = {
+export const ONLINE_HISTORY_BASE_URL = "https://www.zhihu.com/api/v4/unify-consumption/read_history";
+export const ONLINE_HISTORY_BATCH_DEL_URL = "https://api.zhihu.com/read_history/batch_del";
+export const ONLINE_HISTORY_LIMIT = 10;
+export const ONLINE_HISTORY_MAX_OFFSET = 100000;
+export const OnlineHistoryRepositoryFailureKind = {
   INVALID_CURSOR: "invalid_cursor",
   REPEATED_CURSOR: "repeated_cursor",
   INVALID_CONTENT_KEY: "invalid_content_key",
@@ -315,14 +314,3 @@ export class DefaultOnlineHistoryRepository {
     throw new OnlineHistoryRepositoryFailure(OnlineHistoryRepositoryFailureKind.CANCELLED);
   }
 }
-export { ONLINE_HISTORY_BASE_URL };
-export { ONLINE_HISTORY_BATCH_DEL_URL };
-export { ONLINE_HISTORY_LIMIT };
-export { ONLINE_HISTORY_MAX_OFFSET };
-export { OnlineHistoryRepositoryFailureKind };
-export { buildBatchDelBody };
-export { buildOnlineHistoryUrl };
-export { canonicalOnlineHistoryCursorKey };
-export { isOnlineHistoryCursorUrl };
-export { onlineHistoryDeletePairOf };
-export { onlineHistoryOffsetOf };

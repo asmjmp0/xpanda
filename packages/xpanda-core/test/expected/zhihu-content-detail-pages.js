@@ -66,7 +66,6 @@ import { stageQuestionAnswerNavigator } from "@normalized:N&&&entry/src/main/ets
 import { stageVideoPlaybackContext } from "@normalized:N&&&entry/src/main/ets/pages/VideoPlaybackHandoff&";
 import { takeQuestionAnswerNavigator } from "@normalized:N&&&entry/src/main/ets/pages/QuestionAnswerNavigator&";
 import { themeColorContainerColor } from "@normalized:N&&&data/Index&1.0.0";
-let contentAuthorAvatarUrl, contentAuthorBadge, contentAuthorHeadline, contentAuthorName, contentBlockingTitle, contentContextTitle, contentCreatedAtText, contentDetailPageTitle, contentEmptyMessage, contentEndorsements, contentHtml, contentIpInfo, contentShareSummary, contentShareThumbnailUrl, contentSpeechText, contentStatistics, contentTitle, contentUpdatedAtText, formatContentDateTime;
 let local_0_1, local_0_2, local_0_3, local_0_4, local_0_5, local_0_6, local_0_7, local_0_8, local_0_9, local_0_11;
 let local_0_12 = function (p0, p1) {
   let v0 = Math.min(1, Math.max(0, p1));
@@ -101,15 +100,15 @@ let local_0_0 = function (p0) {
   };
   return SegmentButtonOptions.tab(v2);
 };
-contentAuthorAvatarUrl = function (p0) {
+export function contentAuthorAvatarUrl(p0) {
   let v0 = (p0.value.author === null || p0.value.author === undefined ? undefined : p0.value.author.avatarUrl === null || p0.value.author.avatarUrl === undefined ? undefined : p0.value.author.avatarUrl.trim())
     ?? "";
   if (v0.startsWith("http://")) {
     v0 = "https://" + v0.substring(7) + "";
   }
   return new RegExp("^https:\\/\\/[A-Za-z0-9.-]+").test(v0) ? v0 : "";
-};
-contentAuthorBadge = function (p0) {
+}
+export function contentAuthorBadge(p0) {
   let v1;
   let v0 = p0.value.author === null || p0.value.author === undefined ? undefined : p0.value.author.badge;
   if (v0 === undefined || v0.iconUrl.trim().length === 0) {
@@ -121,15 +120,15 @@ contentAuthorBadge = function (p0) {
     "description": v0.description,
     "iconUrl": v1
   } : undefined;
-};
-contentAuthorHeadline = function (p0) {
+}
+export function contentAuthorHeadline(p0) {
   return (p0.value.author === null || p0.value.author === undefined ? undefined : p0.value.author.headline === null || p0.value.author.headline === undefined ? undefined : p0.value.author.headline.trim())
     ?? "";
-};
-contentAuthorName = function (p0) {
+}
+export function contentAuthorName(p0) {
   return (p0.value.author === null || p0.value.author === undefined ? undefined : p0.value.author.name) ?? "";
-};
-contentBlockingTitle = function (p0) {
+}
+export function contentBlockingTitle(p0) {
   let v0;
   if (p0.kind === ContentDetailKind.QUESTION || p0.kind === ContentDetailKind.ARTICLE) {
     return p0.value.title;
@@ -139,23 +138,23 @@ contentBlockingTitle = function (p0) {
     v0 = "回答";
   }
   return v0;
-};
-contentContextTitle = function (p0) {
+}
+export function contentContextTitle(p0) {
   if (p0.kind === ContentDetailKind.ANSWER) {
     return (p0.value.questionTitle === null || p0.value.questionTitle === undefined ? undefined : p0.value.questionTitle.trim())
       ?? "";
   }
   return contentTitle(p0).trim();
-};
-contentCreatedAtText = function (p0) {
+}
+export function contentCreatedAtText(p0) {
   let v0;
   if (p0.kind !== ContentDetailKind.ANSWER && p0.kind !== ContentDetailKind.ARTICLE) {
     return "";
   }
   v0 = formatContentDateTime(p0.value.createdAt);
   return v0.length > 0 ? "发布于 " + v0 + "" : "";
-};
-contentDetailPageTitle = function (p0) {
+}
+export function contentDetailPageTitle(p0) {
   switch (p0) {
     case ContentDetailKind.QUESTION:
       return "问题";
@@ -166,8 +165,8 @@ contentDetailPageTitle = function (p0) {
     default:
       return;
   }
-};
-contentEmptyMessage = function (p0) {
+}
+export function contentEmptyMessage(p0) {
   let v0;
   if (p0.kind === ContentDetailKind.QUESTION) {
     return "问题暂时没有补充说明";
@@ -177,14 +176,14 @@ contentEmptyMessage = function (p0) {
     v0 = "正文为空";
   }
   return v0;
-};
-contentEndorsements = function (p0) {
+}
+export function contentEndorsements(p0) {
   if (p0.kind === ContentDetailKind.QUESTION) {
     return [];
   }
   return p0.value.endorsements ?? [];
-};
-contentHtml = function (p0) {
+}
+export function contentHtml(p0) {
   if (p0.kind === ContentDetailKind.QUESTION) {
     return p0.value.detailHtml;
   }
@@ -192,25 +191,25 @@ contentHtml = function (p0) {
     return;
   }
   return p0.value.contentHtml;
-};
-contentIpInfo = function (p0) {
+}
+export function contentIpInfo(p0) {
   if (p0.kind === ContentDetailKind.QUESTION) {
     return "";
   }
   return (p0.value.ipInfo ?? "").trim();
-};
-contentShareSummary = function (p0) {
+}
+export function contentShareSummary(p0) {
   let v0;
   return p0.kind !== ContentDetailKind.ANSWER && p0.kind !== ContentDetailKind.ARTICLE && (v0 = p0.value.excerpt.trim(), v0.length > 0) ? v0 : "来自知乎++的受信内容链接";
-};
-contentShareThumbnailUrl = function (p0) {
+}
+export function contentShareThumbnailUrl(p0) {
   let v0 = contentAuthorAvatarUrl(p0);
   if (!new RegExp("^https:\\/\\/(?:pic|pica|picx|pic[0-9]+)\\.zhimg\\.com\\/").test(v0)) {
     v0 = undefined;
   }
   return v0;
-};
-contentSpeechText = function (p0) {
+}
+export function contentSpeechText(p0) {
   let v1 /*parseZhihuHtml*/, acc;
   let local_1_0 = [];
   v1 = contentContextTitle(p0);
@@ -238,8 +237,8 @@ contentSpeechText = function (p0) {
     }
   }
   return local_1_0.join("。\n");
-};
-contentStatistics = function (p0, p1, p2) {
+}
+export function contentStatistics(p0, p1, p2) {
   if (p0.kind === ContentDetailKind.QUESTION) {
     if (p2 == null) {
       p2 = p0.value.followerCount;
@@ -253,8 +252,8 @@ contentStatistics = function (p0, p1, p2) {
     p1 = p0.value.voteupCount;
   }
   return "" + p1 + " 赞同 · " + p0.value.commentCount + " 条评论";
-};
-contentTitle = function (p0) {
+}
+export function contentTitle(p0) {
   switch (p0.kind) {
     case ContentDetailKind.QUESTION:
       return p0.value.title;
@@ -265,8 +264,8 @@ contentTitle = function (p0) {
     default:
       return;
   }
-};
-contentUpdatedAtText = function (p0) {
+}
+export function contentUpdatedAtText(p0) {
   let v1 /*ContentDetailKind*/;
   if (p0.kind !== ContentDetailKind.ANSWER && p0.kind !== ContentDetailKind.ARTICLE) {
     return "";
@@ -276,7 +275,7 @@ contentUpdatedAtText = function (p0) {
   }
   v1 = formatContentDateTime(p0.value.updatedAt);
   return v1.length > 0 ? "编辑于 " + v1 + "" : "";
-};
+}
 local_0_2 = function (p0, p1, p2) {
   return (p0 < 0 ? -1 : 1) * p1 * Math.tanh(Math.abs(p0) / (p1 * p2));
 };
@@ -328,7 +327,7 @@ local_0_9 = function (p0) {
   }
   return AppStorage.get("resolvedThemeColor") ?? DEFAULT_THEME_COLOR;
 };
-formatContentDateTime = function (p0) {
+export function formatContentDateTime(p0) {
   let v0, v1, v2, v3;
   if (!Number.isFinite(p0) || p0 <= 0) {
     return "";
@@ -342,7 +341,7 @@ formatContentDateTime = function (p0) {
   v0 = v0.getMinutes();
   v0 = v3 + v1(v0);
   return v2 + (v0 + "");
-};
+}
 local_0_1 = function (p0) {
   let acc = p0.map(function (p0) {
     let local_1_0, local_1_1;
@@ -8813,22 +8812,3 @@ local_0_3 = 300;
 local_0_6 = 46;
 local_0_7 = 80;
 local_0_5 = 1.2;
-export { contentAuthorAvatarUrl };
-export { contentAuthorBadge };
-export { contentAuthorHeadline };
-export { contentAuthorName };
-export { contentBlockingTitle };
-export { contentContextTitle };
-export { contentCreatedAtText };
-export { contentDetailPageTitle };
-export { contentEmptyMessage };
-export { contentEndorsements };
-export { contentHtml };
-export { contentIpInfo };
-export { contentShareSummary };
-export { contentShareThumbnailUrl };
-export { contentSpeechText };
-export { contentStatistics };
-export { contentTitle };
-export { contentUpdatedAtText };
-export { formatContentDateTime };
