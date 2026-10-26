@@ -19,11 +19,11 @@ import { readProtoVarint } from "@normalized:N&&&youtube_core/src/main/ets/commo
 import { sabrReadFields } from "@normalized:N&&&youtube_core/src/main/ets/extractor/sabr/SabrProto&1.0.0";
 import { umpReadAll } from "@normalized:N&&&youtube_core/src/main/ets/extractor/sabr/UmpReader&1.0.0";
 let PART_FORMAT_INITIALIZATION_METADATA, PART_MEDIA, PART_MEDIA_END, PART_MEDIA_HEADER, PART_NEXT_REQUEST_POLICY, PART_RELOAD_PLAYER_RESPONSE, PART_SABR_CONTEXT_SENDING_POLICY, PART_SABR_CONTEXT_UPDATE, PART_SABR_ERROR, PART_SABR_REDIRECT, PART_SABR_SEEK, PART_STREAM_PROTECTION_STATUS, isRecoverableIntegrityIssues, requireUmpContentType, sabrDecodeBody, sabrDecodeParts;
-let local_0_1, local_0_2, local_0_3, local_0_4, local_0_5, local_0_6, local_0_7, local_0_8, local_0_9, local_0_10, local_0_11, local_0_12, local_0_13, local_0_14, local_0_15;
-local_0_12 = function (p0, p1, p2) {
-  let v6, v7, v14, v17;
-  v7 = [];
-  v6 = [];
+let local_0_2, local_0_3, local_0_4, local_0_5, local_0_6, local_0_9, local_0_10, local_0_11, local_0_13, local_0_14, local_0_15;
+let local_0_12 = function (p0, p1, p2) {
+  let v14, v17;
+  let v7 = [];
+  let v6 = [];
   for (v14 of p0) {
     if (v6.indexOf(v14.headerId) >= 0) {
       v7.push("duplicate-media-header:" + v14.headerId + "");
@@ -51,9 +51,9 @@ local_0_12 = function (p0, p1, p2) {
   }
   return v7;
 };
-local_0_1 = function (p0) {
-  let v4, v5, v6, v13;
-  v6 = 0;
+let local_0_1 = function (p0) {
+  let v4, v5, v13;
+  let v6 = 0;
   for (v13 of p0) {
     v6 += v13.length;
   }
@@ -65,9 +65,9 @@ local_0_1 = function (p0) {
   }
   return v5;
 };
-local_0_8 = function (p0) {
-  let v4, v11, v14, v15, v16, v17, v20;
-  v4 = new SabrContextSendingPolicy();
+let local_0_8 = function (p0) {
+  let v11, v14, v15, v16, v17, v20;
+  let v4 = new SabrContextSendingPolicy();
   for (v11 of sabrReadFields(p0)) {
     v14 = [];
     if (v11.wireType === WIRE_VARINT) {
@@ -98,9 +98,9 @@ local_0_8 = function (p0) {
   }
   return v4;
 };
-local_0_7 = function (p0) {
-  let v4, v11;
-  v4 = new SabrContextUpdate();
+let local_0_7 = function (p0) {
+  let v11;
+  let v4 = new SabrContextUpdate();
   for (v11 of sabrReadFields(p0)) {
     if (v11.number === 1) {
       v4.type = v11.varint | 0;
@@ -119,8 +119,8 @@ local_0_7 = function (p0) {
   return v4;
 };
 local_0_14 = function (p0) {
-  let v4, v11;
-  v4 = new local_0_15 /*FormatByteRange*/();
+  let v11;
+  let v4 = new local_0_15 /*FormatByteRange*/();
   for (v11 of sabrReadFields(p0)) {
     if ((v11.number === 1 || v11.number === 3) && v11.wireType === WIRE_VARINT) {
       v4.start = v11.varint;
@@ -131,8 +131,8 @@ local_0_14 = function (p0) {
   return v4;
 };
 local_0_9 = function (p0) {
-  let v4, v11, v14, v19;
-  v4 = new SabrFormatInitMeta();
+  let v11, v14, v19;
+  let v4 = new SabrFormatInitMeta();
   for (v11 of sabrReadFields(p0)) {
     if (v11.number === 1 && v11.wireType === WIRE_LENGTH_DELIMITED) {
       v4.videoId = v11.getString();
@@ -171,8 +171,8 @@ local_0_9 = function (p0) {
   return v4;
 };
 local_0_2 = function (p0) {
-  let v4, v11;
-  v4 = new SabrNextRequestPolicy();
+  let v11;
+  let v4 = new SabrNextRequestPolicy();
   for (v11 of sabrReadFields(p0)) {
     if (v11.number === 1) {
       v4.targetAudioReadaheadMs = v11.varint | 0;
@@ -199,8 +199,8 @@ local_0_2 = function (p0) {
   return v4;
 };
 local_0_3 = function (p0) {
-  let v4, v11;
-  v4 = new SabrRedirectInfo();
+  let v11;
+  let v4 = new SabrRedirectInfo();
   for (v11 of sabrReadFields(p0)) {
     if (v11.number === 1 && v11.wireType === WIRE_LENGTH_DELIMITED) {
       v4.url = v11.getString();
@@ -209,8 +209,8 @@ local_0_3 = function (p0) {
   return v4;
 };
 local_0_5 = function (p0) {
-  let v9, v10, v11, v12, v17, v18, v19, v20, v21, acc;
-  v9 = sabrReadFields(p0)[Symbol.iterator]();
+  let v10, v11, v12, v17, v18, v19, v20, v21, acc;
+  let v9 = sabrReadFields(p0)[Symbol.iterator]();
   do {
     label_52: ;
     v10 = v9.next();
@@ -246,8 +246,8 @@ local_0_10 = function (p0) {
   return -1;
 };
 local_0_6 = function (p0) {
-  let v4, v11;
-  v4 = new local_0_13 /*StreamProtectionResult*/();
+  let v11;
+  let v4 = new local_0_13 /*StreamProtectionResult*/();
   for (v11 of sabrReadFields(p0)) {
     if (v11.number === 1 && v11.wireType === WIRE_VARINT) {
       v4.status = v11.varint | 0;
@@ -280,8 +280,8 @@ sabrDecodeBody = function (p0) {
   return sabrDecodeParts(umpReadAll(p0));
 };
 sabrDecodeParts = function (p0) {
-  let v4, v11;
-  v4 = new SabrPartProcessor();
+  let v11;
+  let v4 = new SabrPartProcessor();
   for (v11 of p0) {
     v4.acceptPart(v11);
   }

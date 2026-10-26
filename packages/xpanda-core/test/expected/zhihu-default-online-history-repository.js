@@ -22,16 +22,15 @@ canonicalOnlineHistoryCursorKey = function (p0) {
   return "" + ONLINE_HISTORY_BASE_URL + "?" + p0.substring(p0.indexOf("?") + 1).split("&").slice().sort().join("&") + "";
 };
 local_0_1 = function (p0) {
-  let local_1_0;
-  local_1_0 = new Set();
+  let local_1_0 = new Set();
   p0.forEach(function (p0) {
     local_1_0.add(p0);
   });
   return local_1_0;
 };
 isOnlineHistoryCursorUrl = function (p0) {
-  let v0, v1;
-  v1 = p0.length === 0;
+  let v0;
+  let v1 = p0.length === 0;
   if (p0.length !== 0) {
     v1 = p0.length > 4096;
   }
@@ -54,8 +53,8 @@ isOnlineHistoryCursorUrl = function (p0) {
   return false;
 };
 onlineHistoryDeletePairOf = function (p0) {
-  let v0 /*OnlineHistoryRepositoryFailure*/, v1;
-  v1 = p0.indexOf(":");
+  let v0 /*OnlineHistoryRepositoryFailure*/;
+  let v1 = p0.indexOf(":");
   if (v1 <= 0 || v1 !== p0.lastIndexOf(":")) {
     throw new OnlineHistoryRepositoryFailure(OnlineHistoryRepositoryFailureKind.INVALID_CONTENT_KEY);
   }
@@ -79,8 +78,8 @@ onlineHistoryOffsetOf = function (p0) {
   return local_0_0(p0.substring(p0.indexOf("?") + 1).split("&"), "offset") ?? 0;
 };
 local_0_0 = function (p0, p1) {
-  let v0, v2, v5, v9, v10;
-  v2 = p0[Symbol.iterator]();
+  let v0, v5, v9, v10;
+  let v2 = p0[Symbol.iterator]();
   do {
     v5 = v2.next();
     if (v5.done) {
@@ -142,8 +141,7 @@ OnlineHistoryRepositoryFailureKind = {
 };
 class OnlineHistoryRepositoryFailure extends Error {
   constructor(p0) {
-    let v0;
-    v0 = "在线历史请求已取消";
+    let v0 = "在线历史请求已取消";
     switch (p0) {
       case OnlineHistoryRepositoryFailureKind.INVALID_CURSOR:
         v0 = "在线历史分页地址不受信任";
@@ -302,8 +300,7 @@ class DefaultOnlineHistoryRepository {
     throw new OnlineHistoryRepositoryFailure(OnlineHistoryRepositoryFailureKind.CANCELLED);
   }
   async deleteEntry(p0) {
-    let v6;
-    v6 = {
+    let v6 = {
       "url": ONLINE_HISTORY_BATCH_DEL_URL,
       "method": ZhihuHttpMethod.POST,
       "body": buildBatchDelBody([onlineHistoryDeletePairOf(p0)], false),

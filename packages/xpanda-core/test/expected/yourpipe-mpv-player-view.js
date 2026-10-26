@@ -4,8 +4,7 @@
 * powered by xpanda decompiler, author: jmp0
 */
 import { MpvPlayerController } from "@normalized:N&&&@yourpipe/libmpv-napi/src/main/ets/controller/MpvPlayerController&0.2.0";
-let VideoFit;
-VideoFit = undefined;
+let VideoFit = undefined;
 if (!("finalizeConstruction" in ViewPU.prototype)) {
   Reflect.set(ViewPU.prototype, "finalizeConstruction", function () {});
 }
@@ -19,10 +18,9 @@ VideoFit = {
 };
 class MpvPlayerView extends ViewPU {
   constructor(p0, p1, p2, p3, p4, p5) {
-    let v2, v6, v7;
-    v6 = p3 === undefined ? -1 : p3;
-    v7 = p4 === undefined ? undefined : p4;
-    v2 = super(p0, p2, v6, p5);
+    let v6 = p3 === undefined ? -1 : p3;
+    let v7 = p4 === undefined ? undefined : p4;
+    let v2 = super(p0, p2, v6, p5);
     if (typeof v7 === "function") {
       v2.paramsGenerator_ = v7;
     }
@@ -157,8 +155,7 @@ class MpvPlayerView extends ViewPU {
     return;
   }
   startSizePolling() {
-    let local_0_0;
-    local_0_0 = this;
+    let local_0_0 = this;
     if (local_0_0.sized || local_0_0.sizeTimer !== -1) {
       return;
     }
@@ -177,8 +174,7 @@ class MpvPlayerView extends ViewPU {
     }
   }
   initialRender() {
-    let local_0_0;
-    local_0_0 = this;
+    let local_0_0 = this;
     local_0_0.observeComponentCreation2(function (p0, p1) {
       Stack.create();
       Stack.width("100%");
@@ -186,9 +182,8 @@ class MpvPlayerView extends ViewPU {
       Stack.clip(true);
       Stack.alignContent(Alignment.Center);
       Stack.onAreaChange(function (p0, p1) {
-        let v5, v6;
-        v6 = vp2px(p1.width);
-        v5 = vp2px(p1.height);
+        let v6 = vp2px(p1.width);
+        let v5 = vp2px(p1.height);
         if (v6 > 0 && v5 > 0) {
           local_0_0.areaW = v6;
           local_0_0.areaH = v5;

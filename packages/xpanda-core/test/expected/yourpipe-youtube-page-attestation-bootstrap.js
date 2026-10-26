@@ -4,19 +4,19 @@
 * powered by xpanda decompiler, author: jmp0
 */
 let parseSabrAttChallengeData, parseYoutubePageAttestationBootstrap;
-let local_0_0, local_0_1, local_0_2, local_0_3, local_0_4, local_0_5, local_0_6, local_0_7, local_0_8, local_0_9, local_0_10, local_0_11;
-local_0_5 = function (p0) {
+let local_0_0, local_0_1, local_0_3, local_0_4, local_0_6, local_0_7, local_0_8, local_0_9, local_0_10, local_0_11;
+let local_0_5 = function (p0) {
   return typeof p0 === "string" && p0.length > 0 ? p0 : undefined;
 };
-local_0_2 = function (p0) {
+let local_0_2 = function (p0) {
   if (p0 === null ? p0 !== null : typeof p0 === "object") {
     return Array.isArray(p0) ? undefined : p0;
   }
   return undefined;
 };
 local_0_8 = function (p0, p1, p2) {
-  let v6, v7, v9, v10, v11, v13;
-  v7 = "";
+  let v6, v9, v10, v11, v13;
+  let v7 = "";
   for (v6 = p1; v6 < p0.length; v7 += v9) {
     v13 = v6;
     v6 += 1;
@@ -81,9 +81,9 @@ local_0_8 = function (p0, p1, p2) {
   return "";
 };
 local_0_0 = function (p0, p1) {
-  let v5, v6, v8, v9, v10, v11;
-  v5 = [];
-  v6 = 0;
+  let v8, v9, v10, v11;
+  let v5 = [];
+  let v6 = 0;
   while (true) {
     v8 = p0.indexOf(p1, v6);
     if (v8 < 0) {
@@ -118,10 +118,10 @@ local_0_0 = function (p0, p1) {
   }
 };
 local_0_10 = function (p0, p1) {
-  let v5, v6, v7, v10, v11;
-  v5 = 0;
-  v7 = "";
-  v6 = false;
+  let v10, v11;
+  let v5 = 0;
+  let v7 = "";
+  let v6 = false;
   for (v10 = p1; v10 < p0.length; v10 += 1) {
     v11 = p0.charAt(v10);
     if (v7 !== "") {
@@ -146,8 +146,8 @@ local_0_9 = function (p0) {
   return p0 === " " || p0 === "\t" || p0 === "\n" || p0 === "\r" || p0 === "\f" || p0 === "";
 };
 local_0_6 = function (p0) {
-  let v4, v11, v14;
-  v4 = new Map();
+  let v11, v14;
+  let v4 = new Map();
   if (p0.length === 0) {
     return v4;
   }
@@ -162,8 +162,8 @@ local_0_6 = function (p0) {
   return v4;
 };
 local_0_4 = function (p0) {
-  let v5, v6;
-  v6 = local_0_7 /*INITIAL_ATTESTATION_RESPONSE*/.exec(p0);
+  let v5;
+  let v6 = local_0_7 /*INITIAL_ATTESTATION_RESPONSE*/.exec(p0);
   if (!v6) {
     return undefined;
   }
@@ -178,8 +178,8 @@ local_0_4 = function (p0) {
   }
 };
 parseSabrAttChallengeData = function (p0) {
-  let v4, v5, v6, v7, v8, v9;
-  v4 = local_0_2(local_0_2(JSON.parse(p0))?.bgChallenge);
+  let v5, v6, v7, v8, v9;
+  let v4 = local_0_2(local_0_2(JSON.parse(p0))?.bgChallenge);
   if (!v4) {
     throw new Error("Attestation response has no BotGuard challenge");
   }

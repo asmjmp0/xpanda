@@ -13,16 +13,15 @@ import { getThumbnailUrlFromThumbnailObject } from "@normalized:N&&&entry/src/ma
 class MusicSearchService {
   constructor() {}
   static isMusicSearch(p0) {
-    let v5;
-    v5 = p0 && p0.length > 0;
+    let v5 = p0 && p0.length > 0;
     return !!(v5 && p0[0].startsWith("music_"));
   }
   static parseInitialMusicSearchResponse(p0, p1, p2) {
-    let v7, v8, v9, v15, v22, v28;
-    v7 = [];
-    v8 = null;
-    v15 = p0.contents?.tabbedSearchResultsRenderer?.tabs;
-    v9 = (v15 && v15.length > 0 ? v15[0] : undefined)?.tabRenderer?.content?.sectionListRenderer;
+    let v22, v28;
+    let v7 = [];
+    let v8 = null;
+    let v15 = p0.contents?.tabbedSearchResultsRenderer?.tabs;
+    let v9 = (v15 && v15.length > 0 ? v15[0] : undefined)?.tabRenderer?.content?.sectionListRenderer;
     for (v22 of v9 ? v9.contents : []) {
       if (v22.musicShelfRenderer) {
         if (v22.musicShelfRenderer.contents && v22.musicShelfRenderer.contents.length > 0) {
@@ -40,10 +39,10 @@ class MusicSearchService {
     };
   }
   static parseMusicSearchContinuationResponse(p0, p1, p2) {
-    let v7, v9, v13, acc;
-    v7 = [];
-    v9 = null;
-    acc = p0.continuationContents?.musicShelfContinuation;
+    let v13;
+    let v7 = [];
+    let v9 = null;
+    let acc = p0.continuationContents?.musicShelfContinuation;
     if (acc) {
       if (acc.contents && acc.contents.length > 0) {
         v7 = MusicSearchService.buildMusicSearchItemsFromContents(acc.contents, p1, p2);
@@ -59,10 +58,9 @@ class MusicSearchService {
     };
   }
   static buildMusicSearchItemsFromContents(p0, p1, p2) {
-    let local_1_0, local_1_1, local_1_2;
-    local_1_1 = p1;
-    local_1_2 = [];
-    local_1_0 = p2 && p2.length > 0 ? p2[0] : "";
+    let local_1_1 = p1;
+    let local_1_2 = [];
+    let local_1_0 = p2 && p2.length > 0 ? p2[0] : "";
     p0.forEach(function (p0) {
       let v4, v8, v10, v12, v13, v15;
       if (!p0.musicResponsiveListItemRenderer) {
@@ -114,8 +112,7 @@ class MusicSearchService {
     return v8?.runs ?? [];
   }
   static getMusicAuthorFromRuns(p0) {
-    let v4;
-    v4 = p0 && p0.length > 0 ? p0[0] : undefined;
+    let v4 = p0 && p0.length > 0 ? p0[0] : undefined;
     return v4 ? v4.text || "" : "";
   }
   static getMusicUploaderFromRuns(p0, p1) {
@@ -141,8 +138,8 @@ class MusicSearchService {
     return p0.playlistItemData ? p0.playlistItemData.videoId || "" : "";
   }
   static getMusicPlaylistId(p0) {
-    let v12, v19, v23, v24, acc;
-    acc = p0.menu?.menuRenderer?.items;
+    let v12, v19, v23, v24;
+    let acc = p0.menu?.menuRenderer?.items;
     if (acc) {
       for (v19 of acc) {
         v24 = v19.toggleMenuServiceItemRenderer?.toggledServiceEndpoint?.likeEndpoint?.target;
@@ -154,8 +151,7 @@ class MusicSearchService {
     return v12 ? v12.playlistId || "" : "";
   }
   static getMusicThumbnailUrl(p0) {
-    let v5;
-    v5 = p0.thumbnail?.musicThumbnailRenderer;
+    let v5 = p0.thumbnail?.musicThumbnailRenderer;
     return getThumbnailUrlFromThumbnailObject(v5?.thumbnail);
   }
 }

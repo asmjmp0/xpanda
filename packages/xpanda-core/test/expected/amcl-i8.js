@@ -21,8 +21,8 @@ import { p763 } from "@normalized:N&&&feature_core/Index&1.0.0";
 import { q763 } from "@normalized:N&&&feature_core/Index&1.0.0";
 import { r763 } from "@normalized:N&&&feature_core/Index&1.0.0";
 let b763, c763, w762, x762, z762;
-let local_0_0, local_0_1, local_0_2, local_0_3, local_0_4, local_0_5, local_0_6, local_0_7, local_0_8, local_0_9, local_0_10, local_0_11;
-local_0_9 = function (p0) {
+let local_0_0, local_0_1, local_0_2, local_0_3, local_0_4, local_0_5, local_0_6, local_0_7, local_0_8, local_0_10, local_0_11;
+let local_0_9 = function (p0) {
   if (!p0) {
     throw new Error("归档结构、条目或摘要与文件计划不一致");
   }
@@ -248,8 +248,8 @@ local_0_0 = function (p0) {
   return;
 };
 local_0_2 = function (p0) {
-  let v0, v6, acc;
-  v0 = "";
+  let v6, acc;
+  let v0 = "";
   for (v6 of p0) {
     v6 = v6.toString(16);
     acc = v6.padStart;
@@ -498,8 +498,7 @@ x762 = async function (p0, p1) {
   return v7;
 };
 local_0_6 = function (p0, p1, p2) {
-  let v0;
-  v0 = p0.filesDir.replace(new RegExp("\\/+$"), "") + "/" + p0.workRelative;
+  let v0 = p0.filesDir.replace(new RegExp("\\/+$"), "") + "/" + p0.workRelative;
   if (p1 !== v0 + "/snapshot" || p2 !== v0 + "/export.zip") {
     throw new Error("Native导出工作路径不一致");
   }

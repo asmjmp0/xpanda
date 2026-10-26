@@ -67,18 +67,16 @@ import { stageVideoPlaybackContext } from "@normalized:N&&&entry/src/main/ets/pa
 import { takeQuestionAnswerNavigator } from "@normalized:N&&&entry/src/main/ets/pages/QuestionAnswerNavigator&";
 import { themeColorContainerColor } from "@normalized:N&&&data/Index&1.0.0";
 let contentAuthorAvatarUrl, contentAuthorBadge, contentAuthorHeadline, contentAuthorName, contentBlockingTitle, contentContextTitle, contentCreatedAtText, contentDetailPageTitle, contentEmptyMessage, contentEndorsements, contentHtml, contentIpInfo, contentShareSummary, contentShareThumbnailUrl, contentSpeechText, contentStatistics, contentTitle, contentUpdatedAtText, formatContentDateTime;
-let local_0_0, local_0_1, local_0_2, local_0_3, local_0_4, local_0_5, local_0_6, local_0_7, local_0_8, local_0_9, local_0_11, local_0_12;
-local_0_12 = function (p0, p1) {
-  let v0;
-  v0 = Math.min(1, Math.max(0, p1));
+let local_0_1, local_0_2, local_0_3, local_0_4, local_0_5, local_0_6, local_0_7, local_0_8, local_0_9, local_0_11;
+let local_0_12 = function (p0, p1) {
+  let v0 = Math.min(1, Math.max(0, p1));
   if (v0 >= 1) {
     return p0;
   }
   return "" + p0 + "" + Math.round(v0 * 255).toString(16).padStart(2, "0") + "";
 };
-local_0_0 = function (p0) {
-  let v2;
-  v2 = {
+let local_0_0 = function (p0) {
+  let v2 = {
     "buttons": [{
       "text": "默认"
     }, {
@@ -104,8 +102,7 @@ local_0_0 = function (p0) {
   return SegmentButtonOptions.tab(v2);
 };
 contentAuthorAvatarUrl = function (p0) {
-  let v0;
-  v0 = (p0.value.author === null || p0.value.author === undefined ? undefined : p0.value.author.avatarUrl === null || p0.value.author.avatarUrl === undefined ? undefined : p0.value.author.avatarUrl.trim())
+  let v0 = (p0.value.author === null || p0.value.author === undefined ? undefined : p0.value.author.avatarUrl === null || p0.value.author.avatarUrl === undefined ? undefined : p0.value.author.avatarUrl.trim())
     ?? "";
   if (v0.startsWith("http://")) {
     v0 = "https://" + v0.substring(7) + "";
@@ -113,8 +110,8 @@ contentAuthorAvatarUrl = function (p0) {
   return new RegExp("^https:\\/\\/[A-Za-z0-9.-]+").test(v0) ? v0 : "";
 };
 contentAuthorBadge = function (p0) {
-  let v0, v1;
-  v0 = p0.value.author === null || p0.value.author === undefined ? undefined : p0.value.author.badge;
+  let v1;
+  let v0 = p0.value.author === null || p0.value.author === undefined ? undefined : p0.value.author.badge;
   if (v0 === undefined || v0.iconUrl.trim().length === 0) {
     return undefined;
   }
@@ -207,8 +204,7 @@ contentShareSummary = function (p0) {
   return p0.kind !== ContentDetailKind.ANSWER && p0.kind !== ContentDetailKind.ARTICLE && (v0 = p0.value.excerpt.trim(), v0.length > 0) ? v0 : "来自知乎++的受信内容链接";
 };
 contentShareThumbnailUrl = function (p0) {
-  let v0;
-  v0 = contentAuthorAvatarUrl(p0);
+  let v0 = contentAuthorAvatarUrl(p0);
   if (!new RegExp("^https:\\/\\/(?:pic|pica|picx|pic[0-9]+)\\.zhimg\\.com\\/").test(v0)) {
     v0 = undefined;
   }
@@ -216,8 +212,7 @@ contentShareThumbnailUrl = function (p0) {
 };
 contentSpeechText = function (p0) {
   let v1 /*parseZhihuHtml*/, acc;
-  let local_1_0;
-  local_1_0 = [];
+  let local_1_0 = [];
   v1 = contentContextTitle(p0);
   if (v1.length > 0) {
     local_1_0.push(v1);
@@ -228,8 +223,7 @@ contentSpeechText = function (p0) {
   }
   v1 = parseZhihuHtml(contentHtml(p0));
   v1.forEach(function (p0) {
-    let v0;
-    v0 = p0.text.trim();
+    let v0 = p0.text.trim();
     if (v0.length > 0) {
       local_1_0.push(v0);
     }
@@ -287,8 +281,7 @@ local_0_2 = function (p0, p1, p2) {
   return (p0 < 0 ? -1 : 1) * p1 * Math.tanh(Math.abs(p0) / (p1 * p2));
 };
 local_0_8 = function (p0) {
-  let v0;
-  v0 = p0.backgroundColorGroup ?? "";
+  let v0 = p0.backgroundColorGroup ?? "";
   if (v0.startsWith("GBK") || v0.startsWith("GBL") || v0.startsWith("GRD") || v0.startsWith("GYL")) {
     v0 = local_0_11(v0);
     return local_0_12(v0, p0.backgroundColorAlpha);
@@ -329,8 +322,7 @@ local_0_11 = function (p0) {
   }
 };
 local_0_9 = function (p0) {
-  let v0 /*DEFAULT_THEME_COLOR*/;
-  v0 = p0.textColorGroup ?? "";
+  let v0 /*DEFAULT_THEME_COLOR*/ = p0.textColorGroup ?? "";
   if (v0.startsWith("GBK") || v0.startsWith("GBL") || v0.startsWith("GRD") || v0.startsWith("GYL")) {
     return local_0_11(v0);
   }
@@ -352,16 +344,14 @@ formatContentDateTime = function (p0) {
   return v2 + (v0 + "");
 };
 local_0_1 = function (p0) {
-  let acc;
-  acc = p0.map(function (p0) {
+  let acc = p0.map(function (p0) {
     let local_1_0, local_1_1;
     if (p0.marks.length <= 1) {
       return p0;
     }
     local_1_0 = new Map();
     p0.marks.forEach(function (p0) {
-      let v1 /*groups*/;
-      v1 = local_1_0.get("" + p0.startIndex + ":" + p0.endIndex + "");
+      let v1 /*groups*/ = local_1_0.get("" + p0.startIndex + ":" + p0.endIndex + "");
       if (v1 === undefined) {
         local_1_0.set("" + p0.startIndex + ":" + p0.endIndex + "", [p0]);
       } else {
@@ -379,8 +369,7 @@ local_0_1 = function (p0) {
       }));
       local_2_0 = [];
       v0.forEach(function (p0) {
-        let v0 /*effectiveSegmentMeta*/;
-        v0 = effectiveSegmentMeta(p0);
+        let v0 /*effectiveSegmentMeta*/ = effectiveSegmentMeta(p0);
         if (v0 === undefined) {
           return;
         }
@@ -397,8 +386,7 @@ local_0_1 = function (p0) {
       local_2_4 = false;
       local_2_5 = false;
       v0.forEach(function (p0) {
-        let v0 /*effectiveSegmentMeta*/;
-        v0 = effectiveSegmentMeta(p0);
+        let v0 /*effectiveSegmentMeta*/ = effectiveSegmentMeta(p0);
         if (v0 === undefined) {
           return;
         }
@@ -439,8 +427,7 @@ if (!("finalizeConstruction" in ViewPU.prototype)) {
 class ContentDetailPage extends ViewPU {
   constructor(p0, p1, p2, p3, p4, p5) {
     let v3 /*DEFAULT_THEME_COLOR*/;
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     if (p3 === undefined) {
       p3 = -1;
     }
@@ -1451,8 +1438,7 @@ class ContentDetailPage extends ViewPU {
   }
   aboutToAppear() {
     let v2 /*ContentDetailController*/;
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     local_1_0.pageActive = true;
     if (local_1_0.activeContentId.length === 0) {
       local_1_0.activeContentId = local_1_0.contentId;
@@ -1510,8 +1496,7 @@ class ContentDetailPage extends ViewPU {
   }
   ensureAnswers() {
     let v0;
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     if (local_1_0.pageActive && local_1_0.kind === ContentDetailKind.QUESTION) {
       if (!local_1_0.authenticated) {
         return;
@@ -1606,8 +1591,7 @@ class ContentDetailPage extends ViewPU {
   }
   currentSegmentMeta() {
     let v0;
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     v0 = local_1_0.segmentInfos.find(function (p0) {
       return p0.pid === local_1_0.segmentSheetPid;
     });
@@ -1619,8 +1603,7 @@ class ContentDetailPage extends ViewPU {
   }
   currentSegmentQuote() {
     let v0, v1, v2;
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     v0 = local_1_0.segmentInfos.find(function (p0) {
       return p0.pid === local_1_0.segmentSheetPid;
     });
@@ -1635,11 +1618,10 @@ class ContentDetailPage extends ViewPU {
     return v1 > v2 ? v0.text.substring(v2, v1) : "";
   }
   applySegmentMeta(p0, p1, p2) {
-    let local_1_0, local_1_1, local_1_2, local_1_3;
-    local_1_0 = p0;
-    local_1_2 = p1;
-    local_1_3 = p2;
-    local_1_1 = [];
+    let local_1_0 = p0;
+    let local_1_2 = p1;
+    let local_1_3 = p2;
+    let local_1_1 = [];
     this.segmentInfos.forEach(function (p0) {
       let local_2_0;
       if (p0.pid === local_1_0) {
@@ -1724,8 +1706,7 @@ class ContentDetailPage extends ViewPU {
   }
   copySegmentQuote() {
     let v0;
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     v0 = local_1_0.currentSegmentQuote();
     if (v0.length === 0) {
       return;
@@ -1744,8 +1725,7 @@ class ContentDetailPage extends ViewPU {
     return;
   }
   segmentActionSheet(p0) {
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     local_1_0.observeComponentCreation2(function (p0, p1) {
       Column.create({
         "space": {
@@ -2067,8 +2047,7 @@ class ContentDetailPage extends ViewPU {
     }
   }
   createBlockingAction() {
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     if (local_1_0.rules === undefined || local_1_0.history === undefined) {
       return;
     }
@@ -2079,8 +2058,7 @@ class ContentDetailPage extends ViewPU {
     return;
   }
   initialRender() {
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     local_1_0.observeComponentCreation2(function (p0, p1) {
       Stack.create({
         "alignContent": Alignment.TopStart
@@ -2089,8 +2067,7 @@ class ContentDetailPage extends ViewPU {
       Stack.height("100%");
       Stack.clip(true);
       Stack.onAreaChange(function (p0, p1) {
-        let v0;
-        v0 = Number(p1.width);
+        let v0 = Number(p1.width);
         if (v0 > 0 && Math.abs(v0 - local_1_0.answerViewportWidthVp) > 1) {
           local_1_0.answerViewportWidthVp = v0;
         }
@@ -2348,9 +2325,8 @@ class ContentDetailPage extends ViewPU {
             Stack.height("100%");
             Stack.hitTestBehavior(HitTestMode.Transparent);
             Stack.onAreaChange(function (p0, p1) {
-              let v2, v3;
-              v2 = Number(p1.width);
-              v3 = Number(p1.height);
+              let v2 = Number(p1.width);
+              let v3 = Number(p1.height);
               if (v2 > 0 && Math.abs(v2 - local_1_0.answerFabOverlayWidthVp) > 1) {
                 local_1_0.answerFabOverlayWidthVp = v2;
               }
@@ -2563,8 +2539,7 @@ class ContentDetailPage extends ViewPU {
     Stack.pop();
   }
   favoriteDialog(p0) {
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     local_1_0.observeComponentCreation2(function (p0, p1) {
       let v0 /*CollectionDialogComponent*/;
       if (p1) {
@@ -2610,8 +2585,8 @@ class ContentDetailPage extends ViewPU {
   }
   refreshContentFavoriteState() {
     let v1, acc;
-    let local_1_0, local_1_1;
-    local_1_1 = this;
+    let local_1_0;
+    let local_1_1 = this;
     if (local_1_1.collectionRepository === undefined || local_1_1.session === undefined || local_1_1.session.getState().status !== SessionStatus.AUTHENTICATED || local_1_1.kind === ContentDetailKind.QUESTION) {
       local_1_1.contentFavorited = false;
       return;
@@ -2632,10 +2607,9 @@ class ContentDetailPage extends ViewPU {
     return;
   }
   statusPanel(p0, p1, p2) {
-    let local_1_0, local_1_1, local_1_2;
-    local_1_2 = this;
-    local_1_1 = p0;
-    local_1_0 = p1;
+    let local_1_2 = this;
+    let local_1_1 = p0;
+    let local_1_0 = p1;
     local_1_2.observeComponentCreation2(function (p0, p1) {
       Column.create({
         "space": {
@@ -2750,9 +2724,8 @@ class ContentDetailPage extends ViewPU {
     Column.pop();
   }
   loadedContent(p0, p1) {
-    let local_1_0, local_1_1;
-    local_1_1 = this;
-    local_1_0 = p0;
+    let local_1_1 = this;
+    let local_1_0 = p0;
     local_1_1.observeComponentCreation2(function (p0, p1) {
       Stack.create({
         "alignContent": Alignment.Bottom
@@ -2970,9 +2943,8 @@ class ContentDetailPage extends ViewPU {
     Stack.pop();
   }
   horizontalAnswerPage(p0, p1) {
-    let local_1_0, local_1_1;
-    local_1_1 = this;
-    local_1_0 = p0;
+    let local_1_1 = this;
+    let local_1_0 = p0;
     local_1_1.observeComponentCreation2(function (p0, p1) {
       Stack.create({
         "alignContent": Alignment.TopStart
@@ -3235,8 +3207,7 @@ class ContentDetailPage extends ViewPU {
     Stack.pop();
   }
   horizontalAnswerTitleBar(p0) {
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     local_1_0.observeComponentCreation2(function (p0, p1) {
       Column.create();
       Column.width("100%");
@@ -3270,9 +3241,8 @@ class ContentDetailPage extends ViewPU {
     Column.pop();
   }
   horizontalAnswerBottomBar(p0, p1) {
-    let local_1_0, local_1_1;
-    local_1_1 = this;
-    local_1_0 = p0;
+    let local_1_1 = this;
+    let local_1_0 = p0;
     local_1_1.observeComponentCreation2(function (p0, p1) {
       Column.create();
       Column.width("100%");
@@ -3698,9 +3668,8 @@ class ContentDetailPage extends ViewPU {
     Column.pop();
   }
   answerPreviewCard(p0, p1) {
-    let local_1_0, local_1_1;
-    local_1_1 = this;
-    local_1_0 = p0;
+    let local_1_1 = this;
+    let local_1_0 = p0;
     local_1_1.observeComponentCreation2(function (p0, p1) {
       let v2 /*themeColorContainerColor*/;
       Column.create({
@@ -3763,9 +3732,8 @@ class ContentDetailPage extends ViewPU {
     Column.pop();
   }
   answerPreviewLabelRow(p0, p1) {
-    let local_1_0, local_1_1;
-    local_1_1 = this;
-    local_1_0 = p0;
+    let local_1_1 = this;
+    let local_1_0 = p0;
     local_1_1.observeComponentCreation2(function (p0, p1) {
       Row.create({
         "space": 6
@@ -3799,8 +3767,7 @@ class ContentDetailPage extends ViewPU {
       SymbolGlyph.fontColor(v2);
     }, SymbolGlyph);
     local_1_1.observeComponentCreation2(function (p0, p1) {
-      let v2;
-      v2 = local_1_1.answerOverscrollTriggered() ? "松手切换" : local_1_0 ? "上一个回答" : "下一个回答";
+      let v2 = local_1_1.answerOverscrollTriggered() ? "松手切换" : local_1_0 ? "上一个回答" : "下一个回答";
       Text.create(v2);
       Text.fontSize({
         "id": 50331669,
@@ -3824,9 +3791,8 @@ class ContentDetailPage extends ViewPU {
     Row.pop();
   }
   answerPreviewAuthorRow(p0, p1) {
-    let local_1_0, local_1_1;
-    local_1_1 = this;
-    local_1_0 = p0;
+    let local_1_1 = this;
+    let local_1_0 = p0;
     local_1_1.observeComponentCreation2(function (p0, p1) {
       Row.create({
         "space": 8
@@ -3977,8 +3943,7 @@ class ContentDetailPage extends ViewPU {
     Row.pop();
   }
   answerNextFloatingButton(p0) {
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     local_1_0.observeComponentCreation2(function (p0, p1) {
       Button.createWithChild({
         "type": ButtonType.Circle,
@@ -4004,8 +3969,7 @@ class ContentDetailPage extends ViewPU {
         "y": local_1_0.answerFabOffsetY
       });
       Button.onAreaChange(function (p0, p1) {
-        let v0;
-        v0 = Number(p1.width);
+        let v0 = Number(p1.width);
         if (v0 > 0 && Math.abs(v0 - local_1_0.answerFabWidthVp) > 1) {
           local_1_0.answerFabWidthVp = v0;
         }
@@ -4057,9 +4021,9 @@ class ContentDetailPage extends ViewPU {
     Button.pop();
   }
   onAnswerFabPanUpdate(p0) {
-    let v1, v2, v3;
-    v1 = p0.offsetX - this.answerFabPanPrevX;
-    v2 = p0.offsetY - this.answerFabPanPrevY;
+    let v3;
+    let v1 = p0.offsetX - this.answerFabPanPrevX;
+    let v2 = p0.offsetY - this.answerFabPanPrevY;
     this.answerFabPanPrevX = p0.offsetX;
     this.answerFabPanPrevY = p0.offsetY;
     if (v1 === 0 && v2 === 0) {
@@ -4102,8 +4066,8 @@ class ContentDetailPage extends ViewPU {
   }
   snapAnswerFabToHand() {
     let v0, v1 /*ContentDetailKind*/;
-    let local_1_0, local_1_1;
-    local_1_1 = this;
+    let local_1_0;
+    let local_1_1 = this;
     v0 = !local_1_1.gripFollowActions || local_1_1.kind !== ContentDetailKind.ANSWER;
     v1 = 0;
     if (!v0) {
@@ -4154,8 +4118,7 @@ class ContentDetailPage extends ViewPU {
   }
   loadAnswerFabPosition() {
     let v0 /*getAbilityContext*/, acc;
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     local_1_0.answerFabPositionLoaded = true;
     v0 = getAbilityContext();
     if (v0 === undefined) {
@@ -4204,9 +4167,8 @@ class ContentDetailPage extends ViewPU {
     }).catch(function (p0) {});
   }
   contentHeader(p0, p1) {
-    let local_1_0, local_1_1;
-    local_1_1 = this;
-    local_1_0 = p0;
+    let local_1_1 = this;
+    let local_1_0 = p0;
     local_1_1.observeComponentCreation2(function (p0, p1) {
       If.create();
       if ((local_1_0.kind === ContentDetailKind.ANSWER || local_1_0.kind === ContentDetailKind.ARTICLE) && local_1_1.immersiveReading) {
@@ -4216,8 +4178,8 @@ class ContentDetailPage extends ViewPU {
       } else {
         local_1_1.ifElseBranchUpdateFunction(1, function () {
           local_1_1.observeComponentCreation2(function (p0, p1) {
-            let v0, v3;
-            v0 = 0;
+            let v3;
+            let v0 = 0;
             Column.create({
               "space": {
                 "id": 50331691,
@@ -4299,8 +4261,7 @@ class ContentDetailPage extends ViewPU {
                     Text.copyOption(CopyOptions.LocalDevice);
                     Text.width("100%");
                     Text.onAreaChange(function (p0, p1) {
-                      let v0;
-                      v0 = Number(p1.height);
+                      let v0 = Number(p1.height);
                       if (v0 > 0 && Math.abs(v0 - local_1_1.contentTitleHeightVp) > 1) {
                         local_1_1.contentTitleHeightVp = v0;
                       }
@@ -4484,8 +4445,7 @@ class ContentDetailPage extends ViewPU {
               local_1_1.ifElseBranchUpdateFunction(1, function () {});
             } else if (((local_1_0.value.topics === null || local_1_0.value.topics === undefined ? undefined : local_1_0.value.topics.length) ?? 0) > 0) {
               local_1_1.ifElseBranchUpdateFunction(0, function () {
-                let v0;
-                v0 = local_1_1.articleTopicsFlow.bind(local_1_1);
+                let v0 = local_1_1.articleTopicsFlow.bind(local_1_1);
                 v0(local_1_0.value.topics ?? []);
               });
             } else {
@@ -4575,9 +4535,8 @@ class ContentDetailPage extends ViewPU {
     If.pop();
   }
   contentDateFooter(p0, p1) {
-    let local_1_0, local_1_1;
-    local_1_1 = this;
-    local_1_0 = p0;
+    let local_1_1 = this;
+    let local_1_0 = p0;
     local_1_1.observeComponentCreation2(function (p0, p1) {
       If.create();
       if (local_1_0.kind === ContentDetailKind.ANSWER || local_1_0.kind === ContentDetailKind.ARTICLE) {
@@ -4708,9 +4667,8 @@ class ContentDetailPage extends ViewPU {
     If.pop();
   }
   immersiveAuthorRow(p0, p1) {
-    let local_1_0, local_1_1;
-    local_1_1 = this;
-    local_1_0 = p0;
+    let local_1_1 = this;
+    let local_1_0 = p0;
     local_1_1.observeComponentCreation2(function (p0, p1) {
       If.create();
       if (contentAuthorName(local_1_0).length > 0) {
@@ -4828,9 +4786,8 @@ class ContentDetailPage extends ViewPU {
     If.pop();
   }
   contentHeaderAuthorRow(p0, p1) {
-    let local_1_0, local_1_1;
-    local_1_1 = this;
-    local_1_0 = p0;
+    let local_1_1 = this;
+    let local_1_0 = p0;
     local_1_1.observeComponentCreation2(function (p0, p1) {
       If.create();
       if (contentAuthorName(local_1_0).length > 0) {
@@ -4961,8 +4918,7 @@ class ContentDetailPage extends ViewPU {
                 local_1_1.ifElseBranchUpdateFunction(0, function () {
                   if (!If.canRetake("" + local_1_0.kind + "_detail_header_author_badge")) {
                     local_1_1.observeComponentCreation2(function (p0, p1) {
-                      let v2;
-                      v2 = contentAuthorBadge(local_1_0)?.iconUrl ?? "";
+                      let v2 = contentAuthorBadge(local_1_0)?.iconUrl ?? "";
                       Image.create(v2);
                       Image.id("" + local_1_0.kind + "_detail_header_author_badge");
                       Image.width(18);
@@ -5019,9 +4975,9 @@ class ContentDetailPage extends ViewPU {
     If.pop();
   }
   updateAnswerTitleScrolled(p0, p1) {
-    let local_1_0, local_1_1, local_1_2;
-    local_1_2 = this;
-    local_1_0 = p0;
+    let local_1_1;
+    let local_1_2 = this;
+    let local_1_0 = p0;
     if (local_1_0.kind === ContentDetailKind.ANSWER) {
       if (local_1_0.value.id === (local_1_2.content === null || local_1_2.content === undefined ? undefined : local_1_2.content.value.id)) {
         local_1_1 = p1 > (local_1_2.contentTitleHeightVp > 0 ? local_1_2.contentTitleHeightVp + 8 : 64);
@@ -5046,8 +5002,7 @@ class ContentDetailPage extends ViewPU {
     return;
   }
   updateChromeHiddenByScroll(p0) {
-    let v0;
-    v0 = p0 - this.lastContentScrollOffset;
+    let v0 = p0 - this.lastContentScrollOffset;
     this.lastContentScrollOffset = p0;
     if (p0 <= 2) {
       this.chromeHiddenByScroll = false;
@@ -5065,9 +5020,9 @@ class ContentDetailPage extends ViewPU {
     }
   }
   updateArticleTitleScrolled(p0, p1) {
-    let local_1_0, local_1_1, local_1_2;
-    local_1_2 = this;
-    local_1_0 = p0;
+    let local_1_1;
+    let local_1_2 = this;
+    let local_1_0 = p0;
     if (local_1_0.kind === ContentDetailKind.ARTICLE) {
       if (local_1_0.value.id === (local_1_2.content === null || local_1_2.content === undefined ? undefined : local_1_2.content.value.id)) {
         local_1_1 = p1 > (local_1_2.contentTitleHeightVp > 0 ? local_1_2.contentTitleHeightVp + 8 : 64);
@@ -5092,9 +5047,8 @@ class ContentDetailPage extends ViewPU {
     return;
   }
   questionDocument(p0, p1) {
-    let local_1_0, local_1_1;
-    local_1_1 = this;
-    local_1_0 = p0;
+    let local_1_1 = this;
+    let local_1_0 = p0;
     local_1_1.observeComponentCreation2(function (p0, p1) {
       Refresh.create({
         "refreshing": {
@@ -5150,8 +5104,7 @@ class ContentDetailPage extends ViewPU {
             }
           },
           "onScrollOffset": function (p0) {
-            let local_2_0;
-            local_2_0 = p0 > 160;
+            let local_2_0 = p0 > 160;
             if (local_2_0 !== local_1_1.questionScrolled) {
               local_1_1.questionScrolled = local_2_0;
               local_1_1.getUIContext().animateTo({
@@ -5207,8 +5160,7 @@ class ContentDetailPage extends ViewPU {
               }
             },
             "onScrollOffset": function (p0) {
-              let local_2_0;
-              local_2_0 = p0 > 160;
+              let local_2_0 = p0 > 160;
               if (local_2_0 !== local_1_1.questionScrolled) {
                 local_1_1.questionScrolled = local_2_0;
                 local_1_1.getUIContext().animateTo({
@@ -5246,8 +5198,7 @@ class ContentDetailPage extends ViewPU {
   }
   openContentLink(p0) {
     let v0 /*getAbilityContext*/;
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     v0 = contentLinkDestination(p0);
     if (v0 === undefined) {
       if (!new RegExp("^https?:\\/\\/", "i").test(p0)) {
@@ -5272,9 +5223,8 @@ class ContentDetailPage extends ViewPU {
     return;
   }
   questionBodyFooter(p0, p1) {
-    let local_1_0, local_1_1;
-    local_1_1 = this;
-    local_1_0 = p0;
+    let local_1_1 = this;
+    let local_1_0 = p0;
     local_1_1.observeComponentCreation2(function (p0, p1) {
       Column.create({
         "space": 12
@@ -5296,8 +5246,7 @@ class ContentDetailPage extends ViewPU {
           local_1_1.observeComponentCreation2(function (p0, p1) {
             ForEach.create();
             local_1_1.forEachUpdateFunction(p0, local_1_0.value.topics, function (p0) {
-              let local_2_0;
-              local_2_0 = p0;
+              let local_2_0 = p0;
               local_1_1.observeComponentCreation2(function (p0, p1) {
                 Button.createWithLabel("# " + local_2_0.name + "", {
                   "type": ButtonType.Normal,
@@ -5427,12 +5376,10 @@ class ContentDetailPage extends ViewPU {
     Column.pop();
   }
   questionAnswerItems(p0) {
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     LazyForEach.create("1", local_1_0, local_1_0.answerDataSource, function (p0) {
-      let local_2_0, local_2_1;
-      local_2_1 = p0;
-      local_2_0 = function (p0, p1) {
+      let local_2_1 = p0;
+      let local_2_0 = function (p0, p1) {
         ListItem.create(function () {}, false);
       };
       (function () {
@@ -5446,8 +5393,7 @@ class ContentDetailPage extends ViewPU {
     LazyForEach.pop();
   }
   userBlockDialog(p0) {
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     local_1_0.observeComponentCreation2(function (p0, p1) {
       Column.create({
         "space": {
@@ -5563,8 +5509,7 @@ class ContentDetailPage extends ViewPU {
     Column.pop();
   }
   keywordBlockDialog(p0) {
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     local_1_0.observeComponentCreation2(function (p0, p1) {
       Column.create({
         "space": {
@@ -5673,8 +5618,7 @@ class ContentDetailPage extends ViewPU {
     Column.pop();
   }
   confirmUserBlock() {
-    let v0;
-    v0 = this.pendingUserBlock;
+    let v0 = this.pendingUserBlock;
     if (this.pendingUserBlock === undefined || this.blockingAction === undefined || this.content === undefined) {
       return;
     }
@@ -5683,8 +5627,8 @@ class ContentDetailPage extends ViewPU {
     return;
   }
   confirmKeywordBlock() {
-    let v1, v3;
-    v1 = this.keywordBlockInput;
+    let v3;
+    let v1 = this.keywordBlockInput;
     this.keywordBlockVisible = false;
     this.keywordBlockInput = "";
     v3 = this.blockingAction === undefined;
@@ -5705,8 +5649,7 @@ class ContentDetailPage extends ViewPU {
     };
   }
   bottomActionBar(p0) {
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     local_1_0.observeComponentCreation2(function (p0, p1) {
       Column.create({
         "space": {
@@ -5721,8 +5664,7 @@ class ContentDetailPage extends ViewPU {
       Column.zIndex(2);
       Column.hitTestBehavior(HitTestMode.Default);
       Column.onAreaChange(function (p0, p1) {
-        let v0;
-        v0 = Number(p1.height);
+        let v0 = Number(p1.height);
         if (v0 > 0 && Math.abs(v0 - local_1_0.bottomActionBarHeightVp) > 1) {
           local_1_0.bottomActionBarHeightVp = v0;
         }
@@ -6135,8 +6077,7 @@ class ContentDetailPage extends ViewPU {
     Column.pop();
   }
   answerVoteCapsule(p0) {
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     local_1_0.observeComponentCreation2(function (p0, p1) {
       Row.create({
         "space": 0
@@ -6167,8 +6108,7 @@ class ContentDetailPage extends ViewPU {
     Row.pop();
   }
   answerRightActions(p0) {
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     local_1_0.observeComponentCreation2(function (p0, p1) {
       If.create();
       if (local_1_0.canEditExistingAnswer()) {
@@ -6346,8 +6286,7 @@ class ContentDetailPage extends ViewPU {
     Button.pop();
   }
   questionRightActions(p0) {
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     local_1_0.observeComponentCreation2(function (p0, p1) {
       Button.createWithChild({
         "type": ButtonType.Normal,
@@ -6450,9 +6389,8 @@ class ContentDetailPage extends ViewPU {
     Button.pop();
   }
   questionStatItem(p0, p1, p2) {
-    let local_1_0, local_1_1;
-    local_1_0 = p0;
-    local_1_1 = p1;
+    let local_1_0 = p0;
+    let local_1_1 = p1;
     this.observeComponentCreation2(function (p0, p1) {
       Row.create({
         "space": 4
@@ -6491,8 +6429,7 @@ class ContentDetailPage extends ViewPU {
     Row.pop();
   }
   questionAnswersFooter(p0) {
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     local_1_0.observeComponentCreation2(function (p0, p1) {
       If.create();
       if (local_1_0.kind === ContentDetailKind.QUESTION) {
@@ -6722,9 +6659,8 @@ class ContentDetailPage extends ViewPU {
     If.pop();
   }
   answerFeedCard(p0, p1) {
-    let local_1_0, local_1_1;
-    local_1_1 = this;
-    local_1_0 = p0;
+    let local_1_1 = this;
+    let local_1_0 = p0;
     local_1_1.observeComponentCreation2(function (p0, p1) {
       Button.createWithChild({
         "type": ButtonType.Normal,
@@ -6755,9 +6691,8 @@ class ContentDetailPage extends ViewPU {
       });
       Button.accessibilityText("打开回答");
       Button.onClick(function () {
-        let v0, v1;
-        v0 = local_1_1.questionAnswerFeedFactory();
-        v1 = local_1_1.answersController === null || local_1_1.answersController === undefined ? undefined : local_1_1.answersController.snapshot();
+        let v0 = local_1_1.questionAnswerFeedFactory();
+        let v1 = local_1_1.answersController === null || local_1_1.answersController === undefined ? undefined : local_1_1.answersController.snapshot();
         if (v0 !== undefined && v1 !== undefined) {
           v0 = new QuestionAnswerNavigator(local_1_1.activeContentId, local_1_0.feedItem.target.id, v1, v0);
           stageQuestionAnswerNavigator(v0);
@@ -6815,8 +6750,7 @@ class ContentDetailPage extends ViewPU {
     return;
   }
   navigatorHasPrevious() {
-    let v0;
-    v0 = this.navigatorRevision >= 0;
+    let v0 = this.navigatorRevision >= 0;
     if (this.navigatorRevision >= 0) {
       v0 = (this.answerNavigator === null || this.answerNavigator === undefined ? undefined : this.answerNavigator.hasPrevious())
         ?? false;
@@ -6824,8 +6758,7 @@ class ContentDetailPage extends ViewPU {
     return v0;
   }
   navigatorHasNext() {
-    let v0;
-    v0 = this.navigatorRevision >= 0;
+    let v0 = this.navigatorRevision >= 0;
     if (this.navigatorRevision >= 0) {
       v0 = (this.answerNavigator === null || this.answerNavigator === undefined ? undefined : this.answerNavigator.hasNext())
         ?? false;
@@ -6840,10 +6773,9 @@ class ContentDetailPage extends ViewPU {
     });
   }
   openSegmentComments() {
-    let v0, v1, v2, v5;
-    v0 = 0;
-    let local_1_0;
-    local_1_0 = this;
+    let v1, v2, v5;
+    let v0 = 0;
+    let local_1_0 = this;
     v1 = local_1_0.currentSegmentMeta();
     if (v1 === undefined || v1.segIds.length === 0) {
       local_1_0.openComments();
@@ -6906,8 +6838,8 @@ class ContentDetailPage extends ViewPU {
     return;
   }
   async restoreAnswerDoubleTapAction() {
-    let v0, v3 /*getAbilityContext*/;
-    v3 = getAbilityContext();
+    let v0;
+    let v3 /*getAbilityContext*/ = getAbilityContext();
     if (v3 === undefined) {
       return undefined;
     }
@@ -7013,8 +6945,7 @@ class ContentDetailPage extends ViewPU {
   }
   onAnswerOverscrollPanEnd() {}
   cancelAnswerOverscrollPan() {
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     local_1_0.overscrollRawDrag = 0;
     if (local_1_0.answerOverscrollOffset === 0) {
       return;
@@ -7031,8 +6962,7 @@ class ContentDetailPage extends ViewPU {
     return Math.abs(this.answerOverscrollOffset) >= this.answerOverscrollTriggerThreshold() / Math.min(3, Math.max(0.5, this.answerSwitchSensitivity));
   }
   answerOverscrollProgress() {
-    let v0;
-    v0 = Math.abs(this.answerOverscrollOffset) / (this.answerOverscrollTriggerThreshold() / Math.min(3, Math.max(0.5, this.answerSwitchSensitivity)));
+    let v0 = Math.abs(this.answerOverscrollOffset) / (this.answerOverscrollTriggerThreshold() / Math.min(3, Math.max(0.5, this.answerSwitchSensitivity)));
     return Math.min(1, v0);
   }
   answerOverscrollTriggerThreshold() {
@@ -7048,8 +6978,7 @@ class ContentDetailPage extends ViewPU {
     return this.answerPreviewData(p0)?.authorAvatarUrl ?? "";
   }
   answerPreviewExcerpt(p0) {
-    let v0;
-    v0 = this.answerPreviewData(p0);
+    let v0 = this.answerPreviewData(p0);
     if (v0 === undefined) {
       return "";
     }
@@ -7068,9 +6997,8 @@ class ContentDetailPage extends ViewPU {
     return this.content !== undefined && this.content.kind === ContentDetailKind.ANSWER ? contentContextTitle(this.content) : "";
   }
   canEditExistingAnswer() {
-    let v2, v3 /*SessionStatus*/;
-    v2 = this.session === null || this.session === undefined ? undefined : this.session.getState().profile;
-    v3 = this.content !== undefined && this.content.kind === ContentDetailKind.ANSWER;
+    let v2 = this.session === null || this.session === undefined ? undefined : this.session.getState().profile;
+    let v3 /*SessionStatus*/ = this.content !== undefined && this.content.kind === ContentDetailKind.ANSWER;
     if (this.content !== undefined && this.content.kind === ContentDetailKind.ANSWER) {
       v3 = (this.session === null || this.session === undefined ? undefined : this.session.getState().status) === SessionStatus.AUTHENTICATED;
     }
@@ -7098,8 +7026,7 @@ class ContentDetailPage extends ViewPU {
   }
   actionMenuSheet(p0) {
     let v0;
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     local_1_0.observeComponentCreation2(function (p0, p1) {
       Column.create({
         "space": {
@@ -7203,10 +7130,9 @@ class ContentDetailPage extends ViewPU {
       If.create();
       if (local_1_0.kind === ContentDetailKind.ANSWER || local_1_0.kind === ContentDetailKind.ARTICLE) {
         local_1_0.ifElseBranchUpdateFunction(0, function () {
-          let v0, v1, v5;
-          v0 = local_1_0.menuQuickAction.bind(local_1_0);
-          v1 = local_1_0.isCurrentContentSpeaking() ? "停止朗读" : "朗读";
-          v5 = function () {
+          let v0 = local_1_0.menuQuickAction.bind(local_1_0);
+          let v1 = local_1_0.isCurrentContentSpeaking() ? "停止朗读" : "朗读";
+          let v5 = function () {
             local_1_0.actionMenuShown = false;
             local_1_0.toggleSpeechPlayback();
           };
@@ -7307,8 +7233,7 @@ class ContentDetailPage extends ViewPU {
       If.create();
       if (local_1_0.content !== undefined && (v0 = 0, contentAuthorName(local_1_0.content).length > 0)) {
         local_1_0.ifElseBranchUpdateFunction(v0, function () {
-          let v0;
-          v0 = local_1_0.menuSettingRow.bind(local_1_0);
+          let v0 = local_1_0.menuSettingRow.bind(local_1_0);
           v0("屏蔽作者", {
             "id": 125832135,
             "type": 40000,
@@ -7317,8 +7242,7 @@ class ContentDetailPage extends ViewPU {
             "moduleName": "entry"
           }, "" + local_1_0.kind + "_block_author", false, !local_1_0.blockingBusy
             && local_1_0.blockingAction !== undefined, function () {
-            let v0;
-            v0 = local_1_0.content === null || local_1_0.content === undefined ? undefined : local_1_0.content.value.author;
+            let v0 = local_1_0.content === null || local_1_0.content === undefined ? undefined : local_1_0.content.value.author;
             if (v0 !== undefined) {
               local_1_0.actionMenuShown = false;
               local_1_0.pendingUserBlock = {
@@ -7353,13 +7277,12 @@ class ContentDetailPage extends ViewPU {
     return (getAbilityContext()?.config.fontSizeScale ?? 1) > 1.2 || this.actionMenuWidth < 360 ? "50%" : "25%";
   }
   menuQuickAction(p0, p1, p2, p3, p4, p5) {
-    let local_1_0, local_1_1, local_1_2, local_1_3, local_1_4, local_1_5;
-    local_1_5 = this;
-    local_1_1 = p0;
-    local_1_4 = p1;
-    local_1_0 = p2;
-    local_1_3 = p3;
-    local_1_2 = p4;
+    let local_1_5 = this;
+    let local_1_1 = p0;
+    let local_1_4 = p1;
+    let local_1_0 = p2;
+    let local_1_3 = p3;
+    let local_1_2 = p4;
     local_1_5.observeComponentCreation2(function (p0, p1) {
       Button.createWithChild({
         "type": ButtonType.Normal,
@@ -7436,14 +7359,13 @@ class ContentDetailPage extends ViewPU {
     Button.pop();
   }
   menuSettingRow(p0, p1, p2, p3, p4, p5, p6) {
-    let local_1_0, local_1_1, local_1_2, local_1_3, local_1_4, local_1_5, local_1_6;
-    local_1_6 = this;
-    local_1_2 = p0;
-    local_1_4 = p1;
-    local_1_0 = p2;
-    local_1_5 = p3;
-    local_1_1 = p4;
-    local_1_3 = p5;
+    let local_1_6 = this;
+    let local_1_2 = p0;
+    let local_1_4 = p1;
+    let local_1_0 = p2;
+    let local_1_5 = p3;
+    let local_1_1 = p4;
+    let local_1_3 = p5;
     local_1_6.observeComponentCreation2(function (p0, p1) {
       Button.createWithChild({
         "type": ButtonType.Normal,
@@ -7548,8 +7470,7 @@ class ContentDetailPage extends ViewPU {
     Button.pop();
   }
   doubleTapAskSheet(p0) {
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     local_1_0.observeComponentCreation2(function (p0, p1) {
       Column.create({
         "space": {
@@ -7790,8 +7711,7 @@ class ContentDetailPage extends ViewPU {
   }
   copyContentLink() {
     let v0;
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     if (local_1_0.content === undefined) {
       return;
     }
@@ -7808,8 +7728,7 @@ class ContentDetailPage extends ViewPU {
     return;
   }
   isCurrentContentSpeaking() {
-    let v0 /*getSpeechPlaybackService*/;
-    v0 = getSpeechPlaybackService().getSnapshot();
+    let v0 /*getSpeechPlaybackService*/ = getSpeechPlaybackService().getSnapshot();
     return (v0.status === SpeechPlaybackStatus.INITIALIZING || v0.status === SpeechPlaybackStatus.SPEAKING)
       && v0.contentId === this.activeContentId;
   }
@@ -7835,8 +7754,7 @@ class ContentDetailPage extends ViewPU {
   }
   shareContentLink() {
     let v1 /*getAbilityContext*/, v2, v3, v4, acc;
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     v1 = getAbilityContext();
     v2 = local_1_0.content === undefined;
     if (local_1_0.content !== undefined) {
@@ -7870,9 +7788,8 @@ class ContentDetailPage extends ViewPU {
     return;
   }
   articleTopicsFlow(p0, p1) {
-    let local_1_0, local_1_1;
-    local_1_1 = this;
-    local_1_0 = p0;
+    let local_1_1 = this;
+    let local_1_0 = p0;
     local_1_1.observeComponentCreation2(function (p0, p1) {
       Flex.create({
         "wrap": FlexWrap.Wrap
@@ -7883,8 +7800,7 @@ class ContentDetailPage extends ViewPU {
     local_1_1.observeComponentCreation2(function (p0, p1) {
       ForEach.create();
       local_1_1.forEachUpdateFunction(p0, local_1_0, function (p0) {
-        let local_2_0;
-        local_2_0 = p0;
+        let local_2_0 = p0;
         local_1_1.observeComponentCreation2(function (p0, p1) {
           Button.createWithLabel("# " + local_2_0.name + "", {
             "type": ButtonType.Normal,
@@ -7945,9 +7861,8 @@ class ContentDetailPage extends ViewPU {
     Flex.pop();
   }
   endorsementFlow(p0, p1) {
-    let local_1_0, local_1_1;
-    local_1_1 = this;
-    local_1_0 = p0;
+    let local_1_1 = this;
+    let local_1_0 = p0;
     local_1_1.observeComponentCreation2(function (p0, p1) {
       Flex.create({
         "wrap": FlexWrap.Wrap,
@@ -7959,8 +7874,7 @@ class ContentDetailPage extends ViewPU {
     local_1_1.observeComponentCreation2(function (p0, p1) {
       ForEach.create();
       local_1_1.forEachUpdateFunction(p0, local_1_0, function (p0) {
-        let local_2_0;
-        local_2_0 = p0;
+        let local_2_0 = p0;
         local_1_1.observeComponentCreation2(function (p0, p1) {
           Row.create({
             "space": 4
@@ -8072,8 +7986,7 @@ class ContentDetailPage extends ViewPU {
     Flex.pop();
   }
   voteUpAction(p0) {
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     local_1_0.observeComponentCreation2(function (p0, p1) {
       Button.createWithChild({
         "type": ButtonType.Normal,
@@ -8140,8 +8053,7 @@ class ContentDetailPage extends ViewPU {
     Button.pop();
   }
   voteDownAction(p0) {
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     local_1_0.observeComponentCreation2(function (p0, p1) {
       Button.createWithChild({
         "type": ButtonType.Normal,
@@ -8195,8 +8107,7 @@ class ContentDetailPage extends ViewPU {
     Button.pop();
   }
   followQuestionAction(p0) {
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     local_1_0.observeComponentCreation2(function (p0, p1) {
       Button.createWithChild({
         "type": ButtonType.Normal,
@@ -8272,8 +8183,7 @@ class ContentDetailPage extends ViewPU {
     Button.pop();
   }
   interactionStatusRow(p0) {
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     local_1_0.observeComponentCreation2(function (p0, p1) {
       Row.create({
         "space": {
@@ -8385,8 +8295,7 @@ class ContentDetailPage extends ViewPU {
   }
   ensureAnswerNavigator(p0) {
     let v0;
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     v0 = local_1_0.questionAnswerFeedFactory();
     if (v0 === undefined) {
       return;
@@ -8398,8 +8307,8 @@ class ContentDetailPage extends ViewPU {
   }
   activateInteraction(p0) {
     let v0;
-    let local_1_0, local_1_1, local_1_2;
-    local_1_2 = this;
+    let local_1_0, local_1_1;
+    let local_1_2 = this;
     if (p0.kind === ContentDetailKind.QUESTION) {
       v0 = local_1_2.followController !== undefined;
       if (local_1_2.followController === undefined) {
@@ -8543,8 +8452,7 @@ class QuestionDetailPage extends ViewPU {
     this.aboutToBeDeletedInternal();
   }
   initialRender() {
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     local_1_0.observeComponentCreation2(function (p0, p1) {
       let acc;
       if (p1) {
@@ -8696,8 +8604,7 @@ class AnswerDetailPage extends ViewPU {
     this.aboutToBeDeletedInternal();
   }
   initialRender() {
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     local_1_0.observeComponentCreation2(function (p0, p1) {
       let acc;
       if (p1) {
@@ -8843,8 +8750,7 @@ class ArticleDetailPage extends ViewPU {
     this.aboutToBeDeletedInternal();
   }
   initialRender() {
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     local_1_0.observeComponentCreation2(function (p0, p1) {
       let acc;
       if (p1) {

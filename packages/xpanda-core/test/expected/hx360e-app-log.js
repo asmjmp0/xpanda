@@ -7,10 +7,9 @@ import deviceInfo from "@ohos:deviceInfo";
 import fs from "@ohos:file.fs";
 import hilog from "@ohos:hilog";
 let acc;
-let local_0_0, local_0_1, local_0_2;
-local_0_0 = 0;
-local_0_1 = "HX360E";
-local_0_2 = 2 * 1024 * 1024;
+let local_0_0 = 0;
+let local_0_1 = "HX360E";
+let local_0_2 = 2 * 1024 * 1024;
 class AppLog {
   static dir = "";
   static file = "";
@@ -61,13 +60,12 @@ class AppLog {
     }
   }
   static now() {
-    let v0, v1, v2, v3;
-    v0 = new Date();
-    v1 = function (p0, p1) {
+    let v0 = new Date();
+    let v1 = function (p0, p1) {
       return p0.toString().padStart(p1, "0");
     };
-    v2 = "" + v0.getFullYear() + "-" + v1(v0.getMonth() + 1, 2) + "-" + v1(v0.getDate(), 2) + " ";
-    v3 = "" + v1(v0.getHours(), 2) + ":" + v1(v0.getMinutes(), 2) + ":" + v1(v0.getSeconds(), 2);
+    let v2 = "" + v0.getFullYear() + "-" + v1(v0.getMonth() + 1, 2) + "-" + v1(v0.getDate(), 2) + " ";
+    let v3 = "" + v1(v0.getHours(), 2) + ":" + v1(v0.getMinutes(), 2) + ":" + v1(v0.getSeconds(), 2);
     v2 += v3 + ".";
     v0 = v0.getMilliseconds();
     v0 = "" + v1(v0, 3);

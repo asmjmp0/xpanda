@@ -6,6 +6,7 @@ import {
     file,
     isAssignmentExpression,
     isBlockStatement,
+    isExpressionStatement,
     isForInStatement,
     isForOfStatement,
     isIdentifier,
@@ -344,6 +345,38 @@ export class TempVariableSimplify implements ISimplify {
         this.removeUnusedDeclarations(body, ctx);
     }
 
+    /**
+     * `let X;` 与紧随其后的 `X = RHS;` 合并为 `let X = RHS;`。
+     *
+     * 生成器把整组寄存器/词法槽先声明成无初始化的 `let`,再逐条赋值,输出里留下
+     * `let local_0_0; local_0_0 = "content_filter_views";` 这样的两段式。赋值语句
+     * 是复制传播、模块类定义折叠(`local_1_0 = acc` 别名链)、静态初始化接收链
+     * 回溯等 pass 的输入形态,合并必须放在它们全部结束之后做(见 SimplifyExport)。
+     *
+     * 安全规则:
+     *   1. 只处理语句列表位置(Program/BlockStatement body)的 let/var 声明,
+     *      且每个 declarator 都是无初始化的标识符(生成器输出的固定形态);
+     *   2. 声明之后必须是连续的 `名字 = 右值` 赋值前缀,目标都在声明组里;
+     *      中间插入任何其它语句即停止——把赋值搬过它会重排副作用的求值顺序;
+     *   3. 右值不得出现声明组里"尚未初始化"的名字(保守起见嵌套函数里的出现
+     *      也算读取):合并后这些名字处于 TDZ,读取从 undefined 变成 ReferenceError
+     *      (`let X; X = X + 1` 是 NaN,`let X = X + 1` 直接抛错);
+     *   4. 未合并的名字保持在最前(声明位置不变,TDZ 边界不后移),合并的按赋值
+     *      顺序输出——这样每条合并声明恰好落在原赋值语句的位置上,求值顺序零重排。
+     */
+    public static mergeDeclarationInitializers(node: Program): boolean {
+        const lists: TYPE.Statement[][] = [];
+        walkNode(node, (n) => {
+            if (isProgramNode(n) || isBlockStatement(n)) lists.push((n as TYPE.BlockStatement).body);
+            return true;
+        });
+        let changed = false;
+        for (const list of lists) {
+            if (mergeDeclarationInitializersInList(list)) changed = true;
+        }
+        return changed;
+    }
+
     /** 删除没有任何引用的 temp 声明(替代旧方案反复 scope.crawl 的做法)。 */
     private removeUnusedDeclarations(stmts: TYPE.Statement[], ctx: FunctionContext): void {
         const written = new Set<string>();
@@ -420,4 +453,80 @@ export class TempVariableSimplify implements ISimplify {
                 break;
         }
     }
+}
+
+/**
+ * 右值里是否出现 names 中"尚未初始化"的名字。不跳过嵌套函数:闭包体里的出现
+ * 也可能只是立刻执行的 IIFE(`X = (function () { return X; })()`),合并后该
+ * 读取会从 undefined 变成 TDZ ReferenceError,宁可放弃合并。
+ */
+function referencesUninitializedName(
+    node: TYPE.Node | null | undefined,
+    names: Set<string>,
+    initialized: Set<string>,
+): boolean {
+    let found = false;
+    walkNode(node, (n) => {
+        if (found) return false;
+        if (isIdentifier(n) && names.has(n.name) && !initialized.has(n.name)) {
+            found = true;
+            return false;
+        }
+        return true;
+    });
+    return found;
+}
+
+/** 合并一个语句列表里的 `let X; X = RHS;`;返回是否修改。规则见 mergeDeclarationInitializers。 */
+function mergeDeclarationInitializersInList(list: TYPE.Statement[]): boolean {
+    let changed = false;
+    for (let i = 0; i < list.length; i++) {
+        const decl = list[i];
+        if (!isVariableDeclaration(decl) || (decl.kind !== "let" && decl.kind !== "var")) continue;
+
+        // 形态检查:所有 declarator 都是无初始化的标识符,且组内无重名
+        const declarators = new Map<string, TYPE.VariableDeclarator>();
+        let wellFormed = true;
+        for (const d of decl.declarations) {
+            if (!isIdentifier(d.id) || d.init || declarators.has(d.id.name)) {
+                wellFormed = false;
+                break;
+            }
+            declarators.set(d.id.name, d);
+        }
+        if (!wellFormed) continue;
+        const groupNames = new Set<string>(declarators.keys());
+
+        // 从声明后连续的 `名字 = 右值` 赋值前缀里收集可合并的赋值(首个不满足即停)
+        const merged: Array<{ name: string; value: TYPE.Expression }> = [];
+        const initialized = new Set<string>();
+        let j = i + 1;
+        for (; j < list.length; j++) {
+            const stmt = list[j];
+            if (!isExpressionStatement(stmt) || !isAssignmentExpression(stmt.expression)) break;
+            const assign = stmt.expression;
+            if (assign.operator !== "=" || !isIdentifier(assign.left)) break;
+            const name = assign.left.name;
+            if (!groupNames.has(name) || initialized.has(name)) break;
+            if (referencesUninitializedName(assign.right, groupNames, initialized)) break;
+            merged.push({ name, value: assign.right });
+            initialized.add(name);
+        }
+        if (merged.length === 0) continue;
+
+        // 未合并的名字保持在最前,合并的按赋值顺序输出,整段替换原声明 + 被消费的赋值
+        const newStatements: TYPE.VariableDeclaration[] = [];
+        const unmerged = decl.declarations.filter(
+            (d) => !initialized.has((d.id as TYPE.Identifier).name));
+        if (unmerged.length > 0) newStatements.push(TYPE.variableDeclaration(decl.kind, unmerged));
+        for (const m of merged) {
+            const declarator = declarators.get(m.name)!;
+            declarator.init = m.value;
+            newStatements.push(TYPE.variableDeclaration(decl.kind, [declarator]));
+        }
+        list.splice(i, 1 + merged.length, ...newStatements);
+        changed = true;
+        i += newStatements.length - 1; // for 的 i++ 跳过刚插入的语句
+    }
+    return changed;
 }

@@ -5,13 +5,13 @@
 */
 import { NGA_HOSTS } from "@bundle:com.example.nga_oh/entry/ets/common/constants/NgaDomains";
 let isNgaQrLoginUrl;
-let local_0_0, local_0_1, local_0_2;
-local_0_0 = function (p0) {
+let local_0_1, local_0_2;
+let local_0_0 = function (p0) {
   return decodeURIComponent(p0);
 };
 isNgaQrLoginUrl = function (p0) {
-  let v0, v1, v3, v4, v5, v6;
-  v0 = p0.trim();
+  let v1, v3, v4, v5, v6;
+  let v0 = p0.trim();
   if (!v0.toLowerCase().startsWith("https://")) {
     return false;
   }
@@ -53,8 +53,8 @@ isNgaQrLoginUrl = function (p0) {
   return local_0_2(v0);
 };
 local_0_1 = function (p0) {
-  let v0, v1;
-  v0 = 0;
+  let v1;
+  let v0 = 0;
   for (v1 = p0.toLowerCase(); v0 < NGA_HOSTS.length; v0 += 1) {
     if (v1 === NGA_HOSTS[v0]) {
       return true;
@@ -63,14 +63,14 @@ local_0_1 = function (p0) {
   return false;
 };
 local_0_2 = function (p0) {
-  let v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, acc;
-  v2 = p0.split("&");
-  v9 = 0;
-  v3 = "";
-  v4 = false;
-  v6 = false;
-  v7 = "";
-  v5 = false;
+  let v8, v10, v11, acc;
+  let v2 = p0.split("&");
+  let v9 = 0;
+  let v3 = "";
+  let v4 = false;
+  let v6 = false;
+  let v7 = "";
+  let v5 = false;
   for (v8 = ""; v9 < v2.length; v9 += 1) {
     v10 = v2[v9].indexOf("=");
     if (v10 <= 0) {

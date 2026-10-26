@@ -156,5 +156,9 @@ export class SimplifyExport {
         // 统一折叠成 `class Name {}` 声明,类方法里的 lexenv 自引用读取同步改名为 Name。
         // 放在最后:定点迭代把 acc 枢纽清干净之后,定义与目标赋值之间才只剩纯别名链。
         ClassSyntaxSimplify.foldModuleClassDeclarations(node);
+        // `let X;` 与紧随的 `X = RHS;` 合并成 `let X = RHS;`。放在整个管线的最后:
+        // 赋值语句是复制传播、模块类定义折叠(`local_1_0 = acc` 别名链)、静态初始化
+        // 接收链回溯等 pass 的输入形态,提前合并会打断它们。
+        TempVariableSimplify.mergeDeclarationInitializers(node);
     }
 }

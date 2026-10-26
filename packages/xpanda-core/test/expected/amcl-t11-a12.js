@@ -20,8 +20,8 @@ import { q36 } from "@normalized:N&&&commons/Index&1.0.0";
 import { y } from "@normalized:N&&&commons/Index&1.0.0";
 import zlib from "@ohos:zlib";
 let b1268, c1268, d1268, e1268, e771, f1268, r1267, s1267, t1267, u1267, v1267;
-let local_0_0, local_0_1, local_0_4, local_0_5, local_0_6, local_0_7, local_0_8, local_0_9, local_0_10, local_0_11, local_0_12;
-local_0_9 = function (p0) {
+let local_0_0, local_0_1, local_0_4, local_0_5, local_0_6, local_0_7, local_0_8, local_0_10, local_0_11, local_0_12;
+let local_0_9 = function (p0) {
   return p0.downloads
     && p0.downloads.artifact
     && p0.downloads.artifact.url
@@ -30,11 +30,11 @@ local_0_9 = function (p0) {
     && p0.url.length > 0;
 };
 b1268 = function (p0, p1, p2, p3) {
-  let v3, v4, v5 /*a32*/, v6, v8, v9, v10, v11, v12 /*c771*/;
-  v3 = [];
-  v4 = new Set();
-  v5 = local_0_8(p0);
-  v6 = local_0_8(p1);
+  let v8, v9, v10, v11, v12 /*c771*/;
+  let v3 = [];
+  let v4 = new Set();
+  let v5 /*a32*/ = local_0_8(p0);
+  let v6 = local_0_8(p1);
   if (v5 && v5.libraries) {
     for (v9 of v5.libraries) {
       v11 = v9.name || "";
@@ -150,8 +150,8 @@ b1268 = function (p0, p1, p2, p3) {
 };
 c1268 = async function (p0, p1, p2, p3) {
   let v3, v6, v7, v8, v9, v11, v12, v19, v20, v29, v30, v31, v33, acc;
-  let local_1_0, local_1_1, local_1_2, local_1_3;
-  local_1_1 = p3;
+  let local_1_0, local_1_2, local_1_3;
+  let local_1_1 = p3;
   v3 = local_0_8(p0);
   if (!v3) {
     return undefined;
@@ -333,8 +333,8 @@ d1268 = function (p0, p1) {
   y.info(local_0_0, "Copied " + local_0_12(p0, p1) + " files from maven/ to libraries/", a32);
 };
 e1268 = async function (p0, p1, p2, p3) {
-  let v0, v3, v6, v9, v14, v15, v16, v19, v21, v22;
-  v3 = local_0_8(p2);
+  let v0, v6, v9, v14, v15, v16, v19, v21, v22;
+  let v3 = local_0_8(p2);
   if (v3 === null) {
     throw new Error("无法读取旧版 Forge 内嵌库来源清单");
   }
@@ -399,8 +399,8 @@ e1268 = async function (p0, p1, p2, p3) {
   }
 };
 e771 = function (p0) {
-  let v0, v4, v6, v7 /*a104*/;
-  v0 = [];
+  let v4, v6, v7 /*a104*/;
+  let v0 = [];
   for (v4 of local_0_1) {
     v7 = a104(p0 + "/jdk/" + v4 + "/release");
     v6 = a104(p0 + "/jdk/" + v4 + "/lib/server/libjvm.so");
@@ -590,9 +590,9 @@ r1267 = function (p0) {
   return p0.length === 0 ? "" : c771(p0);
 };
 s1267 = async function (p0) {
-  let v3, v4, v5, v6, v11, acc;
-  v3 = 0;
-  v4 = new m1268();
+  let v5, v6, v11, acc;
+  let v3 = 0;
+  let v4 = new m1268();
   if (p0.length === 0) {
     return v4;
   }
@@ -600,17 +600,14 @@ s1267 = async function (p0) {
   v6 = [];
   for (v11 of p0) {
     {
-      let local_1_2_0;
-      local_1_2_0 = v11;
+      let local_1_2_0 = v11;
       acc = v5.fetchText(local_1_2_0 + ".sha1", [], 6).then(function (p0) {
-        let v0, v1;
-        v1 = "([0-9a-fA-F]{40})";
-        v0 = new RegExp("([0-9a-fA-F]{40})").exec(p0);
+        let v1 = "([0-9a-fA-F]{40})";
+        let v0 = new RegExp("([0-9a-fA-F]{40})").exec(p0);
         return v0 && (v1 = 1, v0[1]) ? v0[v1].toLowerCase() : "";
       });
       acc = acc.catch(function (p0) {
-        let v4 /*b1277*/;
-        v4 = p0?.message ?? String(p0);
+        let v4 /*b1277*/ = p0?.message ?? String(p0);
         y.warn(local_0_0, "installer sha1 probe failed: " + local_1_2_0 + ".sha1 err=" + v4 + "", null, a32);
         return "";
       });
@@ -627,8 +624,8 @@ s1267 = async function (p0) {
   return v4;
 };
 t1267 = function (p0, p1) {
-  let v0, v1;
-  v0 = 0;
+  let v1;
+  let v0 = 0;
   if (p1 <= 0 || p1 >= p0.length) {
     return p0;
   }
@@ -640,8 +637,8 @@ t1267 = function (p0, p1) {
   return v1;
 };
 u1267 = function (p0) {
-  let v0, v1;
-  v1 = p0.indexOf(".");
+  let v0;
+  let v1 = p0.indexOf(".");
   if (v1 >= 0) {
     p0 = p0.substring(0, v1);
   }
@@ -649,8 +646,8 @@ u1267 = function (p0) {
   return isNaN(v0) || v0 >= 20;
 };
 (function (p0, p1) {
-  let v1 /*g50*/, v2 /*p1268*/;
-  v1 = Math.min(local_0_4, Math.max(local_0_5, g50.statSync(p1).size * 200));
+  let v2 /*p1268*/;
+  let v1 /*g50*/ = Math.min(local_0_4, Math.max(local_0_5, g50.statSync(p1).size * 200));
   while (p0.length > 1 && p0.endsWith("/")) {
     p0 = p0.substring(0, p0.length - 1);
   }

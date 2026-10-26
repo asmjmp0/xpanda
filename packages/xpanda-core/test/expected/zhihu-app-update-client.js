@@ -14,8 +14,7 @@ let GITHUB_RELEASES_ATOM, catalogUrlWaves;
 let acc;
 let local_0_0, local_0_1, local_0_2, local_0_3, local_0_4, local_0_5, local_0_6;
 catalogUrlWaves = function (p0) {
-  let v0;
-  v0 = local_0_2(p0);
+  let v0 = local_0_2(p0);
   return [v0, proxiedCatalogUrls(v0[0])];
 };
 local_0_6 = function (p0) {
@@ -26,8 +25,7 @@ local_0_6 = function (p0) {
   };
 };
 local_0_2 = function (p0) {
-  let v1;
-  v1 = Math.floor(Date.now() / local_0_0);
+  let v1 = Math.floor(Date.now() / local_0_0);
   return ["https://raw.githubusercontent.com/" + local_0_1 + "/main/" + ("assets/update/" + p0 + "") + "?v=" + v1 + "", "https://cdn.jsdelivr.net/gh/" + local_0_1 + "@main/" + ("assets/update/" + p0 + "") + "?v=" + v1 + "", "https://fastly.jsdelivr.net/gh/" + local_0_1 + "@main/" + ("assets/update/" + p0 + "") + "?v=" + v1 + ""];
 };
 GITHUB_RELEASES_ATOM = "https://github.com/zhuoyi233/zhihu-plus-plus-HMOS/releases.atom";
@@ -76,9 +74,8 @@ class AppUpdateClient {
     return;
   }
   async requestStatic(p0) {
-    let v0, v2 /*http*/;
-    v2 = http.createHttp();
-    v0 = await v2.request(p0, {
+    let v2 /*http*/ = http.createHttp();
+    let v0 = await v2.request(p0, {
       "method": http.RequestMethod.GET,
       "header": {
         "Accept": "application/json",
@@ -98,21 +95,19 @@ class AppUpdateClient {
   }
   fetchStatic(p0, p1) {
     let acc;
-    let local_2_0, local_2_1, local_2_2;
-    local_2_2 = this;
-    local_2_1 = p1;
-    local_2_0 = catalogUrlWaves(p0);
+    let local_2_2 = this;
+    let local_2_1 = p1;
+    let local_2_0 = catalogUrlWaves(p0);
     acc = new Promise(function (p0, p1) {
       let v3;
-      let local_3_0, local_3_1, local_3_2, local_3_3, local_3_4, local_3_5, local_3_6, local_3_7, local_3_8, local_3_9;
-      local_3_7 = p0;
-      local_3_4 = p1;
-      local_3_1 = 0;
-      local_3_2 = local_2_0[0].length;
-      local_3_5 = 0;
-      local_3_0 = false;
-      local_3_3 = false;
-      local_3_6 = function () {
+      let local_3_7 = p0;
+      let local_3_4 = p1;
+      let local_3_1 = 0;
+      let local_3_2 = local_2_0[0].length;
+      let local_3_5 = 0;
+      let local_3_0 = false;
+      let local_3_3 = false;
+      let local_3_6 = function () {
         let v1 /*total*/;
         if (!local_3_0 /*settled*/ && local_3_1 >= local_3_2) {
           if (!local_3_3 && local_2_0[1].length > 0) {
@@ -124,13 +119,12 @@ class AppUpdateClient {
         }
         return;
       };
-      local_3_8 = function () {
+      let local_3_8 = function () {
         local_3_1 += 1;
         local_3_6();
       };
-      local_3_9 = function (p0) {
-        let acc;
-        acc = local_2_2.requestStatic(p0).then(function (p0) {
+      let local_3_9 = function (p0) {
+        let acc = local_2_2.requestStatic(p0).then(function (p0) {
           if (local_3_0 /*settled*/) {
             return;
           }
@@ -167,8 +161,8 @@ class AppUpdateClient {
     return acc;
   }
   async latestCatalog(p0) {
-    let v0, v2 /*AppUpdateClient*/, acc;
-    v2 = !p0 && AppUpdateClient.latestJson.length > 0;
+    let v0, acc;
+    let v2 /*AppUpdateClient*/ = !p0 && AppUpdateClient.latestJson.length > 0;
     if (v2 && (acc = Date.now(), !v2 - AppUpdateClient.latestFetchedAt < local_0_0)) {
       return AppUpdateClient.latestJson;
     }
@@ -192,8 +186,7 @@ class AppUpdateClient {
     return v0;
   }
   async requestAtomFallback() {
-    let v0;
-    v0 = await this.requestHandle.request(GITHUB_RELEASES_ATOM, {
+    let v0 = await this.requestHandle.request(GITHUB_RELEASES_ATOM, {
       "method": http.RequestMethod.GET,
       "header": {
         "Accept": "application/atom+xml",
@@ -208,9 +201,9 @@ class AppUpdateClient {
     return v0 !== 200 || typeof v0.result !== "string" ? undefined : decodeLatestReleaseAtom(v0.result);
   }
   async fetchReleaseDetail(p0) {
-    let v5, v6, v8;
-    v5 = JSON.parse(await this.releasesCatalog())[Symbol.iterator]();
-    v6 = v5.next;
+    let v8;
+    let v5 = JSON.parse(await this.releasesCatalog())[Symbol.iterator]();
+    let v6 = v5.next;
     do {
       v8 = v6.call(v5);
       if (v8.done) {

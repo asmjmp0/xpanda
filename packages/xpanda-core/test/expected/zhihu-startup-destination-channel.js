@@ -6,8 +6,8 @@
 import { AppDestinationName } from "@normalized:N&&&core/src/main/ets/navigation/AppDestination&1.0.0";
 import { DeepLinkType } from "@normalized:N&&&core/src/main/ets/navigation/DeepLinkResolver&1.0.0";
 import { decodeAppDestination } from "@normalized:N&&&core/src/main/ets/navigation/AppDestination&1.0.0";
-let appDestinationIdentity, findAppDestinationStackIndex, shouldPushAppDestination, startupDestinationChannel, toAppDestination;
-appDestinationIdentity = function (p0) {
+let startupDestinationChannel;
+let appDestinationIdentity = function (p0) {
   switch (p0.name) {
     case AppDestinationName.QUESTION:
     case AppDestinationName.ANSWER:
@@ -32,9 +32,9 @@ appDestinationIdentity = function (p0) {
       return p0.name;
   }
 };
-findAppDestinationStackIndex = function (p0, p1) {
-  let v1, v2, v3 /*decodeAppDestination*/;
-  v1 = 0;
+let findAppDestinationStackIndex = function (p0, p1) {
+  let v2, v3 /*decodeAppDestination*/;
+  let v1 = 0;
   for (v2 = appDestinationIdentity(p1); v1 < p0.length; v1 += 1) {
     v3 = p0[v1].param === undefined ? decodeAppDestination(p0[v1].name, new Object()) : decodeAppDestination(p0[v1].name, p0[v1].param);
     if (v3 !== undefined && appDestinationIdentity(v3) === v2) {
@@ -43,15 +43,14 @@ findAppDestinationStackIndex = function (p0, p1) {
   }
   return -1;
 };
-shouldPushAppDestination = function (p0, p1) {
-  let v0;
-  v0 = p0 === undefined;
+let shouldPushAppDestination = function (p0, p1) {
+  let v0 = p0 === undefined;
   if (p0 !== undefined) {
     v0 = appDestinationIdentity(p0) !== appDestinationIdentity(p1);
   }
   return v0;
 };
-toAppDestination = function (p0) {
+let toAppDestination = function (p0) {
   switch (p0.type) {
     case DeepLinkType.MAIN_TABS:
       return {
@@ -119,8 +118,7 @@ class StartupDestinationChannel {
   }
   publish(p0) {
     let v0;
-    let local_0_0;
-    local_0_0 = p0;
+    let local_0_0 = p0;
     if (this.listeners.length === 0) {
       this.pending = local_0_0;
       return;
@@ -137,9 +135,8 @@ class StartupDestinationChannel {
   }
   subscribe(p0) {
     let v0;
-    let local_0_0, local_0_1;
-    local_0_1 = this;
-    local_0_0 = p0;
+    let local_0_1 = this;
+    let local_0_0 = p0;
     local_0_1.listeners.push(local_0_0);
     v0 = local_0_1.pending;
     local_0_1.pending = undefined;
@@ -148,8 +145,7 @@ class StartupDestinationChannel {
       local_0_0(v0);
     }
     return function () {
-      let v1;
-      v1 = local_0_1.listeners.indexOf(local_0_0);
+      let v1 = local_0_1.listeners.indexOf(local_0_0);
       if (v1 >= 0) {
         local_0_1.listeners.splice(v1, 1);
       }

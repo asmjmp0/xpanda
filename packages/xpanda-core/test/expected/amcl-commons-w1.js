@@ -43,9 +43,9 @@ u91 = function (p0) {
   return v2 + "/evidence-" + b52(p0).substring(0, 16) + ".log";
 };
 local_0_1 = async function (p0, p1, p2) {
-  let v0, v3 /*g50*/, v5, v11 /*g50*/, v14 /*g50*/, v15, v16, v17, v18 /*j50*/;
-  v3 = new a90();
-  v5 = "";
+  let v0, v11 /*g50*/, v14 /*g50*/, v15, v16, v17, v18 /*j50*/;
+  let v3 /*g50*/ = new a90();
+  let v5 = "";
   await v3.open(p0, p1);
   h50(p2.substring(0, p2.lastIndexOf("/")));
   v11 = await g50.open(p2, g50.OpenMode.CREATE | g50.OpenMode.WRITE_ONLY | g50.OpenMode.TRUNC);
@@ -82,9 +82,9 @@ local_0_1 = async function (p0, p1, p2) {
   throw new Error("单行日志超过 8 MiB，无法安全预览和脱敏");
 };
 w91 = async function (p0, p1, p2, p3) {
-  let v0, v3, v4, v5, v6, v7, v21, v22, v23, v25, v31, v34, v35, v36, v44, v45, v50, v54, acc;
-  v3 = p2.selectedFileIds.slice();
-  v5 = {
+  let v0, v4, v6, v21, v22, v23, v25, v31, v34, v35, v36, v44, v45, v50, v54, acc;
+  let v3 = p2.selectedFileIds.slice();
+  let v5 = {
     "activityId": p2.activityId,
     "revision": p2.revision,
     "createdAt": Date.now(),
@@ -93,7 +93,7 @@ w91 = async function (p0, p1, p2, p3) {
     "redactionVersion": k92,
     "files": []
   };
-  v7 = local_0_0 + 1;
+  let v7 = local_0_0 + 1;
   local_0_0 += 1;
   v5.directory = p1 + "/amcl-share-" + p2.activityId + "-" + v5.createdAt + "-" + v7;
   v6 = [];
@@ -108,8 +108,7 @@ w91 = async function (p0, p1, p2, p3) {
       if (v25.done) break;
       v25 = v25.value;
       {
-        let local_1_3_0;
-        local_1_3_0 = v25;
+        let local_1_3_0 = v25;
         v25 = v22.find(function (p0) {
           return p0.fileId === local_1_3_0;
         });
@@ -187,8 +186,7 @@ w91 = async function (p0, p1, p2, p3) {
           "reason": j50(v6[v31].record.reason, n50.LOGSHARE, 1024)
         };
         v5.files.push(acc);
-        let local_1_4_0;
-        local_1_4_0 = local_1_2_0;
+        let local_1_4_0 = local_1_2_0;
       }
       if (p2.includePublicSummary && p3.length > 0) {
         v21 = j50(p3, n50.LOGSHARE, Number.MAX_SAFE_INTEGER);
@@ -294,10 +292,10 @@ local_0_2 = function (p0, p1, p2) {
   });
 };
 y91 = async function (p0, p1, p2) {
-  let v0, v3, v4, v7, v8;
-  v3 = 0;
-  v4 = p0.files[Symbol.iterator]();
-  v7 = 0;
+  let v0, v8;
+  let v3 = 0;
+  let v4 = p0.files[Symbol.iterator]();
+  let v7 = 0;
   while (true) {
     v8 = v4.next();
     if (v8.done) break;

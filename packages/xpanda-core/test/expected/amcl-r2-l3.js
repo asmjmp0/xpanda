@@ -9,8 +9,7 @@ import { k115 } from "@normalized:N&&&commons/Index&1.0.0";
 import { q51 } from "@normalized:N&&&commons/Index&1.0.0";
 import { r115 } from "@normalized:N&&&commons/Index&1.0.0";
 let u189, v189;
-let local_0_1;
-local_0_1 = function (p0, p1, p2, p3) {
+let local_0_1 = function (p0, p1, p2, p3) {
   let v1, v2, v3;
   if (p2 === undefined) {
     p2 = 0;
@@ -96,8 +95,7 @@ class e190 {
     this.listeners.push(p0);
   }
   unregisterDataChangeListener(p0) {
-    let v0;
-    v0 = this.listeners.indexOf(p0);
+    let v0 = this.listeners.indexOf(p0);
     if (v0 >= 0) {
       this.listeners.splice(v0, 1);
     }
@@ -119,8 +117,7 @@ class e190 {
     this.pageCache.clear();
   }
   discardIdle_() {
-    let v0;
-    v0 = this.idleScan === null || this.idleScan === undefined ? undefined : this.idleScan.cursor;
+    let v0 = this.idleScan === null || this.idleScan === undefined ? undefined : this.idleScan.cursor;
     this.idleScan = undefined;
     if (v0 !== undefined) {
       v0.cancel();
@@ -145,9 +142,8 @@ class e190 {
     this.applyVisibility_();
   }
   isEventExpanded(p0) {
-    let v0, acc;
-    acc = this.expanded.has(p0);
-    v0 = acc;
+    let acc = this.expanded.has(p0);
+    let v0 = acc;
     if (!acc) {
       v0 = !this.collapsed && !this.individuallyCollapsed.has(p0);
     }
@@ -265,9 +261,9 @@ class e190 {
     return p0.parser.finish();
   }
   async loadEvidence(p0, p1, p2, p3, p4) {
-    let v2, v3, v4, v5 /*a190*/, v6, v7, v8, v10, v11, v12, v14, v15, v16, v19 /*r115*/, v20 /*a90*/, acc;
-    v2 = 0;
-    v3 = p3 === undefined ? 0 : p3;
+    let v4, v5 /*a190*/, v6, v7, v8, v10, v11, v12, v14, v15, v16, v19 /*r115*/, v20 /*a90*/, acc;
+    let v2 = 0;
+    let v3 = p3 === undefined ? 0 : p3;
     if (p4 === undefined) {
       p4 = 0;
     }
@@ -456,8 +452,7 @@ class e190 {
     }
   }
   releaseLive_() {
-    let v0;
-    v0 = this.live;
+    let v0 = this.live;
     this.live = undefined;
     if (v0 === undefined) {
       return;
@@ -879,8 +874,8 @@ class e190 {
     }
   }
   async setText(p0) {
-    let v2, v5, v6 /*r115*/, v7, v8, v9, v10, acc;
-    v2 = 1000;
+    let v5, v6 /*r115*/, v7, v8, v9, v10, acc;
+    let v2 = 1000;
     this.cancel();
     v5 = this.generation + 1;
     this.generation = this.generation + 1;
@@ -927,12 +922,12 @@ class e190 {
     return false;
   }
   filter(p0, p1) {
-    let v1, v2, v3, v4, v5, v6, v7 /*k115*/, v8, v9, v10;
-    v1 = p1.toLowerCase();
-    v2 = [];
-    v3 = 0;
-    v4 = 0;
-    v5 = 0;
+    let v6, v7 /*k115*/, v8, v9, v10;
+    let v1 = p1.toLowerCase();
+    let v2 = [];
+    let v3 = 0;
+    let v4 = 0;
+    let v5 = 0;
     while (v5 < this.rows.length) {
       v6 = this.rows[v5].event;
       v7 = this.rows[v5].eventId ?? "";
@@ -960,8 +955,7 @@ class e190 {
               v2.push(v5);
               v5 += 1;
             }
-            let local_1_2_0;
-            local_1_2_0 = local_1_0;
+            let local_1_2_0 = local_1_0;
           }
         }
         v5 = v8;

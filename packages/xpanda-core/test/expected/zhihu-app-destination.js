@@ -270,9 +270,8 @@ decodeAppDestination = function (p0, p1) {
   }
 };
 local_0_2 = function (p0, p1) {
-  let v0, v1;
-  v0 = local_0_0(p0, "id");
-  v1 = v0 === undefined;
+  let v0 = local_0_0(p0, "id");
+  let v1 = v0 === undefined;
   if (v0 !== undefined) {
     v1 = !local_0_9(v0);
   }
@@ -314,9 +313,8 @@ local_0_2 = function (p0, p1) {
   return undefined;
 };
 local_0_3 = function (p0) {
-  let v0, v1;
-  v0 = local_0_0(p0, "entryName");
-  v1 = local_0_0(p0, "title");
+  let v0 = local_0_0(p0, "entryName");
+  let v1 = local_0_0(p0, "title");
   if (local_0_12(v0) && local_0_13(v1)) {
     return local_0_11(p0, ["name", "entryName", "title"]) ? {
       "name": AppDestinationName.NOTIFICATION_ENTRY,
@@ -327,11 +325,10 @@ local_0_3 = function (p0) {
   return undefined;
 };
 local_0_4 = function (p0) {
-  let v0, v1, v2, v3;
-  v0 = local_0_0(p0, "peerId");
-  v1 = local_0_0(p0, "peerName");
-  v2 = local_0_0(p0, "avatarUrl");
-  v3 = !local_0_14(v0);
+  let v0 = local_0_0(p0, "peerId");
+  let v1 = local_0_0(p0, "peerName");
+  let v2 = local_0_0(p0, "avatarUrl");
+  let v3 = !local_0_14(v0);
   if (!v3 && (v3 = v1 !== undefined, v1 !== undefined)) {
     v3 = !local_0_15(v1);
   }
@@ -349,8 +346,7 @@ local_0_4 = function (p0) {
   return undefined;
 };
 local_0_5 = function (p0) {
-  let v0;
-  v0 = local_0_0(p0, "version");
+  let v0 = local_0_0(p0, "version");
   if (v0 === undefined || isSafeWhatsNewVersion(v0)) {
     if (!local_0_11(p0, v0 === undefined ? ["name"] : ["name", "version"])) {
       return undefined;
@@ -365,10 +361,9 @@ local_0_5 = function (p0) {
   return undefined;
 };
 local_0_6 = function (p0) {
-  let v0, v1, v2;
-  v0 = local_0_0(p0, "questionId");
-  v1 = local_0_0(p0, "answerId");
-  v2 = v0 === undefined;
+  let v0 = local_0_0(p0, "questionId");
+  let v1 = local_0_0(p0, "answerId");
+  let v2 = v0 === undefined;
   if (v0 !== undefined) {
     v2 = !isSafeDecimalContentId(v0);
   }
@@ -391,9 +386,8 @@ local_0_6 = function (p0) {
   return undefined;
 };
 local_0_7 = function (p0) {
-  let v0, v1;
-  v0 = local_0_0(p0, "draftId");
-  v1 = v0 === undefined;
+  let v0 = local_0_0(p0, "draftId");
+  let v1 = v0 === undefined;
   if (v0 !== undefined) {
     v1 = !isSafeLocalDraftId(v0);
   }
@@ -416,8 +410,7 @@ local_0_1 = function (p0) {
     && local_0_11(p0, ["name"]);
 };
 local_0_11 = function (p0, p1) {
-  let local_1_0;
-  local_1_0 = p1;
+  let local_1_0 = p1;
   return p0.entries.every(function (p0) {
     return local_1_0.includes(p0.name);
   });
@@ -547,13 +540,11 @@ isSafeWhatsNewVersion = function (p0) {
   return typeof p0 === "string" && new RegExp("^\\d{1,4}(\\.\\d{1,4}){0,3}$").test(p0);
 };
 local_0_8 = function (p0, p1) {
-  let v0;
-  v0 = p0.get(p1);
+  let v0 = p0.get(p1);
   return v0 instanceof JsonNumberValue && Number.isSafeInteger(v0.value) && v0.value >= 0 ? v0.value : undefined;
 };
 local_0_0 = function (p0, p1) {
-  let v0;
-  v0 = p0.get(p1);
+  let v0 = p0.get(p1);
   return v0 instanceof JsonStringValue ? v0.value : undefined;
 };
 shouldReloadAfterAuthentication = function (p0) {

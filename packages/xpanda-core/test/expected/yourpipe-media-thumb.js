@@ -8,10 +8,9 @@ if (!("finalizeConstruction" in ViewPU.prototype)) {
 }
 class MediaThumb extends ViewPU {
   constructor(p0, p1, p2, p3, p4, p5) {
-    let v2, v6, v7;
-    v6 = p3 === undefined ? -1 : p3;
-    v7 = p4 === undefined ? undefined : p4;
-    v2 = super(p0, p2, v6, p5);
+    let v6 = p3 === undefined ? -1 : p3;
+    let v7 = p4 === undefined ? undefined : p4;
+    let v2 = super(p0, p2, v6, p5);
     if (typeof v7 === "function") {
       v2.paramsGenerator_ = v7;
     }
@@ -261,13 +260,12 @@ class MediaThumb extends ViewPU {
     this.displayUrl = this.fallbackUrls.length > 0 ? this.fallbackUrls[0] : "";
   }
   static firstChoiceUrl(p0) {
-    let v4;
-    v4 = MediaThumb.buildFallbackChain(p0);
+    let v4 = MediaThumb.buildFallbackChain(p0);
     return v4.length > 0 ? v4[0] : "";
   }
   static buildFallbackChain(p0) {
-    let v5, v6, v8, v11, acc;
-    v5 = (p0 || "").trim();
+    let v6, v8, v11, acc;
+    let v5 = (p0 || "").trim();
     if (v5.length === 0) {
       return [];
     }
@@ -295,8 +293,7 @@ class MediaThumb extends ViewPU {
     }
   }
   initialRender() {
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     local_1_0.observeComponentCreation2(function (p0, p1) {
       let acc;
       Stack.create({

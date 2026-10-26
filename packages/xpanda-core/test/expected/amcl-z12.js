@@ -32,8 +32,8 @@ import { u1357 } from "@normalized:N&&&gamecontrol/src/main/ets/a13&1.0.0";
 import { v1357 } from "@normalized:N&&&gamecontrol/src/main/ets/a13&1.0.0";
 import { x421 } from "@normalized:N&&&gamecontrol/src/main/ets/a13&1.0.0";
 let a421, a422, b1360, b1361, b421, b474, c1359, c1360, c1361, c421, d1359, d1360, d1361, d421, e1360, e421, f1360, f421, g1359, g421, h1359, h421, i421, l50, n374, o301, o374, p301, p374, q301, q374, r301, r374, r421, s301, s421, t301, t421, u301, v301, v421, w1359, w1360, w301, w374, w412, w421, x1358, x1359, x301, x374, y1358, y301, y374, y420, y421, y473, z1359, z374, z420, z421;
-let local_0_0, local_0_1, local_0_2, local_0_3, local_0_4, local_0_5, local_0_6, local_0_7, local_0_8, local_0_9, local_0_10, local_0_11, local_0_12, local_0_13, local_0_14, local_0_15, local_0_16, local_0_17, local_0_18, local_0_19, local_0_20, local_0_21, local_0_22;
-local_0_1 = function (p0, p1) {
+let local_0_0, local_0_2, local_0_3, local_0_4, local_0_5, local_0_6, local_0_7, local_0_8, local_0_9, local_0_10, local_0_11, local_0_12, local_0_13, local_0_14, local_0_15, local_0_16, local_0_18, local_0_19, local_0_20, local_0_21, local_0_22;
+let local_0_1 = function (p0, p1) {
   return {
     "id": p0.id,
     "label": p0.label,
@@ -75,7 +75,7 @@ local_0_1 = function (p0, p1) {
     "children": p1
   };
 };
-local_0_17 = function (p0) {
+let local_0_17 = function (p0) {
   return p0 === "⚔" || p0 === "🛡" || p0 === "▲" || p0 === "▼";
 };
 a421 = function (p0) {
@@ -83,9 +83,9 @@ a421 = function (p0) {
 };
 a422 = function (p0, p1, p2) {
   let v0, v4;
-  let local_1_0, local_1_1, local_1_2;
-  local_1_0 = p1;
-  local_1_1 = p2;
+  let local_1_2;
+  let local_1_0 = p1;
+  let local_1_1 = p2;
   if (p0.controlGroups !== undefined && local_1_0 !== p0.defaultControlGroupId) {
     if (!p0.controlGroups.some(function (p0) {
       return p0.id === local_1_0;
@@ -223,8 +223,7 @@ b1360 = function (p0) {
 };
 b474 = function (p0, p1) {
   let v0, v1;
-  let local_1_0;
-  local_1_0 = p1;
+  let local_1_0 = p1;
   if (p0.controlGroups === undefined || local_1_0.controlGroupId === undefined) {
     return true;
   }
@@ -241,8 +240,8 @@ c1359 = function (p0) {
   return p0.controlGroups !== undefined ? b422 : p0.lookPolicies === undefined ? b421 : r374;
 };
 c1360 = function (p0, p1, p2) {
-  let v0, v1;
-  v0 = p0.visibilityOverride ?? "auto";
+  let v1;
+  let v0 = p0.visibilityOverride ?? "auto";
   if (v0 === "force_show") {
     return false;
   }
@@ -264,8 +263,7 @@ c1360 = function (p0, p1, p2) {
   return false;
 };
 d1359 = function (p0) {
-  let v0;
-  v0 = (p0.groupActions === null || p0.groupActions === undefined ? undefined : p0.groupActions.some(function (p0) {
+  let v0 = (p0.groupActions === null || p0.groupActions === undefined ? undefined : p0.groupActions.some(function (p0) {
     return p0.targets.length > 0;
   })) ?? false;
   if (!v0) {
@@ -289,8 +287,8 @@ d1360 = function (p0) {
 };
 local_0_20 = function (p0) {
   let v1 /*r1367*/, v4, v5, acc;
-  let local_1_0, local_1_1, local_1_2, local_1_3, local_1_4, local_1_5;
-  local_1_1 = p0.version === b422;
+  let local_1_0, local_1_2, local_1_3, local_1_4, local_1_5;
+  let local_1_1 = p0.version === b422;
   if (local_1_1) {
     local_1_2 = new Set();
     if (local_1_1) {
@@ -659,16 +657,14 @@ e1360 = function (p0, p1, p2, p3) {
 };
 local_0_3 = function (p0, p1) {
   let v1, v3;
-  let local_1_0;
-  local_1_0 = p1;
+  let local_1_0 = p1;
   if (p0.controlGroupId !== undefined) {
     p0.controlGroupId = local_1_0.get(p0.controlGroupId) ?? p0.controlGroupId;
   }
   v1 = p0.groupActions ?? [];
   for (v3 of v1) {
     v3.targets = v3.targets.map(function (p0) {
-      let v0;
-      v0 = local_1_0.get(p0);
+      let v0 = local_1_0.get(p0);
       if (v0 != null) {
         p0 = v0;
       }
@@ -681,15 +677,14 @@ local_0_3 = function (p0, p1) {
   }
 };
 f1360 = function () {
-  let v0;
-  v0 = e1360("mouse", 0.94, 0.9, 7);
+  let v0 = e1360("mouse", 0.94, 0.9, 7);
   v0.alignGroup = p301.NONE;
   return v0;
 };
 g1359 = function (p0) {
   let v3 /*w1366*/, v5;
-  let local_1_0, local_1_1;
-  local_1_0 = r301(p0);
+  let local_1_1;
+  let local_1_0 = r301(p0);
   if (local_1_0.controlGroups === undefined) {
     return local_1_0;
   }
@@ -701,16 +696,14 @@ g1359 = function (p0) {
   }
   local_1_0.defaultControlGroupId = local_1_1.get(local_1_0.defaultControlGroupId ?? "");
   local_1_0.controls = local_1_0.controls.map(function (p0) {
-    let v0;
-    v0 = y420(p0, local_1_0.controls);
+    let v0 = y420(p0, local_1_0.controls);
     local_0_3(v0, local_1_1);
     return v0;
   });
   return local_1_0;
 };
 g421 = function (p0) {
-  let v0 /*d421*/;
-  v0 = p0.style === null || p0.style === undefined ? undefined : p0.style.opacity;
+  let v0 /*d421*/ = p0.style === null || p0.style === undefined ? undefined : p0.style.opacity;
   if (v0 === undefined) {
     return d421;
   }
@@ -784,8 +777,8 @@ local_0_8 = function (p0, p1, p2) {
   return Number.isFinite(p0) && Math.floor(p0) === p0 && p0 >= p1 && p0 <= p2;
 };
 l50 = function (p0) {
-  let v10, v11, v12;
-  v10 = 0;
+  let v11, v12;
+  let v10 = 0;
   for (v11 = 0; v11 < p0.length; v11 += 1) {
     v12 = p0.charCodeAt(v11);
     if (v12 <= 127) {
@@ -828,8 +821,8 @@ local_0_14 = function (p0) {
   return p0 === "press" || p0 === "toggle" || p0 === "doubleTap" || p0 === "longPress";
 };
 q301 = function () {
-  let v8, v9, acc;
-  v8 = [];
+  let v9, acc;
+  let v8 = [];
   v8[0] = {
     "id": "joystick",
     "label": "",
@@ -902,8 +895,8 @@ local_0_16 = function (p0) {
   return p0 === undefined || typeof p0 === "boolean";
 };
 r301 = function (p0) {
-  let v0 /*d285*/, v1, v2;
-  v0 = 0;
+  let v1, v2;
+  let v0 /*d285*/ = 0;
   for (v1 = []; v0 < p0.controls.length; v0 += 1) {
     v1.push(y473(p0.controls[v0]));
   }
@@ -995,8 +988,7 @@ local_0_10 = function (p0, p1, p2) {
   return null;
 };
 s421 = function (p0, p1) {
-  let v3;
-  v3 = 1;
+  let v3 = 1;
   while (true) {
     if (v3 >= p0 || v3 >= p1 || Math.floor(p0 / (v3 + 1)) < 320 || Math.floor(p1 / (v3 + 1)) < 240) break;
     v3 += 1;
@@ -1507,8 +1499,7 @@ w1359 = function (p0) {
   return local_0_19("profile.defaults");
 };
 w301 = function (p0) {
-  let v0 /*e421*/;
-  v0 = p0.style === null || p0.style === undefined ? undefined : p0.style.cornerRadius;
+  let v0 /*e421*/ = p0.style === null || p0.style === undefined ? undefined : p0.style.cornerRadius;
   if (v0 === undefined) {
     v0 = p0.style === null || p0.style === undefined ? undefined : p0.style.shape;
     switch (v0) {
@@ -1545,8 +1536,7 @@ w374 = function () {
   };
 };
 x1358 = function (p0, p1) {
-  let v0;
-  v0 = h421(p0);
+  let v0 = h421(p0);
   if (v0 === "always") {
     return true;
   }
@@ -1603,8 +1593,7 @@ x301 = function (p0) {
   return p1360(v1[0]);
 };
 x374 = function () {
-  let v0;
-  v0 = {};
+  let v0 = {};
   v0.A = {
     "kind": "key",
     "code": n421
@@ -1667,8 +1656,7 @@ x374 = function () {
   return v0;
 };
 y1358 = function (p0) {
-  let v0 /*f421*/;
-  v0 = p0.globalOpacity;
+  let v0 /*f421*/ = p0.globalOpacity;
   if (p0.globalOpacity === undefined) {
     return f421;
   }
@@ -1701,9 +1689,8 @@ local_0_22 = function (p0, p1, p2, p3) {
   return;
 };
 y301 = function (p0, p1) {
-  let v0, v2;
-  v0 = 1;
-  v2 = g421(p0) * y1358(p1);
+  let v0 = 1;
+  let v2 = g421(p0) * y1358(p1);
   if (v2 < 0.05) {
     v0 = 0.05;
   } else if (v2 <= 1) {
@@ -1730,8 +1717,8 @@ y420 = function (p0, p1) {
   return v0;
 };
 y421 = function (p0) {
-  let v0, v1, v5;
-  v0 = r301(p0);
+  let v1, v5;
+  let v0 = r301(p0);
   if (v0.controlGroups === undefined) {
     v1 = z420(v0.controls);
     v0.controlGroups = [{
@@ -1751,8 +1738,8 @@ y421 = function (p0) {
   return v0;
 };
 y473 = function (p0) {
-  let v0, v1;
-  v0 = p0.children === undefined ? undefined : [];
+  let v1;
+  let v0 = p0.children === undefined ? undefined : [];
   if (p0.children && v0) {
     for (v1 = 0; v1 < p0.children.length; v1 += 1) {
       v0.push(y473(p0.children[v1]));
@@ -1784,8 +1771,7 @@ z1359 = function (p0) {
   return a421(p0);
 };
 z420 = function (p0) {
-  let v0;
-  v0 = new Set();
+  let v0 = new Set();
   local_0_4(p0, v0);
   return local_0_7(v0);
 };

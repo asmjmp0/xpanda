@@ -9,23 +9,21 @@ import { fetchBrowsePage } from "@normalized:N&&&youtube_core/Index&1.0.0";
 import i18n from "@ohos:i18n";
 class ChannelDetails {
   constructor(p0, p1) {
-    let v3, v4;
-    v3 = p0 === undefined ? "" : p0;
-    v4 = p1 === undefined ? "" : p1;
+    let v3 = p0 === undefined ? "" : p0;
+    let v4 = p1 === undefined ? "" : p1;
     this.description = v3;
     this.bannerUrl = v4;
   }
 }
 class ChannelProfile {
   constructor(p0, p1, p2, p3, p4, p5, p6) {
-    let v3, v4, v5, v6, v7, v8, v9;
-    v3 = p0 === undefined ? "" : p0;
-    v4 = p1 === undefined ? "" : p1;
-    v5 = p2 === undefined ? "" : p2;
-    v6 = p3 === undefined ? "" : p3;
-    v7 = p4 === undefined ? "" : p4;
-    v8 = p5 === undefined ? "" : p5;
-    v9 = p6 === undefined ? "" : p6;
+    let v3 = p0 === undefined ? "" : p0;
+    let v4 = p1 === undefined ? "" : p1;
+    let v5 = p2 === undefined ? "" : p2;
+    let v6 = p3 === undefined ? "" : p3;
+    let v7 = p4 === undefined ? "" : p4;
+    let v8 = p5 === undefined ? "" : p5;
+    let v9 = p6 === undefined ? "" : p6;
     this.name = v3;
     this.description = v4;
     this.bannerUrl = v5;
@@ -46,8 +44,8 @@ class ChannelInfoService {
     this.VIDEOS_TAB_PARAMS = "EgZ2aWRlb3PyBgQKAjoA";
   }
   async fetchChannelDetails(p0) {
-    let v7, v11, v12;
-    v11 = (p0 || "").trim();
+    let v7, v12;
+    let v11 = (p0 || "").trim();
     if (!v11) {
       return new ChannelDetails();
     }
@@ -56,8 +54,8 @@ class ChannelInfoService {
     return v12 ? new ChannelDetails(this.extractDescription(v12), this.extractBannerUrl(v12)) : new ChannelDetails();
   }
   async fetchChannelProfile(p0) {
-    let v7, v9, v11, v15, v17;
-    v15 = (p0 || "").trim();
+    let v7, v9, v11, v17;
+    let v15 = (p0 || "").trim();
     if (!v15) {
       return new ChannelProfile();
     }
@@ -74,9 +72,9 @@ class ChannelInfoService {
     return new LocaleContext(new Localization(i18n.System.getSystemLanguage() || Localization.DEFAULT.getLanguageCode(), "GB"), new ContentCountry("GB"));
   }
   extractDescription(p0) {
-    let v5, v8, v9;
-    v9 = this.asRecord(p0.metadata);
-    v5 = this.asString(this.asRecord(v9?.channelMetadataRenderer)?.description);
+    let v8;
+    let v9 = this.asRecord(p0.metadata);
+    let v5 = this.asString(this.asRecord(v9?.channelMetadataRenderer)?.description);
     if (v5) {
       return v5;
     }
@@ -84,8 +82,8 @@ class ChannelInfoService {
     return (v8 ? this.readText(v8.description) : "") || "";
   }
   extractBannerUrl(p0) {
-    let v5, v8, v9, v12, v16, v17, v18, acc;
-    v5 = this.asRecord(p0.header);
+    let v8, v9, v12, v16, v17, v18, acc;
+    let v5 = this.asRecord(p0.header);
     if (!v5) {
       return "";
     }
@@ -110,9 +108,9 @@ class ChannelInfoService {
     return "";
   }
   extractChannelName(p0) {
-    let v4, v8, v9;
-    v8 = this.asRecord(p0.metadata);
-    v9 = this.asString(this.asRecord(v8?.channelMetadataRenderer)?.title);
+    let v4;
+    let v8 = this.asRecord(p0.metadata);
+    let v9 = this.asString(this.asRecord(v8?.channelMetadataRenderer)?.title);
     if (v9) {
       return v9;
     }
@@ -120,9 +118,9 @@ class ChannelInfoService {
     return (v4 ? this.readText(v4.title) : "") || "";
   }
   extractHandle(p0) {
-    let v4, v7, v9, acc;
-    v9 = this.asRecord(p0.metadata);
-    v7 = this.handleFromVanityUrl(this.asString(this.asRecord(v9?.channelMetadataRenderer)?.vanityChannelUrl));
+    let v4, acc;
+    let v9 = this.asRecord(p0.metadata);
+    let v7 = this.handleFromVanityUrl(this.asString(this.asRecord(v9?.channelMetadataRenderer)?.vanityChannelUrl));
     if (v7) {
       return v7;
     }
@@ -131,14 +129,13 @@ class ChannelInfoService {
     return this.handleFromVanityUrl(acc);
   }
   handleFromVanityUrl(p0) {
-    let v4, acc;
-    acc = p0 || "";
-    v4 = acc.indexOf("@");
+    let acc = p0 || "";
+    let v4 = acc.indexOf("@");
     return v4 >= 0 ? p0.substring(v4) : "";
   }
   extractAvatarUrl(p0) {
-    let v4, v5, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, acc;
-    v4 = this.asRecord(p0.header);
+    let v5, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, acc;
+    let v4 = this.asRecord(p0.header);
     if (v4) {
       v7 = this.asRecord(v4.c4TabbedHeaderRenderer);
       if (v7) {
@@ -189,8 +186,8 @@ class ChannelInfoService {
     return v5 && (v7 = this.asRecord(v5.channelMetadataRenderer)) && (v8 = this.asRecord(v7.avatar)) && (v10 = this.pickLargestImageUrl(this.asArray(v8.thumbnails))) ? this.normalizeUrl(v10) : "";
   }
   extractSubscriberText(p0) {
-    let v4, v6, v7, v8, v9, v10, v11, v12, v13, v14, v16, acc;
-    v4 = this.asRecord(p0.header);
+    let v6, v7, v8, v9, v10, v11, v12, v13, v14, v16, acc;
+    let v4 = this.asRecord(p0.header);
     if (v4) {
       v7 = ["c4TabbedHeaderRenderer", "interactiveTabbedHeaderRenderer", "carouselHeaderRenderer"];
       for (v9 = 0; v9 < v7.length; v9 += 1) {
@@ -233,8 +230,8 @@ class ChannelInfoService {
     return "";
   }
   extractVideoCountText(p0) {
-    let v4, v6, v7, v8, v9, v10, v11, v12, v16, v18, acc;
-    v4 = this.asRecord(p0.header);
+    let v6, v7, v8, v9, v10, v11, v12, v16, v18, acc;
+    let v4 = this.asRecord(p0.header);
     if (v4) {
       v7 = ["c4TabbedHeaderRenderer"];
       for (v9 = 0; v9 < v7.length; v9 += 1) {
@@ -271,10 +268,10 @@ class ChannelInfoService {
     return "";
   }
   readHeaderMetadataParts(p0) {
-    let v6, v7, v9, v12, v13, v16, v17, v18, acc;
-    v9 = [];
-    v7 = this.asRecord(p0.content);
-    acc = this.asRecord(v7?.pageHeaderViewModel)?.metadata;
+    let v6, v12, v13, v16, v17, v18;
+    let v9 = [];
+    let v7 = this.asRecord(p0.content);
+    let acc = this.asRecord(v7?.pageHeaderViewModel)?.metadata;
     acc = this.asRecord(acc)?.contentMetadataViewModel;
     acc = this.asRecord(acc)?.metadataRows;
     v6 = this.asArray(acc);
@@ -322,8 +319,7 @@ class ChannelInfoService {
     return v5;
   }
   normalizeUrl(p0) {
-    let v4;
-    v4 = (p0 || "").trim();
+    let v4 = (p0 || "").trim();
     if (!v4) {
       return "";
     }
@@ -333,8 +329,7 @@ class ChannelInfoService {
     return v4;
   }
   readText(p0) {
-    let v4;
-    v4 = this.asRecord(p0);
+    let v4 = this.asRecord(p0);
     return v4 ? this.asString(v4.content) : "";
   }
   readContent(p0) {

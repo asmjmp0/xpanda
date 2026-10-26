@@ -45,8 +45,7 @@ class PlayQueueManager {
     }
   }
   removeListener(p0) {
-    let v4;
-    v4 = this.listeners.indexOf(p0);
+    let v4 = this.listeners.indexOf(p0);
     if (v4 >= 0) {
       this.listeners.splice(v4, 1);
     }
@@ -59,8 +58,7 @@ class PlayQueueManager {
     });
   }
   notifyCurrentIndexChanged(p0) {
-    let local_2_0;
-    local_2_0 = p0;
+    let local_2_0 = p0;
     this.listeners.forEach(function (p0) {
       try {
         p0.onCurrentIndexChanged(local_2_0);
@@ -88,8 +86,8 @@ class PlayQueueManager {
     return;
   }
   appendPendingQueueItems(p0) {
-    let v3, v4, v5;
-    v3 = p0 === undefined ? this.QUEUE_BATCH_SIZE : p0;
+    let v4, v5;
+    let v3 = p0 === undefined ? this.QUEUE_BATCH_SIZE : p0;
     if (this.pendingQueueItems.length === 0) {
       return 0;
     }
@@ -114,9 +112,9 @@ class PlayQueueManager {
     this.notifyCurrentIndexChanged(this.currentIndex);
   }
   async loadFromRemotePlaylist(p0, p1, p2) {
-    let v5, v6, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19, v20, v21, v22, v23, v24, v25, v26, v27, v29;
-    v5 = p2 === undefined ? "" : p2;
-    v17 = Date.now();
+    let v6, v8, v9, v10, v11, v12, v13, v14, v15, v16, v18, v19, v20, v21, v22, v23, v24, v25, v26, v27, v29;
+    let v5 = p2 === undefined ? "" : p2;
+    let v17 = Date.now();
     local_0_0 /*logger*/.info("loadFromRemotePlaylist start: playlist=" + p0 + " start=" + p1 + "");
     v13 = this.queue.slice();
     v10 = this.currentIndex;
@@ -196,8 +194,7 @@ class PlayQueueManager {
   }
   setRemotePlaylistSnapshot(p0, p1, p2, p3, p4, p5, p6) {
     let v6, v7, v8, v9, v11, v13;
-    let local_2_0;
-    local_2_0 = p2;
+    let local_2_0 = p2;
     v6 = p3 === undefined ? "" : p3;
     v7 = p4 === undefined ? -1 : p4;
     v8 = p5 === undefined ? null : p5;
@@ -227,8 +224,7 @@ class PlayQueueManager {
   }
   setLocalQueue(p0, p1, p2, p3) {
     let v7, acc;
-    let local_2_0;
-    local_2_0 = p3;
+    let local_2_0 = p3;
     this.sourceType = QueueSourceType.LOCAL;
     this.sourceId = p2;
     this.sourceName = p1;
@@ -371,8 +367,7 @@ class PlayQueueManager {
     return this.hasMorePages;
   }
   addToQueue(p0) {
-    let local_2_0;
-    local_2_0 = p0;
+    let local_2_0 = p0;
     if (this.queue.some(function (p0) {
       return p0.videoId === local_2_0.videoId;
     })) {
@@ -429,14 +424,12 @@ class PlayQueueManager {
   }
   hasUnusedAutoQueueCandidates() {
     let acc;
-    let local_2_0;
-    local_2_0 = this;
+    let local_2_0 = this;
     if (local_2_0.autoQueueCandidates.length === 0) {
       return false;
     }
     acc = local_2_0.autoQueueCandidates.some(function (p0) {
-      let v5;
-      v5 = !!p0.videoId;
+      let v5 = !!p0.videoId;
       return v5 && !local_2_0.autoQueueUsedUrls.has(p0.videoId);
     });
     return acc;
@@ -465,8 +458,8 @@ class PlayQueueManager {
     return;
   }
   appendAutoQueueNext(p0) {
-    let v3, v4, v10, v11;
-    v3 = p0 === undefined ? this.QUEUE_BATCH_SIZE : p0;
+    let v4, v10, v11;
+    let v3 = p0 === undefined ? this.QUEUE_BATCH_SIZE : p0;
     if (this.sourceType !== QueueSourceType.ADHOC) {
       return 0;
     }
@@ -499,8 +492,8 @@ class PlayQueueManager {
     return v4;
   }
   saveAsLocal(p0) {
-    let v5, v8;
-    v5 = "local_";
+    let v8;
+    let v5 = "local_";
     for (v8 = 0; v8 < 16; v8 += 1) {
       v5 += "abcdefghijklmnopqrstuvwxyz0123456789".charAt(Math.floor(Math.random() * "abcdefghijklmnopqrstuvwxyz0123456789".length));
     }
@@ -512,8 +505,7 @@ class PlayQueueManager {
     };
   }
   exportSnapshot(p0) {
-    let v3;
-    v3 = p0 === undefined ? 50 : p0;
+    let v3 = p0 === undefined ? 50 : p0;
     return {
       "items": this.queue.slice(0, v3 > 0 ? v3 : 50),
       "currentIndex": this.currentIndex,

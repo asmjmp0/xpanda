@@ -27,9 +27,9 @@ import { UIConfig } from "@normalized:N&&&entry/src/main/ets/common/AppState&";
 import deviceInfo from "@ohos:deviceInfo";
 import i18n from "@ohos:i18n";
 import { secondToTime } from "@normalized:N&&&mediaservice/Index&1.0.0";
-let local_0_0, local_0_1, local_0_2, local_0_3, local_0_4, local_0_5, local_0_6, local_0_7, local_0_8, local_0_9, local_0_10, local_0_11, local_0_12, local_0_13, local_0_14, local_0_15, local_0_16, local_0_17, local_0_18, local_0_19, local_0_20, local_0_21, local_0_22, local_0_23, local_0_24, local_0_25, local_0_26, local_0_27, local_0_28, local_0_29, local_0_30, local_0_31, local_0_32;
-local_0_2 = undefined;
-local_0_3 = undefined;
+let local_0_0, local_0_1, local_0_4, local_0_5, local_0_6, local_0_7, local_0_8, local_0_9, local_0_10, local_0_11, local_0_12, local_0_13, local_0_14, local_0_15, local_0_16, local_0_17, local_0_18, local_0_19, local_0_20, local_0_21, local_0_22, local_0_23, local_0_24, local_0_25, local_0_26, local_0_27, local_0_28, local_0_29, local_0_30, local_0_31, local_0_32;
+let local_0_2 = undefined;
+let local_0_3 = undefined;
 if (!("finalizeConstruction" in ViewPU.prototype)) {
   Reflect.set(ViewPU.prototype, "finalizeConstruction", function () {});
 }
@@ -80,8 +80,7 @@ local_0_3 = {
 class VideoPlayer extends ViewPU {
   constructor(p0, p1, p2, p3, p4, p5) {
     let v6, v7;
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     v6 = p3 === undefined ? -1 : p3;
     v7 = p4 === undefined ? undefined : p4;
     local_1_0 = super(p0, p2, v6, p5);
@@ -1137,8 +1136,8 @@ class VideoPlayer extends ViewPU {
     return;
   }
   getErrorDisplay(p0) {
-    let v4, v5;
-    v4 = this.getUIContext().getHostContext();
+    let v5;
+    let v4 = this.getUIContext().getHostContext();
     if (!p0) {
       return v4 ? "[Player] " + v4.resourceManager.getStringSync({
         "id": 16777658,
@@ -1241,9 +1240,9 @@ class VideoPlayer extends ViewPU {
     this.lastController = this.controller;
   }
   onPageVisibilityChange() {
-    let v4, v6, acc;
-    v4 = PlayerSession.getInstance();
-    acc = this.isPageShow && !this.isAppBackground;
+    let v6;
+    let v4 = PlayerSession.getInstance();
+    let acc = this.isPageShow && !this.isAppBackground;
     PlayerPresentation.onPlayerPageVisibility(acc);
     acc = !acc;
     if (acc) {
@@ -1270,8 +1269,8 @@ class VideoPlayer extends ViewPU {
     return;
   }
   aboutToAppear() {
-    let v3, v11, acc;
-    v3 = this.getUIContext().getHostContext();
+    let v11, acc;
+    let v3 = this.getUIContext().getHostContext();
     this.vm.errorMsg = "";
     this.hasError = false;
     this.isWaitingForDualBuffer = false;
@@ -1350,8 +1349,8 @@ class VideoPlayer extends ViewPU {
     return;
   }
   scheduleHideControls() {
-    let local_1_0, local_1_1;
-    local_1_1 = this;
+    let local_1_0;
+    let local_1_1 = this;
     local_1_1.clearHideTimer();
     if (local_1_1.showControls && local_1_1.activeInteraction === local_0_3.NONE && local_1_1.isPageShow && !local_1_1.isAppBackground) {
       if (!local_1_1.canAutoHideControls()) {
@@ -1376,8 +1375,7 @@ class VideoPlayer extends ViewPU {
   }
   onCenterTap(p0) {
     let v4;
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     if (local_1_0.activeInteraction !== local_0_3.NONE) {
       return;
     }
@@ -1429,8 +1427,7 @@ class VideoPlayer extends ViewPU {
   }
   performDoubleTap(p0) {
     let v5;
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     local_1_0.registerDoubleTapActivity();
     if (local_1_0.playbackConfig.doubleTapAction === "off") {
       return;
@@ -1582,10 +1579,9 @@ class VideoPlayer extends ViewPU {
     };
   }
   videoScaleXY() {
-    let v7, v8, v9;
-    v7 = this.videoLayoutVp();
-    v8 = 1;
-    v9 = 1;
+    let v7 = this.videoLayoutVp();
+    let v8 = 1;
+    let v9 = 1;
     if (this.videoAspectMode === "fill") {
       v8 = Math.max(Math.max(1, this.containerVpWidth) / Math.max(1, v7.videoWVp), Math.max(1, this.containerVpHeight) / Math.max(1, v7.videoHVp));
       v9 = v8;
@@ -1599,11 +1595,10 @@ class VideoPlayer extends ViewPU {
     };
   }
   clampVideoPan() {
-    let v3, v4, v5, v6;
-    v3 = this.videoLayoutVp();
-    v6 = this.videoScaleXY();
-    v4 = Math.max(0, (v3.videoWVp * v6.sx - this.containerVpWidth) / 2);
-    v5 = Math.max(0, (v3.videoHVp * v6.sy - this.containerVpHeight) / 2);
+    let v3 = this.videoLayoutVp();
+    let v6 = this.videoScaleXY();
+    let v4 = Math.max(0, (v3.videoWVp * v6.sx - this.containerVpWidth) / 2);
+    let v5 = Math.max(0, (v3.videoHVp * v6.sy - this.containerVpHeight) / 2);
     this.videoPanXVp = Math.min(Math.max(this.videoPanXVp, -v4), v4);
     this.videoPanYVp = Math.min(Math.max(this.videoPanYVp, -v5), v5);
   }
@@ -1613,8 +1608,7 @@ class VideoPlayer extends ViewPU {
     this.videoPanYVp = 0;
   }
   aspectModeLabel() {
-    let v4;
-    v4 = {
+    let v4 = {
       "id": undefined,
       "type": null,
       "params": null,
@@ -1633,8 +1627,7 @@ class VideoPlayer extends ViewPU {
     this.resetVideoZoom();
   }
   AspectMenu(p0) {
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     if (p0 === undefined) {}
     local_1_0.observeComponentCreation2(function (p0, p1) {
       Menu.create();
@@ -1702,15 +1695,14 @@ class VideoPlayer extends ViewPU {
     local_1_0.observeComponentCreation2(function (p0, p1) {
       ForEach.create();
       local_1_0.forEachUpdateFunction(p0, ["fit", "fill", "stretch"], function (p0) {
-        let local_2_0;
-        local_2_0 = p0;
+        let local_2_0 = p0;
         local_1_0.observeComponentCreation2(function (p0, p1) {
-          let v8, v9, acc;
-          v8 = {
+          let acc;
+          let v8 = {
             "content": null,
             "endIcon": null
           };
-          v9 = {
+          let v9 = {
             "id": undefined,
             "type": null,
             "params": null,
@@ -1870,9 +1862,9 @@ class VideoPlayer extends ViewPU {
     return;
   }
   lockPlayerPanMode(p0) {
-    let v4, v5, v7;
-    v4 = Math.abs(p0.offsetX);
-    v5 = Math.abs(p0.offsetY);
+    let v7;
+    let v4 = Math.abs(p0.offsetX);
+    let v5 = Math.abs(p0.offsetY);
     if (Math.max(v4, v5) < local_0_14 /*GESTURE_LOCK_DISTANCE*/) {
       return;
     }
@@ -1996,8 +1988,7 @@ class VideoPlayer extends ViewPU {
   }
   onPlayerPanEnd(p0) {
     let v4;
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     v4 = local_1_0.gestureMode;
     local_1_0.hiddenUiSeekOnly = false;
     if (!p0 && local_1_0.gestureMode === local_0_2.SEEK) {
@@ -2201,8 +2192,7 @@ class VideoPlayer extends ViewPU {
     return v9 && Math.abs(acc - this.containerVpHeight / 2) <= local_0_18 /*CENTER_PLAY_BUTTON_HIT_RADIUS*/;
   }
   SpeedMenu(p0) {
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     if (p0 === undefined) {}
     local_1_0.observeComponentCreation2(function (p0, p1) {
       Menu.create();
@@ -2235,8 +2225,7 @@ class VideoPlayer extends ViewPU {
     local_1_0.observeComponentCreation2(function (p0, p1) {
       ForEach.create();
       local_1_0.forEachUpdateFunction(p0, [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3], function (p0) {
-        let local_2_0;
-        local_2_0 = p0;
+        let local_2_0 = p0;
         local_1_0.observeComponentCreation2(function (p0, p1) {
           let acc;
           MenuItem.create({
@@ -2272,8 +2261,7 @@ class VideoPlayer extends ViewPU {
     Menu.pop();
   }
   SubtitleMenu(p0) {
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     if (p0 === undefined) {}
     local_1_0.observeComponentCreation2(function (p0, p1) {
       Menu.create();
@@ -2342,8 +2330,7 @@ class VideoPlayer extends ViewPU {
     local_1_0.observeComponentCreation2(function (p0, p1) {
       ForEach.create();
       local_1_0.forEachUpdateFunction(p0, local_1_0.vm.subtitleTracks, function (p0) {
-        let local_2_0;
-        local_2_0 = p0;
+        let local_2_0 = p0;
         local_1_0.observeComponentCreation2(function (p0, p1) {
           let acc;
           MenuItem.create({
@@ -2382,8 +2369,7 @@ class VideoPlayer extends ViewPU {
     Menu.pop();
   }
   ChapterMenu(p0) {
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     if (p0 === undefined) {}
     local_1_0.observeComponentCreation2(function (p0, p1) {
       Menu.create();
@@ -2416,9 +2402,8 @@ class VideoPlayer extends ViewPU {
     local_1_0.observeComponentCreation2(function (p0, p1) {
       ForEach.create();
       local_1_0.forEachUpdateFunction(p0, local_1_0.chapters, function (p0, p1) {
-        let local_2_0, local_2_1;
-        local_2_1 = p1;
-        local_2_0 = p0;
+        let local_2_1 = p1;
+        let local_2_0 = p0;
         local_1_0.observeComponentCreation2(function (p0, p1) {
           let acc;
           MenuItem.create({
@@ -2457,8 +2442,7 @@ class VideoPlayer extends ViewPU {
     Menu.pop();
   }
   AudioMenu(p0) {
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     if (p0 === undefined) {}
     local_1_0.observeComponentCreation2(function (p0, p1) {
       Menu.create();
@@ -2492,9 +2476,8 @@ class VideoPlayer extends ViewPU {
       let v5, v12;
       ForEach.create();
       v5 = function (p0, p1) {
-        let local_2_0, local_2_1;
-        local_2_1 = p1;
-        local_2_0 = p0;
+        let local_2_1 = p1;
+        let local_2_0 = p0;
         local_1_0.observeComponentCreation2(function (p0, p1) {
           let acc;
           MenuItem.create({
@@ -2534,8 +2517,7 @@ class VideoPlayer extends ViewPU {
     Menu.pop();
   }
   VideoMenu(p0) {
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     if (p0 === undefined) {}
     local_1_0.observeComponentCreation2(function (p0, p1) {
       Menu.create();
@@ -2569,9 +2551,8 @@ class VideoPlayer extends ViewPU {
       let v5, v12;
       ForEach.create();
       v5 = function (p0, p1) {
-        let local_2_0, local_2_1;
-        local_2_1 = p1;
-        local_2_0 = p0;
+        let local_2_1 = p1;
+        let local_2_0 = p0;
         local_1_0.observeComponentCreation2(function (p0, p1) {
           let acc;
           MenuItem.create({
@@ -2612,8 +2593,7 @@ class VideoPlayer extends ViewPU {
   }
   getSelectedVideoIndex() {
     let acc;
-    let local_1_0;
-    local_1_0 = this.vm.playerModel.currentVideoStream;
+    let local_1_0 = this.vm.playerModel.currentVideoStream;
     acc = this.controller.getMergedVideoList().findIndex(function (p0) {
       return p0.stream === local_1_0 /*current*/;
     });
@@ -2638,15 +2618,14 @@ class VideoPlayer extends ViewPU {
       }.id) + "";
     }
     acc = [p0.name, p0.languageCode, p0.kind].filter(function (p0) {
-      let v5;
-      v5 = !!p0;
+      let v5 = !!p0;
       return v5 && p0.trim().length > 0;
     });
     return acc.join(" · ");
   }
   getAiTranslateLabel() {
-    let v3, v4, v5;
-    v3 = getContext().resourceManager.getStringSync({
+    let v4, v5;
+    let v3 = getContext().resourceManager.getStringSync({
       "id": 16777299,
       "type": 10003,
       "params": [],
@@ -2665,8 +2644,8 @@ class VideoPlayer extends ViewPU {
   }
   onAiTranslateClick() {
     let v3, v4, v5, acc;
-    let local_1_0, local_1_1;
-    local_1_1 = this;
+    let local_1_0;
+    let local_1_1 = this;
     v4 = SubtitleTranslationService.getInstance();
     if (v4.isRunning()) {
       v4.cancel();
@@ -2791,9 +2770,8 @@ class VideoPlayer extends ViewPU {
     return this.controller.getCurrentAudioIndex();
   }
   getCurrentChapterIndex() {
-    let v3, v6;
-    v3 = -1;
-    v6 = 0;
+    let v3 = -1;
+    let v6 = 0;
     while (v6 >= this.chapters.length || this.chapters[v6].startTimeSeconds > this.currentTime) {
       v3 = v6;
       v6 += 1;
@@ -2804,13 +2782,11 @@ class VideoPlayer extends ViewPU {
     return Math.min(local_0_19 /*CONTROL_SIDE_MAX*/, Math.max(local_0_20 /*CONTROL_SIDE_MIN*/, Math.round(this.containerVpWidth * 0.035)));
   }
   getControlLeftPad() {
-    let v3;
-    v3 = this.getControlComfortSidePad();
+    let v3 = this.getControlComfortSidePad();
     return this.isFullLandscapeScreen ? Math.max(v3, this.playerControlAvoidLeft + local_0_21 /*CONTROL_SAFE_GAP*/) : v3;
   }
   getControlRightPad() {
-    let v3;
-    v3 = this.getControlComfortSidePad();
+    let v3 = this.getControlComfortSidePad();
     return this.isFullLandscapeScreen ? Math.max(v3, this.playerControlAvoidRight + local_0_21 /*CONTROL_SAFE_GAP*/) : v3;
   }
   getControlTopPad() {
@@ -2823,8 +2799,7 @@ class VideoPlayer extends ViewPU {
     return this.containerVpWidth > 0 && this.containerVpWidth < local_0_24 /*COMPACT_CONTROL_WIDTH*/ ? 4 : 8;
   }
   getTopToolCount() {
-    let v3;
-    v3 = this.curSource.isLive ? 0 : 1;
+    let v3 = this.curSource.isLive ? 0 : 1;
     if (!this.isLocalMode && this.chapters.length > 0) {
       v3 += 1;
     }
@@ -2844,9 +2819,8 @@ class VideoPlayer extends ViewPU {
     return v3 + 1;
   }
   estimateTopToolsWidthVp() {
-    let v3, v4;
-    v4 = this.getControlItemGap();
-    v3 = this.getTopToolCount();
+    let v4 = this.getControlItemGap();
+    let v3 = this.getTopToolCount();
     return v3 <= 0 ? 0 : v3 * local_0_25 /*SPEED_CONTROL_WIDTH*/ + Math.max(0, v3 - 1) * v4;
   }
   shouldCollapseTopTools() {
@@ -2861,8 +2835,7 @@ class VideoPlayer extends ViewPU {
     return this.estimateTopToolsWidthVp() > v3 * local_0_27 /*TOP_TOOLS_HALF_RATIO*/;
   }
   getTimeLabelWidth() {
-    let v3;
-    v3 = secondToTime(Math.floor(Math.max(0, this.durationTime)));
+    let v3 = secondToTime(Math.floor(Math.max(0, this.durationTime)));
     if (v3.length > 8) {
       return 80;
     }
@@ -2875,13 +2848,11 @@ class VideoPlayer extends ViewPU {
     return this.getTimeLabelWidth() * 2 + 12;
   }
   shouldShowTimelineText() {
-    let v4;
-    v4 = !this.curSource.isLive && this.containerVpWidth >= local_0_28 /*TIMELINE_TEXT_MIN_WIDTH*/;
+    let v4 = !this.curSource.isLive && this.containerVpWidth >= local_0_28 /*TIMELINE_TEXT_MIN_WIDTH*/;
     return v4 && this.containerVpHeight >= local_0_29 /*TIMELINE_TEXT_MIN_HEIGHT*/;
   }
   AudioOnlyCoverLayer(p0) {
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     if (p0 === undefined) {}
     local_1_0.observeComponentCreation2(function (p0, p1) {
       Stack.create({
@@ -2964,8 +2935,7 @@ class VideoPlayer extends ViewPU {
     Stack.pop();
   }
   initialRender() {
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     local_1_0.observeComponentCreation2(function (p0, p1) {
       Stack.create({
         "alignContent": Alignment.Center
@@ -2999,8 +2969,7 @@ class VideoPlayer extends ViewPU {
         "controller": local_1_0.x_componentController
       }, "com.talon.yourpipe/entry");
       XComponent.onLoad(function () {
-        let v3;
-        v3 = local_1_0.x_componentController.getXComponentSurfaceId();
+        let v3 = local_1_0.x_componentController.getXComponentSurfaceId();
         Logger.info(local_0_1 /*TAG*/, "XComponent onLoad, surfaceId=" + v3 + "");
         local_1_0.controller.setSurfaceID(v3);
         if (local_1_0.onSurfaceReady) {
@@ -3022,9 +2991,8 @@ class VideoPlayer extends ViewPU {
         "y": local_1_0.videoPanYVp
       });
       XComponent.onAreaChange(function (p0, p1) {
-        let v5, v6;
-        v6 = Math.round(local_1_0.getUIContext().vp2px(Number(p1.width)));
-        v5 = Math.round(local_1_0.getUIContext().vp2px(Number(p1.height)));
+        let v6 = Math.round(local_1_0.getUIContext().vp2px(Number(p1.width)));
+        let v5 = Math.round(local_1_0.getUIContext().vp2px(Number(p1.height)));
         if (v6 > 0 && v5 > 0) {
           Logger.debug(local_0_1 /*TAG*/, "XComponent onAreaChange: " + v6 + "x" + v5 + " px");
           local_1_0.controller.resizeSurface(v6, v5);
@@ -3383,8 +3351,7 @@ class VideoPlayer extends ViewPU {
       if (local_1_0.isGestureSeek) {
         local_1_0.ifElseBranchUpdateFunction(0, function () {
           local_1_0.observeComponentCreation2(function (p0, p1) {
-            let v8;
-            v8 = "" + secondToTime(Math.floor(local_1_0.gestureSeekTime)) + " / " + secondToTime(Math.floor(local_1_0.durationTime)) + "";
+            let v8 = "" + secondToTime(Math.floor(local_1_0.gestureSeekTime)) + " / " + secondToTime(Math.floor(local_1_0.durationTime)) + "";
             Text.create(v8);
             Text.fontColor(Color.White);
             Text.fontSize(26);
@@ -3712,8 +3679,7 @@ class VideoPlayer extends ViewPU {
     Stack.pop();
   }
   GestureLayer(p0) {
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     if (p0 === undefined) {}
     local_1_0.observeComponentCreation2(function (p0, p1) {
       Column.create();
@@ -3773,8 +3739,7 @@ class VideoPlayer extends ViewPU {
     return new SymbolGlyphModifier(p0).fontSize("22vp");
   }
   TopToolsCollapsedMenu(p0) {
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     if (p0 === undefined) {}
     local_1_0.observeComponentCreation2(function (p0, p1) {
       Menu.create();
@@ -4153,8 +4118,7 @@ class VideoPlayer extends ViewPU {
     Menu.pop();
   }
   TopToolsExpandedRow(p0) {
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     if (p0 === undefined) {}
     local_1_0.observeComponentCreation2(function (p0, p1) {
       Row.create({
@@ -4402,8 +4366,7 @@ class VideoPlayer extends ViewPU {
     Row.pop();
   }
   TopControl(p0) {
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     if (p0 === undefined) {}
     local_1_0.observeComponentCreation2(function (p0, p1) {
       Row.create();
@@ -4494,8 +4457,7 @@ class VideoPlayer extends ViewPU {
     Row.pop();
   }
   PlayControl(p0) {
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     if (p0 === undefined) {}
     local_1_0.observeComponentCreation2(function (p0, p1) {
       Row.create({

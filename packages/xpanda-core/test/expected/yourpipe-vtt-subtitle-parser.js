@@ -4,10 +4,10 @@
 * powered by xpanda decompiler, author: jmp0
 */
 let findActiveSubtitleText, parseVttSubtitles;
-let local_0_0, local_0_1, local_0_2, local_0_3;
-local_0_2 = function (p0) {
-  let v5, v12;
-  v5 = p0.replace(new RegExp("<[^>]*>", "g"), "");
+let local_0_0, local_0_1, local_0_3;
+let local_0_2 = function (p0) {
+  let v12;
+  let v5 = p0.replace(new RegExp("<[^>]*>", "g"), "");
   for (v12 of [["&amp;", "&"], ["&lt;", "<"], ["&gt;", ">"], ["&quot;", "\""], ["&#39;", "'"], ["&nbsp;", " "]]) {
     v5 = v5.split(v12[0]).join(v12[1]);
   }
@@ -51,11 +51,11 @@ local_0_1 = function (p0, p1, p2, p3) {
   return parseInt(p0, 10) * 3600000 + parseInt(p1, 10) * 60000 + parseInt(p2, 10) * 1000 + parseInt(p3, 10);
 };
 parseVttSubtitles = function (p0) {
-  let v4, v5, v6, v7, v9, v11, v12, v13, v14;
-  v4 = [];
-  v7 = new RegExp("^" + local_0_0 /*VTT_TIMESTAMP*/ + "\\s+-->\\s+" + local_0_0 /*VTT_TIMESTAMP*/);
-  v6 = p0.replace(new RegExp("^\\uFEFF"), "").split(new RegExp("\\r?\\n"));
-  v5 = 0;
+  let v9, v11, v12, v13, v14;
+  let v4 = [];
+  let v7 = new RegExp("^" + local_0_0 /*VTT_TIMESTAMP*/ + "\\s+-->\\s+" + local_0_0 /*VTT_TIMESTAMP*/);
+  let v6 = p0.replace(new RegExp("^\\uFEFF"), "").split(new RegExp("\\r?\\n"));
+  let v5 = 0;
   while (v5 < v6.length) {
     v11 = v7.exec(v6[v5].trim());
     if (!v11) {

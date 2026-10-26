@@ -13,11 +13,11 @@ globalThis.AES = {
   "sbox": [99, 124, 119, 123, 242, 107, 111, 197, 48, 1, 103, 43, 254, 215, 171, 118, 202, 130, 201, 125, 250, 89, 71, 240, 173, 212, 162, 175, 156, 164, 114, 192, 183, 253, 147, 38, 54, 63, 247, 204, 52, 165, 229, 241, 113, 216, 49, 21, 4, 199, 35, 195, 24, 150, 5, 154, 7, 18, 128, 226, 235, 39, 178, 117, 9, 131, 44, 26, 27, 110, 90, 160, 82, 59, 214, 179, 41, 227, 47, 132, 83, 209, 0, 237, 32, 252, 177, 91, 106, 203, 190, 57, 74, 76, 88, 207, 208, 239, 170, 251, 67, 77, 51, 133, 69, 249, 2, 127, 80, 60, 159, 168, 81, 163, 64, 143, 146, 157, 56, 245, 188, 182, 218, 33, 16, 255, 243, 210, 205, 12, 19, 236, 95, 151, 68, 23, 196, 167, 126, 61, 100, 93, 25, 115, 96, 129, 79, 220, 34, 42, 144, 136, 70, 238, 184, 20, 222, 94, 11, 219, 224, 50, 58, 10, 73, 6, 36, 92, 194, 211, 172, 98, 145, 149, 228, 121, 231, 200, 55, 109, 141, 213, 78, 169, 108, 86, 244, 234, 101, 122, 174, 8, 186, 120, 37, 46, 28, 166, 180, 198, 232, 221, 116, 31, 75, 189, 139, 138, 112, 62, 181, 102, 72, 3, 246, 14, 97, 53, 87, 185, 134, 193, 29, 158, 225, 248, 152, 17, 105, 217, 142, 148, 155, 30, 135, 233, 206, 85, 40, 223, 140, 161, 137, 13, 191, 230, 66, 104, 65, 153, 45, 15, 176, 84, 187, 22],
   "rcon": [[0, 0, 0, 0], [1, 0, 0, 0], [2, 0, 0, 0], [4, 0, 0, 0], [8, 0, 0, 0], [16, 0, 0, 0], [32, 0, 0, 0], [64, 0, 0, 0], [128, 0, 0, 0], [27, 0, 0, 0], [54, 0, 0, 0]],
   "cipher": function cipher(p0, p1) {
-    let v0, v1, v4, v5, v6;
-    v0 = 0;
-    v1 = 1;
-    v4 = [new Array(4), new Array(4), new Array(4), new Array(4)];
-    v5 = new Array(4 * 4);
+    let v6;
+    let v0 = 0;
+    let v1 = 1;
+    let v4 = [new Array(4), new Array(4), new Array(4), new Array(4)];
+    let v5 = new Array(4 * 4);
     for (v6 = 0; v6 < p0.length; v6 += 1) {
       v4[v6 % 4][Math.floor(v6 / 4)] = p0[v6];
     }
@@ -43,8 +43,8 @@ globalThis.AES = {
     }
   },
   "shiftRows": function shiftRows(p0, p1) {
-    let v2, v3, v4;
-    v2 = 1;
+    let v3, v4;
+    let v2 = 1;
     for (v3 = new Array(p1); v2 < 4; v2 += 1) {
       for (v4 = 0; v4 < p1; v4 += 1) {
         v3[v4] = p0[v2][(v4 + v2) % p1];
@@ -79,9 +79,9 @@ globalThis.AES = {
     }
   },
   "keyExpansion": function keyExpansion(p0) {
-    let v0, v1, v7, v8, v9;
-    v7 = new Array(4 * (p0.length / 4 + 6 + 1));
-    v8 = new Array(4);
+    let v0, v1, v9;
+    let v7 = new Array(4 * (p0.length / 4 + 6 + 1));
+    let v8 = new Array(4);
     for (v9 = 0; v9 < p0.length / 4; v9 += 1) {
       v7[v9] = [p0[4 * v9], p0[4 * v9 + 1], p0[4 * v9 + 2], p0[4 * v9 + 3]];
     }
@@ -106,8 +106,8 @@ globalThis.AES = {
     return v7;
   },
   "rotWord": function rotWord(p0) {
-    let v2, v3;
-    v2 = 0;
+    let v3;
+    let v2 = 0;
     for (v3 = p0[0]; v2 < 3; v2 += 1) {
       p0[v2] = p0[v2 + 1];
     }
@@ -120,8 +120,8 @@ globalThis.AES = {
     }
   },
   "generateKey": function generateKey() {
-    let v1, v3;
-    v1 = 0;
+    let v3;
+    let v1 = 0;
     for (v3 = new Array(16); v1 < 16; v1 += 1) {
       v3[v1] = Math.floor(Math.random() * 256);
     }
@@ -131,8 +131,8 @@ globalThis.AES = {
 globalThis.AES.Base64 = {
   "characters": "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=",
   "encode": function encode(p0) {
-    let v7, v8, v9, v10, v11, v12;
-    v7 = 0;
+    let v8, v9, v10, v11, v12;
+    let v7 = 0;
     for (v8 = ""; v7 < p0.length; v8 = v8 + this.characters.charAt(v12) + this.characters.charAt(v9) + this.characters.charAt(v10) + this.characters.charAt(v11)) {
       v9 = p0.charCodeAt(v7);
       v11 = v7 + 1 + 1;
@@ -155,10 +155,10 @@ globalThis.AES.Base64 = {
     return v8;
   },
   "decode": function decode(p0) {
-    let v6, v7, v8, v9, v10, v11, v12;
-    v6 = 0;
-    v7 = "";
-    v8 = p0.replace(new RegExp("[^A-Za-z0-9\\+\\/\\=]", "g"), "");
+    let v9, v10, v11, v12;
+    let v6 = 0;
+    let v7 = "";
+    let v8 = p0.replace(new RegExp("[^A-Za-z0-9\\+\\/\\=]", "g"), "");
     while (v6 < v8.length) {
       v12 = v6 + 1;
       v6 = v8.charAt(v6);
@@ -181,8 +181,7 @@ globalThis.AES.Base64 = {
   }
 };
 globalThis.AES.Counter = function () {
-  let local_0_0;
-  local_0_0 = undefined;
+  let local_0_0 = undefined;
   this.arr = new Array(16);
   for (local_0_0 = 0; local_0_0 < 4; local_0_0 += 1) {
     this.arr[local_0_0] = 1715592630 >>> local_0_0 * 8 & 255;
@@ -207,9 +206,8 @@ globalThis.AES.Counter = function () {
   console.log();
 };
 globalThis.AES.Crypto = function (p0) {
-  let local_0_0, local_0_1;
-  local_0_1 = undefined;
-  local_0_0 = undefined;
+  let local_0_1 = undefined;
+  let local_0_0 = undefined;
   local_0_1 = 16;
   this.key = p0;
   this.keySchedule = globalThis.AES.keyExpansion(p0);
@@ -224,9 +222,9 @@ globalThis.AES.Crypto = function (p0) {
     return this.counter.arr;
   };
   this.run = function (p0) {
-    let v2, v3, v4, v5, v6, v8;
-    v2 = Math.ceil(p0.length / local_0_1);
-    v3 = new Array(p0.length);
+    let v4, v5, v6, v8;
+    let v2 = Math.ceil(p0.length / local_0_1);
+    let v3 = new Array(p0.length);
     for (v4 = 0; v4 < v2; v4 += 1) {
       v5 = globalThis.AES.cipher(this.counter.arr, this.keySchedule);
       v6 = v4 + 1 === v2 ? p0.length % local_0_1 : local_0_1;

@@ -36,8 +36,7 @@ local_0_10 = function (p0) {
   return new RegExp("^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$").test(p0) && !p0.includes("..");
 };
 local_0_13 = function (p0, p1) {
-  let v0;
-  v0 = p0.length === 0;
+  let v0 = p0.length === 0;
   if (p0.length !== 0) {
     v0 = p0.length > p1;
   }
@@ -60,16 +59,14 @@ markSharePanelOpened = function (p0, p1) {
   };
 };
 local_0_9 = function (p0) {
-  let v0 /*ShareFailure*/;
-  v0 = p0.replace(new RegExp("\\\\", "g"), "/").replace(new RegExp("\\/+$", "g"), "");
+  let v0 /*ShareFailure*/ = p0.replace(new RegExp("\\\\", "g"), "/").replace(new RegExp("\\/+$", "g"), "");
   if (!new RegExp("^\\/[A-Za-z0-9._/-]+$").test(v0) || v0.includes("..")) {
     throw new ShareFailure(ShareFailureKind.INVALID_PAYLOAD);
   }
   return v0;
 };
 local_0_2 = function (p0) {
-  let v0 /*ShareFailure*/;
-  v0 = p0.trim();
+  let v0 /*ShareFailure*/ = p0.trim();
   if (!local_0_13(v0, MAX_SHARE_SUMMARY_LENGTH)) {
     throw new ShareFailure(ShareFailureKind.INVALID_PAYLOAD);
   }
@@ -94,8 +91,7 @@ local_0_8 = function (p0, p1, p2) {
   throw new ShareFailure(ShareFailureKind.INVALID_PAYLOAD);
 };
 local_0_1 = function (p0) {
-  let v0 /*ShareFailure*/;
-  v0 = p0.trim();
+  let v0 /*ShareFailure*/ = p0.trim();
   if (!local_0_13(v0, MAX_SHARE_TITLE_LENGTH)) {
     throw new ShareFailure(ShareFailureKind.INVALID_PAYLOAD);
   }
@@ -120,8 +116,7 @@ local_0_4 = function (p0) {
   throw new ShareFailure(ShareFailureKind.INVALID_PAYLOAD);
 };
 local_0_6 = function (p0, p1, p2, p3) {
-  let v0;
-  v0 = local_0_8(p0.temporaryFile, p1, false);
+  let v0 = local_0_8(p0.temporaryFile, p1, false);
   return {
     "kind": SharePayloadKind.FILE,
     "dispatchKind": ShareDispatchKind.TEMPORARY_FILE,
@@ -159,9 +154,9 @@ local_0_5 = function (p0, p1, p2, p3) {
   };
 };
 prepareSharePayload = function (p0, p1) {
-  let v0, v1, v2, v3, v4;
-  v0 = local_0_1(p0.title);
-  v1 = local_0_2(p0.summary);
+  let v2, v3, v4;
+  let v0 = local_0_1(p0.title);
+  let v1 = local_0_2(p0.summary);
   if (p0.kind === SharePayloadKind.TEXT) {
     v2 = local_0_3(p0.contentUrl);
     v3 = p0.thumbnailUrl === undefined ? undefined : local_0_4(p0.thumbnailUrl);
@@ -264,8 +259,7 @@ ShareOutcome = {
 };
 class ShareFailure extends Error {
   constructor(p0) {
-    let v0;
-    v0 = super(local_0_0(p0));
+    let v0 = super(local_0_0(p0));
     v0.name = "ShareFailure";
     v0.kind = p0;
     return v0;

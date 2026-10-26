@@ -33,8 +33,7 @@ local_0_0 = function (p0) {
   return v6.substring(0, v4);
 };
 local_0_1 = function (p0) {
-  let v4;
-  v4 = local_0_0(p0);
+  let v4 = local_0_0(p0);
   return v4 === "youtube.com" || v4.endsWith(".youtube.com");
 };
 local_0_3 = YTCoreLogger.getInstance("HttpDownloader");
@@ -82,8 +81,8 @@ let local_1_0;
 {
   acc = class HttpError extends Error {
     constructor(p0, p1, p2, p3, p4, p5, p6) {
-      let v2, v10;
-      v2 = super(p0);
+      let v10;
+      let v2 = super(p0);
       v2.name = "HttpError";
       v2.url = p1;
       v2.method = p2;
@@ -175,8 +174,7 @@ let local_1_0;
       };
     }
     getFriendlyMessage() {
-      let v6;
-      v6 = {};
+      let v6 = {};
       v6[HttpErrorType.NETWORK_ERROR] = "Network connection failed, please check your network settings";
       v6[HttpErrorType.INFORMATIONAL] = "Server response abnormal";
       v6[HttpErrorType.BAD_REQUEST] = "Bad request format";
@@ -260,8 +258,7 @@ class HttpDownloader {
   constructor() {}
   async request(p0, p1, p2, p3, p4, p5, p6) {
     let v8, v9, v10, v11, v12, v13, v14, v16, v17, v19, v21, acc;
-    let local_2_0;
-    local_2_0 = p1;
+    let local_2_0 = p1;
     v8 = p5 === undefined || p5;
     v9 = p6 === undefined ? 30000 : p6;
     v11 = null;
@@ -302,9 +299,8 @@ class HttpDownloader {
           HttpDownloader.applyConnectionPoolReuse(local_3_1 /*httpOptions*/);
           HttpDownloader.applyProxyToOptions(local_3_1 /*httpOptions*/, local_2_0);
           acc = new Promise(function (p0, p1) {
-            let local_4_0, local_4_1;
-            local_4_0 = p0;
-            local_4_1 = p1;
+            let local_4_0 = p0;
+            let local_4_1 = p1;
             local_3_0 /*request*/.request(local_2_0, local_3_1 /*httpOptions*/, function (p0, p1) {
               if (!p0) {
                 local_0_3 /*logger*/.debug("Response code: " + p1.responseCode + "");
@@ -367,17 +363,15 @@ class HttpDownloader {
     throw acc;
   }
   sleep(p0) {
-    let local_2_0;
-    local_2_0 = p0;
+    let local_2_0 = p0;
     return new Promise(function (p0) {
       return setTimeout(p0, local_2_0);
     });
   }
   processHeaders(p0, p1) {
     let v7, v8;
-    let local_2_0, local_2_1;
-    local_2_0 = p0;
-    local_2_1 = {
+    let local_2_0 = p0;
+    let local_2_1 = {
       "Content-Type": "application/json"
     };
     if (p1) {
@@ -403,9 +397,8 @@ class HttpDownloader {
     return local_2_1 /*headers*/;
   }
   post(p0, p1, p2, p3, p4, p5) {
-    let v8, acc;
-    v8 = p5 === undefined ? 30000 : p5;
-    acc = p2 || {};
+    let v8 = p5 === undefined ? 30000 : p5;
+    let acc = p2 || {};
     if (p4) {
       acc["Content-Type"] = [p4];
     }
@@ -418,9 +411,9 @@ class HttpDownloader {
     return this.postBinaryWithRetry(p0, p1, p2, p3, p4 === undefined || p4, p6, p7, p5, false);
   }
   async postBinaryWithRetry(p0, p1, p2, p3, p4, p5, p6, p7, p8) {
-    let v12, v13, v14, v16, v17, v18, v19, v20, v22, acc;
-    v13 = null;
-    v12 = 0;
+    let v14, v16, v17, v18, v19, v20, v22, acc;
+    let v13 = null;
+    let v12 = 0;
     while (true) {
       if (v12 >= (p4 ? HttpDownloader.MAX_RETRIES : 1)) break;
       v12 += 1;
@@ -490,12 +483,12 @@ class HttpDownloader {
   }
   postBinaryStreamOnce(p0, p1, p2, p3, p4, p5, p6, p7) {
     let v11, v12, acc;
-    let local_2_0, local_2_1, local_2_2, local_2_3, local_2_4, local_2_5, local_2_6;
-    local_2_3 = p0;
-    local_2_5 = p4;
-    local_2_0 = p5;
-    local_2_4 = p6;
-    local_2_2 = p7;
+    let local_2_1, local_2_6;
+    let local_2_3 = p0;
+    let local_2_5 = p4;
+    let local_2_0 = p5;
+    let local_2_4 = p6;
+    let local_2_2 = p7;
     if (local_2_2 === undefined) {
       local_2_2 = true;
     }
@@ -515,25 +508,24 @@ class HttpDownloader {
     HttpDownloader.applyProxyToOptions(local_2_6 /*httpOptions*/, local_2_3);
     acc = new Promise(function (p0, p1) {
       let acc;
-      let local_3_0, local_3_1, local_3_2, local_3_3, local_3_4, local_3_5, local_3_6, local_3_7, local_3_8, local_3_9, local_3_10, local_3_11, local_3_12, local_3_13, local_3_14;
-      local_3_10 = p0;
-      local_3_11 = p1;
-      local_3_6 = [];
-      local_3_5 = 0;
-      local_3_8 = 0;
-      local_3_9 = new Object();
-      local_3_3 = false;
-      local_3_4 = false;
-      local_3_2 = false;
-      local_3_14 = 60000 + 5000;
-      local_3_0 = -1;
-      local_3_1 = function () {
+      let local_3_10 = p0;
+      let local_3_11 = p1;
+      let local_3_6 = [];
+      let local_3_5 = 0;
+      let local_3_8 = 0;
+      let local_3_9 = new Object();
+      let local_3_3 = false;
+      let local_3_4 = false;
+      let local_3_2 = false;
+      let local_3_14 = 60000 + 5000;
+      let local_3_0 = -1;
+      let local_3_1 = function () {
         if (local_3_0 /*watchdogTimer*/ >= 0) {
           clearTimeout(local_3_0 /*watchdogTimer*/);
           local_3_0 = -1;
         }
       };
-      local_3_7 = function () {
+      let local_3_7 = function () {
         local_3_1 /*clearWatchdog*/();
         if (local_2_0 && local_2_0.request === local_2_1 /*httpRequest*/) {
           local_2_0.request = undefined;
@@ -547,7 +539,7 @@ class HttpDownloader {
           local_2_1 /*httpRequest*/.destroy();
         } catch (catchAcc) {}
       };
-      local_3_13 = function () {
+      let local_3_13 = function () {
         let v3, v4, v6, v7, v9, v10;
         if (!local_3_2 /*settled*/ && local_3_3 /*requestReturned*/) {
           if (!local_3_4 /*streamEnded*/) {
@@ -579,7 +571,7 @@ class HttpDownloader {
         }
         return;
       };
-      local_3_12 = function (p0) {
+      let local_3_12 = function (p0) {
         if (local_3_2 /*settled*/) {
           return;
         }
@@ -646,9 +638,8 @@ class HttpDownloader {
   }
   processBinaryHeaders(p0, p1) {
     let v6, v7;
-    let local_2_0, local_2_1;
-    local_2_0 = p0;
-    local_2_1 = {};
+    let local_2_0 = p0;
+    let local_2_1 = {};
     if (p1) {
       v7 = p1.getLanguageCode();
       v6 = p1.getCountryCode();
@@ -681,8 +672,7 @@ class HttpDownloader {
     HttpDownloader.setCookieObserver = p0;
   }
   static fromNetworkError(p0, p1, p2) {
-    let acc;
-    acc = p0.message || "Network error";
+    let acc = p0.message || "Network error";
     return acc.includes("407") ? new HttpError(acc, p1, p2, 407) : new HttpError(acc, p1, p2, undefined, undefined, undefined, p0.code);
   }
   static notifySetCookie(p0, p1) {
@@ -708,8 +698,8 @@ class HttpDownloader {
     return;
   }
   static applyProxyToOptions(p0, p1) {
-    let v5, v7, v8;
-    v5 = HttpProxyOptions.getSnapshot();
+    let v7, v8;
+    let v5 = HttpProxyOptions.getSnapshot();
     if (!HttpProxyOptions.isActive(v5) || HttpProxyOptions.shouldBypass(p1, v5)) {
       p0.usingProxy = false;
       return;

@@ -28,8 +28,7 @@ local_0_0 = 0;
 local_0_1 = "HX360E";
 class GamePage extends ViewPU {
   constructor(p0, p1, p2, p3, p4, p5) {
-    let local_2_0;
-    local_2_0 = this;
+    let local_2_0 = this;
     if (p3 === undefined) {
       p3 = -1;
     }
@@ -297,10 +296,9 @@ class GamePage extends ViewPU {
     this.__dbgY.set(p0);
   }
   static readMemMb() {
-    let v0, v3 /*fs*/, v4;
-    v0 = [0, 0, 0];
-    v3 = fs.readTextSync("/proc/self/status");
-    v4 = new RegExp("VmRSS:\\s+(\\d+)").exec(v3);
+    let v0 = [0, 0, 0];
+    let v3 /*fs*/ = fs.readTextSync("/proc/self/status");
+    let v4 = new RegExp("VmRSS:\\s+(\\d+)").exec(v3);
     v3 = new RegExp("VmSize:\\s+(\\d+)").exec(v3);
     if (v4 !== null) {
       v4 = Number(v4[1]) / 1024;
@@ -337,12 +335,11 @@ class GamePage extends ViewPU {
   }
   setImmersive(p0) {
     let acc;
-    let local_2_0;
-    local_2_0 = p0;
+    let local_2_0 = p0;
     try {
       acc = window.getLastWindow(getContext(this)).then(function (p0) {
-        let v1, v2;
-        v1 = local_2_0 ? [] : ["status", "navigation"];
+        let v2;
+        let v1 = local_2_0 ? [] : ["status", "navigation"];
         p0.setWindowSystemBarEnable(v1).catch(function (p0) {
           hilog.error(local_0_0, local_0_1, "setWindowSystemBarEnable failed: %{public}s", p0.message);
         });
@@ -385,8 +382,7 @@ class GamePage extends ViewPU {
     }
   }
   aboutToAppear() {
-    let local_2_0;
-    local_2_0 = this;
+    let local_2_0 = this;
     try {
       Orientation.autoLandscape(getContext(local_2_0));
     } catch (catchAcc) {
@@ -415,8 +411,8 @@ class GamePage extends ViewPU {
     local_2_0.startBootProbe();
   }
   refreshDebugEnabled() {
-    let v0 /*testNapi*/, v1;
-    v0 = SettingsStore.shared();
+    let v1;
+    let v0 /*testNapi*/ = SettingsStore.shared();
     v0.open(getContext(this).filesDir);
     v1 = v0.raw("Display|show_debug_overlay") === "true";
     v0 = v0.raw("Display|present_letterbox");
@@ -589,9 +585,8 @@ class GamePage extends ViewPU {
     this.clearPrompt();
   }
   startBootProbe() {
-    let local_2_0, local_2_1;
-    local_2_1 = this;
-    local_2_0 = 0;
+    let local_2_1 = this;
+    let local_2_0 = 0;
     local_2_1.bootProbeTimer = setInterval(function () {
       let v1 /*GamePage*/;
       local_2_0 += 1;
@@ -635,13 +630,12 @@ class GamePage extends ViewPU {
     }
   }
   stickToKeys(p0, p1, p2) {
-    let v2 /*DOMAIN*/, v3 /*TAG*/, v4 /*testNapi*/, v5 /*XPadKey*/, v6 /*XPadKey*/, v7 /*XPadKey*/;
-    v2 = Math.round(Math.abs(p1) * 32767);
-    v3 = Math.round(Math.abs(p2) * 32767);
-    v4 = p0 ? XPadKey.LThumbLeft : XPadKey.RThumbLeft;
-    v5 = p0 ? XPadKey.LThumbRight : XPadKey.RThumbRight;
-    v6 = p0 ? XPadKey.LThumbUp : XPadKey.RThumbUp;
-    v7 = p0 ? XPadKey.LThumbDown : XPadKey.RThumbDown;
+    let v2 /*DOMAIN*/ = Math.round(Math.abs(p1) * 32767);
+    let v3 /*TAG*/ = Math.round(Math.abs(p2) * 32767);
+    let v4 /*testNapi*/ = p0 ? XPadKey.LThumbLeft : XPadKey.RThumbLeft;
+    let v5 /*XPadKey*/ = p0 ? XPadKey.LThumbRight : XPadKey.RThumbRight;
+    let v6 /*XPadKey*/ = p0 ? XPadKey.LThumbUp : XPadKey.RThumbUp;
+    let v7 /*XPadKey*/ = p0 ? XPadKey.LThumbDown : XPadKey.RThumbDown;
     try {
       testNapi.emulator.keyEvent(v4, p1 < -0.12, p1 < -0.12 ? -v2 : 0);
       if (p1 <= 0.12) {
@@ -701,16 +695,14 @@ class GamePage extends ViewPU {
     }
   }
   handlePhysicalAxis(p0) {
-    let v1, v2;
-    v1 = p0.getHorizontalAxisValue();
-    v2 = -p0.getVerticalAxisValue();
+    let v1 = p0.getHorizontalAxisValue();
+    let v2 = -p0.getVerticalAxisValue();
     if (v1 !== 0 || v2 !== 0) {
       this.stickToKeys(true, v1, v2);
     }
   }
   handlePhysicalKey(p0) {
-    let v0;
-    v0 = this.physicalPadKey(p0.keyCode);
+    let v0 = this.physicalPadKey(p0.keyCode);
     if (v0 < 0) {
       return false;
     }
@@ -719,13 +711,12 @@ class GamePage extends ViewPU {
     return true;
   }
   roundBtn(p0, p1, p2, p3, p4, p5) {
-    let local_2_0, local_2_1, local_2_2, local_2_3, local_2_4, local_2_5;
-    local_2_5 = this;
-    local_2_0 = p0;
-    local_2_4 = p1;
-    local_2_1 = p2;
-    local_2_2 = p3;
-    local_2_3 = p4;
+    let local_2_5 = this;
+    let local_2_0 = p0;
+    let local_2_4 = p1;
+    let local_2_1 = p2;
+    let local_2_2 = p3;
+    let local_2_3 = p4;
     local_2_5.observeComponentCreation2(function (p0, p1) {
       let acc;
       if (p1) {
@@ -774,12 +765,11 @@ class GamePage extends ViewPU {
     });
   }
   rectBtn(p0, p1, p2, p3, p4) {
-    let local_2_0, local_2_1, local_2_2, local_2_3, local_2_4;
-    local_2_4 = this;
-    local_2_0 = p0;
-    local_2_3 = p1;
-    local_2_1 = p2;
-    local_2_2 = p3;
+    let local_2_4 = this;
+    let local_2_0 = p0;
+    let local_2_3 = p1;
+    let local_2_1 = p2;
+    let local_2_2 = p3;
     local_2_4.observeComponentCreation2(function (p0, p1) {
       let acc;
       if (p1) {
@@ -865,8 +855,7 @@ class GamePage extends ViewPU {
     Column.pop();
   }
   exitDialog(p0) {
-    let local_2_0;
-    local_2_0 = this;
+    let local_2_0 = this;
     local_2_0.observeComponentCreation2(function (p0, p1) {
       Column.create();
       Column.width("100%");
@@ -989,8 +978,7 @@ class GamePage extends ViewPU {
     Column.pop();
   }
   initialRender() {
-    let local_2_0;
-    local_2_0 = this;
+    let local_2_0 = this;
     local_2_0.observeComponentCreation2(function (p0, p1) {
       Stack.create({
         "alignContent": Alignment.Center
@@ -1005,10 +993,10 @@ class GamePage extends ViewPU {
         local_2_0.handlePhysicalAxis(p0);
       });
       Stack.onAreaChange(function (p0, p1) {
-        let v0, v2, v3 /*display*/, v4, v5 /*hilog*/;
-        v3 = display.getDefaultDisplaySync();
-        v4 = v3.densityPixels;
-        v5 = v3.width;
+        let v0, v2;
+        let v3 /*display*/ = display.getDefaultDisplaySync();
+        let v4 = v3.densityPixels;
+        let v5 /*hilog*/ = v3.width;
         v3 = v3.height;
         v0 = v4;
         v2 = v3;
@@ -1393,9 +1381,8 @@ class GamePage extends ViewPU {
                 local_2_0.observeComponentCreation2(function (p0, p1) {
                   ForEach.create();
                   local_2_0.forEachUpdateFunction(p0, local_2_0.promptButtons, function (p0, p1) {
-                    let local_3_0, local_3_1;
-                    local_3_1 = p1;
-                    local_3_0 = p0;
+                    let local_3_1 = p1;
+                    let local_3_0 = p0;
                     local_2_0.observeComponentCreation2(function (p0, p1) {
                       Button.createWithLabel(local_3_0);
                       Button.margin(4);
@@ -1422,9 +1409,8 @@ class GamePage extends ViewPU {
                 local_2_0.observeComponentCreation2(function (p0, p1) {
                   ForEach.create();
                   local_2_0.forEachUpdateFunction(p0, local_2_0.promptDiscLabels, function (p0, p1) {
-                    let local_3_0, local_3_1;
-                    local_3_1 = p1;
-                    local_3_0 = p0;
+                    let local_3_1 = p1;
+                    let local_3_0 = p0;
                     local_2_0.observeComponentCreation2(function (p0, p1) {
                       Button.createWithLabel(local_3_0);
                       Button.width("100%");

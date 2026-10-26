@@ -45,8 +45,8 @@ extractZhihuLinkFromText = function (p0) {
   return undefined;
 };
 resolveZhihuLink = function (p0) {
-  let v1, v2;
-  v1 = 8192;
+  let v2;
+  let v1 = 8192;
   if (p0.length === 0 || p0.length > 8192) {
     return undefined;
   }
@@ -54,8 +54,8 @@ resolveZhihuLink = function (p0) {
   return v2.length === 0 || v2.length > v1 ? undefined : local_0_0(v2, 0);
 };
 local_0_0 = function (p0, p1) {
-  let v0 /*isSafeDecimalContentId*/, v1 /*isSafeDecimalContentId*/, v2 /*parseAbsoluteUrl*/, v4 /*isSafeDecimalContentId*/, v5, v6;
-  v1 = 2;
+  let v0 /*isSafeDecimalContentId*/, v2 /*parseAbsoluteUrl*/, v4 /*isSafeDecimalContentId*/, v5, v6;
+  let v1 /*isSafeDecimalContentId*/ = 2;
   if (p0.length === 0 || p0.length > 8192 || p1 > 2) {
     return undefined;
   }

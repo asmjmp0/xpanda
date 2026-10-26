@@ -8,8 +8,8 @@
     return p0 + p1 & 4294967295;
   }
   function rhex(p0) {
-    let v3, v4;
-    v3 = 0;
+    let v4;
+    let v3 = 0;
     for (v4 = ""; v3 < 4; v3 += 1) {
       v4 += "0123456789abcdef"[p0 >> v3 * 8 + 4 & 15] + "0123456789abcdef"[p0 >> v3 * 8 & 15];
     }
@@ -19,8 +19,8 @@
     return cmn(p1 & p3 | p2 & ~p3, p0, p1, p4, p5, p6);
   }
   function md5blk(p0) {
-    let v8, v9;
-    v8 = 0;
+    let v9;
+    let v8 = 0;
     for (v9 = []; v8 < 64; v8 += 4) {
       v9[v8 >> 2] = p0.charCodeAt(v8) + (p0.charCodeAt(v8 + 1) << 8) + (p0.charCodeAt(v8 + 2) << 16) + (p0.charCodeAt(v8 + 3) << 24);
     }
@@ -69,11 +69,10 @@
     return cmn(p1 ^ p2 ^ p3, p0, p1, p4, p5, p6);
   }
   function md5cycle(p0, p1) {
-    let v1, v3, v5, v7;
-    v1 = ff(p0[0], p0[1], p0[2], p0[3], p1[0], 7, -680876936);
-    v7 = ff(p0[3], v1, p0[1], p0[2], p1[1], 12, -389564586);
-    v5 = ff(p0[2], v7, v1, p0[1], p1[2], 17, 606105819);
-    v3 = ff(p0[1], v5, v7, v1, p1[3], 22, -1044525330);
+    let v1 = ff(p0[0], p0[1], p0[2], p0[3], p1[0], 7, -680876936);
+    let v7 = ff(p0[3], v1, p0[1], p0[2], p1[1], 12, -389564586);
+    let v5 = ff(p0[2], v7, v1, p0[1], p1[2], 17, 606105819);
+    let v3 = ff(p0[1], v5, v7, v1, p1[3], 22, -1044525330);
     v1 = ff(v1, v3, v5, v7, p1[4], 7, -176418897);
     v7 = ff(v7, v1, v3, v5, p1[5], 12, 1200080426);
     v5 = ff(v5, v7, v1, v3, p1[6], 17, -1473231341);
@@ -140,8 +139,7 @@
     p0[3] = add32(v7, p0[3]);
   }
   function cmn(p0, p1, p2, p3, p4, p5) {
-    let v0;
-    v0 = add32(add32(p1, p0), add32(p3, p5));
+    let v0 = add32(add32(p1, p0), add32(p3, p5));
     return add32(v0 << p4 | v0 >>> 32 - p4, p2);
   }
   globalThis.md5 = function md5(p0) {

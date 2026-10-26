@@ -658,7 +658,9 @@ function selectHighest(p0) {
 `);
     SimplifyExport.simplify(program);
     const code = NodeFactory.generate(program);
-    if (!/let\s+local_1_0,\s*local_1_1/.test(code) || !code.includes("return local_1_1")) {
+    // 声明可能被 mergeDeclarationInitializers 合并成 `let local_1_1 = undefined;` 的
+    // 形态,回归只要求两个闭包写入的绑定都仍然被声明、返回值仍读取变量本身。
+    if (!(/let\s+local_1_0/.test(code) && /let\s+local_1_1/.test(code)) || !code.includes("return local_1_1")) {
         throw new Error(`simplify: 闭包写入的外层变量被错误传播/删除\n${code}`);
     }
 }

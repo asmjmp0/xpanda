@@ -8,16 +8,15 @@ import { PlayerModel } from "@normalized:N&&&mediaservice/src/main/ets/model/Pla
 import { SabrProtocolException } from "@normalized:N&&&youtube_core/Index&1.0.0";
 import { SabrTrackBuffer } from "@normalized:N&&&mediaservice/src/main/ets/sabr/SabrTrackBuffer&1.0.0";
 import { sabrSessionStore } from "@normalized:N&&&mediaservice/src/main/ets/sabr/SabrSessionStore&1.0.0";
-let local_0_0;
-local_0_0 = "[SabrOfflineDownloader]";
+let local_0_0 = "[SabrOfflineDownloader]";
 class SabrOfflineDownloader {
   constructor() {}
   static isSabrStream(p0) {
     return PlayerModel.isSabrStream(p0);
   }
   static async downloadTracks(p0) {
-    let v4, v6, v7, v8, v9, v10, v14, v15;
-    v7 = p0.video.sabrInfo || p0.audio.sabrInfo;
+    let v4, v6, v8, v9, v10, v14, v15;
+    let v7 = p0.video.sabrInfo || p0.audio.sabrInfo;
     if (v7) {
       if (!v7.serverAbrStreamingUrl) {
         throw new Error("SABR download: missing sabrInfo/serverAbrStreamingUrl");
@@ -60,8 +59,7 @@ class SabrOfflineDownloader {
     ;
   }
   static resolveVideoFormat(p0, p1, p2) {
-    let v6;
-    v6 = p0.findFormatByItag(p2);
+    let v6 = p0.findFormatByItag(p2);
     return v6 || {
       "itag": p2,
       "mimeType": p1.mimeType,
@@ -76,8 +74,7 @@ class SabrOfflineDownloader {
     };
   }
   static resolveAudioFormat(p0, p1, p2) {
-    let v6;
-    v6 = p0.findFormatByItagAndTrack(p2, p1.audioTrackId);
+    let v6 = p0.findFormatByItagAndTrack(p2, p1.audioTrackId);
     if (v6 && p1.audioTrackId && v6.audioTrackId !== p1.audioTrackId) {
       v6 = undefined;
     }
@@ -99,13 +96,13 @@ class SabrOfflineDownloader {
   }
   static async dumpDualTrack(p0, p1, p2, p3, p4, p5, p6) {
     let v11, v12, v13, v15, v16, v17, v18, v19, v20, v21, v22, v23, v26, v28, acc;
-    let local_2_0, local_2_1, local_2_2, local_2_3, local_2_4, local_2_5, local_2_6, local_2_7;
-    local_2_0 = 0;
-    local_2_4 = 0;
-    local_2_1 = 0;
-    local_2_5 = 0;
-    local_2_3 = false;
-    local_2_7 = false;
+    let local_2_2, local_2_6;
+    let local_2_0 = 0;
+    let local_2_4 = 0;
+    let local_2_1 = 0;
+    let local_2_5 = 0;
+    let local_2_3 = false;
+    let local_2_7 = false;
     v11 = 0;
     v15 = await p0.readSegment(true, -1, false);
     if (!v15 || v15.length === 0) {
