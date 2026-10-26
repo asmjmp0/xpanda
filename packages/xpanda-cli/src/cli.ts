@@ -12,21 +12,41 @@ import { decompileClassesParallel, resolveJobs } from "./parallel/ParallelDecomp
 
 /**
  * CLI 入口
+ *   npx tsx src/cli.ts help [decompile|unpack-index]
  *   npx tsx src/cli.ts decompile <file.abc|file.hap> [-o outDir] [--no-simplify] [--raw] [--stdout] [--quiet] [-j N]
  *   npx tsx src/cli.ts unpack-index <resources.index> [-o outDir] [--stdout]
  * @Author: jmp0 */
-function usage(): void {
-    console.log("用法: xpanda decompile <file.abc|file.hap> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N]");
-    console.log("  file.hap         鸿蒙应用包:自动解出全部 .abc 反编译,并解包 resources.index 与 resources/ 资源文件");
-    console.log("  -o outDir        按类名输出 .js 文件(默认 out/;hap 模式下 abc 条目输出到 outDir/<条目路径>/)");
-    console.log("  --no-simplify    禁用优化器(跳过 simplify 阶段,等价于 --raw)");
-    console.log("  --stdout         将结果拼接输出到标准输出");
-    console.log("  --quiet          关闭反编译过程日志");
-    console.log("  -j, --jobs N     按类并行 simplify 的 worker 数;0 = 自动(CPU-1,上限 4)");
-    console.log("用法: xpanda unpack-index <resources.index> [-o outDir] [--stdout]");
-    console.log("  解包鸿蒙 resources.index(兼容 Restool 与 RestoolV2 格式)");
-    console.log("  -o outDir        输出 resources.json(默认 out/)");
-    console.log("  --stdout         将 JSON 输出到标准输出");
+function printDecompileUsage(): void {
+    console.log("Usage: xpanda decompile <file.abc|file.hap> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N]");
+    console.log("  file.hap         HarmonyOS app package: decompiles every .abc entry and unpacks resources.index plus resources/ files");
+    console.log("  -o outDir        Writes .js files named by class (default out/; in hap mode abc entries go to outDir/<entry path>/)");
+    console.log("  --no-simplify    Disables the optimizer (skips the simplify stage, same as --raw)");
+    console.log("  --stdout         Concatenates the result to standard output");
+    console.log("  --quiet          Suppresses decompilation progress logs");
+    console.log("  -j, --jobs N     Worker count for per-class parallel simplify; 0 = auto (CPU-1, capped at 4)");
+}
+
+function printUnpackIndexUsage(): void {
+    console.log("Usage: xpanda unpack-index <resources.index> [-o outDir] [--stdout]");
+    console.log("  Unpacks a HarmonyOS resources.index (supports both Restool and RestoolV2 formats)");
+    console.log("  -o outDir        Writes resources.json (default out/)");
+    console.log("  --stdout         Prints the JSON to standard output");
+}
+
+/** Print usage for one command, or all commands when no (known) topic given. */
+function help(command?: string): void {
+    if (command === "decompile") return printDecompileUsage();
+    if (command === "unpack-index") return printUnpackIndexUsage();
+    if (command !== undefined) console.error(`Unknown help topic: ${command} (available: decompile | unpack-index)`);
+    printDecompileUsage();
+    printUnpackIndexUsage();
+}
+
+/** Command parse failure: print the reason plus usage, then exit non-zero. */
+function fail(message: string, command?: string): never {
+    console.error(message);
+    help(command);
+    process.exit(1);
 }
 
 /** resources.index → 可序列化摘要(unpack-index 与 hap 模式共用) */
@@ -48,17 +68,18 @@ function resourcesIndexToJson(data: Uint8Array): { indexFile: ResourceIndexFile;
 }
 
 function unpackIndex(args: string[]): void {
-    if (args.length < 1) {
-        usage();
-        process.exit(1);
-        return;
-    }
+    if (args.length < 1) fail("unpack-index: missing <resources.index> file argument", "unpack-index");
     const input = args[0];
     let outDir = "out";
     let stdout = false;
     for (let i = 1; i < args.length; i++) {
-        if (args[i] === "-o") outDir = args[++i];
+        if (args[i] === "-o") {
+            const value = args[++i];
+            if (value === undefined) fail("option -o requires a value", "unpack-index");
+            outDir = value;
+        }
         else if (args[i] === "--stdout") stdout = true;
+        else fail(`unknown argument: ${args[i]}`, "unpack-index");
     }
     const data = new Uint8Array(fs.readFileSync(path.resolve(input)));
     const { indexFile, json } = resourcesIndexToJson(data);
@@ -169,15 +190,17 @@ async function decompileHap(decompiler: PandaDecompiler, data: Uint8Array, optio
 
 async function main(): Promise<void> {
     const args = process.argv.slice(2);
-    if (args.length >= 1 && args[0] === "unpack-index") {
+    // help 命令(无参数时等价于 help):打印用法后正常退出
+    if (args.length === 0 || args[0] === "help" || args[0] === "-h" || args[0] === "--help") {
+        help(args[1]);
+        return;
+    }
+    if (args[0] === "unpack-index") {
         unpackIndex(args.slice(1));
         return;
     }
-    if (args.length < 2 || args[0] !== "decompile") {
-        usage();
-        process.exit(args.length === 0 ? 0 : 1);
-        return;
-    }
+    if (args[0] !== "decompile") fail(`unknown command: ${args[0]}`);
+    if (args.length < 2) fail("decompile: missing <file.abc|file.hap> file argument", "decompile");
     const input = args[1];
     let outDir = "out";
     let raw = false;
@@ -185,7 +208,11 @@ async function main(): Promise<void> {
     let quiet = false;
     let jobsArg = 1;
     for (let i = 2; i < args.length; i++) {
-        if (args[i] === "-o") outDir = args[++i];
+        if (args[i] === "-o") {
+            const value = args[++i];
+            if (value === undefined) fail("option -o requires a value", "decompile");
+            outDir = value;
+        }
         else if (args[i] === "--raw" || args[i] === "--no-simplify") raw = true;
         else if (args[i] === "--stdout") stdout = true;
         else if (args[i] === "--quiet") quiet = true;
@@ -193,6 +220,7 @@ async function main(): Promise<void> {
             const value = Number(args[++i]);
             jobsArg = Number.isFinite(value) ? value : 1;
         }
+        else fail(`unknown argument: ${args[i]}`, "decompile");
     }
     const jobs = raw ? 1 : resolveJobs(jobsArg);
     const options: DecompileOptions = { outDir, raw, stdout, jobs };

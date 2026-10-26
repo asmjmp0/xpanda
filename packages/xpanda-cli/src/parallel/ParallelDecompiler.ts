@@ -170,10 +170,10 @@ export async function decompileClassesParallel(
                     content = await worker.run(ast);
                 } catch (e) {
                     workerFailures++;
-                    warn("simplify worker 失败,主线程降级: " + job.clazz.name.content + " (" + e + ")");
+                    warn("simplify worker failed, falling back to main thread: " + job.clazz.name.content + " (" + e + ")");
                     if (workerFailures >= 2) {
                         workersEnabled = false;
-                        warn("simplify worker 连续失败,剩余类改为主线程串行 simplify");
+                        warn("simplify worker failed repeatedly, remaining classes fall back to serial simplify on the main thread");
                     }
                     content = decompiler.simplifyInProcess(ast);
                 }
