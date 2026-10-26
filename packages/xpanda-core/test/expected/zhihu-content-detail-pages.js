@@ -67,7 +67,7 @@ import { stageVideoPlaybackContext } from "@normalized:N&&&entry/src/main/ets/pa
 import { takeQuestionAnswerNavigator } from "@normalized:N&&&entry/src/main/ets/pages/QuestionAnswerNavigator&";
 import { themeColorContainerColor } from "@normalized:N&&&data/Index&1.0.0";
 let contentAuthorAvatarUrl, contentAuthorBadge, contentAuthorHeadline, contentAuthorName, contentBlockingTitle, contentContextTitle, contentCreatedAtText, contentDetailPageTitle, contentEmptyMessage, contentEndorsements, contentHtml, contentIpInfo, contentShareSummary, contentShareThumbnailUrl, contentSpeechText, contentStatistics, contentTitle, contentUpdatedAtText, formatContentDateTime;
-let local_0_0, local_0_1, local_0_2, local_0_3, local_0_4, local_0_5, local_0_6, local_0_7, local_0_8, local_0_9, local_0_10, local_0_11, local_0_12;
+let local_0_0, local_0_1, local_0_2, local_0_3, local_0_4, local_0_5, local_0_6, local_0_7, local_0_8, local_0_9, local_0_11, local_0_12;
 local_0_12 = function (p0, p1) {
   let v0;
   v0 = Math.min(1, Math.max(0, p1));
@@ -436,7 +436,7 @@ local_0_1 = function (p0) {
 if (!("finalizeConstruction" in ViewPU.prototype)) {
   Reflect.set(ViewPU.prototype, "finalizeConstruction", function () {});
 }
-local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
+class ContentDetailPage extends ViewPU {
   constructor(p0, p1, p2, p3, p4, p5) {
     let v3 /*DEFAULT_THEME_COLOR*/;
     let local_1_0;
@@ -8450,7 +8450,7 @@ local_0_10 = class panda_jmp0_reserved_anonymous_0 extends ViewPU {
   rerender() {
     this.updateDirtyElements();
   }
-};
+}
 class QuestionDetailPage extends ViewPU {
   constructor(p0, p1, p2, p3, p4, p5) {
     let v0;
@@ -8548,7 +8548,7 @@ class QuestionDetailPage extends ViewPU {
     local_1_0.observeComponentCreation2(function (p0, p1) {
       let acc;
       if (p1) {
-        acc = new local_0_10(local_1_0, {
+        acc = new ContentDetailPage(local_1_0, {
           "kind": ContentDetailKind.QUESTION,
           "questionAnswerFeedFactory": local_1_0.questionAnswerFeedFactory,
           "contentId": local_1_0.contentId,
@@ -8701,7 +8701,7 @@ class AnswerDetailPage extends ViewPU {
     local_1_0.observeComponentCreation2(function (p0, p1) {
       let acc;
       if (p1) {
-        acc = new local_0_10(local_1_0, {
+        acc = new ContentDetailPage(local_1_0, {
           "kind": ContentDetailKind.ANSWER,
           "questionAnswerFeedFactory": local_1_0.questionAnswerFeedFactory,
           "contentId": local_1_0.contentId,
@@ -8848,7 +8848,7 @@ class ArticleDetailPage extends ViewPU {
     local_1_0.observeComponentCreation2(function (p0, p1) {
       let acc;
       if (p1) {
-        acc = new local_0_10(local_1_0, {
+        acc = new ContentDetailPage(local_1_0, {
           "kind": ContentDetailKind.ARTICLE,
           "contentId": local_1_0.contentId,
           "repository": local_1_0.repository,

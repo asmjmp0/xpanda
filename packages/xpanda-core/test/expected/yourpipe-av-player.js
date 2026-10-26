@@ -4779,7 +4779,7 @@ class VideoPlayer extends ViewPU {
     this.updateDirtyElements();
   }
 }
-local_0_0 = class panda_jmp0_reserved_anonymous_1 {
+local_0_0 = class KeepScreenOnStateListener {
   constructor(p0) {
     this.owner = p0;
   }

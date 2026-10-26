@@ -19,7 +19,7 @@ import { readProtoVarint } from "@normalized:N&&&youtube_core/src/main/ets/commo
 import { sabrReadFields } from "@normalized:N&&&youtube_core/src/main/ets/extractor/sabr/SabrProto&1.0.0";
 import { umpReadAll } from "@normalized:N&&&youtube_core/src/main/ets/extractor/sabr/UmpReader&1.0.0";
 let PART_FORMAT_INITIALIZATION_METADATA, PART_MEDIA, PART_MEDIA_END, PART_MEDIA_HEADER, PART_NEXT_REQUEST_POLICY, PART_RELOAD_PLAYER_RESPONSE, PART_SABR_CONTEXT_SENDING_POLICY, PART_SABR_CONTEXT_UPDATE, PART_SABR_ERROR, PART_SABR_REDIRECT, PART_SABR_SEEK, PART_STREAM_PROTECTION_STATUS, isRecoverableIntegrityIssues, requireUmpContentType, sabrDecodeBody, sabrDecodeParts;
-let local_0_0, local_0_1, local_0_2, local_0_3, local_0_4, local_0_5, local_0_6, local_0_7, local_0_8, local_0_9, local_0_10, local_0_11, local_0_12, local_0_13, local_0_14, local_0_15;
+let local_0_1, local_0_2, local_0_3, local_0_4, local_0_5, local_0_6, local_0_7, local_0_8, local_0_9, local_0_10, local_0_11, local_0_12, local_0_13, local_0_14, local_0_15;
 local_0_12 = function (p0, p1, p2) {
   let v6, v7, v14, v17;
   v7 = [];
@@ -316,19 +316,19 @@ PART_STREAM_PROTECTION_STATUS = 58;
 PART_SABR_CONTEXT_UPDATE = 57;
 PART_SABR_CONTEXT_SENDING_POLICY = 59;
 local_0_11 = YTCoreLogger.getInstance("SabrResponseDecoder");
-local_0_0 = class panda_jmp0_reserved_anonymous_0 {
+class OpenMediaAssembly {
   constructor(p0) {
     this.chunks = [];
     this.header = p0;
   }
-};
-local_0_13 = class panda_jmp0_reserved_anonymous_1 {
+}
+local_0_13 = class StreamProtectionResult {
   constructor() {
     this.status = -1;
     this.maxRetries = -1;
   }
 };
-local_0_15 = class panda_jmp0_reserved_anonymous_2 {
+local_0_15 = class FormatByteRange {
   constructor() {
     this.start = -1;
     this.end = -1;
@@ -350,7 +350,7 @@ class SabrPartProcessor {
       if (p0.type === PART_MEDIA_HEADER) {
         v6 = SabrMediaHeader.decode(p0.data);
         this.decoded.mediaHeaders.push(v6);
-        this.open.set(v6.headerId, new local_0_0 /*OpenMediaAssembly*/(v6));
+        this.open.set(v6.headerId, new OpenMediaAssembly(v6));
       } else if (p0.type !== PART_MEDIA) {
         if (p0.type === PART_MEDIA_END) {
           if (p0.data.length > 0) {

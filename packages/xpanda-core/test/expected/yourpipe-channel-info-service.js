@@ -7,7 +7,6 @@ import { ContentCountry } from "@normalized:N&&&youtube_core/Index&1.0.0";
 import { Localization } from "@normalized:N&&&youtube_core/Index&1.0.0";
 import { fetchBrowsePage } from "@normalized:N&&&youtube_core/Index&1.0.0";
 import i18n from "@ohos:i18n";
-let local_0_0;
 class ChannelDetails {
   constructor(p0, p1) {
     let v3, v4;
@@ -36,12 +35,12 @@ class ChannelProfile {
     this.handle = v9;
   }
 }
-local_0_0 = class panda_jmp0_reserved_anonymous_2 {
+class LocaleContext {
   constructor(p0, p1) {
     this.localization = p0;
     this.contentCountry = p1;
   }
-};
+}
 class ChannelInfoService {
   constructor() {
     this.VIDEOS_TAB_PARAMS = "EgZ2aWRlb3PyBgQKAjoA";
@@ -72,7 +71,7 @@ class ChannelInfoService {
     return new ChannelProfile(v11, v7, this.extractBannerUrl(v17), this.extractAvatarUrl(v17), this.extractSubscriberText(v17), this.extractVideoCountText(v17), this.extractHandle(v17));
   }
   resolveLocale() {
-    return new local_0_0 /*LocaleContext*/(new Localization(i18n.System.getSystemLanguage() || Localization.DEFAULT.getLanguageCode(), "GB"), new ContentCountry("GB"));
+    return new LocaleContext(new Localization(i18n.System.getSystemLanguage() || Localization.DEFAULT.getLanguageCode(), "GB"), new ContentCountry("GB"));
   }
   extractDescription(p0) {
     let v5, v8, v9;

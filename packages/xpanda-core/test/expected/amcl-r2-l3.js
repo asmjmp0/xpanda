@@ -9,7 +9,7 @@ import { k115 } from "@normalized:N&&&commons/Index&1.0.0";
 import { q51 } from "@normalized:N&&&commons/Index&1.0.0";
 import { r115 } from "@normalized:N&&&commons/Index&1.0.0";
 let u189, v189;
-let local_0_1, local_0_2, local_0_3;
+let local_0_1;
 local_0_1 = function (p0, p1, p2, p3) {
   let v1, v2, v3;
   if (p2 === undefined) {
@@ -38,7 +38,7 @@ local_0_1 = function (p0, p1, p2, p3) {
 u189 = function (p0) {
   return h115(p0);
 };
-local_0_2 = class panda_jmp0_reserved_anonymous_0 {
+class a190 {
   constructor() {
     this.sourceIndex = 0;
     this.cursor = undefined;
@@ -51,8 +51,8 @@ local_0_2 = class panda_jmp0_reserved_anonymous_0 {
     this.parser = new r115();
     this.queued = undefined;
   }
-};
-local_0_3 = class panda_jmp0_reserved_anonymous_1 {
+}
+class c190 {
   constructor() {
     this.path = "";
     this.cursor = new a90();
@@ -62,7 +62,7 @@ local_0_3 = class panda_jmp0_reserved_anonymous_1 {
     this.events = [];
     this.characters = 0;
   }
-};
+}
 new RegExp("\\b\\d{2}:\\d{2}:\\d{2}(?:[.,]\\d+)?\\b|\\b(?:TRACE|DEBUG|INFO|WARN|WARNING|ERROR|FATAL)\\b|\\[[DIWEF]\\]|[\\w.$]+(?:Exception|Error)\\b|[\\w$]+\\.java:\\d+", "g");
 class e190 {
   constructor() {
@@ -298,7 +298,7 @@ class e190 {
         this.idleScan = undefined;
       } else {
         this.discardIdle_();
-        v5 = new local_0_2();
+        v5 = new a190();
       }
       v6 = 1024;
       v7 = 16;
@@ -482,7 +482,7 @@ class e190 {
     this.scanKey = "";
     if (this.live === undefined || this.live.path !== p0.path) {
       this.releaseLive_();
-      v6 = new local_0_3();
+      v6 = new c190();
       v6.path = p0.path;
       this.live = v6;
       this.liveBytesRead = 0;

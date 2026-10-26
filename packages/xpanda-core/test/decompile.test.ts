@@ -3366,6 +3366,58 @@ function verifyHx360eAppLogClass(): void {
 }
 
 /**
+ * 回归:registerNamedRoute 页面类的模块级还原(hx360e1.0.2.abc 的 GamePage)。
+ *
+ * 页面类没有模块名赋值(stmodulevar/export 都没有),类槽被两跳搬运后只被
+ * registerNamedRoute 的回调读取:
+ *   { let local_1_0; acc = class <anon> extends ViewPU{...}; local_1_0 = acc; }
+ *   local_0_2 = acc;
+ *   registerNamedRoute(function () { return new local_0_2(undefined, {}); }, ...);
+ * 旧实现里链扫描遇到非赋值语句就放弃,整类停在匿名类 + lexenv 搬运形态。
+ * 现在:
+ *   1. defineClassWithBuffer 用类记录名(`#~@0=#GamePage`)命名类表达式;
+ *   2. 链扫描把只读语句收集为「保留语句」继续向后找模块名赋值;
+ *   3. 没有模块名赋值时退回类表达式自带的名字(树内无其它引用才成立);
+ *   4. 类声明插到最外层块元素之前,保留语句里的槽读取改名为类绑定。
+ * 还原成 `class GamePage extends ViewPU {...}` + `new GamePage(...)`;
+ * 类方法里的 self-ref 槽读取(local_1_0.readMemMb)同步改名为 GamePage。
+ * 整类输出锁定在 expected/hx360e-game-page.js。
+ */
+function verifyHx360eGamePageClass(): void {
+    const abcPath = path.join(__dirname, "resources", "hx360e1.0.2.abc");
+    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
+    const clazz = pandaFile.getAllClasses().find(
+        (c) => c.name.content === "L&entry/src/main/ets/pages/GamePage&;");
+    if (!clazz) throw new Error("hx360e: 未找到 GamePage");
+    const code = new PandaDecompiler().decompileClass(clazz);
+    NodeFactory.parse(code);
+    if (code.includes("created by SimpleAnalysis") || code.includes("decompiler_")) {
+        throw new Error(`GamePage: 反编译降级或残留伪语句\n${code}`);
+    }
+    for (const fragment of [
+        "class GamePage extends ViewPU {",
+        "  static readMemMb() {",
+        "v1 = GamePage.readMemMb();",
+        "registerNamedRoute(function () {",
+        "  return new GamePage(undefined, {});",
+    ]) {
+        if (!code.includes(fragment)) {
+            throw new Error(`GamePage: 缺少 ${JSON.stringify(fragment)}\n${code}`);
+        }
+    }
+    for (const residue of ["local_1_0", "local_0_2 = acc", ".call(acc)", "panda_jmp0_reserved_anonymous"]) {
+        if (code.includes(residue)) {
+            throw new Error(`GamePage: 类定义未还原(残留 ${JSON.stringify(residue)})\n${code}`);
+        }
+    }
+    const expected = fs.readFileSync(
+        path.join(__dirname, "expected", "hx360e-game-page.js"), "utf-8");
+    if (code !== expected) {
+        throw new Error(`GamePage: 输出与快照不一致\n${firstDifference(expected, code)}`);
+    }
+}
+
+/**
  * 回归:字节码 24.0.0.0 的 SOURCE_FILE 类标签 + 登录参数校验的短路链还原。
  *
  * 1. lnga1.2.6.abc 的类带 `PandaClassTag.SOURCE_FILE`(tag 0x07),载荷是 4 字节
@@ -4427,6 +4479,10 @@ async function main(): Promise<void> {
 
     console.log("[test] hx360e 24.0.0.0 class static field init (hx360e1.0.2.abc)");
     verifyHx360eAppLogClass();
+    console.log("    ok");
+
+    console.log("[test] hx360e 24.0.0.0 named-route page class (hx360e1.0.2.abc)");
+    verifyHx360eGamePageClass();
     console.log("    ok");
 
     console.log("[test] simplify sequenced test prefix fold");

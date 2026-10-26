@@ -601,6 +601,8 @@ interface ModuleClassFold {
     aliases: string[];
     /** 要删除的别名赋值语句及其所在列表 */
     chain: Array<{ stmt: TYPE.Statement; list: TYPE.Statement[] }>;
+    /** 链中夹着的只读语句(registerNamedRoute 回调等,读取类槽):保留原位,读取改名 */
+    retained: Array<{ stmt: TYPE.Statement; list: TYPE.Statement[] }>;
     /** 最终模块级绑定名 */
     target: string;
     /** 用类声明替换的目标语句;null 表示直接在 stmt 原位替换 */
@@ -613,6 +615,11 @@ interface ModuleClassFold {
      * 模块作用域);null 时锚点本身就在 program.body,原位替换即可。
      */
     programInsertAfter: TYPE.Node | null;
+    /**
+     * 非 null 时链中有保留语句,类声明插到 program.body 中该语句**之前**(类绑定必须
+     * 在只读语句执行前初始化)。优先级高于 programInsertAfter。
+     */
+    programInsertBefore: TYPE.Node | null;
     /** 校验阶段收集的待删 no-init declarator(别名槽 + 目标模块名的 `let` 声明) */
     declarators: TYPE.VariableDeclarator[];
 }
@@ -727,6 +734,39 @@ function countPlainWrites(stmts: TYPE.Statement[], name: string): number {
     return count;
 }
 
+/**
+ * 语句是否写入 holders 中的任何名字(普通赋值/自增/for-in-of 头/带初始化的声明)。
+ * 用于模块级类折叠的链扫描:写到链上名字的非别名语句说明槽被挪作他用,必须放弃;
+ * 什么都不写的语句(只读,如 registerNamedRoute 回调)可以原位保留。
+ */
+function statementWritesAnyHolder(stmt: TYPE.Statement, holders: Set<string>): boolean {
+    let writes = false;
+    walkNode(stmt, (node) => {
+        if (writes) return false;
+        if (isAssignmentExpression(node) && isIdentifier(node.left)
+            && holders.has(node.left.name)) {
+            writes = true;
+            return false;
+        }
+        if (isUpdateExpression(node) && isIdentifier(node.argument) && holders.has(node.argument.name)) {
+            writes = true;
+            return false;
+        }
+        if ((isForInStatement(node) || isForOfStatement(node)) && isIdentifier(node.left)
+            && holders.has(node.left.name)) {
+            writes = true;
+            return false;
+        }
+        if (isVariableDeclarator(node) && isIdentifier(node.id)
+            && node.init != null && holders.has(node.id.name)) {
+            writes = true;
+            return false;
+        }
+        return true;
+    });
+    return writes;
+}
+
 /** 匹配 `X = class R{}` / 单 declarator `let X = class R{}`;返回 null 表示不是定义点 */
 function matchClassDeclSite(stmt: TYPE.Statement): { classExpr: TYPE.ClassExpression; holder: string } | null {
     if (isExpressionStatement(stmt) && isAssignmentExpression(stmt.expression)
@@ -761,45 +801,87 @@ function buildFold(
         holder: site.holder,
         aliases: [],
         chain: [],
+        retained: [],
         target: "",
         targetStmt: null,
         targetList: null,
         targetOwner: owner,
         programInsertAfter: null,
+        programInsertBefore: null,
         declarators: [],
     };
     if (!isValidBindingName(site.holder)) {
-        // holder 是临时名:沿执行顺序向后收集别名链,直到第一个非临时赋值目标
+        // holder 是临时名:沿执行顺序向后收集别名链,直到第一个非临时赋值目标。
+        // 链中夹着的只读语句(registerNamedRoute 回调等)原位保留、继续向后扫描——
+        // 类槽在它们执行时持有类值,折叠后由类绑定接替;出现任何对链上名字的
+        // 其它写入说明槽被挪作他用,保守放弃。
         const holders = new Set<string>([site.holder]);
         if (site.holder !== "acc") fold.aliases.push(site.holder);
         for (const { stmt, owner: stepOwner } of forwardStatements(contexts, owner, index + 1)) {
             const expression = isExpressionStatement(stmt) ? stmt.expression : null;
-            if (!expression || !isAssignmentExpression(expression) || expression.operator !== "="
-                || !isIdentifier(expression.left) || !isIdentifier(expression.right)
-                || !holders.has(expression.right.name)) return null;
-            const left = expression.left;
-            if (holders.has(left.name)) {
+            let aliasLeft: TYPE.Identifier | null = null;
+            if (expression && isAssignmentExpression(expression) && expression.operator === "="
+                && isIdentifier(expression.left) && isIdentifier(expression.right)
+                && holders.has(expression.right.name)) {
+                aliasLeft = expression.left;
+            }
+            if (aliasLeft === null) {
+                if (statementWritesAnyHolder(stmt, holders)) return null;
+                fold.retained.push({ stmt, list: contexts.get(stepOwner)!.list });
+                continue;
+            }
+            if (holders.has(aliasLeft.name)) {
                 // 冗余枢纽恢复(`acc = v1`):链上没有其它读取,一并删除
                 fold.chain.push({ stmt, list: contexts.get(stepOwner)!.list });
                 continue;
             }
-            if (isTempName(left.name) && !left.name.startsWith("panda_jmp0_reserved_")) {
-                holders.add(left.name);
-                fold.aliases.push(left.name);
+            if (isTempName(aliasLeft.name) && !aliasLeft.name.startsWith("panda_jmp0_reserved_")) {
+                holders.add(aliasLeft.name);
+                fold.aliases.push(aliasLeft.name);
                 fold.chain.push({ stmt, list: contexts.get(stepOwner)!.list });
                 continue;
             }
-            if (!isValidBindingName(left.name)) return null;
-            fold.target = left.name;
+            if (!isValidBindingName(aliasLeft.name)) return null;
+            fold.target = aliasLeft.name;
             fold.targetStmt = stmt;
             fold.targetList = contexts.get(stepOwner)!.list;
             fold.targetOwner = stepOwner;
             break;
         }
-        if (!fold.target) return null;
+        if (!fold.target) {
+            // 链止于只读语句/程序末尾,没有模块名赋值(registerNamedRoute 注册的
+            // 页面类):退回类表达式自带的名字——defineClassWithBuffer 已用类记录名
+            // (`#~@0=#GamePage`)命名,该名字在整棵树内必须没有其它出现。
+            const id = site.classExpr.id;
+            if (!id || !isIdentifier(id) || !isValidBindingName(id.name)) return null;
+            if (scanNameUsage(program, id.name, fold.stmt).total > 0) return null;
+            fold.target = id.name;
+        }
     } else {
         // holder 本身就是模块级绑定名(`Name = class R{}` / `let Name = class R{}`):原位替换
         fold.target = site.holder;
+    }
+    if (fold.retained.length > 0) {
+        // 链中有保留语句:类绑定必须在它们执行前初始化,类声明插到 program.body 的
+        // 最外层块元素之前(owner === program 时即定义语句原位,求值位置不变,无需
+        // 限制)。块内定义之前同层只允许无初始化声明/空语句,避免类头(extends)
+        // 提前求值重排副作用。
+        if (owner !== program) {
+            for (let j = 0; j < index; j++) {
+                const pre = ctx.list[j];
+                if (isEmptyStatement(pre)) continue;
+                if (isVariableDeclaration(pre) && pre.declarations.every((d) => d.init == null)) continue;
+                return null;
+            }
+        }
+        let anchorNode: TYPE.Node = owner;
+        let cur = contexts.get(anchorNode)!;
+        while (cur.parent && cur.parent.owner !== program) {
+            anchorNode = cur.parent.owner;
+            cur = contexts.get(anchorNode)!;
+        }
+        fold.programInsertBefore = owner === program ? fold.stmt : anchorNode;
+        return validateFold(program, fold) ? fold : null;
     }
     // 类声明必须落到模块作用域(program.body)。锚点在块内时沿块链向上攀升:
     // 每一层「锚点之后」的语句只允许是本折叠的链上语句(它们会被删除,等效于
@@ -824,6 +906,17 @@ function buildFold(
     return validateFold(program, fold) ? fold : null;
 }
 
+function countNameRefsOutside(node: TYPE.Node, name: string, exclude: Set<TYPE.Node>): number {
+    let count = 0;
+    walkNode(node, (n) => {
+        // 排除集合整体跳过(语句/declarator 一起排除,子孙不再进入)
+        if (exclude.has(n)) return false;
+        if (isIdentifier(n) && n.name === name) count++;
+        return true;
+    });
+    return count;
+}
+
 function validateFold(program: TYPE.Program, fold: ModuleClassFold): boolean {
     const chainStmts = fold.chain.map((c) => c.stmt);
     // 目标名:至多一个 no-init `let` 声明(折叠后删掉),不得与 import/参数/标签等绑定冲突;
@@ -840,9 +933,25 @@ function validateFold(program: TYPE.Program, fold: ModuleClassFold): boolean {
         if (usage.writes !== countPlainWrites(chainStmts, alias)) return false;
         fold.declarators.push(...usage.declaratorsNoInit);
     }
-    // 编译器生成的类名(匿名/保留名):类体之外的引用无法随之改名,保守放弃
+    // 编译器保留类名(panda_jmp0_reserved_*):类体之外的引用含义不明,无法随之改名,
+    // 保守放弃。真实类名(来自类记录 `#~@0=#Name`)的类体之外引用都是模块绑定的
+    // 合法引用,类表达式的 id 改名/落点调整不影响它们。
     const classId = fold.classExpr.id;
-    if (classId && isIdentifier(classId) && scanNameUsage(program, classId.name, fold.stmt).total > 0) return false;
+    if (classId && isIdentifier(classId) && classId.name !== fold.target
+        && classId.name.startsWith("panda_jmp0_reserved_")
+        && scanNameUsage(program, classId.name, fold.stmt).total > 0) return false;
+    // 别名槽读取核算:类体(定义语句)、链上赋值、目标赋值(会被类声明替换)、
+    // 保留语句、待删声明之外不允许还有别名引用——否则删除声明后这些引用变成
+    // 悬空标识符,保守放弃。
+    // (折叠后保留语句里的读取会被改名为类绑定,已计入排除集合。)
+    const exclude = new Set<TYPE.Node>(chainStmts);
+    exclude.add(fold.stmt);
+    if (fold.targetStmt) exclude.add(fold.targetStmt);
+    for (const r of fold.retained) exclude.add(r.stmt);
+    for (const d of fold.declarators) exclude.add(d);
+    for (const alias of fold.aliases) {
+        if (countNameRefsOutside(program, alias, exclude) > 0) return false;
+    }
     return true;
 }
 
@@ -929,7 +1038,16 @@ function applyFold(program: TYPE.Program, contexts: Map<TYPE.Node, StatementList
     const reservedIdName = classExpr.id && isIdentifier(classExpr.id) ? classExpr.id.name : null;
     classExpr.id = identifier(fold.target);
     const classDecl = classDeclaration(classExpr.id, classExpr.superClass, classExpr.body, classExpr.decorators);
-    if (fold.programInsertAfter) {
+    if (fold.programInsertBefore) {
+        // 链中有保留语句:定义/别名链/目标赋值全部删除,类声明插到锚点之前
+        // (类绑定在保留语句执行前初始化;先取锚点下标再删,防止锚点自身被删)
+        const insertIdx = program.body.indexOf(fold.programInsertBefore as TYPE.Statement);
+        removeFromList(fold.list, fold.stmt);
+        for (const c of fold.chain) removeFromList(c.list, c.stmt);
+        if (fold.targetStmt && fold.targetList) removeFromList(fold.targetList, fold.targetStmt);
+        if (insertIdx >= 0) program.body.splice(insertIdx, 0, classDecl);
+        else program.body.push(classDecl);
+    } else if (fold.programInsertAfter) {
         // 锚点在块内:定义语句/别名链/目标赋值全部删除,类声明插到 program.body
         // 的最外层块元素之后(类绑定必须落在模块作用域,求值顺序不变)
         removeFromList(fold.list, fold.stmt);
@@ -974,4 +1092,10 @@ function applyFold(program: TYPE.Program, contexts: Map<TYPE.Node, StatementList
     // 类体内部对旧类名/别名槽的引用改成类名绑定
     if (reservedIdName) replaceNameRefs(classExpr, reservedIdName, classExpr.id as TYPE.Identifier);
     for (const alias of fold.aliases) replaceNameRefs(classExpr, alias, classExpr.id as TYPE.Identifier);
+    // 保留语句(registerNamedRoute 回调等)里的链名读取同样改名为类绑定:
+    // 它们执行时链名持有类值,折叠后由类声明接替
+    for (const r of fold.retained) {
+        if (reservedIdName) replaceNameRefs(r.stmt, reservedIdName, classExpr.id as TYPE.Identifier);
+        for (const alias of fold.aliases) replaceNameRefs(r.stmt, alias, classExpr.id as TYPE.Identifier);
+    }
 }

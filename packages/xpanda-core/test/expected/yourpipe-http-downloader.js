@@ -9,7 +9,7 @@ import deviceInfo from "@ohos:deviceInfo";
 import http from "@ohos:net.http";
 let HttpAbortToken, HttpError, HttpErrorType;
 let acc;
-let local_0_0, local_0_1, local_0_2, local_0_3, local_0_4, local_0_5;
+let local_0_0, local_0_1, local_0_2, local_0_3;
 HttpErrorType = undefined;
 local_0_0 = function (p0) {
   let v4, v5, v6, v7, v8;
@@ -39,7 +39,7 @@ local_0_1 = function (p0) {
 };
 local_0_3 = YTCoreLogger.getInstance("HttpDownloader");
 local_0_2 = ["cookie", "authorization"];
-local_0_4 = class panda_jmp0_reserved_anonymous_0 {
+class RedirectAuthStripInterceptor {
   constructor() {
     this.interceptorType = http.InterceptorType.REDIRECTION;
   }
@@ -67,8 +67,8 @@ local_0_4 = class panda_jmp0_reserved_anonymous_0 {
     }
     return Promise.resolve(true);
   }
-};
-local_0_5 = class panda_jmp0_reserved_anonymous_1 {
+}
+class FinalResponseHookInterceptor {
   constructor(p0) {
     this.interceptorType = http.InterceptorType.FINAL_RESPONSE;
     this.hook = p0;
@@ -77,10 +77,10 @@ local_0_5 = class panda_jmp0_reserved_anonymous_1 {
     this.hook(p1);
     return Promise.resolve(true);
   }
-};
+}
 let local_1_0;
 {
-  acc = class panda_jmp0_reserved_anonymous_2 extends Error {
+  acc = class HttpError extends Error {
     constructor(p0, p1, p2, p3, p4, p5, p6) {
       let v2, v10;
       v2 = super(p0);
@@ -215,7 +215,7 @@ let local_1_0;
   };
   local_1_0 = acc;
   HttpError = acc;
-  HttpAbortToken = class panda_jmp0_reserved_anonymous_3 {
+  HttpAbortToken = class HttpAbortToken {
     constructor() {
       this.aborted = false;
     }
@@ -281,7 +281,7 @@ class HttpDownloader {
           v16 = false;
           try {
             v19 = new http.HttpInterceptorChain();
-            v19.addChain([new local_0_4 /*RedirectAuthStripInterceptor*/(), new local_0_5 /*FinalResponseHookInterceptor*/(function (p0) {
+            v19.addChain([new RedirectAuthStripInterceptor(), new FinalResponseHookInterceptor(function (p0) {
               HttpDownloader.notifySetCookie(p0, local_2_0);
             })]);
             v16 = v19.apply(local_3_0 /*request*/);

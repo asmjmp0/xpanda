@@ -738,7 +738,7 @@ class n1268 {
   }
 }
 local_0_1 = [17, 21, 25];
-local_0_6 = class panda_jmp0_reserved_anonymous_2 {
+local_0_6 = class p1268 {
   constructor() {
     this.entries = 0;
     this.bytes = 0;

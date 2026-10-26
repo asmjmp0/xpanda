@@ -15,6 +15,7 @@ import {
     stripFinallyMarkers,
 } from "./TryFinally";
 import { PandaDecompileException } from "../PandaParseException";
+import { isTempName } from "../simplify/AstUtils";
 import { ENTRY_FUNCTION_MAIN } from "../file/PandaFile";
 import type { PandaMethod } from "../file/method/PandaMethod";
 import { PandaString } from "../file/desc/PandaString";
@@ -344,7 +345,15 @@ const HANDLES: Record<string, Handle> = {
         const codeGenerator = mh.getCodeGenerator();
         const factory = codeGenerator.getNodeFactory();
         let className = ins.constructorMethod!.name.content;
-        if (className.startsWith("#")) {
+        // 类构造器记录名 `#~@0=#GamePage`:最后一个 '#' 之后是源码类名,直接用作
+        // 类表达式名——模块级类折叠、静态初始化、registerNamedRoute 这类"没有模块名
+        // 赋值、只靠闭包读 lexenv 槽"的页面类都需要这个可读名字。取不到合法标识符
+        // (含 acc/vN/local_* 等临时名)时退回保留名。
+        const sharp = className.lastIndexOf("#");
+        const sourceName = sharp >= 0 ? className.slice(sharp + 1) : "";
+        if (sourceName.length > 0 && /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(sourceName) && !isTempName(sourceName)) {
+            className = sourceName;
+        } else if (className.startsWith("#")) {
             className = "panda_jmp0_reserved_anonymous_" + mh.getNextID();
         } else {
             className = "panda_jmp0_reserved_class_" + mh.getNextID();
