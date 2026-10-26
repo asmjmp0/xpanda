@@ -6,7 +6,7 @@
 import { contentIdentityKey } from "@normalized:N&&&data/src/main/ets/data/BlockingRuleStore&1.0.0";
 import relationalStore from "@ohos:data.relationalStore";
 let local_0_0 = "content_filter_views";
-class ContentFilterRuntimeStore {
+export class ContentFilterRuntimeStore {
   constructor(p0, p1) {
     this.mutationQueue = Promise.resolve();
     this.database = p0;
@@ -150,4 +150,3 @@ class ContentFilterRuntimeStore {
     return v10;
   }
 }
-export { ContentFilterRuntimeStore };

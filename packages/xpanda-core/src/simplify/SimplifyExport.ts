@@ -160,5 +160,8 @@ export class SimplifyExport {
         // 赋值语句是复制传播、模块类定义折叠(`local_1_0 = acc` 别名链)、静态初始化
         // 接收链回溯等 pass 的输入形态,提前合并会打断它们。
         TempVariableSimplify.mergeDeclarationInitializers(node);
+        // 导出还原:模块级类折叠之后,顶层 `export { Name };` 合并进对应的
+        // `class Name {}` 声明,输出 `export class Name {}`(改名/非类导出保留原语句)。
+        ClassSyntaxSimplify.foldExportDeclarations(node);
     }
 }

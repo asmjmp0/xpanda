@@ -10,7 +10,7 @@ import { VideoItem } from "@normalized:N&&&youtube_core/Index&1.0.0";
 import { getMusicContinuationToken } from "@normalized:N&&&entry/src/main/ets/features/home/utils/ContinuationUtils&";
 import { getTextFromRuns } from "@normalized:N&&&entry/src/main/ets/features/home/utils/TextUtils&";
 import { getThumbnailUrlFromThumbnailObject } from "@normalized:N&&&entry/src/main/ets/features/home/utils/ThumbnailUtils&";
-class MusicSearchService {
+export class MusicSearchService {
   constructor() {}
   static isMusicSearch(p0) {
     let v5 = p0 && p0.length > 0;
@@ -155,4 +155,3 @@ class MusicSearchService {
     return getThumbnailUrlFromThumbnailObject(v5?.thumbnail);
   }
 }
-export { MusicSearchService };

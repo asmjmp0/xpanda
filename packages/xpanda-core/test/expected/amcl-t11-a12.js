@@ -715,13 +715,13 @@ local_0_8 = function (p0) {
 local_0_0 = q36.MOD_FORGE_INSTALLER;
 local_0_11 = f32 + "/mc/game/version_manifest_v2.json";
 local_0_10 = e32 + "/mc/game/version_manifest_v2.json";
-class m1268 {
+export class m1268 {
   constructor() {
     this.sha1 = "";
     this.sourceIndex = -1;
   }
 }
-class n1268 {
+export class n1268 {
   constructor(p0, p1, p2) {
     if (p2 === undefined) {
       p2 = "";
@@ -749,8 +749,6 @@ export { d1268 };
 export { e1268 };
 export { e771 };
 export { f1268 };
-export { m1268 };
-export { n1268 };
 export { r1267 };
 export { s1267 };
 export { t1267 };

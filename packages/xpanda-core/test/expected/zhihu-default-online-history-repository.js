@@ -139,7 +139,7 @@ OnlineHistoryRepositoryFailureKind = {
   INVALID_CONTENT_KEY: "invalid_content_key",
   CANCELLED: "cancelled"
 };
-class OnlineHistoryRepositoryFailure extends Error {
+export class OnlineHistoryRepositoryFailure extends Error {
   constructor(p0) {
     let v0 = "在线历史请求已取消";
     switch (p0) {
@@ -159,7 +159,7 @@ class OnlineHistoryRepositoryFailure extends Error {
     return v0;
   }
 }
-class DefaultOnlineHistoryRepository {
+export class DefaultOnlineHistoryRepository {
   constructor(p0, p1) {
     this.requestedCursors = new Set();
     this.deliveredIdentities = new Set();
@@ -315,12 +315,10 @@ class DefaultOnlineHistoryRepository {
     throw new OnlineHistoryRepositoryFailure(OnlineHistoryRepositoryFailureKind.CANCELLED);
   }
 }
-export { DefaultOnlineHistoryRepository };
 export { ONLINE_HISTORY_BASE_URL };
 export { ONLINE_HISTORY_BATCH_DEL_URL };
 export { ONLINE_HISTORY_LIMIT };
 export { ONLINE_HISTORY_MAX_OFFSET };
-export { OnlineHistoryRepositoryFailure };
 export { OnlineHistoryRepositoryFailureKind };
 export { buildBatchDelBody };
 export { buildOnlineHistoryUrl };

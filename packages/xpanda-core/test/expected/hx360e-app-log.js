@@ -10,7 +10,7 @@ let acc;
 let local_0_0 = 0;
 let local_0_1 = "HX360E";
 let local_0_2 = 2 * 1024 * 1024;
-class AppLog {
+export class AppLog {
   static dir = "";
   static file = "";
   static prevFile = "";
@@ -83,4 +83,3 @@ class AppLog {
     return;
   }
 }
-export { AppLog };

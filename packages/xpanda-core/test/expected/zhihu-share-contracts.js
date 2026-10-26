@@ -257,7 +257,7 @@ ShareOutcome = {
   OPENED: "opened",
   CANCELLED: "cancelled"
 };
-class ShareFailure extends Error {
+export class ShareFailure extends Error {
   constructor(p0) {
     let v0 = super(local_0_0(p0));
     v0.name = "ShareFailure";
@@ -272,7 +272,6 @@ export { SHARE_PANEL_GRACE_MILLIS };
 export { SHARE_TEMPORARY_DIRECTORY };
 export { SHARE_TEMPORARY_MAX_AGE_MILLIS };
 export { ShareDispatchKind };
-export { ShareFailure };
 export { ShareFailureKind };
 export { ShareImageSourceKind };
 export { ShareOutcome };

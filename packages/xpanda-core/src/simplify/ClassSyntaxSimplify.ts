@@ -12,12 +12,16 @@ const {
     classProperty,
     file,
     identifier,
+    exportNamedDeclaration,
     isEmptyStatement,
     isAssignmentExpression,
     isBlockStatement,
+    isClassDeclaration,
     isClassExpression,
     isClassMethod,
     isClassProperty,
+    isExportNamedDeclaration,
+    isExportSpecifier,
     isExpressionStatement,
     isForInStatement,
     isForOfStatement,
@@ -560,6 +564,60 @@ export class ClassSyntaxSimplify implements ISimplify {
                 if (folded) break;
             }
             if (!folded) break;
+        }
+        return changed;
+    }
+
+    /**
+     * 把模块顶层的 `export { Name };`(decompileRaw 按字节码导出表原样输出的语句)
+     * 合并进顶层的 `class Name {}` 声明,输出 `export class Name {}`。
+     *
+     * `export { X }` 只是给绑定打导出标记,不在运行时求值,把它挪到类声明上
+     * 不改变任何求值顺序。约束:
+     *   - 只折 local 名与导出名相同的 specifier(`export { X as Y }` 无法内联进
+     *     类声明,连同非类导出一起保留在原语句里,只有全部折完才删除该语句);
+     *   - 类声明必须就在 program.body 顶层(export 只能出现在模块作用域);
+     *   - 每个类只合并一次。
+     *
+     * 必须放在 foldModuleClassDeclarations 之后:它的 scanNameUsage 把 export
+     * specifier 计作模块名的合法引用,提前删掉会让模块级类折叠放弃。
+     */
+    public static foldExportDeclarations(program: Program): boolean {
+        const topLevelClasses = new Map<string, TYPE.ClassDeclaration>();
+        for (const stmt of program.body) {
+            if (isClassDeclaration(stmt) && stmt.id) topLevelClasses.set(stmt.id.name, stmt);
+        }
+        if (topLevelClasses.size === 0) return false;
+        let changed = false;
+        // 倒序遍历(可能整条删除 export 语句);类声明的包装是原地替换,不受影响
+        for (let i = program.body.length - 1; i >= 0; i--) {
+            const stmt = program.body[i];
+            // source 非空是 re-export(`export { X } from "path"`),没有本地绑定;declaration 非空说明已内联
+            if (!isExportNamedDeclaration(stmt) || stmt.source || stmt.declaration) continue;
+            if (stmt.specifiers.length === 0) continue;
+            const folded: TYPE.ClassDeclaration[] = [];
+            const keptSpecifiers: TYPE.ExportNamedDeclaration["specifiers"] = [];
+            for (const spec of stmt.specifiers) {
+                const name = isExportSpecifier(spec) && isIdentifier(spec.local)
+                    && isIdentifier(spec.exported) && spec.local.name === spec.exported.name
+                    ? spec.local.name : null;
+                const clazz = name !== null ? topLevelClasses.get(name) : undefined;
+                if (clazz) {
+                    folded.push(clazz);
+                    topLevelClasses.delete(name!);
+                } else {
+                    keptSpecifiers.push(spec);
+                }
+            }
+            if (folded.length === 0) continue;
+            for (const clazz of folded) {
+                const index = program.body.indexOf(clazz);
+                if (index < 0) continue; // 防御:同一绑定重复导出时只折第一次
+                program.body[index] = exportNamedDeclaration(clazz, [], null);
+            }
+            if (keptSpecifiers.length === 0) program.body.splice(i, 1);
+            else stmt.specifiers = keptSpecifiers;
+            changed = true;
         }
         return changed;
     }

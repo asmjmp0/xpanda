@@ -63,7 +63,7 @@ class c190 {
   }
 }
 new RegExp("\\b\\d{2}:\\d{2}:\\d{2}(?:[.,]\\d+)?\\b|\\b(?:TRACE|DEBUG|INFO|WARN|WARNING|ERROR|FATAL)\\b|\\[[DIWEF]\\]|[\\w.$]+(?:Exception|Error)\\b|[\\w$]+\\.java:\\d+", "g");
-class e190 {
+export class e190 {
   constructor() {
     this.rows = [];
     this.visible = [];
@@ -978,6 +978,5 @@ class e190 {
     return -1;
   }
 }
-export { e190 };
 export { u189 };
 export { v189 };

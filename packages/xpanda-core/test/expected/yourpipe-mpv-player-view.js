@@ -16,7 +16,7 @@ VideoFit = {
   Fill: 2,
   2: "Fill"
 };
-class MpvPlayerView extends ViewPU {
+export class MpvPlayerView extends ViewPU {
   constructor(p0, p1, p2, p3, p4, p5) {
     let v6 = p3 === undefined ? -1 : p3;
     let v7 = p4 === undefined ? undefined : p4;
@@ -224,5 +224,4 @@ class MpvPlayerView extends ViewPU {
     this.updateDirtyElements();
   }
 }
-export { MpvPlayerView };
 export { VideoFit };

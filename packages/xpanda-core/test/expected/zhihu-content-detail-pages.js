@@ -8360,7 +8360,7 @@ class ContentDetailPage extends ViewPU {
     this.updateDirtyElements();
   }
 }
-class QuestionDetailPage extends ViewPU {
+export class QuestionDetailPage extends ViewPU {
   constructor(p0, p1, p2, p3, p4, p5) {
     let v0;
     if (p3 === undefined) {
@@ -8512,7 +8512,7 @@ class QuestionDetailPage extends ViewPU {
     this.updateDirtyElements();
   }
 }
-class AnswerDetailPage extends ViewPU {
+export class AnswerDetailPage extends ViewPU {
   constructor(p0, p1, p2, p3, p4, p5) {
     let v0;
     if (p3 === undefined) {
@@ -8664,7 +8664,7 @@ class AnswerDetailPage extends ViewPU {
     this.updateDirtyElements();
   }
 }
-class ArticleDetailPage extends ViewPU {
+export class ArticleDetailPage extends ViewPU {
   constructor(p0, p1, p2, p3, p4, p5) {
     let v0;
     if (p3 === undefined) {
@@ -8813,9 +8813,6 @@ local_0_3 = 300;
 local_0_6 = 46;
 local_0_7 = 80;
 local_0_5 = 1.2;
-export { AnswerDetailPage };
-export { ArticleDetailPage };
-export { QuestionDetailPage };
 export { contentAuthorAvatarUrl };
 export { contentAuthorBadge };
 export { contentAuthorHeadline };

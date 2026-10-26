@@ -15,12 +15,12 @@ QueueSourceType = {
   LOCAL: "local",
   ADHOC: "adhoc"
 };
-class QueueChangeListener {
+export class QueueChangeListener {
   constructor() {}
   onQueueChanged() {}
   onCurrentIndexChanged(p0) {}
 }
-class PlayQueueManager {
+export class PlayQueueManager {
   static instance = undefined;
   constructor() {
     this.queue = [];
@@ -533,6 +533,4 @@ class PlayQueueManager {
     return;
   }
 }
-export { PlayQueueManager };
-export { QueueChangeListener };
 export { QueueSourceType };

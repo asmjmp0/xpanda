@@ -10,7 +10,7 @@ import util from "@ohos:util";
 let acc;
 let local_0_0 = 0;
 let local_0_1 = "HX360E";
-class LogExport {
+export class LogExport {
   constructor() {}
   static readLogTail(p0, p1) {
     let v1 /*hilog*/, v5, v6 /*fs*/, v7, v8 /*util*/, v10, v11, v12, v13, v14, v18, acc;
@@ -72,4 +72,3 @@ class LogExport {
     }
   }
 }
-export { LogExport };

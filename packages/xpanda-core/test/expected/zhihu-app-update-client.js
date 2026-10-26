@@ -34,7 +34,7 @@ local_0_4 = 10000;
 local_0_0 = 10 * 60 * 1000;
 local_0_1 = "zhuoyi233/zhihu-plus-plus-HMOS";
 local_0_5 = 4000;
-class AppUpdateClient {
+export class AppUpdateClient {
   static latestJson = "";
   static latestFetchedAt = 0;
   static releasesJson = "";
@@ -242,6 +242,5 @@ class AppUpdateClient {
     }
   }
 }
-export { AppUpdateClient };
 export { GITHUB_RELEASES_ATOM };
 export { catalogUrlWaves };

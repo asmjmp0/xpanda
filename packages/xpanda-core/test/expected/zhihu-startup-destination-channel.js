@@ -95,7 +95,7 @@ let toAppDestination = function (p0) {
       return;
   }
 };
-class LatestOperationGuard {
+export class LatestOperationGuard {
   constructor() {
     this.generation = 0;
   }
@@ -110,7 +110,7 @@ class LatestOperationGuard {
     return p0 === this.generation;
   }
 }
-class StartupDestinationChannel {
+export class StartupDestinationChannel {
   constructor() {
     this.listeners = [];
     this.pending = undefined;
@@ -156,8 +156,6 @@ class StartupDestinationChannel {
   }
 }
 startupDestinationChannel = new StartupDestinationChannel();
-export { LatestOperationGuard };
-export { StartupDestinationChannel };
 export { appDestinationIdentity };
 export { findAppDestinationStackIndex };
 export { shouldPushAppDestination };

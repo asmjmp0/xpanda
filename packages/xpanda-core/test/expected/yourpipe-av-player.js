@@ -77,7 +77,7 @@ local_0_3 = {
   SLIDER: "slider",
   MENU: "menu"
 };
-class VideoPlayer extends ViewPU {
+export class VideoPlayer extends ViewPU {
   constructor(p0, p1, p2, p3, p4, p5) {
     let v6, v7;
     let local_1_0 = this;
@@ -4749,4 +4749,3 @@ local_0_0 = class KeepScreenOnStateListener {
     this.owner._onKeepScreenStateChanged(p1);
   }
 };
-export { VideoPlayer };

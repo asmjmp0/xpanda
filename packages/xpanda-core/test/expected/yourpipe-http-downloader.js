@@ -242,7 +242,7 @@ let local_1_0;
     UNKNOWN: "UNKNOWN"
   };
 }
-class Request {
+export class Request {
   constructor(p0, p1, p2, p3, p4) {
     this.method = p0;
     this.url = p1;
@@ -251,7 +251,7 @@ class Request {
     this.localization = p4;
   }
 }
-class HttpDownloader {
+export class HttpDownloader {
   static MAX_RETRIES = 3;
   static RETRY_DELAY = 1000;
   static setCookieObserver = undefined;
@@ -754,7 +754,5 @@ class HttpDownloader {
   }
 }
 export { HttpAbortToken };
-export { HttpDownloader };
 export { HttpError };
 export { HttpErrorType };
-export { Request };

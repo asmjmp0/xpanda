@@ -7,7 +7,7 @@ import { ContentCountry } from "@normalized:N&&&youtube_core/Index&1.0.0";
 import { Localization } from "@normalized:N&&&youtube_core/Index&1.0.0";
 import { fetchBrowsePage } from "@normalized:N&&&youtube_core/Index&1.0.0";
 import i18n from "@ohos:i18n";
-class ChannelDetails {
+export class ChannelDetails {
   constructor(p0, p1) {
     let v3 = p0 === undefined ? "" : p0;
     let v4 = p1 === undefined ? "" : p1;
@@ -15,7 +15,7 @@ class ChannelDetails {
     this.bannerUrl = v4;
   }
 }
-class ChannelProfile {
+export class ChannelProfile {
   constructor(p0, p1, p2, p3, p4, p5, p6) {
     let v3 = p0 === undefined ? "" : p0;
     let v4 = p1 === undefined ? "" : p1;
@@ -39,7 +39,7 @@ class LocaleContext {
     this.contentCountry = p1;
   }
 }
-class ChannelInfoService {
+export class ChannelInfoService {
   constructor() {
     this.VIDEOS_TAB_PARAMS = "EgZ2aWRlb3PyBgQKAjoA";
   }
@@ -353,6 +353,3 @@ class ChannelInfoService {
     return typeof p0 === "number" ? p0 : -1;
   }
 }
-export { ChannelDetails };
-export { ChannelInfoService };
-export { ChannelProfile };

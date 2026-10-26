@@ -105,6 +105,15 @@ function runInSandbox(code: string): string[] {
     return runSandbox(code).logs;
 }
 
+/**
+ * 沙箱执行前剥掉模块导出:`export { X };` 整行删除;
+ * `export class/function/const/let/var` 形态只去掉 export 前缀(声明本身要保留)。
+ */
+function stripModuleExports(code: string): string {
+    return code.replace(/^export\s+\{[^}]*\};\s*$/gm, "")
+        .replace(/^export\s+(?=(?:async\s+)?(?:class|function|const|let|var)\b)/gm, "");
+}
+
 function verifyMd5(code: string): void {
     const { logs, sandbox } = runSandbox(code);
     const expected = crypto.createHash("md5").update("admin").digest("hex");
@@ -1651,9 +1660,7 @@ function verifyZhihuDeepLinkResolver(): void {
 
     // 行为校验:去掉 import/export 后在沙箱执行,提供三个被引用模块的桩实现。
     // 顶层 let 不会挂到 globalThis 上,末尾显式收集要校验的绑定。
-    const body = code
-        .replace(/^import\s+.*\n/gm, "")
-        .replace(/^export\s+\{[^}]*\};\s*$/gm, "")
+    const body = stripModuleExports(code.replace(/^import\s+.*\n/gm, ""))
         + "\nglobalThis.__exports = { DeepLinkType, MAX_DEEP_LINK_INPUT_LENGTH, describeDeepLink, extractZhihuLinkFromText, resolveZhihuLink };";
     const sandbox: Record<string, unknown> = {
         isSafeDecimalContentId: (id: unknown): boolean => typeof id === "string" && /^\d+$/.test(id) && id.length > 0,
@@ -1767,7 +1774,7 @@ function verifyZhihuShareContracts(): void {
     }
 
     // 行为校验:去掉 export 后在沙箱执行,直接调用导出的校验函数。
-    const body = code.replace(/^export\s+\{[^}]*\};\s*$/gm, "")
+    const body = stripModuleExports(code)
         + "\nglobalThis.__exports = {"
         + " createTemporaryShareLifecycle, markSharePanelOpened, prepareSharePayload,"
         + " shouldCleanupTemporaryShareFile, ShareFailureKind,"
@@ -2535,8 +2542,7 @@ function verifyYourpipeVttSubtitleParser(): void {
     }
 
     // 行为校验:去掉 export 后在沙箱跑真实解析(含 BOM / CRLF / 实体 / 标签 / 多行字幕)
-    const sandboxCode = code
-        .replace(/^export\s+\{[^}]*\};\s*$/gm, "")
+    const sandboxCode = stripModuleExports(code)
         + "\nglobalThis.__exports = { parseVttSubtitles, findActiveSubtitleText };";
     const { sandbox } = runSandbox(sandboxCode);
     const exported = sandbox.__exports as {
@@ -2618,7 +2624,7 @@ const AppLog = {
 const FeedServiceProvider = {};
 `;
     const sandboxCode = prelude
-        + code.replace(/^import[^\n]*\n/gm, "").replace(/^export\s+\{[^}]*\};\s*$/gm, "")
+        + stripModuleExports(code.replace(/^import[^\n]*\n/gm, ""))
         + "\nglobalThis.__exports = { PlayQueueManager, QueueSourceType };";
     const { sandbox } = runSandbox(sandboxCode);
     const exported = sandbox.__exports as {

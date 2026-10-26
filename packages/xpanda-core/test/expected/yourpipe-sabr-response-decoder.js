@@ -334,7 +334,7 @@ local_0_15 = class FormatByteRange {
     this.end = -1;
   }
 };
-class SabrPartProcessor {
+export class SabrPartProcessor {
   constructor(p0, p1) {
     this.decoded = new SabrDecodedResponse();
     this.open = new Map();
@@ -452,7 +452,6 @@ export { PART_SABR_ERROR };
 export { PART_SABR_REDIRECT };
 export { PART_SABR_SEEK };
 export { PART_STREAM_PROTECTION_STATUS };
-export { SabrPartProcessor };
 export { isRecoverableIntegrityIssues };
 export { requireUmpContentType };
 export { sabrDecodeBody };

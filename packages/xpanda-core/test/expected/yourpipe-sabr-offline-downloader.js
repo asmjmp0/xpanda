@@ -9,7 +9,7 @@ import { SabrProtocolException } from "@normalized:N&&&youtube_core/Index&1.0.0"
 import { SabrTrackBuffer } from "@normalized:N&&&mediaservice/src/main/ets/sabr/SabrTrackBuffer&1.0.0";
 import { sabrSessionStore } from "@normalized:N&&&mediaservice/src/main/ets/sabr/SabrSessionStore&1.0.0";
 let local_0_0 = "[SabrOfflineDownloader]";
-class SabrOfflineDownloader {
+export class SabrOfflineDownloader {
   constructor() {}
   static isSabrStream(p0) {
     return PlayerModel.isSabrStream(p0);
@@ -530,4 +530,3 @@ class SabrOfflineDownloader {
     return Math.min(99, Math.max(2, Math.round((p4 + p5) / (1024 * 1024))));
   }
 }
-export { SabrOfflineDownloader };
