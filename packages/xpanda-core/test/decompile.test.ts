@@ -3470,6 +3470,54 @@ function verifyLngaQrLoginUtils(): void {
 }
 
 /**
+ * 回归:类构造器记录名不带 '#' 前缀的工具链(install1.3.0.abc)的类命名与
+ * 「类声明 + prototype 装载」残留还原(WebChromeClientHostApiImpl)。
+ *
+ * 1. 这批产物的 defineclasswithbuffer 记录名是纯标识符(newWindowWebViewClient /
+ *    NewWebView / WebChromeClientImpl),旧命名逻辑只在 '#' 之后取源码类名,
+ *    无 '#' 时一律退回 panda_jmp0_reserved_class_N。
+ * 2. 源码里声明后未使用的 `class newWindowWebViewClient {}` 编译成
+ *    `defineclasswithbuffer; ldobjbyname prototype` 尾巴(没有 store),定点迭代
+ *    后只剩 `(class {...}).prototype;` 裸语句;foldPrototypeResidueClasses 把它
+ *    原位还原成类声明。落 lexenv 槽的 NewWebView 则由 foldModuleClassDeclarations
+ *    折叠并把闭包里的槽读取改名为类绑定。
+ * 整类输出锁定在 expected/install-web-chrome-client-host-api-impl.js。
+ */
+function verifyInstallWebChromeClientClass(): void {
+    const abcPath = path.join(__dirname, "resources", "install1.3.0.abc");
+    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
+    const clazz = pandaFile.getAllClasses().find((c) =>
+        c.name.content === "Lpkg_modules/.ohpm/webview_flutter_ohos@63rxyovf6soepjs+sja1e6+fkzygj1xf5z4crizkc8u="
+        + "/pkg_modules/webview_flutter_ohos/src/main/ets/io.flutter.plugins/webview_flutter/WebChromeClientHostApiImpl;");
+    if (!clazz) throw new Error("install: 未找到 WebChromeClientHostApiImpl");
+    const code = new PandaDecompiler().decompileClass(clazz);
+    NodeFactory.parse(code);
+    if (code.includes("created by SimpleAnalysis") || code.includes("decompiler_")) {
+        throw new Error(`WebChromeClientHostApiImpl: 反编译降级或残留伪语句\n${code}`);
+    }
+    for (const fragment of [
+        "class newWindowWebViewClient {",
+        "class NewWebView extends ViewPU {",
+        "new NewWebView(local_1_1, {",
+        "export class WebChromeClientHostApiImpl extends WebChromeClientHostApi {",
+    ]) {
+        if (!code.includes(fragment)) {
+            throw new Error(`WebChromeClientHostApiImpl: 缺少 ${JSON.stringify(fragment)}\n${code}`);
+        }
+    }
+    for (const residue of ["panda_jmp0_reserved_class_", ").prototype;", "local_0_1"]) {
+        if (code.includes(residue)) {
+            throw new Error(`WebChromeClientHostApiImpl: 类定义未还原(残留 ${JSON.stringify(residue)})\n${code}`);
+        }
+    }
+    const expected = fs.readFileSync(
+        path.join(__dirname, "expected", "install-web-chrome-client-host-api-impl.js"), "utf-8");
+    if (code !== expected) {
+        throw new Error(`WebChromeClientHostApiImpl: 输出与快照不一致\n${firstDifference(expected, code)}`);
+    }
+}
+
+/**
  * 回归:if 条件尾部多条赋值序列还原成嵌套 if。
  * `if (A && B && (x = 1, y = 2, C))` 中序列只在 A/B 为真时求值,可安全搬进分支体;
  * 有 else 时外层条件为假也必须执行 else,因此不能用同一变换(否则 else 丢失)。
@@ -4479,6 +4527,10 @@ async function main(): Promise<void> {
 
     console.log("[test] lnga SOURCE_FILE + qr login short circuit (lnga1.2.6.abc)");
     verifyLngaQrLoginUtils();
+    console.log("    ok");
+
+    console.log("[test] install '#'-less class record names + prototype residue (install1.3.0.abc)");
+    verifyInstallWebChromeClientClass();
     console.log("    ok");
 
     console.log("[test] hx360e 24.0.0.0 try/catch/finally structure (hx360e1.0.2.abc)");

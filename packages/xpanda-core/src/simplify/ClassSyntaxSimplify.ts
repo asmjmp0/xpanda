@@ -541,6 +541,46 @@ export class ClassSyntaxSimplify implements ISimplify {
     }
 
     /**
+     * 把「类声明 + prototype 装载」的残留裸语句还原成类声明:
+     *
+     *   (class Name { ... }).prototype;   →   class Name { ... }
+     *
+     * ArkTS 把模块级 `class Name {}` 编译成 `defineclasswithbuffer; sta v;
+     * ldobjbyname prototype; lda v; store`,`.prototype` 装载是类声明协议的一部分,
+     * 它的值从来没人读。当类没有落到任何模块变量/词法槽(源码里声明后未使用,或
+     * 声明即导出前的收尾)时,store 不存在,定点迭代清掉 acc 枢纽后只剩上面这条
+     * 裸语句。类表达式的求值(建立绑定、定义方法)就是原类声明的全部副作用,
+     * 原位换成类声明语义等价(类声明同样在原位置求值)。
+     *
+     * 约束:类表达式必须带合法绑定名(defineClassWithBuffer 已用类记录名命名),
+     * 且该名字在整棵树内没有其它出现——转成声明后绑定提升到外层作用域,与既有
+     * 绑定重名会直接 SyntaxError。嵌套块内的语句同样处理(类声明是块级绑定)。
+     */
+    public static foldPrototypeResidueClasses(program: Program): boolean {
+        let changed = false;
+        const visit = (list: TYPE.Statement[]): void => {
+            for (let i = 0; i < list.length; i++) {
+                const stmt = list[i];
+                if (isBlockStatement(stmt)) {
+                    visit(stmt.body);
+                    continue;
+                }
+                const clazz = matchPrototypeResidue(stmt);
+                if (!clazz) continue;
+                if (scanNameUsage(program, (clazz.id as TYPE.Identifier).name, stmt).total > 0) continue;
+                // hole 哨兵父类与 foldModuleClassDeclarations 一并清掉
+                if (clazz.superClass && isIdentifier(clazz.superClass) && clazz.superClass.name === "hole") {
+                    clazz.superClass = null;
+                }
+                list[i] = classDeclaration(clazz.id, clazz.superClass, clazz.body, clazz.decorators);
+                changed = true;
+            }
+        };
+        visit(program.body);
+        return changed;
+    }
+
+    /**
      * 把模块级类定义的寄存器/别名链折叠回 `class Name {}` 声明(见文件尾部的形态说明)。
      * 在管线尾部调用:此时 acc 枢纽、原型装载残留已被定点迭代清干净,定义语句与
      * 目标赋值之间只剩别名搬运语句,链上出现任何其它语句都保守放弃。
@@ -823,6 +863,22 @@ function statementWritesAnyHolder(stmt: TYPE.Statement, holders: Set<string>): b
         return true;
     });
     return writes;
+}
+
+/**
+ * 匹配 `(class Name { ... }).prototype;` 裸语句(foldPrototypeResidueClasses 的形态),
+ * 返回类表达式,返回 null 表示不是该形态。
+ */
+function matchPrototypeResidue(stmt: TYPE.Statement): TYPE.ClassExpression | null {
+    if (!isExpressionStatement(stmt)) return null;
+    const expr: TYPE.Node = stmt.expression;
+    if (!isMemberExpression(expr) && !isOptionalMemberExpression(expr)) return null;
+    if (expr.computed || expr.optional) return null;
+    if (!isIdentifier(expr.property) || expr.property.name !== "prototype") return null;
+    const obj = expr.object;
+    if (!isClassExpression(obj) || !obj.id || !isIdentifier(obj.id)) return null;
+    if (!isValidBindingName(obj.id.name)) return null;
+    return obj;
 }
 
 /** 匹配 `X = class R{}` / 单 declarator `let X = class R{}`;返回 null 表示不是定义点 */

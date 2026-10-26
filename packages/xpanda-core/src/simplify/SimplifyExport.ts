@@ -151,6 +151,10 @@ export class SimplifyExport {
         // 类的 static 字段。这条调用插在类定义与模块名赋值之间,不先折掉,
         // 下面的模块级类定义折叠会因为别名链中断而放弃。
         ClassSyntaxSimplify.foldClassStaticInitializers(node);
+        // 「类声明 + prototype 装载」残留:`(class Name {}).prototype;` 裸语句还原成
+        // 类声明。类没落到任何模块变量/词法槽时 store 不存在,定点迭代清掉 acc 枢纽
+        // 后只剩这条裸语句,模块级类折叠的别名链扫描不会匹配它,先在这里折掉。
+        ClassSyntaxSimplify.foldPrototypeResidueClasses(node);
         // 模块级类定义还原:`acc = class <匿名>{}; local_1_0 = acc; Name = acc;` /
         // `T = class <匿名>{}; Name = T;` / `Name = class <匿名>{};` / `let Name = class <匿名>{};`
         // 统一折叠成 `class Name {}` 声明,类方法里的 lexenv 自引用读取同步改名为 Name。

@@ -348,11 +348,14 @@ const HANDLES: Record<string, Handle> = {
         // 类构造器记录名 `#~@0=#GamePage`:最后一个 '#' 之后是源码类名,直接用作
         // 类表达式名——模块级类折叠、静态初始化、registerNamedRoute 这类"没有模块名
         // 赋值、只靠闭包读 lexenv 槽"的页面类都需要这个可读名字。取不到合法标识符
-        // (含 acc/vN/local_* 等临时名)时退回保留名。
+        // (含 acc/vN/local_* 等临时名)时退回保留名。部分工具链的记录名不带 '#'
+        // 前缀(如 `newWindowWebViewClient`),名字本身是合法标识符时同样直接使用。
         const sharp = className.lastIndexOf("#");
         const sourceName = sharp >= 0 ? className.slice(sharp + 1) : "";
         if (sourceName.length > 0 && /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(sourceName) && !isTempName(sourceName)) {
             className = sourceName;
+        } else if (sharp < 0 && /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(className) && !isTempName(className)) {
+            // 记录名整体就是合法源码标识符:保持原样
         } else if (className.startsWith("#")) {
             className = "panda_jmp0_reserved_anonymous_" + mh.getNextID();
         } else {
