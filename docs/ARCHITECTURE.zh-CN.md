@@ -146,7 +146,7 @@ JavaScript 源码(落盘 / stdout / 编程 API)
 
 ### 7.3 结构化分析(`StructureAnalysis.ts`)—— Region 归约
 
-构造:`RegionGraphBuilder` 把 CFG 转为 Region 图(`RegionType = Linear | Condition | Tail`)。ArkTS 为语言特性合成异常 handler —— **for-in、for-of、async 函数、generator** —— 这些被排除在区域图之外;真实 try 在 try 入口前拼接 `TryCatchHelperRegion`(false 边 → try 体,true 边 → handler;handler 区域获得 `exceptionLandingPad`)。`codeSize === 0` 的 try(空 catch)被跳过。死代码(入度 0 的块)被迭代剪除。
+构造:`RegionGraphBuilder` 把 CFG 转为 Region 图(`RegionType = Linear | Condition | Tail`)。ArkTS 为语言特性合成异常 handler —— **for-in、for-of、async 函数、generator** —— 这些被排除在区域图之外;真实 try 在 try 入口前拼接 `TryCatchHelperRegion`(false 边 → try 体,true 边 → handler;handler 区域获得 `exceptionLandingPad`)。当前 `es2abc` 的 catch 表 `codeSize === 0` 不表示空 catch:13.0.1.0 和 24.0.0.0 上每条 handler 的 `codeSize` 都是 0,能否进入区域图要看 handler 本体。`for-of` / `for-in` / `try` / `async` / generator 的共用 lowering 写在[字节码形态](./BYTECODE_PATTERNS.zh-CN.md)。死代码(入度 0 的块)被迭代剪除。
 
 区域图上的归约循环:
 
@@ -169,7 +169,7 @@ JavaScript 源码(落盘 / stdout / 编程 API)
 
 ### 7.5 try/finally 还原(`TryFinally.ts`)
 
-ArkTS 13 把 `finally` 编译成状态机(hole 哨兵、cleanup 块、重抛守卫)。`buildFinallyPlans` 按**结构特征**识别 —— 不按块大小:try 结束块写入 hole 哨兵并跳到 cleanup;handler 以 `sta` 开始且不立即 throw;稍后某个 hole 比较块带 throw 后继即为守卫。PC 顺序严格校验。角色(start / cleanup / guard / suppress)成为 `__xpanda_finally_marker__` 字符串,由 `MethodHandler` 插入;`applyFinallyPlans` 按三种布局改写(同一语句列表 / 嵌套列表尾部 / try+真 catch 形态)为 `try { … } finally { … }`。无法定位的 plan 留下 `/* xpanda: try/finally not restored */` 注释;标记一律剥离。
+ArkTS 13 把 `finally` 编译成状态机(hole 哨兵、cleanup 块、重抛守卫)。`buildFinallyPlans` 按**结构特征**识别 —— 不按块大小:try 结束块写入 hole 哨兵并跳到 cleanup;handler 以 `sta` 开始且不立即 throw;稍后某个 hole 比较块带 throw 后继即为守卫。PC 顺序严格校验。角色(start / cleanup / guard / suppress)成为 `__xpanda_finally_marker__` 字符串,由 `MethodHandler` 插入;`applyFinallyPlans` 按三种布局改写(同一语句列表 / 嵌套列表尾部 / try+真 catch 形态)为 `try { … } finally { … }`。无法定位的 plan 留下 `/* xpanda: try/finally not restored */` 注释;标记一律剥离。当前 `es2abc` 还会在每个 `return` 前内联一份 `finally`,并在 `hole` 收尾 handler 里再留一份;这个形态,以及 `for-of` 关闭所用的同一份收尾,见[字节码形态](./BYTECODE_PATTERNS.zh-CN.md)。
 
 ### 7.6 图工具
 

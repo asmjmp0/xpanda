@@ -170,5 +170,8 @@ export class SimplifyExport {
         // `export const Name = ...`,`export default` 同样内联(匿名导出槽直接变成
         // `export default <右值>`)。改名列名/条件不满足的定义保留原语句。
         ClassSyntaxSimplify.foldExportDeclarations(node);
+        // 类折叠和死存储清理会删掉模块级 `acc = ...`,声明要再扫一次。
+        // 这次把 acc / vN 也算进去,并忽略已经被替换掉的 binding 路径。
+        TempVariableSimplify.removeUnusedLexicalDeclarations(node, true);
     }
 }

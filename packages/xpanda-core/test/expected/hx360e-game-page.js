@@ -19,7 +19,6 @@ import inputDevice from "@ohos:multimodalInput.inputDevice";
 import router from "@ohos:router";
 import testNapi from "@normalized:Y&&&libentry.so&";
 import window from "@ohos:window";
-let acc;
 let local_0_0, local_0_1;
 if (!("finalizeConstruction" in ViewPU.prototype)) {
   Reflect.set(ViewPU.prototype, "finalizeConstruction", function () {});
@@ -427,10 +426,14 @@ class GamePage extends ViewPU {
     if (!this.showDebug) {
       return;
     }
-    v0 = testNapi.emulator.averageFps();
-    v1 = testNapi.emulator.lastFrameTimeMs();
-    v0 = "FPS " + v0.toFixed(1) + " · " + v1.toFixed(1);
-    this.dbgFps = v0 + "ms";
+    try {
+      v0 = testNapi.emulator.averageFps();
+      v1 = testNapi.emulator.lastFrameTimeMs();
+      v0 = "FPS " + v0.toFixed(1) + " · " + v1.toFixed(1);
+      this.dbgFps = v0 + "ms";
+    } catch (catchAcc) {
+      this.dbgFps = "统计不可用";
+    }
     return;
   }
   rearmPhysicalPad(p0) {
@@ -465,7 +468,9 @@ class GamePage extends ViewPU {
     }
   }
   aboutToDisappear() {
-    inputDevice.off("change", this.deviceWatcher);
+    try {
+      inputDevice.off("change", this.deviceWatcher);
+    } catch (catchAcc) {}
     if (this.quitAfterLeave) {
       this.quitAfterLeave = false;
       setTimeout(function () {
@@ -477,7 +482,9 @@ class GamePage extends ViewPU {
         }
       }, 400);
     }
-    Orientation.portrait(getContext(this));
+    try {
+      Orientation.portrait(getContext(this));
+    } catch (catchAcc) {}
     this.setImmersive(false);
     if (this.debugTimer >= 0) {
       clearInterval(this.debugTimer);
@@ -492,7 +499,9 @@ class GamePage extends ViewPU {
       this.stopBootProbe();
       this.promptTimer = -1;
     }
-    testNapi.emulator.padReleaseAll();
+    try {
+      testNapi.emulator.padReleaseAll();
+    } catch (catchAcc) {}
     this.cancelAllPrompts();
   }
   tryAttach() {
@@ -579,19 +588,26 @@ class GamePage extends ViewPU {
     this.clearPrompt();
   }
   cancelAllPrompts() {
-    testNapi.prompt.keyboardCancelAll();
-    testNapi.prompt.msgboxCancelAll();
-    testNapi.prompt.discCancelAll();
+    try {
+      testNapi.prompt.keyboardCancelAll();
+      testNapi.prompt.msgboxCancelAll();
+      testNapi.prompt.discCancelAll();
+    } catch (catchAcc) {}
     this.clearPrompt();
   }
   startBootProbe() {
     let local_2_1 = this;
     let local_2_0 = 0;
     local_2_1.bootProbeTimer = setInterval(function () {
-      let v1 /*GamePage*/;
+      let v1 /*GamePage*/, v2 /*testNapi*/;
       local_2_0 += 1;
       v1 = GamePage.readMemMb();
-      AppLog.i("probe", "t=" + local_2_0 /*ticks*/ * 200 + "ms rss=" + v1[0] + "MB vm=" + v1[1] + "MB avail=" + v1[2] + "MB frames=" + testNapi.vulkanStatus().frames + "");
+      try {
+        v2 = testNapi.vulkanStatus().frames;
+      } catch (catchAcc) {
+        v2 = -1;
+      }
+      AppLog.i("probe", "t=" + local_2_0 /*ticks*/ * 200 + "ms rss=" + v1[0] + "MB vm=" + v1[1] + "MB avail=" + v1[2] + "MB frames=" + v2 + "");
       if (local_2_0 /*ticks*/ >= 300) {
         local_2_1.stopBootProbe();
       }

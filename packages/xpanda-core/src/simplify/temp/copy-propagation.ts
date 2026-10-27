@@ -34,6 +34,7 @@ import {
     isPureExpression,
     isTempName,
     nodeSize,
+    walkNode,
 } from "../AstUtils";
 import { TempVariablePass } from "./base";
 import { EnvState } from "./env";
@@ -76,6 +77,22 @@ export class CopyPropagation extends TempVariablePass {
             collectMemberWriteTargets(node, members);
         }
         return { names, members };
+    }
+    /**
+     * catch 里 `X = Y` 的 Y。try 写过 Y 时,这次拷贝看到的是异常发生时的 Y,
+     * 不能换成 try 之前的值。
+     */
+    private identifierCopySources(node: TYPE.Node): Set<string> {
+        const names = new Set<string>();
+        walkNode(node, (current) => {
+            if (current !== node && isFunctionLike(current)) return false;
+            if (isAssignmentExpression(current) && current.operator === "="
+                && isIdentifier(current.left) && isIdentifier(current.right)) {
+                names.add(current.right.name);
+            }
+            return true;
+        });
+        return names;
     }
     /** 处理完区域后调用:区域内的写入使外层 env 的缓存失效。 */
     private invalidateRegionWrites(
@@ -179,6 +196,7 @@ export class CopyPropagation extends TempVariablePass {
                 this.processNestedStatement(stmt.body, env, ctx);
                 return;
             case "TryStatement": {
+                const tryBodyWrites = this.collectRegionWrites([stmt.block]);
                 const tryWrites = this.collectRegionWrites([stmt.block, stmt.handler?.body]);
                 const writes = {
                     names: new Set(tryWrites.names),
@@ -190,7 +208,19 @@ export class CopyPropagation extends TempVariablePass {
                     for (const target of finalizerWrites.members) writes.members.push(target);
                 }
                 this.processNestedStatement(stmt.block, env.copy(), ctx);
-                if (stmt.handler) this.processNestedStatement(stmt.handler.body, env.copy(), ctx);
+                if (stmt.handler) {
+                    // `v5 = v7` 这种标识符拷贝的右值,如果 try 体写过 v7,不能用
+                    // try 之前的别名。f1268 的 catch 要把打开的 fd 留给 finally
+                    // 的 closeSync;沿用 try 前的日志字符串会把字符串当成 fd。
+                    // 其它读取仍用外层 env:HttpDownloader 的 catch 里 `if (v14)
+                    // v14.destroy()` 是 finally 已经做过的清理,用 try 前的空值
+                    // 折掉,避免和 finally 各销毁一次。
+                    const catchEnv = env.copy();
+                    for (const name of this.identifierCopySources(stmt.handler.body)) {
+                        if (tryBodyWrites.names.has(name)) catchEnv.invalidate(name);
+                    }
+                    this.processNestedStatement(stmt.handler.body, catchEnv, ctx);
+                }
                 if (stmt.finalizer) {
                     // finally 可能在 try 的任意位置(含异常路径)执行,不能沿用 try 之前
                     // 的别名关系:try 里写过的名字在 finally 入口必须视为未知,

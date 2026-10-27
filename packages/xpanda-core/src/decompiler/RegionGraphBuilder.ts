@@ -17,6 +17,8 @@ export class RegionGraphBuilder {
     private readonly lastBlock: PandaIRBasicBlock;
     /** handleEntryBlock -> tryEntryBlock */
     private readonly exceptionHandleBlocks = new Map<PandaIRBasicBlock, PandaIRBasicBlock>();
+    /** tryEntryBlock -> 保护范围结束 pc(不含)。同一入口取更紧的范围。 */
+    private readonly tryBodyEndPC = new Map<PandaIRBasicBlock, number>();
     private isAsyncFunction = false;
     private isGeneratorFunction = false;
 
@@ -62,23 +64,76 @@ export class RegionGraphBuilder {
                 //  - 纯 rethrow 处理器只是 finally 的异常跳板 / 词法环境清理;
                 //  - 经典 finally(正常完成块里写 hole 哨兵再跳到 cleanup)交给
                 //    TryFinally 还原。
+                const commitPC = handleCodeLength === 0
+                    ? this.skippedCommitEnd(handleEntryBlock, tryBlock.startPC + tryCodeLength) : null;
                 if (handleCodeLength === 0) {
                     if (this.isPureRethrowHandler(handleEntryBlock)) continue;
-                    if (finallyStartPCs.has(tryBlock.startPC)) continue;
-                    if (this.isFinallyHandler(handleEntryBlock)) {
+                    // 用户 catch 会把入口 `sta` 保存的异常再读出来(传给日志、读
+                    // .message、再抛)。它和 finally 计划、内层 finally 的 hole
+                    // 可以共用同一个 try 范围,不能因为这些特征被整段丢掉
+                    // (amcl t11/a12 的 f1268 写文件失败、c1268 清单失败)。
+                    const usesException = this.catchUsesException(handleEntryBlock);
+                    const ignoredException = this.isIgnoredExceptionCatch(handleEntryBlock);
+                    // 用户 catch 若每条路径都 return/throw,即使保护范围里有内层
+                    // finally 的 hole,接进图也不会把循环后续代码拆进 catch
+                    // (f1268 写 version.json 失败)。跳回循环头的 catch 是 continue
+                    // (c1268 清单失败),单独注册,不按“回到 try 内”丢掉。
+                    const loopContinue = this.continuesAtLoopHead(
+                        handleEntryBlock, tryBlock.startPC, tryBlock.startPC + tryBlock.length);
+                    const exitingCatch = (usesException || ignoredException || commitPC !== null)
+                        && this.handlerExits(handleEntryBlock, tryBlock.startPC, tryBlock.startPC + tryBlock.length);
+                    if (finallyStartPCs.has(tryBlock.startPC) && !exitingCatch) continue;
+                    if (this.isFinallyHandler(handleEntryBlock) && !usesException) {
                         // 24.0.0.0 把 finally 内联在出口前,异常路径的清理只能靠它的
                         // handler 输出,再由 foldEagerCatchToFinally 还原成 try/finally。
                         // 13.0.1.0 的 handler-based finally 保持旧行为(内联 cleanup)。
                         if (!registerFinallyHandlers) continue;
-                    } else {
-                        if (!this.isCatchHandler(handleEntryBlock)) continue;
+                    } else if (this.isCatchHandler(handleEntryBlock) || ignoredException || commitPC !== null) {
                         // 13.0.1.0 的经典 finally 收尾还留在 try 体里(`if (hole == X)
-                        // throw X`)。把外层 catch 接进区域图会把这段重抛卷进 catch,
-                        // 归约结果会膨胀成另一套循环/try 结构,先保持旧行为。
-                        if (!registerFinallyHandlers && this.hasSentinelGuard(tryBlock)) continue;
+                        // throw X`)。回到 try 内的 catch 仍然跳过。
+                        // A catch that warns and jumps back to the loop head (c1268's
+                        // "Failed to get manifest") is a continue, not a rethrow.
+                        // The hole sentinel inside the try belongs to the inlined
+                        // finally of the success path, not to this catch.
+                        if (!registerFinallyHandlers && this.hasSentinelGuard(tryBlock)
+                            && !exitingCatch && !loopContinue) continue;
+                    } else {
+                        continue;
                     }
                 }
                 this.exceptionHandleBlocks.set(handleEntryBlock, tryEntryBlock);
+                // A user catch protects exactly its try-table range. Statements that
+                // start at or after that end must not merge into the try body
+                // (d1268's copyDirRecursive was swallowed by the "no maven" catch).
+                // An await resume dispatch is not a user catch. A try longer than
+                // 1024 bytes usually wraps a loop latch (loadLive); cutting it
+                // stalls region reduction. A range nested inside a much larger try
+                // is also left uncut when it is longer than 64 bytes: cutting
+                // loadEvidence's 95-byte catch pulled the scan loop out and folded
+                // the row array into an empty literal. Shorter inner catches are
+                // still cut, or c763's 30-byte catch swallows the finally
+                // continuation. Pure rethrow / poplexenv handlers get no end.
+                const userCatch = this.catchUsesException(handleEntryBlock)
+                    || this.isIgnoredExceptionCatch(handleEntryBlock)
+                    || this.isCatchHandler(handleEntryBlock)
+                    || commitPC !== null;
+                const nestedWide = this.nestedInMuchLargerTry(tryBlock) && tryCodeLength > 64;
+                const loopContinue = this.continuesAtLoopHead(
+                    handleEntryBlock, tryBlock.startPC, tryBlock.startPC + tryCodeLength);
+                if (userCatch && !nestedWide
+                    && !this.isAsyncResumeHandler(handleEntryBlock)
+                    && ((tryCodeLength <= 1024
+                        && this.handlerExits(handleEntryBlock, tryBlock.startPC, tryBlock.startPC + tryCodeLength))
+                        || loopContinue)) {
+                    // The mov an empty catch jumps over belongs to the success path.
+                    // The protected range has to cover it, or the assignment sits
+                    // after the try and runs on the exception path too.
+                    const endPC = commitPC ?? tryBlock.startPC + tryCodeLength;
+                    const previousEnd = this.tryBodyEndPC.get(tryEntryBlock);
+                    if (previousEnd === undefined || endPC < previousEnd) {
+                        this.tryBodyEndPC.set(tryEntryBlock, endPC);
+                    }
+                }
             }
         }
     }
@@ -200,6 +255,8 @@ export class RegionGraphBuilder {
                 }
                 if (!this.isReachableRegion(entryRegion, tryEntryRegion)) continue;
                 const tryCatchRegion = new TryCatchHelperRegion(tryEntryRegion, handleEntryRegion);
+                const endPC = this.tryBodyEndPC.get(tryEntry);
+                if (endPC !== undefined) tryEntryRegion.tryBodyEndPC = endPC;
                 this.regionGraph.addNode(tryCatchRegion);
                 for (const predecessor of this.regionGraph.predecessors(tryEntryRegion).slice()) {
                     const value = this.regionGraph.edgeValueOrThrow(predecessor, tryEntryRegion);
@@ -213,6 +270,8 @@ export class RegionGraphBuilder {
             }
         }
         for (const handleEntry of pending.keys()) this.exceptionHandleBlocks.delete(handleEntry);
+
+        this.wireEmptyJoinCatches(entryRegion);
 
         // 只经由被跳过的异常处理器才能到达的块在正常控制流里是不可达的:
         // ArkTS 13 的 finally handler 带 codeSize === 0(RegionGraphBuilder 跳过),
@@ -232,7 +291,6 @@ export class RegionGraphBuilder {
                 this.pandaIRCFG.getPandaMethod().name.content + " unreachable exception handler regions");
         }
         for (const region of unreachableRegions) this.regionGraph.removeNode(region);
-
         return { regionGraph: this.regionGraph, entryRegion: this.btor.get(this.entryBlock)! };
     }
 
@@ -316,10 +374,292 @@ export class RegionGraphBuilder {
     }
 
     /**
+     * 入口 `sta vX` 保存的异常随后被使用: `mov dst, vX`,或 `lda vX` 且下一条
+     * 不是 `throw`。`lda vX; throw` 只是重抛,不算用户 catch。
+     */
+    private catchUsesException(block: PandaIRBasicBlock): boolean {
+        const first = block.pandaInstructions[0];
+        if (!first || first.kind !== "store" || !first.destObj) return false;
+        const saved = first.destObj.toString();
+        const instructions = block.pandaInstructions;
+        for (let i = 1; i < instructions.length; i++) {
+            const instruction = instructions[i];
+            const moved = instruction.kind === "mov" && instruction.srcObj?.toString() === saved;
+            const loaded = instruction.kind === "load" && instruction.loadType === "OBJECT"
+                && (instruction as { loadParam?: { toString(): string } }).loadParam?.toString() === saved;
+            if (!moved && !loaded) continue;
+            const next = instructions[i + 1];
+            if (loaded && next && next.kind === "throw") continue;
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Empty catch that skips exactly one success-path `mov` and rejoins.
+     * Returns the continuation pc (the mov belongs to the try), or null.
+     * `try { v0 = 0; v1 = stat() } jmp; mov v0, v1; formula` with handler
+     * `jmp formula` is `try { v0 = stat() } catch {} formula` (y1267).
+     */
+    private skippedCommitEnd(entry: PandaIRBasicBlock, tryEnd: number): number | null {
+        if (entry.pandaInstructions.length !== 1 || entry.pandaInstructions[0].kind !== "jumpDirect") return null;
+        const targets = this.graph.successors(entry);
+        if (targets.length !== 1) return null;
+        const continuation = targets[0];
+        if (continuation.getStartPC() < tryEnd) return null;
+        const exit = this.pandaIRCFG.getBasicBlockByPC(tryEnd);
+        if (!exit || exit.pandaInstructions.length !== 1 || exit.getTerminator().kind !== "jumpDirect") return null;
+        const commits = this.graph.successors(exit);
+        if (commits.length !== 1) return null;
+        const commit = commits[0];
+        if (commit.pandaInstructions.length !== 1 || commit.pandaInstructions[0].kind !== "mov") return null;
+        const after = this.graph.successors(commit);
+        if (after.length !== 1 || after[0] !== continuation) return null;
+        return continuation.getStartPC();
+    }
+
+    /**
+     * 忽略异常值的 catch:handler 不以 `sta` 开头。
+     * `ldnull; return`、单条 `mov`(保留默认值),或常量日志后 return。
+     * 单条 `jmp` 默认不接:它常常跳过成功路径上的一条赋值再汇合,盲目接进图
+     * 会把汇合点拆坏。`skippedCommitEnd` 只认「跳过恰好一条 mov」这一种,
+     * 并把那条 mov 留在 try 的成功路径里(y1267 的空 catch)。
+     * 多条 `mov` 是 for-of close 的寄存器倒换,不能接进图。
+     */
+    private isIgnoredExceptionCatch(entry: PandaIRBasicBlock): boolean {
+        const first = entry.pandaInstructions[0];
+        if (!first || first.kind === "store" || first.kind === "throw") return false;
+        if (first.kind === "load" && first.loadType === "HOLE") return false;
+        if (first.kind === "jumpDirect" || first.opcode.name === "jmp") return false;
+        if (first.kind === "mov") {
+            if (entry.pandaInstructions.length === 1) return true;
+            // Spill reloads, then `return ""` / `return null`. The exception
+            // value is unused (readJarMainClass's manifest read).
+            let index = 0;
+            while (index < entry.pandaInstructions.length && entry.pandaInstructions[index].kind === "mov") index++;
+            if (index === 0 || index === entry.pandaInstructions.length) return false;
+            let returns = false;
+            let constant = false;
+            for (const instruction of entry.pandaInstructions.slice(index)) {
+                if (instruction.kind === "throw" || instruction.kind === "call") return false;
+                if (instruction.kind === "return" || instruction.opcode.name === "asyncfunctionresolve") returns = true;
+                if (instruction.kind === "load" && (instruction.loadType === "STRING"
+                    || instruction.loadType === "NULL" || instruction.loadType === "UNDEFINED")) constant = true;
+                if (instruction.opcode.name === "ldnull" || instruction.opcode.name === "ldundefined"
+                    || instruction.opcode.name === "lda.str" || instruction.opcode.name === "ldai") constant = true;
+            }
+            return returns && constant;
+        }
+        if (first.opcode.name === "ldnull") {
+            return entry.pandaInstructions.some((instruction) => instruction.kind === "return");
+        }
+        let sawString = false;
+        let sawReturn = false;
+        let sawThrow = false;
+        const seen = new Set<PandaIRBasicBlock>();
+        const queue: PandaIRBasicBlock[] = [entry];
+        let budget = 6;
+        while (queue.length > 0 && budget-- > 0) {
+            const block = queue.shift()!;
+            if (seen.has(block)) continue;
+            seen.add(block);
+            for (const instruction of block.pandaInstructions) {
+                if (instruction.kind === "throw") sawThrow = true;
+                if (instruction.kind === "return") sawReturn = true;
+                if (instruction.kind === "load" && instruction.loadType === "STRING") sawString = true;
+            }
+            for (const successor of this.graph.successors(block)) queue.push(successor);
+        }
+        return sawString && sawReturn && !sawThrow;
+    }
+
+    /** True when a much larger try of the same method strictly contains this range. */
+    private nestedInMuchLargerTry(tryBlock: { startPC: number; length: number }): boolean {
+        const tries = this.pandaIRCFG.getPandaMethod().methodCode?.pandaMethodTryBlocks;
+        if (!tries) return false;
+        const start = tryBlock.startPC;
+        const end = start + tryBlock.length;
+        for (const other of tries) {
+            if (other === tryBlock || other.length < tryBlock.length * 4) continue;
+            if (other.length - tryBlock.length < 256) continue;
+            const otherStart = other.startPC;
+            const otherEnd = otherStart + other.length;
+            if (otherStart <= start && otherEnd >= end) return true;
+        }
+        return false;
+    }
+
+    /** Await resume dispatch: suspend/resume shows up after the entry block. */
+    private isAsyncResumeHandler(entry: PandaIRBasicBlock): boolean {
+        const seen = new Set<PandaIRBasicBlock>();
+        const queue: PandaIRBasicBlock[] = [entry];
+        let budget = 6;
+        while (queue.length > 0 && budget-- > 0) {
+            const block = queue.shift()!;
+            if (seen.has(block)) continue;
+            seen.add(block);
+            for (const instruction of block.pandaInstructions) {
+                const name = instruction.opcode.name;
+                if (name === "asyncfunctionawaituncaught" || name === "suspendgenerator"
+                    || name === "resumegenerator" || name === "asyncfunctionreject") return true;
+            }
+            for (const successor of this.graph.successors(block)) queue.push(successor);
+        }
+        return false;
+    }
+
+    /**
+     * handler 的每条路径都离开 try 范围(return / throw / 落到范围外)。
+     * 跳回 try 里面的 catch 会改变循环出口,结构化归约会把循环后的代码内联进循环体。
+     */
+    private handlerExits(entry: PandaIRBasicBlock, tryStart: number, tryEnd: number): boolean {
+        const seen = new Set<PandaIRBasicBlock>();
+        const stack: PandaIRBasicBlock[] = [entry];
+        let sawExit = false;
+        while (stack.length > 0) {
+            const block = stack.pop()!;
+            if (seen.has(block)) continue;
+            seen.add(block);
+            if (seen.size > 16) return false;
+            const terminator = block.getTerminator();
+            if (terminator.kind === "return" || terminator.kind === "throw") {
+                sawExit = true;
+                continue;
+            }
+            const successors = this.graph.successors(block);
+            if (successors.length === 0) {
+                sawExit = true;
+                continue;
+            }
+            for (const successor of successors) {
+                const pc = successor.getStartPC();
+                if (pc >= tryStart && pc < tryEnd) return false;
+                stack.push(successor);
+            }
+        }
+        return sawExit;
+    }
+
+    /**
+     * Catch body does real work, then jumps to a loop head that sits before the
+     * try and is the target of a back edge from inside the try. That edge is the
+     * source `continue` (`for (mUrl of urls) { try { ... } catch { warn } }`).
+     * Re-entering the try before that head is a different shape and stays out.
+     */
+    private continuesAtLoopHead(entry: PandaIRBasicBlock, tryStart: number, tryEnd: number): boolean {
+        if (!this.isCatchHandler(entry)) return false;
+        const heads = new Set<PandaIRBasicBlock>();
+        for (const block of this.pandaIRCFG.pandaIRBasicBlocks) {
+            const pc = block.getStartPC();
+            if (pc < tryStart || pc >= tryEnd) continue;
+            for (const successor of this.graph.successors(block)) {
+                if (successor.getStartPC() < tryStart) heads.add(successor);
+            }
+        }
+        if (heads.size === 0) return false;
+        const seen = new Set<PandaIRBasicBlock>();
+        const stack: PandaIRBasicBlock[] = [entry];
+        while (stack.length > 0) {
+            const block = stack.pop()!;
+            if (seen.has(block)) continue;
+            seen.add(block);
+            if (seen.size > 32) return false;
+            if (block !== entry) {
+                const pc = block.getStartPC();
+                if (pc >= tryStart && pc < tryEnd) return false;
+                if (heads.has(block)) return true;
+            }
+            for (const successor of this.graph.successors(block)) stack.push(successor);
+        }
+        return false;
+    }
+
+    /**
+     * `try { mkdirSync / closeSync } catch {}`: the try is one block, the next
+     * block is a nop `jmp` onto the following statement, and the handler is that
+     * statement (or only the spill reloads the call clobbered, which the success
+     * path skips). Both paths join, so the catch body is the nop jump.
+     * A join that itself throws is a rethrow bridge, not an ignored call.
+     */
+    private wireEmptyJoinCatches(entryRegion: Region): void {
+        const tries = this.pandaIRCFG.getPandaMethod().methodCode?.pandaMethodTryBlocks;
+        if (!tries) return;
+        for (const tryBlock of tries) {
+            if (tryBlock.length === 0 || tryBlock.length > 200) continue;
+            const catchBlock = tryBlock.pandaMethodCatchBlocks[0];
+            if (!catchBlock || catchBlock.codeSize !== 0) continue;
+            const tryEnd = tryBlock.startPC + tryBlock.length;
+            const bridgeBlock = this.pandaIRCFG.getBasicBlockByPC(tryEnd);
+            if (!bridgeBlock || bridgeBlock.pandaInstructions.length !== 1
+                || bridgeBlock.getTerminator().kind !== "jumpDirect") continue;
+            const bridgeSuccs = this.graph.successors(bridgeBlock);
+            if (bridgeSuccs.length !== 1) continue;
+            const joinBlock = bridgeSuccs[0];
+            if (joinBlock.getStartPC() < tryEnd || joinBlock.getTerminator().kind === "throw") continue;
+            const handlerBlock = this.pandaIRCFG.getBasicBlockByPC(catchBlock.handlerPC);
+            if (!handlerBlock) continue;
+            if (handlerBlock !== joinBlock
+                && !this.isSpillRestore(handlerBlock, joinBlock, tryBlock.startPC, tryEnd)) continue;
+            const tryEntryBlock = this.pandaIRCFG.getBasicBlockByPC(tryBlock.startPC);
+            if (!tryEntryBlock) continue;
+            const tryRegion = this.btor.get(tryEntryBlock);
+            const bridgeRegion = this.btor.get(bridgeBlock);
+            const joinRegion = this.btor.get(joinBlock);
+            if (!tryRegion || !bridgeRegion || !joinRegion || tryRegion === entryRegion) continue;
+            if (bridgeRegion.isExceptionLandingPad() || tryRegion.isTryCatchHelperRegion()) continue;
+            if (!this.isReachableRegion(entryRegion, tryRegion)) continue;
+            if (this.regionGraph.outDegree(tryRegion) !== 1
+                || this.regionGraph.successors(tryRegion)[0] !== bridgeRegion) continue;
+            const predecessors = this.regionGraph.predecessors(tryRegion);
+            if (predecessors.length === 0) continue;
+            bridgeRegion.setExceptionLandingPadFlag();
+            this.regionGraph.removeEdge(tryRegion, bridgeRegion);
+            // The join may already be the body of a later try/catch. Landing on
+            // the raw body skips that catch (readJarMainClass: mkdir's success
+            // path bypasses the decompress catch, and the empty jmp then absorbs
+            // the helper, so the graph never collapses).
+            const wrapping = this.regionGraph.predecessors(joinRegion).find((region) =>
+                region.isTryCatchHelperRegion()
+                && this.regionGraph.edgeValue(region, joinRegion) === false);
+            this.regionGraph.putEdgeValue(tryRegion, wrapping ?? joinRegion, false);
+            const previousEnd = tryRegion.tryBodyEndPC;
+            if (previousEnd === null || tryEnd < previousEnd) tryRegion.tryBodyEndPC = tryEnd;
+            const helper = new TryCatchHelperRegion(tryRegion, bridgeRegion);
+            this.regionGraph.addNode(helper);
+            for (const predecessor of predecessors) {
+                const value = this.regionGraph.edgeValueOrThrow(predecessor, tryRegion);
+                this.regionGraph.removeEdge(predecessor, tryRegion);
+                this.regionGraph.putEdgeValue(predecessor, helper, value);
+            }
+            this.regionGraph.putEdgeValue(helper, tryRegion, false);
+            this.regionGraph.putEdgeValue(helper, bridgeRegion, true);
+        }
+    }
+
+    /** Handler movs are the inverse of spills in the try (`mov slot, r` / `mov r, slot`). */
+    private isSpillRestore(handler: PandaIRBasicBlock, join: PandaIRBasicBlock, tryStart: number, tryEnd: number): boolean {
+        if (handler === join || handler.pandaInstructions.length < 2) return false;
+        if (this.graph.successors(handler).length !== 1 || this.graph.successors(handler)[0] !== join) return false;
+        const spills = new Set<string>();
+        for (const block of this.pandaIRCFG.pandaIRBasicBlocks) {
+            const pc = block.getStartPC();
+            if (pc < tryStart || pc >= tryEnd) continue;
+            for (const instruction of block.pandaInstructions) {
+                if (instruction.kind !== "mov" || !instruction.destObj || !instruction.srcObj) continue;
+                spills.add(instruction.srcObj.toString() + "<-" + instruction.destObj.toString());
+            }
+        }
+        for (const instruction of handler.pandaInstructions) {
+            if (instruction.kind !== "mov" || !instruction.destObj || !instruction.srcObj) return false;
+            if (!spills.has(instruction.destObj.toString() + "<-" + instruction.srcObj.toString())) return false;
+        }
+        return true;
+    }
+
+    /**
      * 真正的 catch 处理器:入口 `sta vX`,并在 handler 入口基本块里做可见工作
      * (读字符串 / 模块变量 / 属性,或发起调用)。编译器生成的 for-of / await
      * resume 派发 handler 只做寄存器恢复和条件跳转,不具备这些特征,不能接进区域图。
-     * 空 catch 仍然按旧行为跳过。
      */
     private isCatchHandler(block: PandaIRBasicBlock): boolean {
         if (block.pandaInstructions[0]?.kind !== "store") return false;

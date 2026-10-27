@@ -148,7 +148,7 @@ Statements produced by reduction before being lowered to Babel AST: `LinearPanda
 
 ### 7.3 Structure analysis (`StructureAnalysis.ts`) — region reduction
 
-Construction: `RegionGraphBuilder` converts the CFG into a Region graph (`RegionType = Linear | Condition | Tail`). Synthetic exception handlers that ArkTS emits for language features — **for-in, for-of, async functions, generators** — are excluded from the region graph; genuine try blocks get a `TryCatchHelperRegion` spliced in front of the try entry (false edge → try body, true edge → handler; the handler region receives `exceptionLandingPad`). Try entries with `codeSize === 0` (empty catch) are skipped. Dead code (in-degree-0 blocks) is pruned iteratively.
+Construction: `RegionGraphBuilder` converts the CFG into a Region graph (`RegionType = Linear | Condition | Tail`). Synthetic exception handlers that ArkTS emits for language features — **for-in, for-of, async functions, generators** — are excluded from the region graph; genuine try blocks get a `TryCatchHelperRegion` spliced in front of the try entry (false edge → try body, true edge → handler; the handler region receives `exceptionLandingPad`). Catch-table `codeSize === 0` is not an emptiness signal for current `es2abc`: that compiler writes 0 for every handler, on 13.0.1.0 and 24.0.0.0 alike, and which handlers enter the graph is decided from the handler body. The shared lowering of `for-of` / `for-in` / `try` / `async` / generators is written up in [Bytecode patterns](./BYTECODE_PATTERNS.md). Dead code (in-degree-0 blocks) is pruned iteratively.
 
 Reduction loop over the region graph:
 
@@ -171,7 +171,7 @@ Linear output: `label_<pc>: { … }` blocks, `decompiler_goto(label_N)` for dire
 
 ### 7.5 try/finally restoration (`TryFinally.ts`)
 
-ArkTS 13 compiles `finally` into a state machine (hole sentinel, cleanup block, rethrow guard). `buildFinallyPlans` identifies it **structurally** — not by block sizes: the try-end block writes the hole sentinel and jumps to cleanup; the handler starts with `sta` and does not throw immediately; a later hole-compare block with a throw successor is the guard. PC ordering is strictly validated. Roles (start / cleanup / guard / suppress) become `__xpanda_finally_marker__` strings inserted by `MethodHandler`; `applyFinallyPlans` rewrites three layouts (same statement list / nested list tails / try+real-catch shape) into `try { … } finally { … }`. Any unresolved plan leaves a `/* xpanda: try/finally not restored */` comment; markers are always stripped.
+ArkTS 13 compiles `finally` into a state machine (hole sentinel, cleanup block, rethrow guard). `buildFinallyPlans` identifies it **structurally** — not by block sizes: the try-end block writes the hole sentinel and jumps to cleanup; the handler starts with `sta` and does not throw immediately; a later hole-compare block with a throw successor is the guard. PC ordering is strictly validated. Roles (start / cleanup / guard / suppress) become `__xpanda_finally_marker__` strings inserted by `MethodHandler`; `applyFinallyPlans` rewrites three layouts (same statement list / nested list tails / try+real-catch shape) into `try { … } finally { … }`. Any unresolved plan leaves a `/* xpanda: try/finally not restored */` comment; markers are always stripped. Current `es2abc` also inlines `finally` before every `return` and keeps a second copy in a `hole` epilogue handler; that shape, and the same epilogue used by `for-of` close, is described in [Bytecode patterns](./BYTECODE_PATTERNS.md).
 
 ### 7.6 Graph utilities
 

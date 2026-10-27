@@ -6,7 +6,6 @@
 import deviceInfo from "@ohos:deviceInfo";
 import fs from "@ohos:file.fs";
 import hilog from "@ohos:hilog";
-let acc;
 let local_0_0 = 0;
 let local_0_1 = "HX360E";
 let local_0_2 = 2 * 1024 * 1024;
@@ -24,12 +23,17 @@ export class AppLog {
     AppLog.dir = "" + p0 + "/logs";
     AppLog.file = "" + AppLog.dir + "/app.log";
     AppLog.prevFile = "" + AppLog.dir + "/app.prev.log";
-    if (!fs.accessSync(AppLog.dir)) {
-      fs.mkdirSync(AppLog.dir, true);
+    try {
+      if (!fs.accessSync(AppLog.dir)) {
+        fs.mkdirSync(AppLog.dir, true);
+      }
+    } catch (catchAcc) {
+      AppLog.rotateIfNeeded();
+      AppLog.i("app", "=== HX360E start === api=" + deviceInfo.sdkApiVersion + " model=" + deviceInfo.productModel + " os=" + deviceInfo.osFullName + "" + (" display=" + deviceInfo.displayVersion + ""));
+      return;
     }
     AppLog.rotateIfNeeded();
     AppLog.i("app", "=== HX360E start === api=" + deviceInfo.sdkApiVersion + " model=" + deviceInfo.productModel + " os=" + deviceInfo.osFullName + "" + (" display=" + deviceInfo.displayVersion + ""));
-    return;
   }
   static i(p0, p1) {
     hilog.info(local_0_0, local_0_1, "[%{public}s] %{public}s", p0, p1);
@@ -44,7 +48,14 @@ export class AppLog {
     AppLog.append("E", p0, p1);
   }
   static exception(p0, p1, p2) {
-    AppLog.e(p0, "" + p1 + ": " + JSON.stringify(p2) + "");
+    let v0;
+    try {
+      v0 = JSON.stringify(p2);
+    } catch (catchAcc) {
+      v0 = "" + p2 + "";
+    }
+    v0 = "" + p1 + ": " + v0 + "";
+    AppLog.e(p0, v0);
   }
   static append(p0, p1, p2) {
     let v0 /*fs*/, v1 /*fs*/;

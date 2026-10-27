@@ -3300,7 +3300,7 @@ function verifyAmclForOfCloseBlock(): void {
     for (const fragment of [
         // 耗尽路径的初始化必须保留(伪 goto break 的活跃性按标签处计算)
         'v30 = "";',
-        "for (v33 of JSON.parse(await local_1_3.fetchText(v12.value)).versions) {",
+        "for (v33 of JSON.parse(await local_1_3.fetchText(v12)).versions) {",
         "if (v33.id === p1) {",
         'v30 = v33.url || "";',
         "break;",
@@ -3312,6 +3312,48 @@ function verifyAmclForOfCloseBlock(): void {
     const expected = fs.readFileSync(path.join(__dirname, "expected", "amcl-t11-a12.js"), "utf-8");
     if (code !== expected) {
         throw new Error(`amcl a12: 输出与快照不一致\n${firstDifference(expected, code)}`);
+    }
+}
+
+/**
+ * 回归:amcl t11/d12 的 readJarMainClass 曾整方法降级 SimpleAnalysis。
+ *
+ * mkdir 的空 catch 是一条 nop jmp,落点已经是后面 decompress 的 try 体。
+ * 成功边若直接落到 try 体,就会绕过 catch,jmp 再把 helper 吸进空 catch,
+ * 区域图收不成一个节点(`can not reduce the graph`)。读 manifest 的 catch
+ * 以若干 mov 开头再 `return ""`,也要当成忽略异常的 catch,不能剪掉。
+ */
+function verifyAmclReadJarMainClass(): void {
+    const abcPath = path.join(__dirname, "resources", "amcl1.0.6.abc");
+    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
+    pandaFile.parseAssembly();
+    const decompiler = new PandaDecompiler();
+    const pandaClass = pandaFile.getAllClasses().find(
+        (c) => c.name.content === "L&feature_core/src/main/ets/t11/d12&1.0.0;");
+    if (!pandaClass) throw new Error("amcl: 未找到 L&feature_core/src/main/ets/t11/d12&1.0.0;");
+    const code = decompiler.decompileClass(pandaClass);
+    NodeFactory.parse(code);
+    if (code.includes("created by SimpleAnalysis") || code.includes("decompiler_")) {
+        throw new Error(`amcl d12: 仍在降级或残留伪语句\n${code.slice(0, 800)}`);
+    }
+    const start = code.indexOf("static async readJarMainClass(");
+    if (start < 0) throw new Error(`amcl d12: 未找到 readJarMainClass\n${code.slice(0, 800)}`);
+    const body = code.slice(start, code.indexOf("\n  static ", start));
+    for (const fragment of [
+        "try {\n        g50.mkdirSync(v4, true);\n      } catch (catchAcc) {}",
+        "await v1267(p0, v4);",
+        'y.warn(local_0_0, "decompress for manifest failed " + p0 + ": " + catchAcc.message + "", null, a32);',
+        'g50.readTextSync(v4 + "/META-INF/MANIFEST.MF")',
+        'return "";',
+        "return g771.parseManifestMainClass(v3);",
+    ]) {
+        if (!body.includes(fragment)) {
+            throw new Error(`amcl d12: 缺少 ${JSON.stringify(fragment)}\n${body}`);
+        }
+    }
+    const expected = fs.readFileSync(path.join(__dirname, "expected", "amcl-t11-d12.js"), "utf-8");
+    if (code !== expected) {
+        throw new Error(`amcl d12: 输出与快照不一致\n${firstDifference(expected, code)}`);
     }
 }
 
@@ -4586,6 +4628,10 @@ async function main(): Promise<void> {
 
     console.log("[test] amcl break for...of close block (amcl1.0.6.abc)");
     verifyAmclForOfCloseBlock();
+    console.log("    ok");
+
+    console.log("[test] amcl readJarMainClass structure (amcl1.0.6.abc)");
+    verifyAmclReadJarMainClass();
     console.log("    ok");
 
     console.log("[test] lnga SOURCE_FILE + qr login short circuit (lnga1.2.6.abc)");

@@ -10,7 +10,6 @@ import { decodeReleaseDetail } from "@normalized:N&&&data/src/main/ets/update/Ap
 import http from "@ohos:net.http";
 import { proxiedCatalogUrls } from "@normalized:N&&&data/src/main/ets/update/AppUpdateSources&1.0.0";
 import { resolveAppUpdateCheck } from "@normalized:N&&&data/src/main/ets/update/AppUpdateParser&1.0.0";
-let acc;
 let local_0_0, local_0_1, local_0_2, local_0_3, local_0_4, local_0_5, local_0_6;
 export function catalogUrlWaves(p0) {
   let v0 = local_0_2(p0);

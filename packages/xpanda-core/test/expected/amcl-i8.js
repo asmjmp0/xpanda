@@ -212,22 +212,20 @@ export async function c763(p0, p1, p2, p3) {
       if (v0.size === v17) {
         v16 = local_0_1(v5) !== local_0_1(await g50.stat(v4.fd));
       }
-      if (!v16) {
-        v5 = local_0_1(v5);
-        if (v5 === local_0_1(await g50.stat(p0))) {
-          await g50.close(v14);
-          v14 = {
-            "size": v17,
-            "sha256": null,
-            "readbackVerified": false
-          };
-          v11 = v6;
-          v14.sha256 = local_0_2((await v15.digest()).data);
-          try {} finally {
-            await g50.close(v4);
-          }
-        } else {
-          throw new Error("复制期间归档或目标大小发生变化");
+      if (v16) {
+        throw new Error("复制期间归档或目标大小发生变化");
+      }
+      if (local_0_1(v5) === local_0_1(await g50.stat(p0))) {
+        await g50.close(v14);
+        v14 = {
+          "size": v17,
+          "sha256": null,
+          "readbackVerified": false
+        };
+        v11 = v6;
+        v14.sha256 = local_0_2((await v15.digest()).data);
+        try {} finally {
+          await g50.close(v4);
         }
       } else {
         throw new Error("复制期间归档或目标大小发生变化");

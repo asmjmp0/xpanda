@@ -6,7 +6,11 @@
 import { NGA_HOSTS } from "@bundle:com.example.nga_oh/entry/ets/common/constants/NgaDomains";
 let local_0_1, local_0_2;
 let local_0_0 = function (p0) {
-  return decodeURIComponent(p0);
+  try {
+    return decodeURIComponent(p0);
+  } catch (catchAcc) {
+    return "";
+  }
 };
 export function isNgaQrLoginUrl(p0) {
   let v1, v3, v4, v5, v6;

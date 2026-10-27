@@ -100,12 +100,7 @@ export async function w91(p0, p1, p2, p3) {
   await f92(p0, p2.activityId);
   v22 = e92(p0, p2.activityId);
   if (b92(v22, v3).length === new Set(v3).size) {
-    v3 = v3[Symbol.iterator]();
-    v23 = v3.next;
-    while (true) {
-      v25 = v23.call(v3);
-      if (v25.done) break;
-      v25 = v25.value;
+    for (v25 of v3) {
       {
         let local_1_3_0 = v25;
         v25 = v22.find(function (p0) {
@@ -293,12 +288,8 @@ local_0_2 = function (p0, p1, p2) {
 export async function y91(p0, p1, p2) {
   let v0, v8;
   let v3 = 0;
-  let v4 = p0.files[Symbol.iterator]();
   let v7 = 0;
-  while (true) {
-    v8 = v4.next();
-    if (v8.done) break;
-    v8 = v8.value;
+  for (v8 of p0.files) {
     v3 += v8.bytes;
     v7 += v8.lines;
   }

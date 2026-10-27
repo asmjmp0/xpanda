@@ -115,18 +115,27 @@ export class TempVariableSimplify implements ISimplify {
      * 槽可能从未被读写;块级声明又不在 TempVariableSimplify 的函数级 ctx.infos 里,
      * 旧的清理逻辑不会删除它们。这里按 Babel binding 精确判断(读写都为 0)。
      */
-    public static removeUnusedLexicalDeclarations(node: Program): boolean {
+    public static removeUnusedLexicalDeclarations(node: Program, includeTemps = false): boolean {
         let changed = false;
+        const pattern = includeTemps
+            ? /^(acc|v\d+|(local|sendable)_\d+_\d+(_\d+)?)$/
+            : /^(local|sendable)_\d+_\d+(_\d+)?$/;
         traverse(file(node), {
             VariableDeclaration(path) {
                 const parent = path.parentPath;
                 if (!parent || !(isBlockStatement(parent.node) || isProgramNode(parent.node))) return;
                 const kept = path.node.declarations.filter((declarator) => {
                     if (!isIdentifier(declarator.id) || declarator.init) return true;
-                    if (!/^(local|sendable)_\d+_\d+(_\d+)?$/.test(declarator.id.name)) return true;
+                    if (!pattern.test(declarator.id.name)) return true;
                     const binding = path.scope.getBinding(declarator.id.name);
                     if (!binding || binding.identifier !== declarator.id) return true;
-                    return binding.referencePaths.length !== 0 || binding.constantViolations.length !== 0;
+                    if (!includeTemps) {
+                        return binding.referencePaths.length !== 0 || binding.constantViolations.length !== 0;
+                    }
+                    // 复制传播替换掉读取后,binding 里会留下 node 已经为 null 的路径。
+                    // 只认还挂在当前 AST 上、且不是声明自身的引用。
+                    const live = (ref: { node: TYPE.Node | null }) => !!ref.node && ref.node !== declarator.id;
+                    return binding.referencePaths.some(live) || binding.constantViolations.some(live);
                 });
                 if (kept.length === path.node.declarations.length) return;
                 changed = true;
@@ -406,7 +415,9 @@ export class TempVariableSimplify implements ISimplify {
                         if (!isTempName(name)) return true;
                         if ((nameCount.get(name) ?? 0) > 1) return true;
                         const info = ctx.infos.get(name);
-                        if (!info || info.captured || info.refs.size !== 0) return true;
+                        // refs 在语句被删掉或替换后不会同步清空。当前 AST 里这个名字
+                        // 只剩声明本身(nameCount)、且没有被闭包捕获时,声明就是死的。
+                        if (!info || info.captured) return true;
                         if (written.has(name)) return true;
                         if (declarator.init && !isPureExpression(declarator.init)) return true;
                         if (declarator.init) removeRefs(declarator.init, ctx);

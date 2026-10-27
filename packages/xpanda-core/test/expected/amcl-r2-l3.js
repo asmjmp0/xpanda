@@ -9,6 +9,7 @@ import { k115 } from "@normalized:N&&&commons/Index&1.0.0";
 import { q51 } from "@normalized:N&&&commons/Index&1.0.0";
 import { r115 } from "@normalized:N&&&commons/Index&1.0.0";
 let v189;
+let local_0_0;
 let local_0_1 = function (p0, p1, p2, p3) {
   let v1, v2, v3;
   if (p2 === undefined) {
@@ -37,6 +38,86 @@ let local_0_1 = function (p0, p1, p2, p3) {
 export function u189(p0) {
   return h115(p0);
 }
+v189 = function (p0, p1) {
+  let v5, v6, v7, v14, v15, v21;
+  let v0 = [];
+  let v1 = p0.level === 2 ? "#FCA5A5" : p0.level === 1 ? "#FCD38A" : "#CBD5E1";
+  let v3 = new RegExp(local_0_0.source, "g");
+  let v4 /*d190*/ = v3.exec(p0.text);
+  for (v5 = 0; v4 !== null; v4 = v3.exec(p0.text)) {
+    if (v4.index > v5) {
+      v0.push({
+        "text": p0.text.slice(v5, v4.index),
+        "color": v1
+      });
+    }
+    v6 = "#7DD3FC";
+    v7 = v4[0].indexOf("Exception");
+    if (v7 >= 0 || (v7 = v4[0].indexOf("Error"), v7 >= 0)) {
+      v6 = "#F0ABFC";
+    } else if (new RegExp("ERROR|FATAL|\\[[EF]\\]").test(v4[0])) {
+      v6 = "#FB7185";
+    } else if (new RegExp("WARN|\\[W\\]").test(v4[0])) {
+      v6 = "#FBBF24";
+    } else if (new RegExp("INFO|\\[I\\]").test(v4[0])) {
+      v6 = "#6EE7B7";
+    } else if (new RegExp("DEBUG|TRACE|\\[D\\]").test(v4[0])) {
+      v6 = "#A78BFA";
+    }
+    v0.push({
+      "text": v4[0],
+      "color": v6
+    });
+    v5 = v4.index + v4[0].length;
+  }
+  if (v5 < p0.text.length) {
+    v0.push({
+      "text": p0.text.slice(v5),
+      "color": v1
+    });
+  }
+  if (p0.text.length === 0) {
+    v0.push({
+      "text": " ",
+      "color": v1
+    });
+  }
+  if (p1.length === 0) {
+    return v0;
+  }
+  v1 = [];
+  v3 = p1.toLowerCase();
+  v3 = p0.matchKeyword === v3 && p0.matches !== undefined ? p0.matches : local_0_1(p0.text, v3);
+  v6 = 0;
+  for (v7 of v0) {
+    v14 = 0;
+    for (v15 of v3) {
+      v21 = Math.max(0, v15.start - v6);
+      v15 = Math.min(v7.text.length, v15.end - v6);
+      if (v15 > v21) {
+        if (v21 > v14) {
+          v1.push({
+            "text": v7.text.slice(v14, v21),
+            "color": v7.color
+          });
+        }
+        v1.push({
+          "text": v7.text.slice(v21, v15),
+          "color": "#FDE047"
+        });
+        v14 = v15;
+      }
+    }
+    if (v14 < v7.text.length) {
+      v1.push({
+        "text": v7.text.slice(v14),
+        "color": v7.color
+      });
+    }
+    v6 += v7.text.length;
+  }
+  return v1;
+};
 class a190 {
   constructor() {
     this.sourceIndex = 0;
@@ -62,7 +143,7 @@ class c190 {
     this.characters = 0;
   }
 }
-new RegExp("\\b\\d{2}:\\d{2}:\\d{2}(?:[.,]\\d+)?\\b|\\b(?:TRACE|DEBUG|INFO|WARN|WARNING|ERROR|FATAL)\\b|\\[[DIWEF]\\]|[\\w.$]+(?:Exception|Error)\\b|[\\w$]+\\.java:\\d+", "g");
+local_0_0 = new RegExp("\\b\\d{2}:\\d{2}:\\d{2}(?:[.,]\\d+)?\\b|\\b(?:TRACE|DEBUG|INFO|WARN|WARNING|ERROR|FATAL)\\b|\\[[DIWEF]\\]|[\\w.$]+(?:Exception|Error)\\b|[\\w$]+\\.java:\\d+", "g");
 export class e190 {
   constructor() {
     this.rows = [];

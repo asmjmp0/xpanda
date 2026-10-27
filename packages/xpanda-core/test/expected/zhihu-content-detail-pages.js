@@ -1467,7 +1467,11 @@ class ContentDetailPage extends ViewPU {
       }
     }
     local_1_0.subscribeHoldingHand();
-    local_1_0.immersiveMaterialSupported = hdsMaterial.getSystemMaterialTypes().includes(hdsMaterial.MaterialType.IMMERSIVE);
+    try {
+      local_1_0.immersiveMaterialSupported = hdsMaterial.getSystemMaterialTypes().includes(hdsMaterial.MaterialType.IMMERSIVE);
+    } catch (catchAcc) {
+      local_1_0.immersiveMaterialSupported = false;
+    }
     if (local_1_0.controller !== undefined) {
       local_1_0.controller.activate();
       if (local_1_0.answersController !== null && local_1_0.answersController !== undefined) {
@@ -6842,9 +6846,13 @@ class ContentDetailPage extends ViewPU {
     if (v3 === undefined) {
       return undefined;
     }
-    v0 = await new AppPreferencesStore(v3).loadAnswerDoubleTapAction();
-    if (this.pageActive) {
-      AppStorage.setOrCreate("answerDoubleTapAction", v0);
+    try {
+      v0 = await new AppPreferencesStore(v3).loadAnswerDoubleTapAction();
+      if (this.pageActive) {
+        AppStorage.setOrCreate("answerDoubleTapAction", v0);
+      }
+    } catch (catchAcc) {
+      return undefined;
     }
     return undefined;
   }
@@ -7717,13 +7725,17 @@ class ContentDetailPage extends ViewPU {
     if (local_1_0.content.value.url.trim().length === 0) {
       return;
     }
-    v0 = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, local_1_0.content.value.url);
-    v0 = pasteboard.getSystemPasteboard().setData(v0).then(function () {
-      local_1_0.showMenuToast("已复制链接");
-    });
-    v0.catch(function (p0) {
+    try {
+      v0 = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, local_1_0.content.value.url);
+      v0 = pasteboard.getSystemPasteboard().setData(v0).then(function () {
+        local_1_0.showMenuToast("已复制链接");
+      });
+      v0.catch(function (p0) {
+        local_1_0.showMenuToast("复制失败，请重试");
+      });
+    } catch (catchAcc) {
       local_1_0.showMenuToast("复制失败，请重试");
-    });
+    }
     return;
   }
   isCurrentContentSpeaking() {
@@ -7743,12 +7755,16 @@ class ContentDetailPage extends ViewPU {
       return undefined;
     }
     v5 = getAbilityContext();
-    v5 = v5 === undefined ? defaultSpeechPreferences() : await new AppPreferencesStore(v5).loadSpeechPreferences();
-    v7 = contentContextTitle(this.content).length > 0 ? contentContextTitle(this.content) : contentDetailPageTitle(this.content.kind);
-    await v4.speak(this.activeContentId, v7, contentSpeechText(this.content), v5);
-    v3 = v4.getSnapshot();
-    v3 = v3.status === SpeechPlaybackStatus.ERROR ? v3.message : "已开始朗读";
-    this.showMenuToast(v3);
+    try {
+      v5 = v5 === undefined ? defaultSpeechPreferences() : await new AppPreferencesStore(v5).loadSpeechPreferences();
+      v7 = contentContextTitle(this.content).length > 0 ? contentContextTitle(this.content) : contentDetailPageTitle(this.content.kind);
+      await v4.speak(this.activeContentId, v7, contentSpeechText(this.content), v5);
+      v3 = v4.getSnapshot();
+      v3 = v3.status === SpeechPlaybackStatus.ERROR ? v3.message : "已开始朗读";
+      this.showMenuToast(v3);
+    } catch (catchAcc) {
+      this.showMenuToast("朗读启动失败，请稍后重试");
+    }
     return undefined;
   }
   shareContentLink() {

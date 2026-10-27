@@ -25,6 +25,8 @@ import { removeRefs, tempReadWrites, tempReadWritesBeforeStore, tempReads, tempR
  * @Author: jmp0
  */
 export class LivenessAnalyzer extends TempVariablePass {
+    /** Names a throwing write inside the current try must not kill. */
+    private preserveAcrossThrow: Set<string> | null = null;
 
     /** 不做任何修改的活跃性分析,结果写入 ctx.liveAfter。 */
     analyzeList(stmts: TYPE.Statement[], liveOut: Set<string>, ctx: FunctionContext, loop?: LoopLive): Set<string> {
@@ -97,8 +99,15 @@ export class LivenessAnalyzer extends TempVariablePass {
                 // 只在末尾清理轮启用:中途轮次沿用整语句读取集合,避免改变
                 // 复制传播/条件折叠的轨迹(其他类的既有形态依赖它)。
                 const { reads, writes } = this.readsAndWrites(stmt, ctx);
+                const killed = new Set(writes);
+                // A call on the right-hand side throws before the write lands.
+                // The catch, and code after a catch that falls through, still see
+                // the previous value (`v0 = 0; try { v0 = stat() } catch {}`).
+                if (this.preserveAcrossThrow && this.statementCanThrow(stmt)) {
+                    for (const name of this.preserveAcrossThrow) killed.delete(name);
+                }
                 const result = new Set(reads);
-                for (const name of liveOut) if (!writes.has(name)) result.add(name);
+                for (const name of liveOut) if (!killed.has(name)) result.add(name);
                 return result;
             }
             case "IfStatement": {
@@ -212,7 +221,15 @@ export class LivenessAnalyzer extends TempVariablePass {
                     ? this.transferNested(stmt.handler.body, handlerAfter, ctx, nestedLoop, cleanup)
                     : new Set<string>();
                 const after = union(handlerAfter, handlerIn);
+                const preserve = new Set(handlerIn);
+                if (stmt.handler && !this.blockAlwaysExits(stmt.handler.body)) {
+                    const written = this.straightLineWrites(stmt.handler.body);
+                    for (const name of liveOut) if (!written.has(name)) preserve.add(name);
+                }
+                const saved = this.preserveAcrossThrow;
+                this.preserveAcrossThrow = preserve;
                 const blockIn = this.transferNested(stmt.block, after, ctx, nestedLoop, cleanup);
+                this.preserveAcrossThrow = saved;
                 const finalizerIn = stmt.finalizer
                     ? this.transferNested(stmt.finalizer, liveOut, ctx, loop, cleanup)
                     : liveOut;
@@ -246,7 +263,17 @@ export class LivenessAnalyzer extends TempVariablePass {
                 if (stmt.declaration && isStatementNode(stmt.declaration)) {
                     return this.transfer(stmt.declaration as TYPE.Statement, liveOut, ctx, loop, cleanup);
                 }
-                return new Set(liveOut);
+                // `export { Name }` reads the local binding. Without that read,
+                // `v1267 = function () {}` is a dead store and collapses to a bare
+                // function expression, leaving `let v1267` uninitialized.
+                // Names in `export { X } from "..."` belong to the other module.
+                const exported = new Set(liveOut);
+                if (!stmt.source) {
+                    for (const spec of stmt.specifiers) {
+                        if (spec.local.type === "Identifier") exported.add(spec.local.name);
+                    }
+                }
+                return exported;
             case "ExportDefaultDeclaration":
                 return tempReads(stmt.declaration as TYPE.Node, ctx);
             case "BreakStatement": {
@@ -398,5 +425,57 @@ export class LivenessAnalyzer extends TempVariablePass {
         if (isObjectExpression(rhs) || isArrayExpression(rhs)) return null;
         // 调用等有副作用:保留表达式本身
         return { replace: expressionStatement(rhs), remainingReads: reads };
+    }
+
+    /** Assignments that happen before the first branch or exit. */
+    private straightLineWrites(stmt: TYPE.Statement): Set<string> {
+        const names = new Set<string>();
+        const body = stmt.type === "BlockStatement" ? stmt.body : [stmt];
+        for (const child of body) {
+            if (child.type !== "ExpressionStatement" && child.type !== "VariableDeclaration") break;
+            if (child.type === "VariableDeclaration") {
+                for (const declarator of child.declarations) {
+                    if (declarator.id.type === "Identifier" && declarator.init) names.add(declarator.id.name);
+                }
+                continue;
+            }
+            const expr = child.expression;
+            if (expr.type !== "AssignmentExpression" || expr.left.type !== "Identifier") break;
+            names.add(expr.left.name);
+        }
+        return names;
+    }
+
+    /** Every path through the statement leaves. An empty block does not. */
+    private blockAlwaysExits(stmt: TYPE.Statement): boolean {
+        switch (stmt.type) {
+            case "ReturnStatement":
+            case "ThrowStatement":
+            case "BreakStatement":
+            case "ContinueStatement":
+                return true;
+            case "BlockStatement":
+                return stmt.body.some((child) => this.blockAlwaysExits(child));
+            case "IfStatement":
+                return !!stmt.alternate && this.blockAlwaysExits(stmt.consequent)
+                    && this.blockAlwaysExits(stmt.alternate);
+            default:
+                return false;
+        }
+    }
+
+    /** The write does not happen when the right-hand side throws. */
+    private statementCanThrow(stmt: TYPE.Statement): boolean {
+        if (stmt.type === "ExpressionStatement") {
+            const expr = stmt.expression;
+            if (expr.type === "AssignmentExpression") {
+                return !isPureExpression(expr.right);
+            }
+            return !isPureExpression(expr);
+        }
+        if (stmt.type === "VariableDeclaration") {
+            return stmt.declarations.some((declarator) => declarator.init != null && !isPureExpression(declarator.init));
+        }
+        return false;
     }
 }

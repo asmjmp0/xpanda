@@ -1236,13 +1236,24 @@ export class HighLevelGrammarSimplify implements ISimplify {
         // 之前、或之前还有新的赋值覆盖,就与这次删除无关。
         const fnBinding = value.scope.getBinding(fnTemp);
         if (!fnBinding) return;
+        const functionNode = value.getFunctionParent()?.node;
         for (const ref of fnBinding.referencePaths) {
             if (!ref.node || ref.node === call.callee.object) continue;
+            // 删掉 hole 副本后,绑定里还留着那些语句的引用。它们不会再执行。
+            if (functionNode && !containsNode(functionNode, ref.node)) continue;
+            // `v9 = expr` 的左值不读取旧的 next 函数。
+            if (ref.parentPath?.isAssignmentExpression() && ref.parentPath.node.operator === "="
+                && ref.parentPath.node.left === ref.node) continue;
             if (this.hasNewerValueBefore(ref, prevFn, fnTemp)) continue;
             return;
         }
         for (const violation of fnBinding.constantViolations) {
             if (!violation.node || violation.node === fnAssign || violation.node === prevFn.node) continue;
+            if (functionNode && !containsNode(functionNode, violation.node)) continue;
+            // `v9 = substring` 复用临时量,不读取旧的 next 函数。
+            if (isAssignmentExpressionNode(violation.node) && violation.node.operator === "="
+                && isIdentifierNode(violation.node.left) && violation.node.left.name === fnTemp
+                && !collectIdentifierNames(violation.node.right).has(fnTemp)) continue;
             if (this.hasNewerValueBefore(violation, prevFn, fnTemp)) continue;
             return;
         }
@@ -1278,12 +1289,222 @@ export class HighLevelGrammarSimplify implements ISimplify {
         if (aliasStatement) aliasStatement.remove();
     }
 
+    /**
+     * 迭代器初始化可以和 `while (true)` 之间隔着若干 `X = <字面量>`
+     * (`copyDirRecursive` 的下标 `v5 = 0`)。这些赋值留在原地。
+     */
+    private prevIteratorInit(value: NodePath): NodePath<TYPE.ExpressionStatement> | null {
+        let prev = value.getPrevSibling();
+        for (let i = 0; i < 4 && prev.node; i++) {
+            if (!isExpressionStatementNode(prev.node)) return null;
+            const expr = prev.node.expression;
+            if (!isAssignmentExpressionNode(expr) || expr.operator !== "=" || !isIdentifierNode(expr.left)) return null;
+            if (this.iterableOfIteratorInit(expr.right as TYPE.Expression)) {
+                return prev as NodePath<TYPE.ExpressionStatement>;
+            }
+            if (!this.isConstantInitStatement(prev.node)) return null;
+            prev = prev.getPrevSibling();
+        }
+        return null;
+    }
+
+    /**
+     * `while (true)` 的 done 分支是 `break`,或是不读取迭代器/循环变量的
+     * `return`/`throw`(`attachLegacyBundledLibraryChecks` 的 `return undefined`)。
+     * 后者搬到 for-of 之后。
+     */
+    private whileDoneExit(node: TYPE.Statement, iterName: string, vvName: string): TYPE.Statement | "break" | null {
+        if (isBreakStatement(node)) return "break";
+        const exit = isReturnStatementNode(node) || node.type === "ThrowStatement" ? node
+            : (isBlockStatementNode(node) && node.body.length === 1
+                && (isReturnStatementNode(node.body[0]) || node.body[0].type === "ThrowStatement")
+                ? node.body[0] : null);
+        if (!exit) return null;
+        const argument = (exit as TYPE.ReturnStatement | TYPE.ThrowStatement).argument;
+        if (argument) {
+            if (isReturnStatementNode(exit) && !isPureExpression(argument)) return null;
+            const names = collectIdentifierNames(argument);
+            if (names.has(iterName) || names.has(vvName)) return null;
+        }
+        return exit;
+    }
+
+    /**
+     * Iterator-done branch that still contains the `hole` finally sentinel is
+     * the compiler's second copy of the code after the loop. The copy after
+     * the loop is the one TryFinally restored. Breaking out of `while (true)`
+     * runs that copy once (c1268's manifest download).
+     */
+    private replaceHoleDoneWithBreak(value: NodePath<TYPE.WhileStatement>): boolean {
+        const test = value.node.test;
+        if (!isBooleanLiteral(test) || test.value !== true) return false;
+        const body = value.get("body");
+        if (!body.isBlockStatement()) return false;
+        const statements = body.get("body");
+        if (statements.length < 2 || !statements[1].isIfStatement()) return false;
+        const doneTest = statements[1].node.test;
+        if (!isDoneMember(doneTest)) return false;
+        const consequent = statements[1].get("consequent");
+        const list = isBlockStatementNode(consequent.node) ? consequent.node.body : [consequent.node];
+        // A one-statement done branch is the normal `break` / `return`. The hole
+        // duplicate is the compiler's second copy of the code after the loop.
+        if (!this.mentionsHole(consequent.node) || !this.statementAlwaysExits(consequent.node)
+            || list.length < 4 || !value.getNextSibling().node) return false;
+        consequent.replaceWith(TYPE.blockStatement([TYPE.breakStatement()]));
+        return true;
+    }
+
+    /**
+     * A `while (true)` body that breaks out by copying the code after the loop,
+     * including the `hole` finally sentinel, is the compiler's early-exit
+     * duplicate (c1268's found-url path). The copy after the loop is the one
+     * TryFinally restored. `break` runs that copy once.
+     * Every long string in the duplicate must also appear after the loop, so a
+     * unique early return is left alone.
+     */
+    private foldInlinedHoleContinuation(value: NodePath<TYPE.WhileStatement>): boolean {
+        const test = value.node.test;
+        if (!isBooleanLiteral(test) || test.value !== true) return false;
+        const body = value.get("body");
+        if (!body.isBlockStatement()) return false;
+        const after = value.getAllNextSiblings().filter((sibling) => sibling.node).map((sibling) => sibling.node);
+        const afterStrings = this.longStrings(after);
+        if (afterStrings.size === 0) return false;
+        let changed = false;
+        for (const stmtPath of body.get("body")) {
+            if (!stmtPath.isTryStatement()) continue;
+            const block = stmtPath.get("block");
+            if (!block.isBlockStatement()) continue;
+            const statements = block.get("body");
+            let start = -1;
+            for (let i = 0; i < statements.length; i++) {
+                if (this.mentionsHole(statements[i].node)) {
+                    start = i;
+                    break;
+                }
+            }
+            if (start <= 0) continue;
+            const suffix = statements.slice(start).map((stmt) => stmt.node);
+            if (!this.statementAlwaysExits(TYPE.blockStatement(suffix))) continue;
+            const strings = this.longStrings(suffix);
+            if (strings.size === 0) continue;
+            let shared = true;
+            for (const literal of strings) {
+                if (!afterStrings.has(literal)) {
+                    shared = false;
+                    break;
+                }
+            }
+            if (!shared) continue;
+            for (let i = statements.length - 1; i > start; i--) statements[i].remove();
+            statements[start].replaceWith(TYPE.breakStatement());
+            changed = true;
+        }
+        if (changed) this.cleanCatchSpills(value);
+        return changed;
+    }
+
+    /** String literals long enough to identify a duplicated continuation. */
+    private longStrings(nodes: TYPE.Node[]): Set<string> {
+        const strings = new Set<string>();
+        for (const node of nodes) {
+            walkNode(node, (current) => {
+                if (TYPE.isStringLiteral(current) && current.value.length >= 12) strings.add(current.value);
+                return true;
+            });
+        }
+        return strings;
+    }
+
+    /**
+     * Exception handlers restore caller-saved registers (`p1 = v17`) and read
+     * the spilled loop element (`v27`, copied from `v12` around every call).
+     * Those copies are not JavaScript assignments: a throw does not clobber
+     * locals, and the spill temps were never stored. Drop the restores and
+     * retarget the element read at the for-of variable.
+     */
+    private cleanCatchSpills(loop: NodePath<TYPE.WhileStatement>): void {
+        const element = this.loopElementName(loop);
+        const fn = loop.getFunctionParent();
+        if (!fn) return;
+        // A spill temp's only writes are `temp = element` (or the saves were
+        // already deleted). Either way the catch should read the element.
+        const spilledElement = (name: string): boolean => {
+            if (!element || !/^v\d+$/.test(name)) return false;
+            const binding = fn.scope.getBinding(name);
+            if (!binding) return false;
+            const live = binding.constantViolations.filter((violation) =>
+                violation.node && containsNode(fn.node, violation.node));
+            if (live.length === 0) return true;
+            return live.every((violation) => {
+                const node = violation.node;
+                return isAssignmentExpressionNode(node) && node.operator === "="
+                    && isIdentifierNode(node.right) && node.right.name === element;
+            });
+        };
+        loop.traverse({
+            Function: (path) => {
+                if (path.node !== fn.node) path.skip();
+            },
+            CatchClause: (path) => {
+                const body = path.get("body");
+                if (!body.isBlockStatement()) return;
+                const statements = body.get("body");
+                // Register reloads after the warn (`p1 = v17`) clobber locals.
+                // JavaScript keeps those locals across the throw.
+                for (let i = statements.length - 1; i >= 0; i--) {
+                    const node = statements[i].node;
+                    if (!isExpressionStatementNode(node) || !isAssignmentExpressionNode(node.expression)) break;
+                    const assign = node.expression;
+                    if (assign.operator !== "=" || !isIdentifierNode(assign.left) || !isIdentifierNode(assign.right)) break;
+                    statements[i].remove();
+                }
+                body.traverse({
+                    Function: (inner) => inner.skip(),
+                    Identifier: (id) => {
+                        if (!spilledElement(id.node.name)) return;
+                        if (id.parentPath.isAssignmentExpression() && id.parentPath.node.left === id.node) return;
+                        id.replaceWith(TYPE.identifier(element!));
+                    },
+                });
+            },
+        });
+    }
+
+    /** `vv = vv.value` just before the try: the for-of element. */
+    private loopElementName(loop: NodePath<TYPE.WhileStatement>): string | null {
+        const body = loop.get("body");
+        if (!body.isBlockStatement()) return null;
+        for (const stmt of body.get("body")) {
+            if (!stmt.isExpressionStatement() || !isAssignmentExpressionNode(stmt.node.expression)) continue;
+            const assign = stmt.node.expression;
+            if (assign.operator !== "=" || !isIdentifierNode(assign.left)) continue;
+            if (!isMemberExpression(assign.right) || assign.right.computed) continue;
+            if (!isIdentifierNode(assign.right.object) || assign.right.object.name !== assign.left.name) continue;
+            if (!isIdentifierNode(assign.right.property) || assign.right.property.name !== "value") continue;
+            return assign.left.name;
+        }
+        return null;
+    }
+
+    private mentionsHole(node: TYPE.Node): boolean {
+        let found = false;
+        walkNode(node, (current) => {
+            if (found) return false;
+            if (isIdentifierNode(current) && current.name === "hole") {
+                found = true;
+                return false;
+            }
+            return true;
+        });
+        return found;
+    }
+
     private checkAndTransformToForOfStatement(value:NodePath<TYPE.WhileStatement>){
         this.foldHoistedIteratorNext(value);
-        const pre = value.getPrevSibling();
-        if (!isExpressionStatementNode(pre.node)) return false;
+        const pre = this.prevIteratorInit(value);
+        if (!pre) return false;
         const init = pre.node.expression;
-        if (!isAssignmentExpressionNode(init) || init.operator !== "=" || !isIdentifierNode(init.left)) return false;
         const iterable = this.iterableOfIteratorInit(init.right as TYPE.Expression);
         if (!iterable) return false;
         const iterBinding = value.scope.getBinding(init.left.name);
@@ -1358,10 +1579,11 @@ export class HighLevelGrammarSimplify implements ISimplify {
         if (!outStatement.isIfStatement()) return false;
         const btest = outStatement.get('test');
         const consequent = outStatement.get('consequent');
-        if (!isBreakStatement(consequent.node)) return false;
         if (!isDoneMember(btest.node)) return false;
         const doneObject = (btest.node as TYPE.MemberExpression).object;
         if (!isIdentifierNode(doneObject) || doneObject.name !== vv.name) return false;
+        const doneExit = this.whileDoneExit(consequent.node, init.left.name, vv.name);
+        if (!doneExit) return false;
 
         // 全部校验通过后才删除内联 close,避免中途放弃时留下未收尾的迭代器。
         for (const close of inlinedCloses) close.remove();
@@ -1393,6 +1615,7 @@ export class HighLevelGrammarSimplify implements ISimplify {
         const forOfStatement = forOfStatementBuilder(vv,iterable as any,blockStatement);
         value.replaceWith(forOfStatement);
         pre.remove();
+        if (doneExit !== "break") value.insertAfter(TYPE.cloneNode(doneExit));
         this.tryInlineForOfIterable(value);
         return true;
     }
@@ -2226,6 +2449,8 @@ export class HighLevelGrammarSimplify implements ISimplify {
         traverse(file(node), {
             //transform while-statement to for-statement
             WhileStatement:(value)=>{
+                if (this.replaceHoleDoneWithBreak(value)) changed = true;
+                if (this.foldInlinedHoleContinuation(value)) changed = true;
                 if (this.checkAndTransformToForStatement(value)) changed = true;
                 if (this.checkAndTransformToForInStatement(value)) changed = true;
                 if (this.checkAndTransformToForOfStatement(value)) changed = true;
@@ -2272,6 +2497,16 @@ export class HighLevelGrammarSimplify implements ISimplify {
                 if (this.tryRestoreOptionalChain(value)) changed = true;
             }
         })
+
+        // 结构化归约可能把 do-while 收成 while(true)(清单循环的 catch 回边)。
+        // 本次遍历先看到的是 do-while,补一次 while 扫描。
+        traverse(file(node), {
+            WhileStatement:(value)=>{
+                if (this.replaceHoleDoneWithBreak(value)) changed = true;
+                if (this.foldInlinedHoleContinuation(value)) changed = true;
+                if (this.checkAndTransformToForOfStatement(value)) changed = true;
+            },
+        });
 
         // do-while 还原会把内层循环随 done 分支搬到循环之后(内层循环已不在
         // 本次遍历的队列里),重新扫描直到没有新的可还原形态。

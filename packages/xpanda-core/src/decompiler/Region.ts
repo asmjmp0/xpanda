@@ -20,6 +20,11 @@ export class Region implements IPandaDecompileAble {
     exceptionLandingPad = false;
     tryCatchHelperRegion = false;
     logicalRegion = false;
+    /**
+     * 该区域是某个 try 的入口时,保护范围的结束 pc(不含)。
+     * reduceSequence 不能把这个位置之后的语句并进 try 体。
+     */
+    tryBodyEndPC: number | null = null;
 
     constructor(block: PandaIRBasicBlock | null, type: RegionType) {
         this.block = block;
@@ -84,6 +89,7 @@ export class Region implements IPandaDecompileAble {
         copyOne.logicalRegion = this.logicalRegion;
         copyOne.exceptionLandingPad = this.exceptionLandingPad;
         copyOne.tryCatchHelperRegion = this.tryCatchHelperRegion;
+        copyOne.tryBodyEndPC = this.tryBodyEndPC;
         return copyOne;
     }
 

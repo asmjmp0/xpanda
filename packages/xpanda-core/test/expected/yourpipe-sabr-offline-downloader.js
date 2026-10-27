@@ -29,7 +29,6 @@ export class SabrOfflineDownloader {
       v6 = p0.durationMs || p0.video.approxDurationMs || p0.audio.approxDurationMs || 0;
       v9 = !!p0.useAuth;
       Logger.info(local_0_0 /*TAG*/, "download start dual-track video=" + p0.video.itag + " audio=" + p0.audio.itag + " " + ("track=" + (p0.audio.audioTrackId || v4.audioTrackId || "-") + " ") + ("durationMs=" + v6 + " useAuth=" + v9 + ""));
-      v14 = sabrSessionStore;
       v8 = sabrSessionStore.acquire(v7, v4, v10, v9, "|dl");
       try {
         v15 = new SabrTrackBuffer(v8, false, v6);
@@ -44,19 +43,12 @@ export class SabrOfflineDownloader {
         }
         await SabrOfflineDownloader.dumpDualTrack(v15, v14, v8, p0.writeVideo, p0.writeAudio, p0.onProgress, p0.isCancelled);
         Logger.info(local_0_0 /*TAG*/, "download complete dual-track video=" + p0.video.itag + " audio=" + p0.audio.itag + "");
-      } catch (catchAcc) {
-        v14 = catchAcc;
+      } finally {
+        sabrSessionStore.release(v8.key);
       }
-      sabrSessionStore.release(v8.key);
-      if (hole == v14) {
-        return undefined;
-      }
-      throw v14;
     } else {
       throw new Error("SABR download: missing sabrInfo/serverAbrStreamingUrl");
     }
-    /* xpanda: try/finally not restored */
-    ;
   }
   static resolveVideoFormat(p0, p1, p2) {
     let v6 = p0.findFormatByItag(p2);

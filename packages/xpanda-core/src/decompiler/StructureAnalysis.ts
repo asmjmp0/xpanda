@@ -107,6 +107,10 @@ export class StructureAnalysis {
                 if (region.getType() === "Linear") {
                     const instructions = region.block!.pandaInstructions;
                     if (instructions.length === 1 && instructions[0].isJump()) {
+                        // An exception landing pad that is only a jump is an empty
+                        // catch. Folding it makes the catch edge land on the shared
+                        // tail, and reduction then copies that tail into the catch.
+                        if (region.isExceptionLandingPad()) continue;
                         const successor = getOnlyOneSuccessor(this.regionGraph, region);
                         if (!successor) break;
                         replacePredecessors(this.regionGraph, successor, region);
@@ -698,6 +702,13 @@ export class StructureAnalysis {
         // 合并后 region 的语句里会出现对 region 自己的引用(语句图成环),
         // decompile 按引用展开会无限递归;这种合并不能做,留给循环归约处理。
         if (this.statementsReferenceRegion(nextRegion, region)) return false;
+        // try 入口只能吸收保护范围之内的块。范围后的真实语句是 try/catch 的
+        // 续接(d1268 的 copyDirRecursive);纯跳转块可以并进来,让 try 与 catch
+        // 仍汇合到同一个后继。
+        if (region.tryBodyEndPC !== null && nextRegion.block
+            && nextRegion.block.getStartPC() >= region.tryBodyEndPC
+            && !isTransparentJump(nextRegion)
+            && !jumpsBackward(this.regionGraph, region, nextRegion)) return false;
         region.setType(nextRegion.getType());
         if (nextRegion.getType() === "Condition") {
             region.conditionalExp = nextRegion.isConditionalExp();
@@ -1087,6 +1098,24 @@ export class StructureAnalysis {
         if (region.getStatements()[0] instanceof LabelStatement) return;
         region.addFirstStatement(new LabelStatement(region));
     }
+}
+
+function isTransparentJump(region: Region): boolean {
+    const block = region.block;
+    if (!block || region.getStatements().length !== 1) return false;
+    return block.pandaInstructions.length === 1 && block.getTerminator().kind === "jumpDirect";
+}
+
+/** 后继跳回更早的块:这是循环闩,必须允许合并,否则图归约停住。 */
+function jumpsBackward<T extends Region>(graph: ValueGraph<T>, region: T, next: T): boolean {
+    const start = region.block?.getStartPC();
+    if (start === undefined) return false;
+    for (const successor of graph.successors(next)) {
+        if (successor === region) return true;
+        const pc = successor.block?.getStartPC();
+        if (pc !== undefined && pc <= start) return true;
+    }
+    return false;
 }
 
 function getOnlyOneSuccessor<T>(graph: ValueGraph<T>, node: T): T | null {

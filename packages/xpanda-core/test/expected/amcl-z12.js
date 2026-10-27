@@ -1822,6 +1822,7 @@ export const p301 = {
   FUNC_TOP_RIGHT: "func_top_right",
   DEBUG_TOP_LEFT: "debug_top_left"
 };
+v421 = 6;
 export const w421 = 5;
 export const n374 = 1;
 export const o374 = false;
@@ -1838,6 +1839,7 @@ local_0_5 = 0;
 local_0_6 = Math.floor(Math.random() * 1679616).toString(36);
 export const w1360 = 256;
 export const w412 = 6;
+v301 = 8;
 export const u301 = 9;
 b1361 = "ime_chat";
 c1361 = "sys_edit";

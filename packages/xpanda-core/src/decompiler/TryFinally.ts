@@ -1,4 +1,5 @@
 import * as TYPE from "@babel/types";
+import generate from "@babel/generator";
 import type { PandaIRCFG } from "../disasm/PandaIRCFG";
 import type { PandaIRBasicBlock } from "../disasm/PandaIRBasicBlock";
 
@@ -121,7 +122,10 @@ export function buildFinallyPlans(cfg: PandaIRCFG): FinallyPlan[] {
             guardStartPC: guardBlock.getStartPC(),
             guardEndPC: afterBranch.getStartPC(),
             endIsMethodTail: isImplicitMethodTail(cfg, afterBranch),
-            restoreContinuation: isNewHandlerEncoding(cfg),
+            // 正常继续在 `if (pending != hole) throw else { CONTINUATION }` 的
+            // 非抛出分支里。13.0.1.0 的 amcl 与 24+ 都是这个布局;空 else 取出来
+            // 仍是空数组。方法尾的隐式 `return undefined` 由 endIsMethodTail 丢掉。
+            restoreContinuation: true,
         });
     }
     return plans;
@@ -245,6 +249,23 @@ function findEnclosingStatement(root: any, target: any): TYPE.Statement | null {
  * 24.0.0.0 把守卫降级成 `if (sentinel != hole) { throw sentinel } else { <继续> }`,
  * 继续语句被收进 else,删除守卫时必须把它们搬回 try/finally 之后。
  */
+/** catch 体是否只是把异常存进临时变量(`v = catchAcc` / `acc = catchAcc; v = acc`)。 */
+function catchOnlyStoresException(handler: TYPE.CatchClause): boolean {
+    if (!TYPE.isIdentifier(handler.param)) return false;
+    const allowed = new Set<string>([handler.param.name]);
+    let sawStore = false;
+    for (const statement of handler.body.body) {
+        if (isFinallyMarker(statement)) continue;
+        if (!TYPE.isExpressionStatement(statement) || !TYPE.isAssignmentExpression(statement.expression)) return false;
+        const assign = statement.expression;
+        if (assign.operator !== "=" || !TYPE.isIdentifier(assign.left) || !TYPE.isIdentifier(assign.right)) return false;
+        if (!allowed.has(assign.right.name)) return false;
+        allowed.add(assign.left.name);
+        sawStore = true;
+    }
+    return sawStore;
+}
+
 function branchStatements(branch: TYPE.Statement | null | undefined): TYPE.Statement[] {
     if (!branch) return [];
     if (TYPE.isBlockStatement(branch)) return branch.body;
@@ -269,12 +290,6 @@ function extractGuardContinuation(guard: TYPE.IfStatement): TYPE.Statement[] {
         return branchStatements(guard.consequent).slice();
     }
     return [];
-}
-
-/** 24.0.0.0+ 的 try 表 / handler 布局 */
-function isNewHandlerEncoding(cfg: PandaIRCFG): boolean {
-    const version = cfg.getPandaMethod().getPandaFile()?.header.version;
-    return !!version && version[0] >= 24;
 }
 
 /**
@@ -413,9 +428,17 @@ export function applyFinallyPlans(astNode: any, plans: FinallyPlan[]): void {
                     guardEnd = end.index;
                 }
             }
-            // 只有 24.0.0.0+ 的守卫布局把正常继续收进 else 分支;旧版本保持原有
-            // 输出(已由大量快照锁定,而且那里的 start 标记位置另有约定)。
-            if (!plan.restoreContinuation || plan.endIsMethodTail) guardContinuation = [];
+            // 非抛出分支是正常继续。方法尾只有隐式 return 时不搬回来。
+            // 守卫后面已经有语句时,那些语句才是正常继续,else 里的是副本,搬出来会
+            // 盖住后面的赋值(amcl i8 的 `v11 = v6`)。
+            if (!plan.restoreContinuation || plan.endIsMethodTail || guardEnd < cleanupList.length) {
+                guardContinuation = [];
+            }
+            // else 里还夹着 hole 哨兵比较时,那不是干净的正常继续,搬出来会把
+            // 已经在 try 里的尾部再贴一份(amcl i8 的复制校验)。
+            if (guardContinuation.some((statement) => generate(statement).code.includes("hole"))) {
+                guardContinuation = [];
+            }
 
             const finallyStatements = cleanupList.slice(finallyStart, guard);
             // try/catch 布局:结构化分析已经把 finally handler 生成成了
@@ -435,6 +458,41 @@ export function applyFinallyPlans(astNode: any, plans: FinallyPlan[]): void {
                 const parentIndex = parentList ? parentList.indexOf(tryOwner) : -1;
                 if (parentIndex < 0) break left;
                 parentList!.splice(parentIndex, 1, tryNode, ...guardContinuation);
+                applied = true;
+            } else if (tryOwner && tryOwner.handler && cleanupList !== startList) {
+                // 用户 catch 在 try 范围内终止,finally 的 cleanup/guard 落在这条
+                // try/catch 后面(f1268 写文件:catch 打日志再抛,close 在范围外)。
+                // 只有 cleanup 标记紧跟这条 try 时才包一层 try/finally。
+                const parentList = findStatementList(astNode, tryOwner);
+                const parentIndex = parentList ? parentList.indexOf(tryOwner) : -1;
+                if (!parentList || parentList !== cleanupList || parentIndex < 0
+                    || cleanup !== parentIndex + 1 || finallyStart > guard) break left;
+                const finallyStatements = cleanupList.slice(finallyStart, guard);
+                if (finallyStatements.length === 0) break left;
+                let continuation = guardContinuation;
+                let removeThrough = guardEnd;
+                const guardStatement = cleanupList[guardEnd - 1];
+                const afterGuard = cleanupList[guardEnd];
+                if (continuation.length === 0 && guardStatement && TYPE.isIfStatement(guardStatement)
+                    && !guardStatement.alternate && afterGuard && TYPE.isThrowStatement(afterGuard)
+                    && !branchEndsWithThrow(guardStatement.consequent)) {
+                    // `if (pending == hole) { CONTINUATION } throw pending`
+                    continuation = branchStatements(guardStatement.consequent).slice();
+                    removeThrough = guardEnd + 1;
+                }
+                if (plan.endIsMethodTail) continuation = [];
+                // catch 里只有 `v = catchAcc` 时,那是 finally 的异常保存,重抛在守卫里。
+                // 丢掉这个 catch,异常由 try/finally 自己继续抛(SabrOfflineDownloader
+                // 的 release)。用户 catch(打日志再抛)保留。
+                const tryBlock = catchOnlyStoresException(tryOwner.handler)
+                    ? tryOwner.block
+                    : TYPE.blockStatement([tryOwner]);
+                const wrapped = TYPE.tryStatement(
+                    tryBlock,
+                    null,
+                    TYPE.blockStatement(finallyStatements),
+                );
+                parentList.splice(parentIndex, removeThrough - parentIndex, wrapped, ...continuation);
                 applied = true;
             } else if (cleanupList === startList) {
                 // 常规布局:try 体 = [tryStart, cleanup),守卫之后是 try/finally 之后的语句

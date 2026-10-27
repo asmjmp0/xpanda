@@ -20,7 +20,7 @@ import { q36 } from "@normalized:N&&&commons/Index&1.0.0";
 import { y } from "@normalized:N&&&commons/Index&1.0.0";
 import zlib from "@ohos:zlib";
 let v1267;
-let local_0_0, local_0_1, local_0_4, local_0_5, local_0_6, local_0_7, local_0_8, local_0_10, local_0_11, local_0_12;
+let local_0_0, local_0_1, local_0_2, local_0_3, local_0_4, local_0_5, local_0_6, local_0_7, local_0_8, local_0_10, local_0_11, local_0_12;
 let local_0_9 = function (p0) {
   return p0.downloads
     && p0.downloads.artifact
@@ -149,7 +149,7 @@ export function b1268(p0, p1, p2, p3) {
   return v3;
 }
 export async function c1268(p0, p1, p2, p3) {
-  let v3, v6, v7, v8, v9, v11, v12, v19, v20, v29, v30, v31, v33, acc;
+  let v3, v6, v7, v8, v9, v11, v12, v29, v30, v31, v33, acc;
   let local_1_0, local_1_2, local_1_3;
   let local_1_1 = p3;
   v3 = local_0_8(p0);
@@ -186,108 +186,52 @@ export async function c1268(p0, p1, p2, p3) {
   v6 = "";
   v7 = "";
   local_1_3 = d398.instance();
-  v8 = [local_0_10, local_0_11][Symbol.iterator]();
-  v9 = v8.next;
-  acc = false;
   v11 = 0;
-  do {
-    v12 = v9.call(v8);
-    if (v12.done) {
-      if (v6.length === 0) {
-        y.warn(local_0_0, "Could not find client_mappings URL for " + p1 + "", null, a32);
-        return undefined;
-      }
-      if (!new RegExp("^[0-9a-f]{40}$").test(v7) || !Number.isSafeInteger(v11) || v11 <= 0) {
-        throw new Error("client_mappings 缺少可信SHA1/大小，不能把未知映射交给处理器");
-      }
-      y.info(local_0_0, "Downloading mappings: " + v6 + " → " + v3 + "", a32);
-      g50.mkdirSync(v3.substring(0, v3.lastIndexOf("/")), true);
-      local_1_0 = 0;
-      local_1_2 = [];
-      v19 = {
-        "name": "Forge client mappings " + p1,
-        "files": null
-      };
-      v20 = [];
-      v20[0] = {
-        "localPath": v3,
-        "allowedRoot": p2,
-        "urls": m1205(v6.replace("piston-data.mojang.com", d32).replace("launcher.mojang.com", d32), v6),
-        "check": {
-          "sha1": v7,
-          "size": v11
+  for (v12 of [local_0_10, local_0_11]) {
+    try {
+      v30 = "";
+      for (v33 of JSON.parse(await local_1_3.fetchText(v12)).versions) {
+        if (v33.id === p1) {
+          v30 = v33.url || "";
+          break;
         }
-      };
-      v19.files = v20;
-      acc = local_1_3.createAndWait(v19, function (p0) {
-        local_1_0 = p0.taskId;
-        try {
-          if (local_1_1 != null) {
-            local_1_1(p0);
-          }
-        } catch (catchAcc) {
-          if (local_1_2.length === 0) {
-            local_1_2.push(catchAcc);
-          }
-          if (local_1_0 /*p1272*/ > 0) {
-            local_1_3.cancel(local_1_0 /*p1272*/);
-          }
-        }
-      });
-      await acc;
-      if (local_1_2.length > 0) {
-        throw local_1_2[0];
       }
-      if (local_1_0 > 0) {
-        await local_1_3.awaitTaskReleased(local_1_0, true);
+      if (v30.length === 0) {
+        continue;
       }
-      if (hole == v6) {
-        y.info(local_0_0, "Mappings download verified", a32);
-        return undefined;
+      v33 = d32;
+      v29 = v30.replace("piston-meta.mojang.com", d32).replace("launchermeta.mojang.com", d32);
+      v31 = [];
+      if (v29 !== v30) {
+        v31.push(v30);
       }
-      throw v6;
-    }
-    v30 = "";
-    for (v33 of JSON.parse(await local_1_3.fetchText(v12.value)).versions) {
-      if (v33.id === p1) {
-        v30 = v33.url || "";
-        break;
+      v29 = JSON.parse(await local_1_3.fetchText(v29, v31)).downloads;
+      if (v29 && v29.client_mappings) {
+        v29 = v29.client_mappings;
+        v6 = typeof v29.url === "string" ? v29.url : "";
+        v7 = typeof v29.sha1 === "string" ? v29.sha1.toLowerCase() : "";
+        v11 = typeof v29.size === "number" ? v29.size : 0;
       }
+      if (v6.length <= 0) {
+        continue;
+      }
+      break;
+    } catch (catchAcc) {
+      y.warn(local_0_0, "Failed to get manifest from " + v12 + "", catchAcc, a32);
     }
-    acc = v30.length === 0;
-    if (v30.length === 0) {
-      continue;
-    }
-    v33 = d32;
-    v29 = v30.replace("piston-meta.mojang.com", d32).replace("launchermeta.mojang.com", d32);
-    v31 = [];
-    if (v29 !== v30) {
-      v31.push(v30);
-    }
-    v29 = JSON.parse(await local_1_3.fetchText(v29, v31)).downloads;
-    if (v29 && v29.client_mappings) {
-      v29 = v29.client_mappings;
-      v6 = typeof v29.url === "string" ? v29.url : "";
-      v7 = typeof v29.sha1 === "string" ? v29.sha1.toLowerCase() : "";
-      v11 = typeof v29.size === "number" ? v29.size : 0;
-    }
-    acc = v6.length > 0;
-  } while (!acc);
-  if (v8.return == undefined) {
-    v8 = v11;
-  } else {
-    v8.return();
-    v8 = v11;
   }
   if (v6.length === 0) {
     y.warn(local_0_0, "Could not find client_mappings URL for " + p1 + "", null, a32);
     return undefined;
   }
-  if (!new RegExp("^[0-9a-f]{40}$").test(v7) || !Number.isSafeInteger(v8) || v8 <= 0) {
+  if (!new RegExp("^[0-9a-f]{40}$").test(v7) || !Number.isSafeInteger(v11) || v11 <= 0) {
     throw new Error("client_mappings 缺少可信SHA1/大小，不能把未知映射交给处理器");
   }
   y.info(local_0_0, "Downloading mappings: " + v6 + " → " + v3 + "", a32);
-  g50.mkdirSync(v3.substring(0, v3.lastIndexOf("/")), true);
+  v9 = v3.substring(0, v3.lastIndexOf("/"));
+  try {
+    g50.mkdirSync(v9, true);
+  } catch (catchAcc) {}
   v9 = v6.replace("piston-data.mojang.com", d32).replace("launcher.mojang.com", d32);
   local_1_0 = 0;
   local_1_2 = [];
@@ -300,7 +244,7 @@ export async function c1268(p0, p1, p2, p3) {
         "urls": m1205(v9, v6),
         "check": {
           "sha1": v7,
-          "size": v8
+          "size": v11
         }
       }]
     }, function (p0) {
@@ -327,25 +271,26 @@ export async function c1268(p0, p1, p2, p3) {
       await local_1_3.awaitTaskReleased(local_1_0, true);
     }
   }
+  y.info(local_0_0, "Mappings download verified", a32);
+  return undefined;
 }
 export function d1268(p0, p1) {
-  g50.statSync(p0);
+  try {
+    g50.statSync(p0);
+  } catch (catchAcc) {
+    y.info(local_0_0, "No maven/ directory in installer, skipping", a32);
+    return;
+  }
   y.info(local_0_0, "Copied " + local_0_12(p0, p1) + " files from maven/ to libraries/", a32);
 }
 export async function e1268(p0, p1, p2, p3) {
-  let v0, v6, v9, v14, v15, v16, v19, v21, v22;
+  let v0, v9, v14, v15, v16, v19, v21, v22;
   let v3 = local_0_8(p2);
   if (v3 === null) {
     throw new Error("无法读取旧版 Forge 内嵌库来源清单");
   }
   v3 = v3.install;
-  v6 = p0[Symbol.iterator]();
-  while (true) {
-    v9 = v6.next();
-    if (v9.done) {
-      return undefined;
-    }
-    v9 = v9.value;
+  for (v9 of p0) {
     v14 = d771(v9.name);
     v15 = c771(v9.storagePath ?? v14);
     if (v14.length === 0 || v15.length === 0) {
@@ -397,6 +342,7 @@ export async function e1268(p0, p1, p2, p3) {
       throw new Error("旧版 Forge 内嵌库校验失败：" + v19.name + "；" + catchAcc.message);
     }
   }
+  return undefined;
 }
 export function e771(p0) {
   let v4, v6, v7 /*a104*/;
@@ -411,7 +357,7 @@ export function e771(p0) {
   return v0;
 }
 export function f1268(p0, p1, p2, p3, p4, p5, p6, p7) {
-  let v0 /*n1268*/, v2 /*a1*/, v3 /*y*/, v4 /*a32*/, v5 /*a32*/, v6 /*a32*/, v7 /*g50*/, acc;
+  let v0 /*n1268*/, v1 /*n1268*/, v2 /*a1*/, v3 /*y*/, v4 /*a32*/, v5 /*a32*/, v6 /*a32*/, v7 /*g50*/, acc;
   y.info(local_0_0, "Installing legacy Forge: " + p2 + "", a32);
   v0 = l786(p0);
   if (v0 !== p0 || (acc = l786(p3), v0 !== p0 !== p3)) {
@@ -421,11 +367,16 @@ export function f1268(p0, p1, p2, p3, p4, p5, p6, p7) {
   if (!v0) {
     return new n1268(false, p3, "无法读取 install_profile.json");
   }
-  g50.mkdirSync(p4 + "/versions/" + p3, true);
-  g50.mkdirSync(p4 + "/libraries", true);
+  try {
+    g50.mkdirSync(p4 + "/versions/" + p3, true);
+  } catch (catchAcc) {}
+  try {
+    g50.mkdirSync(p4 + "/libraries", true);
+  } catch (catchAcc) {}
   v4 = !v0.install;
   v5 = 0;
   if (v4) {
+    v7 = "Legacy method 1: extracting version.json from json field";
     y.info(local_0_0, "Legacy method 1: extracting version.json from json field", a32);
     v0 = v0.json || "";
     v3 = r1267(v0);
@@ -441,54 +392,71 @@ export function f1268(p0, p1, p2, p3, p4, p5, p6, p7) {
     }
     v0.id = p3;
     try {
-      v5 = g50.openSync(p4 + "/versions/" + p3 + "/" + p3 + ".json", g50.OpenMode.CREATE | g50.OpenMode.WRITE_ONLY | g50.OpenMode.TRUNC);
-      v0 = JSON.stringify(v0);
-      g50.writeSync(v5.fd, v0);
+      try {
+        v7 = g50.openSync(p4 + "/versions/" + p3 + "/" + p3 + ".json", g50.OpenMode.CREATE | g50.OpenMode.WRITE_ONLY | g50.OpenMode.TRUNC);
+        v5 = v7;
+        v0 = JSON.stringify(v0);
+        g50.writeSync(v7.fd, v0);
+      } catch (catchAcc) {
+        v5 = v7;
+        y.warn(local_0_0, "write " + (p4 + "/versions/" + p3 + "/" + p3 + ".json") + " failed", catchAcc, a32);
+        throw catchAcc;
+      }
     } finally {
       if (v5) {
-        g50.closeSync(v5);
+        try {
+          g50.closeSync(v5);
+        } catch (catchAcc) {}
       }
     }
-  } else {
-    y.info(local_0_0, "Legacy method 2: extracting jar from install.filePath", a32);
-    v6 = d771(v0.install.path || "");
-    v7 = r1267(v0.install.filePath || "");
-    if (v6.length !== 0 && v7.length !== 0) {
-      if (!a104(p5 + "/" + v7)) {
-        return new n1268(false, p3, "旧版 Forge 安装器缺少有效的内嵌加载器 JAR");
-      }
-      if ((v0.install.path || "").length > 0 && (v3 = d771(v0.install.path || ""), v3.length > 0)) {
-        v2 = p4 + "/libraries" + "/" + v3;
-        v3 = (p4 + "/libraries" + "/" + v3).substring(0, (p4 + "/libraries" + "/" + v3).lastIndexOf("/"));
+    d1268(p5 + "/maven", p4 + "/libraries");
+    y.info(local_0_0, "Legacy method 1 complete: " + p3 + "", a32);
+    return new n1268(true, p3);
+  }
+  y.info(local_0_0, "Legacy method 2: extracting jar from install.filePath", a32);
+  v6 = d771(v0.install.path || "");
+  v7 = r1267(v0.install.filePath || "");
+  if (v6.length !== 0 && v7.length !== 0) {
+    if (!a104(p5 + "/" + v7)) {
+      return new n1268(false, p3, "旧版 Forge 安装器缺少有效的内嵌加载器 JAR");
+    }
+    if ((v0.install.path || "").length > 0 && (v3 = d771(v0.install.path || ""), v3.length > 0)) {
+      v2 = p4 + "/libraries" + "/" + v3;
+      v3 = (p4 + "/libraries" + "/" + v3).substring(0, (p4 + "/libraries" + "/" + v3).lastIndexOf("/"));
+      try {
         g50.mkdirSync(v3, true);
-        v3 = r1267(v0.install.filePath || "");
-        if ((v0.install.filePath || "").length > 0 && v3.length === 0) {
-          return new n1268(false, p3, "install.filePath 不安全: " + (v0.install.filePath || ""));
+      } catch (catchAcc) {}
+      v3 = r1267(v0.install.filePath || "");
+      if ((v0.install.filePath || "").length > 0 && v3.length === 0) {
+        return new n1268(false, p3, "install.filePath 不安全: " + (v0.install.filePath || ""));
+      }
+      v3 = v3.length > 0 ? p5 + "/" + v3 : "";
+      if (v3.length > 0 && a104(v3)) {
+        try {
+          g50.copyFileSync(v3, v2);
+        } catch (catchAcc) {
+          v3 = "copyFileSync " + v3 + " -> ";
+          v2 = v3 + v2 + " failed";
+          y.error(local_0_0, v2, catchAcc, a32);
+          throw catchAcc;
         }
-        v3 = v3.length > 0 ? p5 + "/" + v3 : "";
-        if (v3.length > 0 && a104(v3)) {
-          try {
-            g50.copyFileSync(v3, v2);
-            v3 = y;
-            v2 = "Copied forge jar: " + v2 + "";
-            y.info(local_0_0, v2, a32);
-          } catch (catchAcc) {
-            v3 = "copyFileSync " + v3 + " -> ";
-            v2 = v3 + v2 + " failed";
-            y.error(local_0_0, v2, catchAcc, a32);
-            throw catchAcc;
-          }
-        }
+        v2 = "Copied forge jar: " + v2 + "";
+        y.info(local_0_0, v2, a32);
       }
-      v0 = v0.versionInfo;
-      if (!v0) {
-        y.error(local_0_0, "Legacy method 2 failed: install_profile.json has \"install\" field but no \"versionInfo\"", null, a32);
-        return new n1268(false, p3, "旧版 Forge 安装器缺少 versionInfo 字段，无法生成 version.json");
-      }
-      v0.id = p3;
-      if (!v0.inheritsFrom) {
-        v0.inheritsFrom = p0;
-      }
+    }
+    v0 = v0.versionInfo;
+    if (!v0) {
+      y.error(local_0_0, "Legacy method 2 failed: install_profile.json has \"install\" field but no \"versionInfo\"", null, a32);
+      return new n1268(false, p3, "旧版 Forge 安装器缺少 versionInfo 字段，无法生成 version.json");
+    }
+    v2 = "id";
+    v0.id = p3;
+    if (!v0.inheritsFrom) {
+      v2 = "inheritsFrom";
+      v0.inheritsFrom = p0;
+    }
+    try {
+      v2 = p3;
       acc = g50.openSync(p4 + "/versions/" + p3 + "/" + p3 + ".json", g50.OpenMode.CREATE | g50.OpenMode.WRITE_ONLY | g50.OpenMode.TRUNC);
       try {
         v0 = JSON.stringify(v0);
@@ -496,9 +464,22 @@ export function f1268(p0, p1, p2, p3, p4, p5, p6, p7) {
       } finally {
         g50.closeSync(acc);
       }
-    } else {
-      return new n1268(false, p3, "旧版 Forge 安装器缺少有效的内嵌加载器 JAR");
+      try {
+        v1 = g50.statSync(p4 + "/versions/" + p3 + "/" + p3 + ".json");
+        if (v1.size < 100) {
+          return new n1268(false, p3, "生成的 version.json 过小（" + v1.size + " bytes），可能 versionInfo 字段不完整");
+        }
+        y.info(local_0_0, "Legacy method 2 complete: " + p3 + "", a32);
+        return new n1268(true, p3);
+      } catch (catchAcc) {
+        return new n1268(false, p3, "version.json 写入后不可读: " + catchAcc.message);
+      }
+    } catch (catchAcc) {
+      y.error(local_0_0, "Failed to write version.json", catchAcc, a32);
+      return new n1268(false, v2, "写入 version.json 失败: " + catchAcc.message);
     }
+  } else {
+    return new n1268(false, p3, "旧版 Forge 安装器缺少有效的内嵌加载器 JAR");
   }
 }
 local_0_12 = function (p0, p1, p2) {
@@ -514,18 +495,16 @@ local_0_12 = function (p0, p1, p2) {
     if (!v1.isDirectory()) {
       throw new Error("复制源不是普通目录: " + p0);
     }
-    g50.mkdirSync(p1, true);
+    try {
+      g50.mkdirSync(p1, true);
+    } catch (catchAcc) {}
     v1 = g50.lstatSync(p1);
     if (!v1.isSymbolicLink()) {
       if (!v1.isDirectory()) {
         throw new Error("复制目标不是普通目录: " + p1);
       }
-      v1 = g50.listFileSync(p0)[Symbol.iterator]();
       v5 = 0;
-      while (true) {
-        v6 = v1.next();
-        if (v6.done) break;
-        v6 = v6.value;
+      for (v6 of g50.listFileSync(p0)) {
         if (l786(v6) !== v6) {
           throw new Error("复制源包含非法文件名");
         }
@@ -548,7 +527,10 @@ local_0_12 = function (p0, p1, p2) {
                   v12 = false;
                 }
                 if (v12) {
-                  g50.mkdirSync(v6.substring(0, v6.lastIndexOf("/")), true);
+                  v11 = v6.substring(0, v6.lastIndexOf("/"));
+                  try {
+                    g50.mkdirSync(v11, true);
+                  } catch (catchAcc) {}
                   g50.copyFileSync(v10, v6);
                   v5 += 1;
                 }
@@ -560,7 +542,10 @@ local_0_12 = function (p0, p1, p2) {
                 throw catchAcc;
               }
               {
-                g50.mkdirSync(v6.substring(0, v6.lastIndexOf("/")), true);
+                v11 = v6.substring(0, v6.lastIndexOf("/"));
+                try {
+                  g50.mkdirSync(v11, true);
+                } catch (catchAcc) {}
                 g50.copyFileSync(v10, v6);
                 v5 += 1;
               }
@@ -645,9 +630,49 @@ export function u1267(p0) {
   v0 = parseInt(p0);
   return isNaN(v0) || v0 >= 20;
 }
-(function (p0, p1) {
-  let v2 /*p1268*/;
-  let v1 /*g50*/ = Math.min(local_0_4, Math.max(local_0_5, g50.statSync(p1).size * 200));
+v1267 = function (p0, p1, p2) {
+  let acc;
+  let local_1_1 = p0;
+  let local_1_2 = p1;
+  let local_1_0 = p2;
+  acc = new Promise(function (p0, p1) {
+    let local_2_4 = p0;
+    let local_2_2 = p1;
+    let local_2_3 = local_1_0 !== undefined && local_1_0 > 0 ? local_1_0 : local_0_2(local_1_1);
+    let local_2_0 = false;
+    let local_2_1 = setTimeout(function () {
+      local_2_0 = true;
+    }, local_2_3);
+    zlib.decompressFile(local_1_1, local_1_2, function (p0) {
+      clearTimeout(local_2_1);
+      if (p0) {
+        local_2_2(new Error("解压失败: " + p0.message));
+        return;
+      }
+      try {
+        local_0_3(local_1_2, local_1_1);
+      } catch (catchAcc) {
+        local_2_2(catchAcc);
+        return;
+      }
+      if (local_2_0) {
+        local_2_2(new Error("解压超时（" + Math.round(local_2_3 / 1000) + "秒；底层操作已等待完成）"));
+      } else {
+        local_2_4();
+      }
+      return;
+    });
+  });
+  return acc;
+};
+local_0_3 = function (p0, p1) {
+  let v1 /*g50*/, v2 /*p1268*/;
+  try {
+    v1 = g50.statSync(p1).size;
+  } catch (catchAcc) {
+    v1 = 0;
+  }
+  v1 = Math.min(local_0_4, Math.max(local_0_5, v1 * 200));
   while (p0.length > 1 && p0.endsWith("/")) {
     p0 = p0.substring(0, p0.length - 1);
   }
@@ -660,7 +685,7 @@ export function u1267(p0) {
     return;
   }
   throw new Error("解压目标不是普通目录");
-});
+};
 local_0_7 = function (p0, p1, p2, p3, p4) {
   let v6, v8 /*l786*/, v9 /*g50*/, acc;
   if (p4 > 64) {
@@ -706,11 +731,20 @@ local_0_7 = function (p0, p1, p2, p3, p4) {
   }
   return;
 };
-(function (p0) {
-  return Math.min(120000 + Math.round(g50.statSync(p0).size / (1024 * 1024) / 100) * 60000, 1200000);
-});
+local_0_2 = function (p0) {
+  let v0;
+  try {
+    v0 = 0;
+    v0 = g50.statSync(p0).size / (1024 * 1024);
+  } catch (catchAcc) {}
+  return Math.min(120000 + Math.round(v0 / 100) * 60000, 1200000);
+};
 local_0_8 = function (p0) {
-  return JSON.parse(g50.readTextSync(p0));
+  try {
+    return JSON.parse(g50.readTextSync(p0));
+  } catch (catchAcc) {
+    return null;
+  }
 };
 local_0_0 = q36.MOD_FORGE_INSTALLER;
 local_0_11 = f32 + "/mc/game/version_manifest_v2.json";

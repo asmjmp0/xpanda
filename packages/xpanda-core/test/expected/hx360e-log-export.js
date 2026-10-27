@@ -7,7 +7,6 @@ import fs from "@ohos:file.fs";
 import hilog from "@ohos:hilog";
 import picker from "@ohos:file.picker";
 import util from "@ohos:util";
-let acc;
 let local_0_0 = 0;
 let local_0_1 = "HX360E";
 export class LogExport {
