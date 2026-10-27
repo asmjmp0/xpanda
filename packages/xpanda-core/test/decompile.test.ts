@@ -3446,6 +3446,15 @@ function verifyAmclSharedTryCatchJoin(clazz: PandaClass, code: string): void {
  * 现在:catch 条目按"与 finally 共用起点的用户 catch"接进图,finally 由 TryFinally
  * 挂到同一个 try 上(cleanup 落在 catch 体尾部时截断 catch、把 cleanup 段变成
  * finally,守卫之后的续接搬回 try/catch/finally 之后)。
+ *
+ * 同一个类里的 `concatParts` 覆盖 finally 的另一种布局(循环体尾部守卫):
+ * `for (const p of parts) { let inp = null; try { inp = open(p); while (…) read/write }
+ * finally { if (inp) try { close(inp) } catch {} } }` 被编译成
+ * `do { …; try 体; CLEANUP; if (pending != hole) throw pending } while (!guard)`,
+ * 守卫的非抛出分支是一条只有 `jmp` 的回边(跳回循环头)、哨兵比较被物化成 do-while
+ * 的 test。守卫后面既没有 if 也没有 end 标记,旧布局只能报
+ * `no usable end marker`,于是内层 finally 没还原、循环 test 把重抛吞掉
+ * (异常时静默结束循环)。现在由 FinallyPlan.loopTailGuard 布局还原。
  */
 function verifyAmclSharedCatchFinally(clazz: PandaClass, code: string): void {
     if (clazz.name.content !== "L&launch/src/main/ets/i15&1.0.0;") {
@@ -3477,6 +3486,38 @@ function verifyAmclSharedCatchFinally(clazz: PandaClass, code: string): void {
     const tailAt = body.lastIndexOf("所选来源不可用");
     if (!(catchAt < finallyAt && finallyAt < tailAt)) {
         throw new Error(`amcl i15 downloadCatalogArchive: catch/finally/兜底顺序不对 (${catchAt}/${finallyAt}/${tailAt})`);
+    }
+    // concatParts:内层 finally(close(inp))必须还原,循环 test 不能还带着守卫
+    const concatStart = code.indexOf("  concatParts(p0, p1) {");
+    if (concatStart < 0) throw new Error(`amcl i15: 未找到 concatParts\n${code}`);
+    const concatEnd = code.indexOf("\n  buildGithubUrls(", concatStart);
+    if (concatEnd < 0) throw new Error(`amcl i15: 未找到 concatParts 的结束位置\n${code}`);
+    const concat = code.slice(concatStart, concatEnd);
+    for (const leftover of ["try/finally not restored", "hole", "xpanda_goto", "decompiler_"]) {
+        if (concat.includes(leftover)) {
+            throw new Error(`amcl i15 concatParts: 仍残留 ${JSON.stringify(leftover)}\n${concat}`);
+        }
+    }
+    // 守卫物化成循环 test 之后必须变回无条件循环(退出只靠 if (v13.done) break)
+    if ((concat.match(/\} finally \{/g) ?? []).length !== 2) {
+        throw new Error(`amcl i15 concatParts: 应有内外两层 finally\n${concat}`);
+    }
+    for (const fragment of [
+        "do {",
+        "if (v13.done) {",
+        "} while (true);",
+        // close(inp) 在内层 finally 里(此前是循环体里的一条普通语句,异常时被跳过)
+        "g50.closeSync(v27);",
+        // close(out) 在外层 finally 里
+        "g50.closeSync(v2);",
+    ]) {
+        if (!concat.includes(fragment)) {
+            throw new Error(`amcl i15 concatParts: 缺少 ${JSON.stringify(fragment)}\n${concat}`);
+        }
+    }
+    const expected = fs.readFileSync(path.join(__dirname, "expected", "amcl-launch-i15.js"), "utf-8");
+    if (code !== expected) {
+        throw new Error(`amcl i15: 输出与快照不一致\n${firstDifference(expected, code)}`);
     }
 }
 
@@ -4710,7 +4751,7 @@ const amclClassTests: BinaryClassTest[] = [
     { label: "amcl display listeners loop + empty catch (amcl1.0.6.abc)", matches: (n) => n === "L&entry/src/main/ets/n4/o8&;", run: verifyAmclDisplayListenersLoop },
     { label: "amcl launch labelled-loop goto (amcl1.0.6.abc)", matches: (n) => n === "L&launch/src/main/ets/r16&1.0.0;", run: verifyAmclLaunchGotoLoop },
     { label: "amcl shared try/catch join (amcl1.0.6.abc)", matches: (n) => n === "L&entry/src/main/ets/r5/l8&;", run: verifyAmclSharedTryCatchJoin },
-    { label: "amcl shared-start catch + finally (amcl1.0.6.abc)", matches: (n) => n === "L&launch/src/main/ets/i15&1.0.0;", run: verifyAmclSharedCatchFinally },
+    { label: "amcl shared-start catch + loop-tail finally (amcl1.0.6.abc)", matches: (n) => n === "L&launch/src/main/ets/i15&1.0.0;", run: verifyAmclSharedCatchFinally },
     { label: "amcl nested try/finally restoration (amcl1.0.6.abc)", matches: (n) => n === "L&feature_core/src/main/ets/e11/i11&1.0.0;", run: verifyAmclNestedFinallyRestoration },
 ];
 

@@ -75,6 +75,13 @@ export interface FinallyPlan {
      * (共享那份在 handler 里,pc 更小)。
      */
     tailCleanupRange?: { startPC: number; endPC: number };
+    /**
+     * cleanup 落在**循环体尾部**,守卫是尾部的一组独立语句(哨兵比较被物化成
+     * do-while 的 test),守卫的非抛出分支是循环回边(经一条 jmp 跳回循环头)。
+     * 还原时把 try 体包成 try/finally,删掉守卫脚手架并把循环 test 改成 true
+     * (回边立刻无条件跳回循环头,退出只靠循环体里的 break)。
+     */
+    loopTailGuard?: boolean;
 }
 
 export interface FinallyRoleInfo {
@@ -368,13 +375,39 @@ export function buildFinallyPlans(cfg: PandaIRCFG): FinallyPlan[] {
         // try/finally;那种版本上再认「循环体尾部」只会多套一层(hx360e LogExport)。
         const version = cfg.getPandaMethod().getPandaFile()?.header.version;
         const legacyHandlers = !version || version[0] < 24;
-        const loopLatch = legacyHandlers && !matchedByRegister && afterBranch.getStartPC() <= tryBlock.startPC;
+        const directBackEdge = afterBranch.getStartPC() <= tryBlock.startPC;
+        // 守卫的非抛出分支也可能只是一条跳回循环头的 jmp(回边块自己单独成块):
+        // 这时它的 pc 比守卫大,不能按 afterBranch 的起始 pc 判断。只认「整块只有
+        // 这一条 jmp」的块 —— 循环增量块(mov/lda/++/jmp)后面还有真正的循环体代码,
+        // 截断守卫之后的语句会把它们一起丢掉(amcl e4/a9 的 `stage`)。
+        const afterTerminator = afterBranch.getTerminator();
+        const bareBackJump = afterTerminator.kind === "jumpDirect"
+            && afterBranch.pandaInstructions.length === 1;
+        const jumpBackEdge = bareBackJump && afterTerminator.destinationPC <= tryBlock.startPC;
+        const loopLatch = legacyHandlers && !matchedByRegister && (directBackEdge || jumpBackEdge);
         if (!(tryBlock.startPC < endBlock.getStartPC()
             && endBlock.getStartPC() <= cleanupBlock.getStartPC()
             && cleanupBlock.getStartPC() < guardBlock.getStartPC()
             && (guardBlock.getStartPC() < afterBranch.getStartPC() || loopLatch))) continue;
 
         const endIsMethodTail = isImplicitMethodTail(cfg, afterBranch);
+        if (loopLatch && !directBackEdge) {
+            // 守卫没被折进 do-while 的 test,而是留在循环体尾部的一组语句里:
+            // `do { …; try { … } finally { … }; if (pending != hole) throw pending } while (!guard)`
+            // 仍然按经典角色插标记,只是还原布局不同(amcl i15 `concatParts` 的内层 finally)。
+            plans.push({
+                id: plans.length,
+                startPC: tryBlock.startPC,
+                endPC: endBlock.getStartPC(),
+                cleanupStartPC,
+                guardStartPC: guardBlock.getStartPC(),
+                guardEndPC: afterBranch.getStartPC(),
+                endIsMethodTail: false,
+                restoreContinuation: false,
+                loopTailGuard: true,
+            });
+            continue;
+        }
         if (loopLatch) {
             plans.push({
                 id: plans.length,
@@ -930,6 +963,53 @@ function applyTailCleanupFinally(
     return true;
 }
 
+/**
+ * 循环体尾部守卫布局(见 `FinallyPlan.loopTailGuard`):
+ *
+ *   do {
+ *     <try 体>
+ *     if (inp) { try { close(inp) } catch {} }   // cleanup
+ *     <守卫脚手架:寄存器恢复 + hole 比较>        // guard 起
+ *   } while (!<物化守卫值>)
+ *
+ * 守卫的非抛出分支是循环回边(经一条 jmp 跳回循环头),所以整段守卫脚手架删掉、
+ * 循环 test 改成 true 之后回边依旧成立(退出只靠循环体里的 break)。
+ */
+function applyLoopTailGuardFinally(
+    astNode: any,
+    startList: TYPE.Statement[],
+    tryStart: number,
+    cleanupList: TYPE.Statement[],
+    cleanup: number,
+    guard: number,
+    finallyStart: number,
+): boolean {
+    if (cleanupList !== startList) return false;
+    if (guard <= cleanup || guard >= startList.length) return false;
+    const owner = findStatementListOwner(astNode, startList);
+    const loop = owner?.statement;
+    if (!loop || !(TYPE.isWhileStatement(loop) || TYPE.isDoWhileStatement(loop))) return false;
+    // 守卫之后的循环 test 必须是物化的布尔临时值(`while (!acc)`),否则截断
+    // 会把真正的循环条件一起带走。
+    const test = loop.test;
+    const materialized = test && (TYPE.isIdentifier(test)
+        || (TYPE.isUnaryExpression(test) && test.operator === "!" && TYPE.isIdentifier(test.argument)));
+    if (!materialized) return false;
+    const finallyStatements = startList.slice(finallyStart, guard);
+    if (finallyStatements.length === 0) return false;
+    if (!(cleanup > tryStart)) return false;
+    const tryStatements = startList.slice(tryStart, cleanup);
+    const tryNode = TYPE.tryStatement(
+        TYPE.blockStatement(tryStatements),
+        null,
+        bodyBlock(finallyStatements),
+    );
+    // cleanup 语句(以及整段守卫脚手架)都属于 finally,替换 range 一直到循环体尾
+    startList.splice(tryStart, startList.length - tryStart, tryNode);
+    loop.test = TYPE.booleanLiteral(true);
+    return true;
+}
+
 /** 跑一遍计划;失败的 plan 连同原因返回(retry 非空时只重试这些 plan)。 */
 function applyPlans(
     astNode: any,
@@ -986,6 +1066,12 @@ function applyPlans(
             if (!guardPos || guardPos.list !== cleanupList) { reason = "guard marker missing or in another list"; break left; }
             const guard = guardPos.index;
             if (cleanup < 0 || guard <= cleanup) { reason = "cleanup/guard order"; break left; }
+
+            if (plan.loopTailGuard) {
+                applied = applyLoopTailGuardFinally(astNode, startList, tryStart, cleanupList, cleanup, guard, finallyStart);
+                if (!applied) reason = "loop tail guard not located";
+                break left;
+            }
 
             // 守卫语句(if (sentinel != hole) throw sentinel)可能把“之后”的块收进
             // else 分支,此时 endMarker 不在同一层。以守卫本身(第一个 IfStatement)
