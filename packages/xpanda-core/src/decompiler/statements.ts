@@ -68,7 +68,7 @@ export class IfPandaStatement extends JumpStatement {
     constructor(private readonly test: Region, consequent: IPandaDecompileAble | null, alternate: IPandaDecompileAble | null) {
         super(test);
         if (test.isTryCatchHelperRegion()) {
-            this.tryCatchPandaStatement = new TryCatchPandaStatement(consequent, alternate);
+            this.tryCatchPandaStatement = new TryCatchPandaStatement(consequent, alternate, test.catchBodyEndPC);
             this.consequent = null;
             this.alternate = null;
             return;
@@ -295,7 +295,12 @@ export class OrLogicalExpressionStatement extends LogicalExpressionStatement {
 }
 
 export class TryCatchPandaStatement implements IPandaDecompileAble {
-    constructor(private readonly tryBody: IPandaDecompileAble | null, private readonly catchBody: IPandaDecompileAble | null) {}
+    constructor(
+        private readonly tryBody: IPandaDecompileAble | null,
+        private readonly catchBody: IPandaDecompileAble | null,
+        /** 该 try 保护范围的结束 pc(try 表),用于判断 catch 与 finally 的嵌套关系 */
+        private readonly tryBodyEndPC: number | null = null,
+    ) {}
 
     decompile(methodHandler: PandaDecompilerMethodHandler, pandaLexical: PandaLexical, astNode: any): void {
         const codeGenerator = methodHandler.getCodeGenerator();
@@ -315,6 +320,7 @@ export class TryCatchPandaStatement implements IPandaDecompileAble {
         codeGenerator.getNodeUtils().insertNodeToBody(factory.expressionStatementNode(toAcc as any) as any, catchBodyNode);
         this.catchBody?.decompile(methodHandler, pandaLexical, catchBodyNode);
         const tryNode = factory.tryStatementNode(tryBodyNode, catchBodyNode);
+        if (this.tryBodyEndPC !== null) methodHandler.recordTryBodyEnd(tryNode, this.tryBodyEndPC);
         codeGenerator.getNodeUtils().insertNodeToBody(tryNode as any, astNode);
     }
 }

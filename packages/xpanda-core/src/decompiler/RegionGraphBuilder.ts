@@ -192,11 +192,17 @@ export class RegionGraphBuilder {
                 for (const instruction of region.block.pandaInstructions) {
                     if (instruction.kind === "async" && instruction.asyncType === "asyncfunctionawaituncaught") {
                         if (region.getType() === "Condition") {
+                            // reject 派发块把 await 的拒绝值再 throw 出去。跳转目标是
+                            // 正常继续,它本身也可能以 throw 结束(`catch (e) { …; throw e }`
+                            // 的 catch 体末尾),按“是不是 throw 块”判断会把 catch 的重抛
+                            // 一起删掉(g9 executeInstall 的 catch 因此不再抛出)。
+                            // 这里只删“throw 的正是 await 结果寄存器”的那条边。
+                            const result = awaitResultRegister(region.block);
                             for (const region1 of this.regionGraph.successors(region).slice()) {
-                                if (region1.block && region1.block.getTerminator().isThrowIns()) {
-                                    this.regionGraph.removeNode(region1);
-                                    region.setType("Linear");
-                                }
+                                if (!region1.block || !region1.block.getTerminator().isThrowIns()) continue;
+                                if (result !== null && !throwsRegister(region1.block, result)) continue;
+                                this.regionGraph.removeNode(region1);
+                                region.setType("Linear");
                             }
                         }
                     }
@@ -254,9 +260,9 @@ export class RegionGraphBuilder {
                     continue;
                 }
                 if (!this.isReachableRegion(entryRegion, tryEntryRegion)) continue;
-                const tryCatchRegion = new TryCatchHelperRegion(tryEntryRegion, handleEntryRegion);
                 const endPC = this.tryBodyEndPC.get(tryEntry);
                 if (endPC !== undefined) tryEntryRegion.tryBodyEndPC = endPC;
+                const tryCatchRegion = new TryCatchHelperRegion(tryEntryRegion, handleEntryRegion);
                 this.regionGraph.addNode(tryCatchRegion);
                 for (const predecessor of this.regionGraph.predecessors(tryEntryRegion).slice()) {
                     const value = this.regionGraph.edgeValueOrThrow(predecessor, tryEntryRegion);
@@ -763,6 +769,25 @@ function throwsRegister(block: PandaIRBasicBlock, register: string): boolean {
     return instructions.some((instruction) => instruction.kind === "load"
         && instruction.loadType === "OBJECT"
         && (instruction as any).loadParam?.toString() === register);
+}
+
+/**
+ * await 结果的寄存器:`resumegenerator` 之后第一次 `sta vX` 保存的就是恢复值,
+ * reject 派发块再把它 throw 出去(`lda vX; throw`)。
+ */
+function awaitResultRegister(block: PandaIRBasicBlock): string | null {
+    const instructions = block.pandaInstructions;
+    for (let i = 0; i < instructions.length; i++) {
+        const instruction = instructions[i];
+        if (instruction.kind !== "generator" || (instruction as any).generatorType !== "resumegenerator") continue;
+        for (let j = i + 1; j < instructions.length; j++) {
+            if (instructions[j].kind !== "store") continue;
+            const dest = (instructions[j] as any).destObj;
+            return dest ? dest.toString() : null;
+        }
+        return null;
+    }
+    return null;
 }
 
 /** 24.0.0.0+ 的 try 表把真正的 catch 处理器也写成 codeSize === 0 */

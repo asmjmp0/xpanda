@@ -25,6 +25,12 @@ export class Region implements IPandaDecompileAble {
      * reduceSequence 不能把这个位置之后的语句并进 try 体。
      */
     tryBodyEndPC: number | null = null;
+    /**
+     * try/catch helper 专用:该 try 保护范围的结束 pc(不含)。
+     * 不能复用 tryBodyEndPC —— 那个字段会被 reduceSequence 用来拒绝越界合并,
+     * helper 上设置它会改变归约行为。
+     */
+    catchBodyEndPC: number | null = null;
 
     constructor(block: PandaIRBasicBlock | null, type: RegionType) {
         this.block = block;
@@ -121,5 +127,7 @@ export class TryCatchHelperRegion extends Region {
         super(null, "Condition");
         this.name = "tryCatchHelper_" + tryEntryRegion + "_" + handleEntryRegion;
         this.tryCatchHelperRegion = true;
+        // 该 try 保护范围的结束 pc:AST 上要靠它判断 catch 是不是嵌在 finally 里
+        this.catchBodyEndPC = tryEntryRegion.tryBodyEndPC;
     }
 }

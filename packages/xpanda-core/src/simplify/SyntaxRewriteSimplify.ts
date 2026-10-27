@@ -315,6 +315,37 @@ export class SyntaxRewriteSimplify implements ISimplify {
         return changed;
     }
 
+    /**
+     * `try {} finally { F }`(try 体为空)与直接执行 `F` 等价:空 try 不会抛异常,
+     * finally 仍在同一位置执行一次;`try {} catch (e) { C }` 的处理器则不可达。
+     * ArkTS 把 finally 内联在出口前,内层分支被折叠/清理后就会留下这种空壳
+     * (amcl1.0.6.abc 的 i8 c763:`try {} finally { await g50.close(v4) }`),
+     * 拆掉它才看得出真正的清理语句。
+     */
+    public static dropEmptyTryBlocks(node: Program): boolean {
+        let changed = false;
+        traverse(file(node), {
+            noScope: true,
+            TryStatement(path) {
+                if (path.node.block.body.length > 0) return;
+                const finalizer = path.node.finalizer;
+                changed = true;
+                if (!finalizer || finalizer.body.length === 0) {
+                    path.remove();
+                    return;
+                }
+                const statements = finalizer.body;
+                // finalizer 顶层有块级声明时保留块,避免把它们摊进外层作用域
+                if (statements.some((statement) => SyntaxRewriteSimplify.isBlockScopedDeclaration(statement))) {
+                    path.replaceWith(finalizer);
+                } else {
+                    path.replaceWithMultiple(statements);
+                }
+            },
+        });
+        return changed;
+    }
+
     /** try body 顶层的块级声明:直接摊进外层语句表会改变它们的作用域 */
     private static isBlockScopedDeclaration(statement: TYPE.Statement): boolean {
         if (isFunctionDeclaration(statement) || isClassDeclaration(statement)) return true;

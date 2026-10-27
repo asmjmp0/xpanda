@@ -224,9 +224,7 @@ export async function c763(p0, p1, p2, p3) {
         };
         v11 = v6;
         v14.sha256 = local_0_2((await v15.digest()).data);
-        try {} finally {
-          await g50.close(v4);
-        }
+        await g50.close(v4);
       } else {
         throw new Error("复制期间归档或目标大小发生变化");
       }

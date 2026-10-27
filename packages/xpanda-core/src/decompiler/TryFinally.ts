@@ -367,6 +367,45 @@ interface MarkerPosition {
     index: number;
     /** true 表示标记在 test 序列里,index 指向包含它的整条语句 */
     inExpression: boolean;
+    /** true 表示按基本块 pc 反查到的 try 体首条语句(index 就是 try 体起点) */
+    byPC?: boolean;
+}
+
+/**
+ * 按 pc 反查 try 体起点:取第一条来源于 `[plan.startPC, plan.cleanupStartPC)` 的语句。
+ *
+ * 只在 start 标记丢失时使用。`MethodHandler.statementBlockPC` 记录了每条 emit 出来的
+ * 语句来自哪个基本块(区域复制会产生多条同 pc 语句),所以 pc 落在 try 保护范围内的
+ * 最早一条语句就是 try 体起点;它所在的列表就是 try 体列表。
+ */
+function locateTryStartByPC(
+    astNode: any,
+    context: FinallyContext | undefined,
+    plan: FinallyPlan,
+): MarkerPosition | null {
+    const statementPC = context?.statementPC;
+    if (!statementPC) return null;
+    let best: { list: TYPE.Statement[]; index: number; pc: number } | null = null;
+    const visit = (node: any): void => {
+        if (!node || typeof node !== "object" || !node.type) return;
+        for (const key of TYPE.VISITOR_KEYS[node.type] ?? []) {
+            const value = node[key];
+            if (!Array.isArray(value)) { visit(value); continue; }
+            const list = value as any[];
+            for (let index = 0; index < list.length; index++) {
+                const item = list[index];
+                if (!item || typeof item !== "object" || !item.type) continue;
+                if (!TYPE.isStatement(item)) { visit(item); continue; }
+                const pc = statementPC.get(item);
+                if (pc !== undefined && pc >= plan.startPC && pc < plan.cleanupStartPC) {
+                    if (!best || pc < best.pc) best = { list: list as TYPE.Statement[], index, pc };
+                }
+                visit(item);
+            }
+        }
+    };
+    visit(astNode);
+    return best ? { list: best.list, index: best.index, inExpression: false, byPC: true } : null;
 }
 
 function locateMarker(
@@ -439,33 +478,44 @@ export interface FinallyContext {
     structures: FinallyStructure[];
     /** 反编译时 emit 的语句 → 来源基本块起始 pc(区域复制会产生多条同 pc 语句) */
     statementPC: WeakMap<object, number>;
+    /** 结构化分析产出的 try 语句 → try 表里该 try 保护范围的结束 pc */
+    tryBodyEndPC?: WeakMap<object, number>;
 }
 
 
-/**
- * 在函数体 AST 上把标记区间替换成 try/finally;失败时清掉标记并留下注释。
- *
- * 两种布局:
- *  1. try 起点 / cleanup / guard 在同一层语句列表(常规);
- *  2. try 起点落在某个条件 test 的求值区(第一个块就是可选链比较),
- *     cleanup/guard 也可能被结构化进 test 或最后一个分支的尾部:
- *     此时用表达式标记定位到包含它的语句,并在尾部分支情形把 finally 上提。
- */
-export function applyFinallyPlans(astNode: any, plans: FinallyPlan[], context?: FinallyContext): void {
-    const failures: string[] = [];
+/** 跑一遍计划;失败的 plan 连同原因返回(retry 非空时只重试这些 plan)。 */
+function applyPlans(
+    astNode: any,
+    plans: FinallyPlan[],
+    context: FinallyContext | undefined,
+    /** 只重试这些 plan(尾块去重之后);null 表示全部 */
+    retry: Set<FinallyPlan> | null,
+): Map<FinallyPlan, string> {
+    const failures = new Map<FinallyPlan, string>();
     for (const plan of plans) {
+        if (retry && !retry.has(plan)) continue;
         let applied = false;
         let reason = "unknown";
         left: {
             // ---- try 体起点 ----
-            const start = locateMarker(astNode, plan.startMarker, plan.startExpr);
+            // 标记可能根本没插上:try 起点块被区域归约合进别的语句、或被结构化进
+            // 条件 test 后标记丢失。此时按基本块 pc 反查第一条来源于
+            // [startPC, cleanupStartPC) 的语句,它就是 try 体的第一句。
+            const start = locateMarker(astNode, plan.startMarker, plan.startExpr)
+                ?? locateTryStartByPC(astNode, context, plan);
             if (!start) { reason = "start marker not found"; break left; }
             const startList = start.list;
-            const tryStart = start.inExpression ? start.index : start.index + 1;
+            const tryStart = start.byPC ? start.index : (start.inExpression ? start.index : start.index + 1);
 
             // ---- cleanup / guard ----
             const cleanupPos = locateMarker(astNode, plan.cleanupMarker, plan.cleanupExpr);
             if (!cleanupPos) { reason = "cleanup marker not found"; break left; }
+            // 按 pc 反查只在“常规布局”(try 体与 cleanup 在同一层语句列表)里可信:
+            // 跨列表时起点多半不是真正的 try 体首条语句,硬套会切错范围
+            // (amcl commons/p1 的 i49 曾因此把条件 test 里的函数表达式切断)。
+            if (start.byPC && cleanupPos.list !== start.list) {
+                reason = "pc-located start in another list"; break left;
+            }
             const cleanupList = cleanupPos.list;
             const cleanup = cleanupPos.index;
             // cleanup 落在 test 序列里时,包含它的整条语句(通常是 `if (sentinel === undefined) { cleanup }`)
@@ -533,7 +583,31 @@ export function applyFinallyPlans(astNode: any, plans: FinallyPlan[], context?: 
             // 就会这样)。start 在 TryStatement 的 try 块里、cleanup/guard 在它的
             // handler 块里,直接改写成 try/finally,sentinel 保存与重抛守卫整段丢弃。
             const tryOwner = findTryStatementForBlock(astNode, startList);
-            if (tryOwner && tryOwner.handler && tryOwner.handler.body.body === cleanupList) {
+            // catch 在 finally 里面还是外面,由 try 表里两者的保护范围决定:
+            // catch 的范围在 cleanup 之前结束 => catch 嵌在 finally 里
+            // (源码 `try { … } catch { … } finally { … }`),必须写成
+            // try/catch/finally;否则 finally 嵌在 catch 所在的 try 体里(常规布局)。
+            const catchEndPC = tryOwner && context?.tryBodyEndPC ? context.tryBodyEndPC.get(tryOwner) : undefined;
+            const catchInsideFinally = catchEndPC !== undefined && catchEndPC <= plan.cleanupStartPC;
+            if (tryOwner && tryOwner.handler && cleanupList === startList && catchInsideFinally) {
+                // cleanup/guard 落在 try 体尾部:两条分支共享、必定退出的尾块被
+                // hoistDuplicatedFinallyTails 提到 if 之后,finally 的 cleanup 就成了
+                // try 体内最后一段语句(amcl g9 的 executeInstall)。这里必须把现有
+                // try/catch 直接改写成 try/catch/finally:catch 先于 finally 执行,
+                // 在 try 体内部再套一层 try/finally 会把顺序反过来(cleanup 抢在
+                // catch 记录失败之前跑)。
+                if (!(cleanup > tryStart)) { reason = "empty try body"; break left; }
+                if (finallyStatements.length === 0) { reason = "empty finally body"; break left; }
+                const parentList = findStatementList(astNode, tryOwner);
+                const parentIndex = parentList ? parentList.indexOf(tryOwner) : -1;
+                if (!parentList || parentIndex < 0) { reason = "no parent list"; break left; }
+                // 守卫之后如果还有语句,它们是 try/finally 之后的正常继续
+                const afterGuard = startList.slice(guardEnd);
+                startList.length = cleanup;
+                tryOwner.finalizer = TYPE.blockStatement(finallyStatements);
+                parentList.splice(parentIndex + 1, 0, ...guardContinuation, ...afterGuard);
+                applied = true;
+            } else if (tryOwner && tryOwner.handler && tryOwner.handler.body.body === cleanupList) {
                 const tryStatements = startList.slice(tryStart);
                 const tryNode = TYPE.tryStatement(
                     TYPE.blockStatement(tryStatements),
@@ -609,17 +683,57 @@ export function applyFinallyPlans(astNode: any, plans: FinallyPlan[], context?: 
                 applied = true;
             }
         }
-        if (!applied) {
-            failures.push(`plan ${plan.id}: start=${plan.startPC} end=${plan.endPC}`
-                + ` cleanup=${plan.cleanupStartPC} guard=${plan.guardStartPC} (${reason})`);
+        if (!applied) failures.set(plan, reason);
+    }
+    return failures;
+}
+
+/**
+ * 在函数体 AST 上把标记区间替换成 try/finally;失败时清掉标记并留下注释。
+ *
+ * 两种布局:
+ *  1. try 起点 / cleanup / guard 在同一层语句列表(常规);
+ *  2. try 起点落在某个条件 test 的求值区(第一个块就是可选链比较),
+ *     cleanup/guard 也可能被结构化进 test 或最后一个分支的尾部:
+ *     此时用表达式标记定位到包含它的语句,并在尾部分支情形把 finally 上提。
+ *
+ * 两种布局都失败时,说明 cleanup/guard 被复制进了 if 的多条分支:先做一次
+ * 尾块去重(hoistDuplicatedFinallyTails)再重试,仍不成功则回滚去重。
+ */
+export function applyFinallyPlans(astNode: any, plans: FinallyPlan[], context?: FinallyContext): void {
+    const failures = applyPlans(astNode, plans, context, null);
+    // cleanup / guard 可能被共享尾块复制进了 if 的两条分支(区域归约把“必定退出”的
+    // 尾块按引用展开到每条归约路径上,见 hoistDuplicatedFinallyTails)。先做一次
+    // AST 级尾块去重,再重试失败的 plan;仍然还原不了就整体回滚,
+    // 去重本身只为还原 finally 服务,不留副作用(amcl commons/p1 的 i49 保持原输出)。
+    if (failures.size > 0) {
+        const firstReasons = new Map(failures);
+        const retry = new Set(failures.keys());
+        const touched = new Map<TYPE.Statement[], TYPE.Statement[]>();
+        if (hoistDuplicatedFinallyTails(astNode, Array.from(retry), touched)) {
+            const retried = applyPlans(astNode, plans, context, retry);
+            if (retried.size === retry.size) {
+                for (const [list, saved] of touched) {
+                    list.length = 0;
+                    list.push(...saved);
+                }
+                failures.clear();
+                for (const [plan, reason] of firstReasons) failures.set(plan, reason);
+            } else {
+                failures.clear();
+                for (const [plan, reason] of retried) failures.set(plan, reason);
+            }
         }
     }
-    if (failures.length > 0) {
+    if (failures.size > 0) {
         // 兜底:无法还原时留一条注释,避免 finally 静默消失。
         // 带上 plan 的 pc 与失败原因,便于后续定位(不影响可执行语义)。
+        const detail = Array.from(failures).map(([plan, reason]) =>
+            `plan ${plan.id}: start=${plan.startPC} end=${plan.endPC}`
+            + ` cleanup=${plan.cleanupStartPC} guard=${plan.guardStartPC} (${reason})`);
         const statement = TYPE.emptyStatement();
-        const detail = context ? ` [${failures.join("; ")}]` : "";
-        TYPE.addComment(statement, "leading", ` xpanda: try/finally not restored${detail} `, false);
+        TYPE.addComment(statement, "leading",
+            ` xpanda: try/finally not restored${context ? ` [${detail.join("; ")}]` : ""} `, false);
         if (Array.isArray(astNode.body)) astNode.body.push(statement);
     }
     stripMarkers(astNode);
@@ -627,4 +741,150 @@ export function applyFinallyPlans(astNode: any, plans: FinallyPlan[], context?: 
 
 export function stripFinallyMarkers(astNode: any): void {
     stripMarkers(astNode);
+}
+
+// ---------------------------------------------------------------------------
+// 共享尾块去重(cleanup / guard 被复制进 if 的多条分支时的补救)
+// ---------------------------------------------------------------------------
+
+interface MarkerOccurrence {
+    /** 标记所在的语句列表 */
+    list: TYPE.Statement[];
+    /** 标记所在语句在 list 中的下标(表达式标记时是包含它的整条语句) */
+    index: number;
+    /** 从根到该语句列表的父链:每项是“包含下一层语句列表”的那条语句 */
+    chain: Array<{ list: TYPE.Statement[]; index: number }>;
+}
+
+function markerValue(plan: FinallyPlan, role: FinallyRole): string {
+    return MARKER_PREFIX + plan.id + "_" + role;
+}
+
+/**
+ * 标记是否就在这条语句自身的表达式里(条件 test 序列、赋值右侧等)。
+ * 嵌套语句里的标记属于更深一层的语句列表,交给列表递归处理。
+ */
+function containsOwnMarker(statement: any, value: string): boolean {
+    const visit = (node: any, isRoot: boolean): boolean => {
+        if (!node || typeof node !== "object" || !node.type) return false;
+        if (!isRoot && TYPE.isStatement(node)) return false;
+        if (TYPE.isStringLiteral(node) && node.value === value) return true;
+        for (const key of TYPE.VISITOR_KEYS[node.type] ?? []) {
+            const child = node[key];
+            if (Array.isArray(child)) {
+                for (const item of child) if (visit(item, false)) return true;
+            } else if (visit(child, false)) return true;
+        }
+        return false;
+    };
+    return visit(statement, true);
+}
+
+function collectMarkerOccurrences(
+    node: any,
+    value: string,
+    chain: Array<{ list: TYPE.Statement[]; index: number }>,
+    out: MarkerOccurrence[],
+): void {
+    if (!node || typeof node !== "object" || !node.type) return;
+    for (const key of TYPE.VISITOR_KEYS[node.type] ?? []) {
+        const child = node[key];
+        if (!Array.isArray(child)) {
+            collectMarkerOccurrences(child, value, chain, out);
+            continue;
+        }
+        const list = child as any[];
+        for (let index = 0; index < list.length; index++) {
+            const item = list[index];
+            if (!item || typeof item !== "object" || !item.type) continue;
+            if (!TYPE.isStatement(item)) {
+                collectMarkerOccurrences(item, value, chain, out);
+                continue;
+            }
+            if (TYPE.isExpressionStatement(item) && TYPE.isStringLiteral(item.expression)
+                && item.expression.value === value) {
+                out.push({ list: list as TYPE.Statement[], index, chain });
+                continue;
+            }
+            if (containsOwnMarker(item, value)) {
+                out.push({ list: list as TYPE.Statement[], index, chain });
+                continue;
+            }
+            collectMarkerOccurrences(item, value, chain.concat([{ list: list as TYPE.Statement[], index }]), out);
+        }
+    }
+}
+
+/**
+ * `if (C) { A; TAIL } else { TAIL }` → `if (C) { A } TAIL`。
+ *
+ * 区域归约没有 goto:两条路径汇合到“必定退出”的尾块时,尾块按引用展开进每条
+ * 归约路径。ArkTS 13 的 finally cleanup + 重抛守卫正好在这段尾块里,于是
+ * cleanup 被复制进 if 的两条分支,applyFinallyPlans 找不到“紧跟 try/catch”
+ * 的布局(amcl1.0.6.abc 的 g9 executeInstall)。
+ *
+ * 分支走到末尾本来就会继续执行 if 之后的语句,所以把分支末尾逐字相同的尾块
+ * 提到 if 之后只保留一份,语义不变(同一批语句每次仍然只执行一次)。
+ * 约束:
+ *  - 尾块必须到分支列表末尾(后面没有别的语句);
+ *  - 尾块里不能有声明(块级作用域会随位置改变);
+ *  - 只有嵌套在保留者所在 if 里的副本才会被删,避免把别处的同名尾块误删。
+ */
+function hoistDuplicatedFinallyTails(
+    astNode: any,
+    plans: FinallyPlan[],
+    /** 被改动的语句列表 → 改动前的内容(还原失败时整体回滚) */
+    touched: Map<TYPE.Statement[], TYPE.Statement[]> = new Map(),
+): boolean {
+    let changed = false;
+    for (const plan of plans) {
+        const cleanups: MarkerOccurrence[] = [];
+        collectMarkerOccurrences(astNode, markerValue(plan, "cleanup"), [], cleanups);
+        if (cleanups.length < 2) continue;
+        const guards: MarkerOccurrence[] = [];
+        collectMarkerOccurrences(astNode, markerValue(plan, "guard"), [], guards);
+        const tails: Array<{ list: TYPE.Statement[]; start: number; end: number; chain: MarkerOccurrence["chain"] }> = [];
+        for (const cleanup of cleanups) {
+            const guard = guards.find((candidate) => candidate.list === cleanup.list
+                && candidate.index >= cleanup.index);
+            // 从 cleanup 到列表末尾就是这段尾块(守卫的“正常继续”分支还在守卫语句里,
+            // end 标记也在里面);两条分支必须逐字相同才会被认成同一段。
+            if (!guard) continue;
+            tails.push({ list: cleanup.list, start: cleanup.index, end: cleanup.list.length - 1, chain: cleanup.chain });
+        }
+        if (tails.length < 2) continue;
+        const groups = new Map<string, typeof tails>();
+        for (const tail of tails) {
+            const code = tail.list.slice(tail.start, tail.end + 1).map((statement) => generate(statement).code).join("\n");
+            const group = groups.get(code);
+            if (group) group.push(tail);
+            else groups.set(code, [tail]);
+        }
+        for (const group of groups.values()) {
+            if (group.length < 2) continue;
+            const statements = group[0].list.slice(group[0].start, group[0].end + 1);
+            if (statements.some((statement) => TYPE.isVariableDeclaration(statement)
+                || TYPE.isFunctionDeclaration(statement) || TYPE.isClassDeclaration(statement))) continue;
+            // 最浅的一处(离外层语句列表最近)保留,其余删掉后把这一份提到 if 之后
+            group.sort((a, b) => a.chain.length - b.chain.length);
+            const keeper = group[0];
+            const anchor = keeper.chain[keeper.chain.length - 1];
+            if (!anchor) continue;
+            const owner = anchor.list[anchor.index];
+            if (group.slice(1).some((tail) => !containsNode(owner, tail.list[tail.start]))) continue;
+            const remember = (list: TYPE.Statement[]): void => {
+                if (!touched.has(list)) touched.set(list, list.slice());
+            };
+            remember(keeper.list);
+            remember(anchor.list);
+            const hoisted = keeper.list.splice(keeper.start, keeper.end - keeper.start + 1);
+            for (const tail of group.slice(1)) {
+                remember(tail.list);
+                tail.list.splice(tail.start, tail.end - tail.start + 1);
+            }
+            anchor.list.splice(anchor.index + 1, 0, ...hoisted);
+            changed = true;
+        }
+    }
+    return changed;
 }

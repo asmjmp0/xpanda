@@ -129,6 +129,8 @@ export class SimplifyExport {
         // try 完全等价:构造器 super 检查、模块初始化的词法环境清理都靠它落地,
         // 拆掉免得整段代码被多包一层。放在不可达语句清理之后(catch 体可能刚被清空)。
         SyntaxRewriteSimplify.removeRedundantRethrowCatches(node);
+        // try 体被清空的 `try {} finally { … }` 只剩一层空壳,拆成直接的清理语句
+        SyntaxRewriteSimplify.dropEmptyTryBlocks(node);
         // 24.0.0.0 把 finally 内联在出口前、异常路径写成 eager catch:
         //   try { A; cleanup; return v } catch (e) { cleanup; throw e }
         // 与 `try { A; return v } finally { cleanup }` 等价,还原成源码结构。

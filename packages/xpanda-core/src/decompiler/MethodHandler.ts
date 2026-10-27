@@ -40,9 +40,15 @@ export class PandaDecompilerMethodHandler {
      * 只在本次反编译内使用(不进入最终 JSON)。
      */
     private readonly statementBlockPC = new WeakMap<object, number>();
+    /** 结构化分析产出的 try 语句 → try 表里该 try 保护范围的结束 pc */
+    private readonly tryBodyEndPC = new WeakMap<object, number>();
 
     constructor(codeGenerator: CodeGenerator) {
         this.codeGenerator = codeGenerator;
+    }
+
+    recordTryBodyEnd(tryNode: object, endPC: number): void {
+        this.tryBodyEndPC.set(tryNode, endPC);
     }
 
     getNextID(): number {
@@ -178,7 +184,11 @@ export class PandaDecompilerMethodHandler {
                 this.finallyRoles = savedRoles;
             }
             if (structured) {
-                applyFinallyPlans(block, plans, { structures, statementPC: this.statementBlockPC });
+                applyFinallyPlans(block, plans, {
+                    structures,
+                    statementPC: this.statementBlockPC,
+                    tryBodyEndPC: this.tryBodyEndPC,
+                });
             }
             else stripFinallyMarkers(block);
         }
