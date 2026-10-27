@@ -1676,14 +1676,12 @@ class ContentDetailPage extends ViewPU {
     };
     this.segmentLikeBusy = true;
     try {
-      try {
-        this.applySegmentMeta(local_1_0, this.segmentSheetMarkIndex, v8);
-        this.applySegmentMeta(local_1_0, this.segmentSheetMarkIndex, await this.segmentReactionRepository.toggleSegmentLike(v7, this.activeContentId, v5, this.segmentSheetMarkIndex));
-      } catch (catchAcc) {
-        hilog.warn(53249, "SegmentReaction", "toggle failed content=%{public}s like=%{public}s message=%{public}s", this.activeContentId, "" + v6.isLike + "", catchAcc instanceof Error ? catchAcc.message : "" + catchAcc + "");
-        this.applySegmentMeta(local_1_0, this.segmentSheetMarkIndex, v6);
-        this.notifySegmentLikeFailure();
-      }
+      this.applySegmentMeta(local_1_0, this.segmentSheetMarkIndex, v8);
+      this.applySegmentMeta(local_1_0, this.segmentSheetMarkIndex, await this.segmentReactionRepository.toggleSegmentLike(v7, this.activeContentId, v5, this.segmentSheetMarkIndex));
+    } catch (catchAcc) {
+      hilog.warn(53249, "SegmentReaction", "toggle failed content=%{public}s like=%{public}s message=%{public}s", this.activeContentId, "" + v6.isLike + "", catchAcc instanceof Error ? catchAcc.message : "" + catchAcc + "");
+      this.applySegmentMeta(local_1_0, this.segmentSheetMarkIndex, v6);
+      this.notifySegmentLikeFailure();
     } finally {
       this.segmentLikeBusy = false;
     }

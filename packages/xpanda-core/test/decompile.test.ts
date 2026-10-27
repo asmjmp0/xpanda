@@ -3602,6 +3602,53 @@ function verifyLngaQrLoginUtils(clazz: PandaClass, code: string): void {
 }
 
 /**
+ * 回归:用户 catch 与 finally 共用同一个 try 起点时的还原(lnga1.2.6.abc 的
+ * SettingsPanel.clearCache)。
+ *
+ * 编译器把 finally 的异常路径写成 codeSize === 0 的 handler,try 结束块只恢复
+ * 寄存器、hole 哨兵写在"try 正常完成 + 用户 catch 完成"共用的汇合块里;
+ * 用户 catch 入口还先带一串寄存器恢复 `mov`(源码的 catch 不引用异常)。
+ * 旧实现因此把用户 catch 整段丢掉(finally 落点被当成 catch),finally 也生成
+ * 不出计划,只剩 `v10 = hole` + `if (hole == v10) return; throw v10` 残渣。
+ *
+ * 现在必须是源码结构:`try { … '缓存已清除' … } catch (e) { '清除缓存失败' }
+ * finally { … area 复位 … clearingCache = false }`,且不再有 hole 哨兵。
+ */
+function verifyLngaSettingsPanelException(clazz: PandaClass, code: string): void {
+    if (!clazz.name.content.endsWith("/pages/SettingsPanel;")) {
+        throw new Error(`lnga SettingsPanel: 类名不符 (${clazz.name.content})`);
+    }
+    NodeFactory.parse(code);
+    if (/\bhole\b/.test(code)) {
+        throw new Error(`lnga SettingsPanel: 仍残留 hole 哨兵\n${code}`);
+    }
+    if (code.includes("try/finally not restored")) {
+        throw new Error(`lnga SettingsPanel: try/finally 未还原\n${code}`);
+    }
+    const start = code.indexOf("async clearCache() {");
+    if (start < 0) throw new Error(`lnga SettingsPanel: 未找到 clearCache\n${code}`);
+    const body = code.slice(start, code.indexOf("\n  }\n", start));
+    if (!body.includes('appStore.showToast("缓存已清除")')) {
+        throw new Error(`lnga clearCache: 正常路径丢失\n${body}`);
+    }
+    // 用户 catch 体(此前整段消失)必须紧跟 try 体,finally 在同一层
+    if (!/try \{[\s\S]*?\} catch \(catchAcc\) \{[\s\S]*?appStore\.showToast\("清除缓存失败"\);/.test(body)) {
+        throw new Error(`lnga clearCache: 用户 catch 体未还原\n${body}`);
+    }
+    if (!/\} finally \{[\s\S]*?this\.clearingCache = false;[\s\S]*?\}$/.test(body)) {
+        throw new Error(`lnga clearCache: finally 未还原\n${body}`);
+    }
+    if (body.includes("switch (") || body.includes("case null:")) {
+        throw new Error(`lnga clearCache: 仍残留 nullish switch\n${body}`);
+    }
+    const expectedPath = path.join(__dirname, "expected", "lnga-settings-panel.js");
+    const snapshot = fs.readFileSync(expectedPath, "utf-8");
+    if (code !== snapshot) {
+        throw new Error(`lnga SettingsPanel: 输出与快照不一致\n${firstDifference(snapshot, code)}`);
+    }
+}
+
+/**
  * 回归:类构造器记录名不带 '#' 前缀的工具链(install1.3.0.abc)的类命名与
  * 「类声明 + prototype 装载」残留还原(WebChromeClientHostApiImpl)。
  *
@@ -4532,6 +4579,7 @@ const hx360eClassTests: BinaryClassTest[] = [
 
 const lngaClassTests: BinaryClassTest[] = [
     { label: "lnga SOURCE_FILE + qr login short circuit (lnga1.2.6.abc)", matches: (n) => n === "Lcom.example.nga_oh/entry/ets/common/utils/NgaQrLoginUtils;", run: verifyLngaQrLoginUtils },
+    { label: "lnga shared-start catch + finally (lnga1.2.6.abc)", matches: (n) => n === "Lcom.example.nga_oh/entry/ets/pages/SettingsPanel;", run: verifyLngaSettingsPanelException },
 ];
 
 const installClassTests: BinaryClassTest[] = [

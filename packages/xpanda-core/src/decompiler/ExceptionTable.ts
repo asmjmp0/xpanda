@@ -122,11 +122,11 @@ export function isFinallyHandler(cfg: PandaIRCFG, block: PandaIRBasicBlock): boo
  * 不是 `throw`。`lda vX; throw` 只是重抛,不算用户 catch。
  */
 export function catchUsesException(block: PandaIRBasicBlock): boolean {
-    const first = block.pandaInstructions[0];
-    if (!first || first.kind !== "store" || !first.destObj) return false;
-    const saved = first.destObj.toString();
+    const entry = handlerEffectiveEntry(block);
+    if (!entry.exceptionRegister) return false;
+    const saved = entry.exceptionRegister;
     const instructions = block.pandaInstructions;
-    for (let i = 1; i < instructions.length; i++) {
+    for (let i = entry.start + 1; i < instructions.length; i++) {
         const instruction = instructions[i];
         const moved = instruction.kind === "mov" && instruction.srcObj?.toString() === saved;
         const loaded = instruction.kind === "load" && instruction.loadType === "OBJECT"
@@ -327,18 +327,73 @@ export function continuesAtLoopHead(cfg: PandaIRCFG, entry: PandaIRBasicBlock, t
 }
 
 /**
- * 真正的 catch 处理器:入口 `sta vX`,并在 handler 入口基本块里做可见工作
+ * handler 的有效入口:跳过入口处的寄存器恢复前缀(`mov v6, v11` …)。
+ *
+ * 用户 catch / finally 落点在 try 体里保存过活跃寄存器时,处理器入口先是一串
+ * `mov` 把原值恢复回被复用的寄存器,之后才 `sta` 保存异常或做真正的清理
+ * (`SettingsPanel.clearCache` 的 catch 入口就是 4 条 mov 之后才 `showToast`)。
+ * 这些 mov 是数据流的一部分(handler 体和 try 之后的代码要读恢复后的值),
+ * 不能删;但分类不该要求"首条就是 sta"。
+ *
+ * 返回有效起始下标与异常保存寄存器;前缀太长或整块都是 mov 时按原样处理
+ * (start = 0),避免把"纯恢复块"误认成 catch。
+ */
+export function handlerEffectiveEntry(block: PandaIRBasicBlock): { start: number; exceptionRegister: string | null } {
+    const instructions = block.pandaInstructions;
+    let start = 0;
+    while (start < instructions.length) {
+        const kind = instructions[start].kind;
+        if (kind !== "mov" && kind !== "nop" && kind !== "popLexEnv") break;
+        start++;
+    }
+    if (start === 0 || start > 8 || start === instructions.length) {
+        const first = instructions[0];
+        const save = first && first.kind === "store" && first.destObj ? first.destObj.toString() : null;
+        return { start: 0, exceptionRegister: save };
+    }
+    const save = instructions[start];
+    return {
+        start,
+        exceptionRegister: save.kind === "store" && save.destObj ? save.destObj.toString() : null,
+    };
+}
+
+/**
+ * 真正的 catch 处理器:有效入口 `sta vX`,并在 handler 入口基本块里做可见工作
  * (读字符串 / 模块变量 / 属性,或发起调用)。编译器生成的 for-of / await
  * resume 派发 handler 只做寄存器恢复和条件跳转,不具备这些特征,不能接进区域图。
  */
 export function isCatchHandler(block: PandaIRBasicBlock): boolean {
-    if (block.pandaInstructions[0]?.kind !== "store") return false;
-    return block.pandaInstructions.some((instruction) => {
+    const { start } = handlerEffectiveEntry(block);
+    if (block.pandaInstructions[start]?.kind !== "store") return false;
+    return block.pandaInstructions.slice(start).some((instruction) => {
         if (instruction.kind === "load") {
             return instruction.loadType === "STRING" || instruction.loadType === "GLOBAL";
         }
         // tryldglobalbyname 是独立的 loadGlobal kind:`catch (e) { e instanceof Error
         // … }` 的入口块里只有它和 instanceof/比较,不带 STRING/GLOBAL 载入。
+        if (instruction.kind === "loadGlobal") return true;
+        if (instruction.kind === "loadObjectBy" || instruction.kind === "storeObject") return true;
+        if (instruction.kind === "call") return true;
+        return instruction.opcode.name === "ldexternalmodulevar" || instruction.opcode.name === "newobjrange";
+    });
+}
+
+/**
+ * 忽略异常值的用户 catch:入口是寄存器恢复前缀 + 可见工作,但没有 `sta` 保存异常。
+ *
+ * `catch { appStore.showToast('清除缓存失败') }` 这种源码里不引用异常的 catch,
+ * 编译器只恢复寄存器,异常值留在 acc 里就没人读。它与 finally 落点的区别是
+ * finally 还有 hole 哨兵/清理结构(调用方用 isFinallyHandler 排掉)。
+ */
+export function isIgnoringCatchHandler(block: PandaIRBasicBlock): boolean {
+    const { start } = handlerEffectiveEntry(block);
+    if (start <= 0 || start >= block.pandaInstructions.length) return false;
+    if (block.pandaInstructions[start].kind === "store") return false;
+    return block.pandaInstructions.slice(start).some((instruction) => {
+        if (instruction.kind === "load") {
+            return instruction.loadType === "STRING" || instruction.loadType === "GLOBAL";
+        }
         if (instruction.kind === "loadGlobal") return true;
         if (instruction.kind === "loadObjectBy" || instruction.kind === "storeObject") return true;
         if (instruction.kind === "call") return true;
@@ -412,7 +467,15 @@ export function classifyTryEntries(cfg: PandaIRCFG): ExceptionTable {
     // ArkTS 13 经典形状的 finally(正常完成块写 hole 哨兵再跳到 cleanup)由
     // TryFinally 在 AST 上还原成 try/finally,不能接进区域图
     // (landing pad 会破坏可归约性)。
-    const finallyStartPCs = new Set(buildFinallyPlans(cfg).map((plan) => plan.startPC));
+    const finallyPlans = buildFinallyPlans(cfg);
+    const finallyStartPCs = new Set(finallyPlans.map((plan) => plan.startPC));
+    // startPC -> finally 计划里最长的保护范围:用户 catch 与 finally 共用起点时,
+    // catch 条目的范围一定比 finally 短(catch 在 finally 里面结束)。
+    const finallyEndByStart = new Map<number, number>();
+    for (const plan of finallyPlans) {
+        const previous = finallyEndByStart.get(plan.startPC) ?? 0;
+        if (plan.endPC > previous) finallyEndByStart.set(plan.startPC, plan.endPC);
+    }
     const registerFinallyHandlers = isNewHandlerEncoding(cfg);
     for (const tryBlock of method.methodCode!.pandaMethodTryBlocks!) {
         const catchBlock = tryBlock.pandaMethodCatchBlocks[0];
@@ -474,7 +537,12 @@ export function classifyTryEntries(cfg: PandaIRCFG): ExceptionTable {
             // (c1268 清单失败),单独注册,不按“回到 try 内”丢掉。
             const loopContinue = continuesAtLoopHead(cfg, handlerEntryBlock, startPC, endPC);
             const finallyHandler = isFinallyHandler(cfg, handlerEntryBlock) && !usesException;
-            const catchHandler = isCatchHandler(handlerEntryBlock) || ignoredException || commitPC !== null;
+            // 用户 catch 与 finally 共用起点时,catch 条目的保护范围更短;只有这种
+            // 条目才允许用“忽略异常、入口带寄存器恢复”的判据,否则会把大量
+            // finally 落点误判成 catch(amcl 上 try 数量翻倍)。
+            const catchOfSharedStart = (finallyEndByStart.get(startPC) ?? 0) > endPC;
+            const catchHandler = isCatchHandler(handlerEntryBlock) || ignoredException || commitPC !== null
+                || (catchOfSharedStart && isIgnoringCatchHandler(handlerEntryBlock) && !finallyHandler);
             const exitingCatch = (usesException || ignoredException || commitPC !== null)
                 && handlerExits(cfg, handlerEntryBlock, startPC, endPC);
             // 用户 catch 可以和 finally 共用同一个 try 起点(源码 `try { … }
@@ -505,7 +573,7 @@ export function classifyTryEntries(cfg: PandaIRCFG): ExceptionTable {
             const kind: HandlerKind = finallyHandler && !usesException && !ignoredException && commitPC === null
                 ? "finallyEpilogue"
                 : ignoredException && !usesException ? "ignoredCatch" : "userCatch";
-            const protectedEndPC = decideProtectedEnd(cfg, tryBlock, handlerEntryBlock, commitPC, tryCodeLength);
+            const protectedEndPC = decideProtectedEnd(cfg, tryBlock, handlerEntryBlock, commitPC, tryCodeLength, catchOfSharedStart);
             push(kind, true, { usesException, exits: exitingCatch, loopContinue, protectedEndPC });
             continue;
         }
@@ -514,12 +582,25 @@ export function classifyTryEntries(cfg: PandaIRCFG): ExceptionTable {
         const ignoredException = isIgnoredExceptionCatch(cfg, handlerEntryBlock);
         const loopContinue = continuesAtLoopHead(cfg, handlerEntryBlock, startPC, endPC);
         const exits = handlerExits(cfg, handlerEntryBlock, startPC, endPC);
-        const protectedEndPC = decideProtectedEnd(cfg, tryBlock, handlerEntryBlock, commitPC, tryCodeLength);
+        const protectedEndPC = decideProtectedEnd(cfg, tryBlock, handlerEntryBlock, commitPC, tryCodeLength, false);
         push(ignoredException ? "ignoredCatch" : "userCatch", true,
             { usesException, exits, loopContinue, protectedEndPC });
     }
     result.isAsyncFunction = isAsyncFunction;
     result.isGeneratorFunction = isGeneratorFunction;
+    // 同一个 try 起点同时有用户 catch 和 v24 的 finally handler 时只保留用户 catch:
+    // finally 由 TryFinally 的计划还原成 try/catch/finally。两个 helper 都接进图会把
+    // 结构叠成 `try { try { … } catch { cleanup; throw } } catch { … }`
+    // (SettingsPanel.clearCache)。计划重建不出来时保留 finallyEpilogue,
+    // 异常路径的清理不能丢。
+    const userCatchStarts = new Set(result.entries
+        .filter((entry) => entry.keep && entry.kind === "userCatch")
+        .map((entry) => entry.startPC));
+    for (let i = result.entries.length - 1; i >= 0; i--) {
+        const entry = result.entries[i];
+        if (entry.kind === "finallyEpilogue" && userCatchStarts.has(entry.startPC)
+            && finallyStartPCs.has(entry.startPC)) result.entries.splice(i, 1);
+    }
     return result;}
 
 /**
@@ -535,12 +616,15 @@ function decideProtectedEnd(
     handlerEntryBlock: PandaIRBasicBlock,
     commitPC: number | null,
     tryCodeLength: number,
+    /** 该条目是"与 finally 共用起点"的用户 catch 范围 */
+    catchOfSharedStart: boolean,
 ): number | null {
     const startPC = tryBlock.startPC;
     const endPC = startPC + tryCodeLength;
     const userCatch = catchUsesException(handlerEntryBlock)
         || isIgnoredExceptionCatch(cfg, handlerEntryBlock)
         || isCatchHandler(handlerEntryBlock)
+        || (catchOfSharedStart && isIgnoringCatchHandler(handlerEntryBlock) && !isFinallyHandler(cfg, handlerEntryBlock))
         || commitPC !== null;
     const nestedWide = nestedInMuchLargerTry(cfg, tryBlock) && tryCodeLength > 64;
     const loopContinue = continuesAtLoopHead(cfg, handlerEntryBlock, startPC, endPC);

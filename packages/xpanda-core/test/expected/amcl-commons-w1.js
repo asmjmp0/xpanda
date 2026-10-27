@@ -101,31 +101,29 @@ export async function w91(p0, p1, p2, p3) {
   v22 = e92(p0, p2.activityId);
   if (b92(v22, v3).length === new Set(v3).size) {
     for (v25 of v3) {
-      {
-        let local_1_3_0 = v25;
-        v25 = v22.find(function (p0) {
-          return p0.fileId === local_1_3_0;
+      let local_1_3_0 = v25;
+      v25 = v22.find(function (p0) {
+        return p0.fileId === local_1_3_0;
+      });
+      if (v25 === undefined || v25.uploadPolicy === a92.NEVER) {
+        throw new Error("所选证据已消失或不可分享，请刷新文件清单");
+      }
+      if (!v6.some(function (p0) {
+        return p0.record.fileId === local_1_3_0;
+      })) {
+        v44 = g50.openSync(v25.localPath, g50.OpenMode.READ_ONLY);
+        v45 = g50.statSync(v44.fd);
+        if (!v45.isFile()) {
+          g50.closeSync(v44);
+          throw new Error("证据不是普通文件");
+        }
+        v6.push({
+          "record": v25,
+          "file": v44,
+          "size": v45.size,
+          "inode": String(v45.ino)
         });
-        if (v25 === undefined || v25.uploadPolicy === a92.NEVER) {
-          throw new Error("所选证据已消失或不可分享，请刷新文件清单");
-        }
-        if (!v6.some(function (p0) {
-          return p0.record.fileId === local_1_3_0;
-        })) {
-          v44 = g50.openSync(v25.localPath, g50.OpenMode.READ_ONLY);
-          v45 = g50.statSync(v44.fd);
-          if (!v45.isFile()) {
-            g50.closeSync(v44);
-            throw new Error("证据不是普通文件");
-          }
-          v6.push({
-            "record": v25,
-            "file": v44,
-            "size": v45.size,
-            "inode": String(v45.ino)
-          });
-          continue;
-        }
+        continue;
       }
     }
     if (v6.length === 0) {

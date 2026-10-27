@@ -333,10 +333,8 @@ export class PlayQueueManager {
         this.notifyQueueChanged();
         return false;
       } finally {
-        {
-          this.isLoadingMore = false;
-          this.notifyQueueChanged();
-        }
+        this.isLoadingMore = false;
+        this.notifyQueueChanged();
       }
     } catch (catchAcc) {
       local_0_0 /*logger*/.error("loadMore failed:", catchAcc);

@@ -43,6 +43,11 @@ export interface FinallyPlan {
     endIsMethodTail?: boolean;
     /** 守卫 else 分支里的正常继续语句是否搬回 try/finally 之后(24.0.0.0+ 的布局) */
     restoreContinuation?: boolean;
+    /**
+     * 哨兵写在结束块之后的共享汇合块里(24+ 的 `try { … } catch { … } finally { … }`)。
+     * 这种布局下结束块是用户 catch 的完成路径,它的寄存器恢复要保留,不能按 suppress 丢弃。
+     */
+    sharedSentinel?: boolean;
     /** 语句级 try 起点标记 */
     startMarker?: TYPE.Statement;
     /** 对应角色落在条件 test 序列里时的表达式标记(applyFinallyPlans 会提升到包含它的语句) */
@@ -66,6 +71,48 @@ function isHoleLoad(block: PandaIRBasicBlock): boolean {
     return block.pandaInstructions.some((instruction) => instruction.kind === "load" && instruction.loadType === "HOLE");
 }
 
+/**
+ * 共享哨兵块:try 结束块只恢复寄存器、哨兵写在后面被用户 catch 完成路径复用的块里。
+ *
+ * 24+ 的编译器会把 try 结尾的寄存器恢复与 hole 哨兵合并到一个汇合块:
+ *
+ *   542: jmp 595                      // try 体正常完成,跳过用户 catch
+ *   581: mov v3,v14; …; jmp 605       // 用户 catch 完成 → 恢复寄存器
+ *   595: mov v11,v18; …;             // try 正常完成 → 恢复寄存器
+ *   605: ldhole; sta v13; …; v10 = v13; jmp 624   // 共享:写哨兵再进 cleanup
+ *   622: sta v10                      // finally 的异常落点
+ *
+ * `buildFinallyPlans` 原来的判据要求"try 结束块自己写 ldhole",这里不成立,于是
+ * 整个 finally 计划丢失(SettingsPanel.clearCache)。沿"只做寄存器恢复"的块前进,
+ * 找到写 hole 且唯一后继就是 cleanup 的块即可确认;finally 体从结束块开始,
+ * 那些寄存器恢复是 cleanup 的输入,必须留在 finally 里。
+ */
+function findSharedSentinelBlock(
+    cfg: PandaIRCFG,
+    endBlock: PandaIRBasicBlock,
+    cleanupBlock: PandaIRBasicBlock,
+): PandaIRBasicBlock | null {
+    const visited = new Set<PandaIRBasicBlock>();
+    let current: PandaIRBasicBlock | null = endBlock;
+    while (current && !visited.has(current)) {
+        visited.add(current);
+        if (current.pandaInstructions.length === 0) return null;
+        if (isHoleLoad(current)) {
+            const successors = cfg.graph.normalSuccessors(current);
+            return successors.length === 1 && successors[0] === cleanupBlock ? current : null;
+        }
+        // 中间块只能是纯寄存器恢复(末尾可以带一条无条件跳转)
+        if (!current.pandaInstructions.every((instruction) => instruction.kind === "mov"
+            || instruction.kind === "nop" || instruction.isJump())) {
+            return null;
+        }
+        const successors = cfg.graph.normalSuccessors(current);
+        if (successors.length !== 1) return null;
+        current = successors[0];
+    }
+    return null;
+}
+
 /** 从 try 表提取 finally 计划;不是 finally 的 try 块返回 null */
 export function buildFinallyPlans(cfg: PandaIRCFG): FinallyPlan[] {
     const method = cfg.getPandaMethod();
@@ -83,15 +130,26 @@ export function buildFinallyPlans(cfg: PandaIRCFG): FinallyPlan[] {
         const endBlock = cfg.getBasicBlockByPC(tryBlock.startPC + tryBlock.length);
         const handlerBlock = cfg.getBasicBlockByPC(catchBlock.handlerPC);
         if (!startBlock || !endBlock || !handlerBlock) continue;
-        if (!isHoleLoad(endBlock)) continue;
         // finally 落点:先 sta 保存异常,再恢复寄存器并落到 cleanup,不会立刻 throw
         if (handlerBlock.pandaInstructions[0]?.kind !== "store") continue;
         const handlerSuccessors = cfg.graph.normalSuccessors(handlerBlock);
         if (handlerSuccessors.length !== 1 || handlerBlock.getTerminator().kind === "throw") continue;
         const cleanupBlock = handlerSuccessors[0];
-        // 正常完成块必须显式跳到 cleanup 起点
-        const endTerminator = endBlock.getTerminator();
-        if (endTerminator.kind !== "jumpDirect" || endTerminator.destinationPC !== cleanupBlock.getStartPC()) continue;
+        // 正常完成路径:结束块自己写 hole 并跳到 cleanup(经典布局),或者哨兵写在
+        // 结束块之后的共享汇合块里(24+ 的 `try { … } catch { … } finally { … }`)。
+        const sharedSentinel = !isHoleLoad(endBlock);
+        let cleanupStartPC = cleanupBlock.getStartPC();
+        if (sharedSentinel) {
+            // 哨兵写在一个被 try 正常完成路径与用户 catch 完成路径共用的块里:
+            // finally 从那个块开始(它的寄存器写入是 cleanup 的输入),
+            // 两条路径各自的恢复指令留在原来的分支里。
+            const sentinelBlock = findSharedSentinelBlock(cfg, endBlock, cleanupBlock);
+            if (!sentinelBlock) continue;
+            cleanupStartPC = sentinelBlock.getStartPC();
+        } else {
+            const endTerminator = endBlock.getTerminator();
+            if (endTerminator.kind !== "jumpDirect" || endTerminator.destinationPC !== cleanupBlock.getStartPC()) continue;
+        }
 
         // cleanup 之后第一个带 ldhole 的条件块是 rethrow 检查
         let guardBlock: PandaIRBasicBlock | null = null;
@@ -118,7 +176,10 @@ export function buildFinallyPlans(cfg: PandaIRCFG): FinallyPlan[] {
             id: plans.length,
             startPC: tryBlock.startPC,
             endPC: endBlock.getStartPC(),
-            cleanupStartPC: cleanupBlock.getStartPC(),
+            // 共享哨兵布局:结束块是用户 catch 的完成路径(寄存器恢复留在 catch 里),
+            // finally 从哨兵所在的那个共享块开始;结束块不再按 suppress 丢弃。
+            cleanupStartPC,
+            sharedSentinel,
             guardStartPC: guardBlock.getStartPC(),
             guardEndPC: afterBranch.getStartPC(),
             endIsMethodTail: isImplicitMethodTail(cfg, afterBranch),
@@ -136,7 +197,7 @@ export function buildFinallyRoles(plans: FinallyPlan[]): Map<number, FinallyRole
     const roles = new Map<number, FinallyRoleInfo>();
     for (const plan of plans) {
         roles.set(plan.startPC, { plan, role: "start" });
-        roles.set(plan.endPC, { plan, role: "suppress" });
+        if (!plan.sharedSentinel) roles.set(plan.endPC, { plan, role: "suppress" });
         roles.set(plan.cleanupStartPC, { plan, role: "cleanup" });
         roles.set(plan.guardStartPC, { plan, role: "guard" });
         roles.set(plan.guardEndPC, { plan, role: "end" });
@@ -216,6 +277,18 @@ function containsNode(node: any, target: any): boolean {
         }
     }
     return false;
+}
+
+/**
+ * 构造 try/finally 的语句块:只有一条语句、而且本身就是块时直接展开
+ * (`finally { { … } }` → `finally { … }`)。这层块是我们自己包出来的
+ * (cleanup 语句来自折叠掉的 `if (resume == undefined) { … }` 的块体),
+ * 展开不改变作用域:外层块里没有别的语句。其它来源的词法块(带 let 的
+ * 循环体块)不受影响。
+ */
+function bodyBlock(statements: TYPE.Statement[]): TYPE.BlockStatement {
+    if (statements.length === 1 && TYPE.isBlockStatement(statements[0])) return statements[0];
+    return TYPE.blockStatement(statements);
 }
 
 /** list 里直接包含 target 的语句下标(没有则 -1) */
@@ -620,7 +693,7 @@ function applyPlans(
                 // 守卫之后如果还有语句,它们是 try/finally 之后的正常继续
                 const afterGuard = startList.slice(guardEnd);
                 startList.length = cleanup;
-                tryOwner.finalizer = TYPE.blockStatement(finallyStatements);
+                tryOwner.finalizer = bodyBlock(finallyStatements);
                 parentList.splice(parentIndex + 1, 0, ...guardContinuation, ...afterGuard);
                 applied = true;
             } else if (tryOwner && tryOwner.handler && tryOwner.handler.body.body === cleanupList) {
@@ -628,7 +701,7 @@ function applyPlans(
                 const tryNode = TYPE.tryStatement(
                     TYPE.blockStatement(tryStatements),
                     null,
-                    TYPE.blockStatement(finallyStatements),
+                    bodyBlock(finallyStatements),
                 );
                 const parentList = findStatementList(astNode, tryOwner);
                 const parentIndex = parentList ? parentList.indexOf(tryOwner) : -1;
@@ -659,7 +732,7 @@ function applyPlans(
                     group.sort((a, b) => b.start - a.start);
                     for (const copy of group) list.splice(copy.start, copy.end - copy.start);
                 }
-                tryOwner.finalizer = TYPE.blockStatement(finalizer);
+                tryOwner.finalizer = bodyBlock(finalizer);
                 parentList.splice(parentIndex + 1, 0, ...guardContinuation);
                 applied = true;
             } else if (tryOwner && tryOwner.handler && cleanupList !== startList) {
@@ -686,16 +759,31 @@ function applyPlans(
                 if (plan.endIsMethodTail) continuation = [];
                 // catch 里只有 `v = catchAcc` 时,那是 finally 的异常保存,重抛在守卫里。
                 // 丢掉这个 catch,异常由 try/finally 自己继续抛(SabrOfflineDownloader
-                // 的 release)。用户 catch(打日志再抛)保留。
-                const tryBlock = catchOnlyStoresException(tryOwner.handler)
-                    ? tryOwner.block
-                    : TYPE.blockStatement([tryOwner]);
-                const wrapped = TYPE.tryStatement(
-                    tryBlock,
-                    null,
-                    TYPE.blockStatement(finallyStatements),
-                );
-                parentList.splice(parentIndex, removeThrough - parentIndex, wrapped, ...continuation);
+                // 的 release)。
+                if (catchOnlyStoresException(tryOwner.handler)) {
+                    const merged = TYPE.tryStatement(
+                        tryOwner.block,
+                        null,
+                        bodyBlock(finallyStatements),
+                    );
+                    parentList.splice(parentIndex, removeThrough - parentIndex, merged, ...continuation);
+                } else if (!tryOwner.finalizer) {
+                    // 用户 catch 保留时直接挂到已有的 try/catch 上:
+                    // `try { try { A } catch (e) { B } } finally { C }` 与
+                    // `try { A } catch (e) { B } finally { C }` 等价(外层没有 catch,
+                    // 异常先过用户 catch,finally 在两条路径后都执行),
+                    // 没必要多包一层(SettingsPanel.clearCache)。
+                    tryOwner.finalizer = bodyBlock(finallyStatements);
+                    parentList.splice(parentIndex, removeThrough - parentIndex, tryOwner, ...continuation);
+                } else {
+                    // 源码本身就是嵌套 try/catch/finally,保留原有 finally 再包一层
+                    const wrapped = TYPE.tryStatement(
+                        TYPE.blockStatement([tryOwner]),
+                        null,
+                        bodyBlock(finallyStatements),
+                    );
+                    parentList.splice(parentIndex, removeThrough - parentIndex, wrapped, ...continuation);
+                }
                 applied = true;
             } else if (cleanupList === startList) {
                 // 常规布局:try 体 = [tryStart, cleanup),守卫之后是 try/finally 之后的语句
@@ -704,7 +792,7 @@ function applyPlans(
                 const tryNode = TYPE.tryStatement(
                     TYPE.blockStatement(tryStatements),
                     null,
-                    TYPE.blockStatement(finallyStatements),
+                    bodyBlock(finallyStatements),
                 );
                 startList.splice(tryStart, guardEnd - tryStart, tryNode, ...guardContinuation);
                 applied = true;
@@ -719,7 +807,7 @@ function applyPlans(
                 const tryNode = TYPE.tryStatement(
                     TYPE.blockStatement(tryStatements),
                     null,
-                    TYPE.blockStatement(finallyStatements),
+                    bodyBlock(finallyStatements),
                 );
                 cleanupList.splice(ownerIndex, guardEnd - ownerIndex, tryNode, ...guardContinuation);
                 applied = true;
@@ -735,7 +823,7 @@ function applyPlans(
                 const tryNode = TYPE.tryStatement(
                     TYPE.blockStatement(tryStatements),
                     null,
-                    TYPE.blockStatement(finallyStatements),
+                    bodyBlock(finallyStatements),
                 );
                 startList.splice(tryStart, startList.length - tryStart, tryNode, ...guardContinuation);
                 applied = true;

@@ -355,6 +355,45 @@ export class SyntaxRewriteSimplify implements ISimplify {
         return changed;
     }
 
+    /**
+     * 只有"双重块"才合并:`{ { … } }` → `{ … }`。
+     *
+     * 条件是父级也是块语句(或 Program)、且父块的语句表里只有这一个块 ——
+     * 此时内层块的作用域范围与外层完全一致,里面的 let/const 提上来也不会和
+     * 父块里的其它名字撞车,任何形态都安全。
+     *
+     * 父块里还有别的语句时一律不动:内层块顶层如果有块级声明,合并会改变它的
+     * 作用域(哪怕只是提一层也可能撞名),这类块(通常是 lexenv 块)保持原样。
+     *
+     * 这层冗余块大多来自我们自己的构造:结构分析给 finally 包出来的
+     * `finally { { … } }`、折叠掉的常量 if 留下的块体等。
+     */
+    public static flattenNestedBlocks(node: Program): boolean {
+        let changed = false;
+        // 展开会暴露更深的嵌套块,固定跑几轮直到稳定
+        for (let round = 0; round < 8; round++) {
+            let roundChanged = false;
+            traverse(file(node), {
+                noScope: true,
+                BlockStatement: (path) => {
+                    if (!path.inList || !Array.isArray(path.container)) return;
+                    const parent = path.parentPath?.node;
+                    if (!parent || !(isBlockStatement(parent) || isProgram(parent))) return;
+                    const list = path.container as TYPE.Statement[];
+                    // 父块里只有这一个块(双重块),作用域范围不变
+                    if (list.length !== 1) return;
+                    const block = path.node;
+                    list.splice(list.indexOf(block), 1, ...block.body);
+                    roundChanged = true;
+                    changed = true;
+                    path.skip();
+                },
+            });
+            if (!roundChanged) break;
+        }
+        return changed;
+    }
+
     /** try body 顶层的块级声明:直接摊进外层语句表会改变它们的作用域 */
     private static isBlockScopedDeclaration(statement: TYPE.Statement): boolean {
         if (isFunctionDeclaration(statement) || isClassDeclaration(statement)) return true;

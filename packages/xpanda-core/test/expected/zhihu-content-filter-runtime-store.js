@@ -27,36 +27,34 @@ export class ContentFilterRuntimeStore {
       v8.push(v7.slice(v11, v11 + 500));
     }
     for (v11 of v8) {
-      {
-        let local_1_2_0;
-        v20 = p0 === undefined ? "" : " WHERE content_key IN (" + v11.map(function (p0) {
-          return "?";
-        }).join(",") + ")";
-        local_1_2_0 = [];
-        v11.forEach(function (p0) {
-          local_1_2_0.push(p0);
-        });
-        v0 = await v4.querySql("SELECT content_key, view_count FROM content_filter_views" + v20, local_1_2_0);
-        try {
-          if (v0.goToFirstRow()) {
-            do {
-              v46 = v0.getString(0);
-              v5[v46] = v0.getLong(1);
-            } while (v0.goToNextRow());
-          }
-        } finally {
-          v0.close();
+      let local_1_2_0;
+      v20 = p0 === undefined ? "" : " WHERE content_key IN (" + v11.map(function (p0) {
+        return "?";
+      }).join(",") + ")";
+      local_1_2_0 = [];
+      v11.forEach(function (p0) {
+        local_1_2_0.push(p0);
+      });
+      v0 = await v4.querySql("SELECT content_key, view_count FROM content_filter_views" + v20, local_1_2_0);
+      try {
+        if (v0.goToFirstRow()) {
+          do {
+            v46 = v0.getString(0);
+            v5[v46] = v0.getLong(1);
+          } while (v0.goToNextRow());
         }
-        v11 = await v4.querySql("SELECT content_key FROM opened_content" + v20, local_1_2_0);
-        try {
-          if (v11.goToFirstRow()) {
-            do {
-              v6.push(v11.getString(0));
-            } while (v11.goToNextRow());
-          }
-        } finally {
-          v11.close();
+      } finally {
+        v0.close();
+      }
+      v11 = await v4.querySql("SELECT content_key FROM opened_content" + v20, local_1_2_0);
+      try {
+        if (v11.goToFirstRow()) {
+          do {
+            v6.push(v11.getString(0));
+          } while (v11.goToNextRow());
         }
+      } finally {
+        v11.close();
       }
     }
     return {

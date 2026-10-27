@@ -391,16 +391,14 @@ export function f1268(p0, p1, p2, p3, p4, p5, p6, p7) {
     }
     v0.id = p3;
     try {
-      try {
-        v7 = g50.openSync(p4 + "/versions/" + p3 + "/" + p3 + ".json", g50.OpenMode.CREATE | g50.OpenMode.WRITE_ONLY | g50.OpenMode.TRUNC);
-        v5 = v7;
-        v0 = JSON.stringify(v0);
-        g50.writeSync(v7.fd, v0);
-      } catch (catchAcc) {
-        v5 = v7;
-        y.warn(local_0_0, "write " + (p4 + "/versions/" + p3 + "/" + p3 + ".json") + " failed", catchAcc, a32);
-        throw catchAcc;
-      }
+      v7 = g50.openSync(p4 + "/versions/" + p3 + "/" + p3 + ".json", g50.OpenMode.CREATE | g50.OpenMode.WRITE_ONLY | g50.OpenMode.TRUNC);
+      v5 = v7;
+      v0 = JSON.stringify(v0);
+      g50.writeSync(v7.fd, v0);
+    } catch (catchAcc) {
+      v5 = v7;
+      y.warn(local_0_0, "write " + (p4 + "/versions/" + p3 + "/" + p3 + ".json") + " failed", catchAcc, a32);
+      throw catchAcc;
     } finally {
       if (v5) {
         try {
@@ -584,20 +582,18 @@ export async function s1267(p0) {
   v5 = d398.instance();
   v6 = [];
   for (v11 of p0) {
-    {
-      let local_1_2_0 = v11;
-      acc = v5.fetchText(local_1_2_0 + ".sha1", [], 6).then(function (p0) {
-        let v1 = "([0-9a-fA-F]{40})";
-        let v0 = new RegExp("([0-9a-fA-F]{40})").exec(p0);
-        return v0 && (v1 = 1, v0[1]) ? v0[v1].toLowerCase() : "";
-      });
-      acc = acc.catch(function (p0) {
-        let v4 /*b1277*/ = p0?.message ?? String(p0);
-        y.warn(local_0_0, "installer sha1 probe failed: " + local_1_2_0 + ".sha1 err=" + v4 + "", null, a32);
-        return "";
-      });
-      v6.push(acc);
-    }
+    let local_1_2_0 = v11;
+    acc = v5.fetchText(local_1_2_0 + ".sha1", [], 6).then(function (p0) {
+      let v1 = "([0-9a-fA-F]{40})";
+      let v0 = new RegExp("([0-9a-fA-F]{40})").exec(p0);
+      return v0 && (v1 = 1, v0[1]) ? v0[v1].toLowerCase() : "";
+    });
+    acc = acc.catch(function (p0) {
+      let v4 /*b1277*/ = p0?.message ?? String(p0);
+      y.warn(local_0_0, "installer sha1 probe failed: " + local_1_2_0 + ".sha1 err=" + v4 + "", null, a32);
+      return "";
+    });
+    v6.push(acc);
   }
   for (v5 = await Promise.all(v6); v3 < v5.length; v3 += 1) {
     if (v5[v3].length === 40) {
