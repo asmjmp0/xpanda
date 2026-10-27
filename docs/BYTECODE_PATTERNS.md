@@ -118,6 +118,8 @@ Handler entry is almost always `sta vX` (the exception arrives in `acc`). Classi
 
 User `catch` at `-O2` is just the source body under a catch-all. No `hole`.
 
+An empty `catch {}` inside a loop is the special case: the handler is the latch block itself (`i++; goto head`), and the normal exit is a one-instruction `jmp` onto that same block. Both paths join there, so the `jmp` is the catch body and stays an exception landing pad (`wireEmptyJoinCatches`); the classifier that looks for "constant log then `return`" must not follow the handler's back edge into the loop body, or the same try gets a second helper (`amcl n4/o8` `clearDisplayListeners`).
+
 ```text
 .catchall body_begin, body_end, handler
 handler:

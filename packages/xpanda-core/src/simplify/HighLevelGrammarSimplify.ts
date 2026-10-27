@@ -1505,6 +1505,7 @@ export class HighLevelGrammarSimplify implements ISimplify {
         const pre = this.prevIteratorInit(value);
         if (!pre) return false;
         const init = pre.node.expression;
+        if (!isAssignmentExpressionNode(init) || init.operator !== "=" || !isIdentifierNode(init.left)) return false;
         const iterable = this.iterableOfIteratorInit(init.right as TYPE.Expression);
         if (!iterable) return false;
         const iterBinding = value.scope.getBinding(init.left.name);

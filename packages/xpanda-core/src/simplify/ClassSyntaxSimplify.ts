@@ -1601,6 +1601,17 @@ function foldDefaultExportValue(program: Program, exportStmt: TYPE.ExportDefault
 }
 
 /**
+ * `export { Name }` 里的本地名来自模块导出表:它已经是模块对外的真实绑定,
+ * 即使形如 `v1511`(反编译器的临时命名)也可以内联成导出声明。
+ * `local_*` / `acc` / `panda_jmp0_reserved_*` 等其它内部名仍保持原语句。
+ */
+function isExportBindingName(name: string): boolean {
+    return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name)
+        && (!isTempName(name) || /^v\d+$/.test(name))
+        && !name.startsWith("panda_jmp0_reserved_");
+}
+
+/**
  * 把 `export { Name };` 折进 Name 的顶层定义(named 形态;default 形态由
  * foldDefaultExportValue 与 foldExportDeclarations 的声明包装处理):
  *   - 右值是函数表达式/箭头 → `export function Name() {...}`(绑定提升到模块
@@ -1611,7 +1622,7 @@ function foldDefaultExportValue(program: Program, exportStmt: TYPE.ExportDefault
  * 找不到顶层定义,或所有落点都不可用时返回 false,导出语句保持原样。
  */
 function foldVariableExport(program: Program, name: string, maxIndex: number): boolean {
-    if (!isValidBindingName(name)) return false;
+    if (!isExportBindingName(name)) return false;
     const def = findTopLevelDefinition(program, name, maxIndex);
     if (!def) return false;
     const decl = findTopLevelDeclaration(program, name, def.index);

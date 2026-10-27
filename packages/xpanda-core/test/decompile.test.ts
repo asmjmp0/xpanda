@@ -3358,6 +3358,102 @@ function verifyAmclReadJarMainClass(): void {
 }
 
 /**
+ * 回归:amcl n4/o8 的 clearDisplayListeners 曾整方法降级 SimpleAnalysis。
+ *
+ * 循环体里 `if (enhancedDisplays) { try { off } catch {} }` 的空 catch 处理器
+ * 就是循环自增块(handlerPC 指向闩),旧分类把它当成“常量日志后 return”的
+ * 忽略异常 catch(洪泛扫描沿回边走进整个循环体),于是同一个 try 被接了两个
+ * helper,归约成 try { try { off } catch {}; i++ } catch { i++ }。
+ * 另外 `if (增强显示)` 条件与 try/catch helper 相邻时,逻辑条件合并曾把没有
+ * 语句的 helper 当成 `A && B` 的操作数,decompile 时抛 TypeError 降级。
+ */
+function verifyAmclDisplayListenersLoop(): void {
+    const abcPath = path.join(__dirname, "resources", "amcl1.0.6.abc");
+    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
+    pandaFile.parseAssembly();
+    const pandaClass = pandaFile.getAllClasses().find(
+        (c) => c.name.content === "L&entry/src/main/ets/n4/o8&;");
+    if (!pandaClass) throw new Error("amcl: 未找到 L&entry/src/main/ets/n4/o8&;");
+    const code = new PandaDecompiler().decompileClass(pandaClass);
+    NodeFactory.parse(code);
+    if (code.includes("created by SimpleAnalysis") || code.includes("decompiler_")
+        || code.includes("xpanda_goto")) {
+        throw new Error(`amcl o8: 仍在降级或残留伪语句\n${code.slice(0, 800)}`);
+    }
+    const start = code.indexOf("  clearDisplayListeners() {");
+    if (start < 0) throw new Error(`amcl o8: 未找到 clearDisplayListeners\n${code.slice(0, 800)}`);
+    const body = code.slice(start, code.indexOf("\n  refresh()", start));
+    for (const leftover of ["[Symbol.iterator]", "label_", "//from goto"]) {
+        if (body.includes(leftover)) {
+            throw new Error(`amcl o8: 循环/标签残留 ${JSON.stringify(leftover)}\n${body}`);
+        }
+    }
+    if ((body.match(/try \{/g) ?? []).length !== 1) {
+        throw new Error(`amcl o8: 空的 catch 被重复包了一层 try\n${body}`);
+    }
+    for (const fragment of [
+        "for (v0 = 0; v0 < this.displays.length; v0 += 1) {",
+        "if (this.enhancedDisplays) {",
+        'this.displays[v0].off("availableAreaChange", this.areaListener);',
+        "} catch (catchAcc) {}",
+        "this.displays = [];",
+    ]) {
+        if (!body.includes(fragment)) {
+            throw new Error(`amcl o8: 缺少 ${JSON.stringify(fragment)}\n${body}`);
+        }
+    }
+}
+
+/**
+ * 回归:amcl launch r16 的回边 goto 落在已带 label 的循环里。
+ *
+ * `determineFollowLatch` 兜底给回边插了 `xpanda_goto(label_43)`,结构化归约
+ * 又把 label 挂到了循环头上(`label_43: while (true) { … }`)。原来的
+ * GotoLoopRestore 只认 `label_x: ;` + 同层 goto,这里 label 体已经是循环,
+ * goto 又埋在 `if (v1.has(v5))` 分支里,于是原样输出成不可执行调用。
+ * 现在应还原成 `continue`(label 无其它引用时一并去掉)。
+ * 整类输出锁定在 expected/amcl-launch-r16.js。
+ */
+function verifyAmclLaunchGotoLoop(): void {
+    const abcPath = path.join(__dirname, "resources", "amcl1.0.6.abc");
+    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
+    pandaFile.parseAssembly();
+    const pandaClass = pandaFile.getAllClasses().find(
+        (c) => c.name.content === "L&launch/src/main/ets/r16&1.0.0;");
+    if (!pandaClass) throw new Error("amcl: 未找到 L&launch/src/main/ets/r16&1.0.0;");
+    const code = new PandaDecompiler().decompileClass(pandaClass);
+    NodeFactory.parse(code);
+    if (code.includes("created by SimpleAnalysis") || code.includes("decompiler_")) {
+        throw new Error(`amcl r16: 反编译降级或残留伪语句\n${code}`);
+    }
+    for (const leftover of ["xpanda_goto", "label_"]) {
+        if (code.includes(leftover)) {
+            throw new Error(`amcl r16: 仍残留 ${JSON.stringify(leftover)}\n${code}`);
+        }
+    }
+    // 模块导出表里的本地名就是真实绑定:`let v1511 = function …; export { v1511 }`
+    // 要折成 `export function v1511(…)`(vN 虽然是临时命名风格,但这里是导出名)
+    if (code.includes("export { v1511 }") || !code.includes("export function v1511(p0) {")) {
+        throw new Error(`amcl r16: v1511 没有折成 export function\n${code}`);
+    }
+    for (const fragment of [
+        "while (true) {",
+        "if (v3 < 0) {",
+        "return v2.reverse();",
+        "if (v1.has(v5)) {",
+        "v3 -= 1;\n        continue;",
+    ]) {
+        if (!code.includes(fragment)) {
+            throw new Error(`amcl r16: 缺少 ${JSON.stringify(fragment)}\n${code}`);
+        }
+    }
+    const expected = fs.readFileSync(path.join(__dirname, "expected", "amcl-launch-r16.js"), "utf-8");
+    if (code !== expected) {
+        throw new Error(`amcl r16: 输出与快照不一致\n${firstDifference(expected, code)}`);
+    }
+}
+
+/**
  * 回归:字节码 24.0.0.0 的 try/catch/finally 结构还原(hx360e1.0.2.abc 的 LogExport)。
  *
  * 该版本把真正的 catch / finally handler 的 codeSize 全写成 0,旧逻辑会把
@@ -4168,6 +4264,56 @@ function firstNode(p0) {
         throw new Error(`终止型循环体不应补 break\n${terminatingCode}`);
     }
 
+    // label 已经挂在循环头上(`label: while (true)`),goto 埋在 if 分支里:
+    // 回边就是 continue,label 无其它引用时一起删掉
+    const labelled = NodeFactory.parse(`
+function scan(p0) {
+  label_3: while (true) {
+    if (p0.i < 0) {
+      return p0.out;
+    }
+    if (p0.seen.has(p0.key)) {
+      p0.i -= 1;
+      xpanda_goto(label_3);
+    }
+    p0.out.push(p0.item);
+    p0.i -= 1;
+  }
+}
+`);
+    restoreGotoLoops(labelled);
+    const labelledCode = NodeFactory.generate(labelled);
+    NodeFactory.parse(labelledCode);
+    if (labelledCode.includes("xpanda_goto") || labelledCode.includes("label_3")) {
+        throw new Error(`已带 label 的循环未还原\n${labelledCode}`);
+    }
+    if (!/while \(true\) \{/.test(labelledCode) || !/p0\.i -= 1;\n\s+continue;/.test(labelledCode)) {
+        throw new Error(`已带 label 的循环没有换成 continue\n${labelledCode}`);
+    }
+
+    // goto 在嵌套循环里:裸 continue 会绑到内层循环,必须用带标签的 continue 并保留 label
+    const nested = NodeFactory.parse(`
+function drain(p0) {
+  label_4: while (true) {
+    for (const item of p0.items) {
+      if (item.done) {
+        xpanda_goto(label_4);
+      }
+    }
+    break;
+  }
+}
+`);
+    restoreGotoLoops(nested);
+    const nestedCode = NodeFactory.generate(nested);
+    NodeFactory.parse(nestedCode);
+    if (nestedCode.includes("xpanda_goto")) {
+        throw new Error(`嵌套循环里的 goto 未还原\n${nestedCode}`);
+    }
+    if (!nestedCode.includes("continue label_4;") || !nestedCode.includes("label_4: while (true)")) {
+        throw new Error(`嵌套循环里的 goto 应换成带标签 continue\n${nestedCode}`);
+    }
+
     // 行为等价:goto 程序的语义用等价的带标签 while 表达,比较执行结果
     const behaviorProgram = NodeFactory.parse(`
 function trimBehavior(p0) {
@@ -4632,6 +4778,14 @@ async function main(): Promise<void> {
 
     console.log("[test] amcl readJarMainClass structure (amcl1.0.6.abc)");
     verifyAmclReadJarMainClass();
+    console.log("    ok");
+
+    console.log("[test] amcl display listeners loop + empty catch (amcl1.0.6.abc)");
+    verifyAmclDisplayListenersLoop();
+    console.log("    ok");
+
+    console.log("[test] amcl launch labelled-loop goto (amcl1.0.6.abc)");
+    verifyAmclLaunchGotoLoop();
     console.log("    ok");
 
     console.log("[test] lnga SOURCE_FILE + qr login short circuit (lnga1.2.6.abc)");

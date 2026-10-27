@@ -8,7 +8,6 @@ import { h115 } from "@normalized:N&&&commons/Index&1.0.0";
 import { k115 } from "@normalized:N&&&commons/Index&1.0.0";
 import { q51 } from "@normalized:N&&&commons/Index&1.0.0";
 import { r115 } from "@normalized:N&&&commons/Index&1.0.0";
-let v189;
 let local_0_0;
 let local_0_1 = function (p0, p1, p2, p3) {
   let v1, v2, v3;
@@ -38,7 +37,7 @@ let local_0_1 = function (p0, p1, p2, p3) {
 export function u189(p0) {
   return h115(p0);
 }
-v189 = function (p0, p1) {
+export function v189(p0, p1) {
   let v5, v6, v7, v14, v15, v21;
   let v0 = [];
   let v1 = p0.level === 2 ? "#FCA5A5" : p0.level === 1 ? "#FCD38A" : "#CBD5E1";
@@ -117,7 +116,7 @@ v189 = function (p0, p1) {
     v6 += v7.text.length;
   }
   return v1;
-};
+}
 class a190 {
   constructor() {
     this.sourceIndex = 0;
@@ -1059,4 +1058,3 @@ export class e190 {
     return -1;
   }
 }
-export { v189 };

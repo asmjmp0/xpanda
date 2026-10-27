@@ -270,6 +270,7 @@ export class LivenessAnalyzer extends TempVariablePass {
                 const exported = new Set(liveOut);
                 if (!stmt.source) {
                     for (const spec of stmt.specifiers) {
+                        if (spec.type !== "ExportSpecifier") continue;
                         if (spec.local.type === "Identifier") exported.add(spec.local.name);
                     }
                 }

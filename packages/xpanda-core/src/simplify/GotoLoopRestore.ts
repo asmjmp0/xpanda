@@ -78,8 +78,107 @@ interface GotoLoopSpan extends LabelSite {
 export function restoreGotoLoops(program: TYPE.Program): void {
     // 每轮只改写一处,避免一次替换让其余候选的位置失效
     for (let round = 0; round < 8; round++) {
-        if (!restoreOne(program)) return;
+        if (restoreLabeledLoopGoto(program)) continue;
+        if (restoreOne(program)) continue;
+        return;
     }
+}
+
+interface LoopLabelSite {
+    /** label 所在的语句列表 */
+    list: TYPE.Statement[];
+    index: number;
+    /** `label: <loop>` 语句本身 */
+    statement: TYPE.LabeledStatement;
+    label: string;
+    /** 所在函数(嵌套函数里的 label 单独算) */
+    fn: TYPE.Node;
+}
+
+/**
+ * `label: while (true) { … xpanda_goto(label) }`: the label already wraps the
+ * loop, so the back edge only needs `continue`. The empty-label form handled by
+ * `restoreOne` cannot see this shape (the label body is the loop, not `;`).
+ *
+ * The label may be the loop anchor emitted by structured analysis when
+ * `determineFollowLatch` fell back to a goto (`amcl` launch r16 `#*#v1511`).
+ * Only `while` is rewritten: its label target is the loop test, exactly where
+ * `continue` goes. (`do { … } while` would jump back to the body start instead.)
+ * Every goto for this label must sit inside this loop body; a goto inside a
+ * nested loop becomes a labeled `continue` (a plain one would bind to the inner
+ * loop), and the label is dropped only when nothing else references it.
+ */
+function restoreLabeledLoopGoto(program: TYPE.Program): boolean {
+    const sites: LoopLabelSite[] = [];
+    collectLoopLabelSites(program, program, sites);
+    for (let i = sites.length - 1; i >= 0; i--) {
+        const site = sites[i];
+        const loopBody = (site.statement.body as any).body as TYPE.Node | undefined;
+        if (!loopBody) continue;
+        // 同名 label(区域复制会产生副本)的 goto 归属不明时整组放弃
+        const gotos = sameLabelGotos(site.fn, site.label);
+        if (gotos.length === 0) continue;
+        if (!gotos.every((goto) => containsNodeDeep(loopBody, goto))) continue;
+        const chains = gotos.map((goto) => ancestorChain(loopBody, goto));
+        if (chains.some((chain) => chain === null)) continue;
+        // 祖先链里还有循环:goto 在嵌套循环里,裸 continue 会绑到内层循环上
+        if (chains.some((chain) => chain!.some(isLoopNode))) {
+            replaceGotos(loopBody, site.label, true);
+            return true;
+        }
+        replaceGotos(loopBody, site.label);
+        // 还有带标签的 break/continue 指向它时,label 必须保留
+        if (!hasLabelReference(loopBody, site.label)) {
+            site.list.splice(site.index, 1, site.statement.body);
+        }
+        return true;
+    }
+    return false;
+}
+
+/** 收集 `label: while (…)` 语句 */
+function collectLoopLabelSites(node: TYPE.Node, fn: TYPE.Node, sites: LoopLabelSite[]): void {
+    const keys = (VISITOR_KEYS as any)[node.type] as string[] | undefined;
+    if (!keys) return;
+    for (const key of keys) {
+        const value = (node as any)[key];
+        if (Array.isArray(value)) {
+            for (let index = 0; index < value.length; index++) {
+                const statement = value[index];
+                if (!statement || typeof statement.type !== "string") continue;
+                if (isLabeledStatement(statement) && TYPE.isWhileStatement(statement.body)) {
+                    sites.push({ list: value as TYPE.Statement[], index, statement, label: statement.label.name, fn });
+                }
+                visitChild(statement);
+            }
+        } else if (value && typeof value.type === "string") {
+            visitChild(value);
+        }
+    }
+
+    function visitChild(child: TYPE.Node): void {
+        if (isFunctionLike(child) || isClassLike(child)) {
+            collectLoopLabelSites(child, child, sites);
+            return;
+        }
+        collectLoopLabelSites(child, fn, sites);
+    }
+}
+
+/** 子树里是否还有 `break label` / `continue label`(不进嵌套函数) */
+function hasLabelReference(root: TYPE.Node, label: string): boolean {
+    let found = false;
+    walkNode(root, (current) => {
+        if (found) return false;
+        if (isFunctionLike(current) || isClassLike(current)) return false;
+        if ((current.type === "BreakStatement" || current.type === "ContinueStatement")
+            && current.label?.name === label) {
+            found = true;
+            return false;
+        }
+        return true;
+    });
+    return found;
 }
 
 function restoreOne(program: TYPE.Program): boolean {
@@ -244,7 +343,8 @@ function applySpan(span: GotoLoopSpan): void {
 }
 
 /** 把子树里的 `xpanda_goto(label)` 语句换成 continue(不进嵌套函数) */
-function replaceGotos(node: TYPE.Node, label: string): void {
+function replaceGotos(node: TYPE.Node, label: string, keepLabel = false): void {
+    const replacement = () => keepLabel ? continueStatement(TYPE.identifier(label)) : continueStatement();
     const keys = (VISITOR_KEYS as any)[node.type] as string[] | undefined;
     if (!keys) return;
     for (const key of keys) {
@@ -254,19 +354,19 @@ function replaceGotos(node: TYPE.Node, label: string): void {
                 const child = value[i];
                 if (!child || typeof child.type !== "string") continue;
                 if (isGotoStatement(child, label)) {
-                    value[i] = continueStatement();
+                    value[i] = replacement();
                     continue;
                 }
                 if (isFunctionLike(child) || isClassLike(child)) continue;
-                replaceGotos(child, label);
+                replaceGotos(child, label, keepLabel);
             }
         } else if (value && typeof value.type === "string") {
             if (isGotoStatement(value, label)) {
-                (node as any)[key] = continueStatement();
+                (node as any)[key] = replacement();
                 continue;
             }
             if (isFunctionLike(value) || isClassLike(value)) continue;
-            replaceGotos(value, label);
+            replaceGotos(value, label, keepLabel);
         }
     }
 }

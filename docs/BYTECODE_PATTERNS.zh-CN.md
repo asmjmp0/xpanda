@@ -118,6 +118,8 @@ handler 入口几乎总是 `sta vX`（异常从 `acc` 进来）。分类看这�
 
 `-O2` 下的用户 `catch` 就是 catch-all 下面的源码体。没有 `hole`。
 
+循环里的空 `catch {}` 是特例：handler 就是闩本身（`i++; goto head`），正常出口是一条单指令 `jmp` 跳到同一个块。两条路径在那里汇合，所以 `jmp` 就是 catch 体、必须保留为异常 landing pad（`wireEmptyJoinCatches`）；而“常量日志后 `return`”那个分类器不能沿 handler 的回边走进循环体，否则同一个 try 会被接上第二个 helper（`amcl n4/o8` 的 `clearDisplayListeners`）。
+
 ```text
 .catchall body_begin, body_end, handler
 handler:

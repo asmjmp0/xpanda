@@ -19,7 +19,6 @@ import { p1205 } from "@normalized:N&&&feature_core/src/main/ets/t11/w11&1.0.0";
 import { q36 } from "@normalized:N&&&commons/Index&1.0.0";
 import { y } from "@normalized:N&&&commons/Index&1.0.0";
 import zlib from "@ohos:zlib";
-let v1267;
 let local_0_0, local_0_1, local_0_2, local_0_3, local_0_4, local_0_5, local_0_6, local_0_7, local_0_8, local_0_10, local_0_11, local_0_12;
 let local_0_9 = function (p0) {
   return p0.downloads
@@ -630,7 +629,7 @@ export function u1267(p0) {
   v0 = parseInt(p0);
   return isNaN(v0) || v0 >= 20;
 }
-v1267 = function (p0, p1, p2) {
+export function v1267(p0, p1, p2) {
   let acc;
   let local_1_1 = p0;
   let local_1_2 = p1;
@@ -664,7 +663,7 @@ v1267 = function (p0, p1, p2) {
     });
   });
   return acc;
-};
+}
 local_0_3 = function (p0, p1) {
   let v1 /*g50*/, v2 /*p1268*/;
   try {
@@ -777,5 +776,4 @@ local_0_6 = class p1268 {
 };
 local_0_4 = 16 * 1024 * 1024 * 1024;
 local_0_5 = 2 * 1024 * 1024 * 1024;
-export { v1267 };
 export { a104 } from "@normalized:N&&&commons/Index&1.0.0";

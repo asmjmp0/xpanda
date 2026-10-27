@@ -173,11 +173,16 @@ export class StructureAnalysis {
             const regions = this.regionGraph.depthFirstPostOrder(this.entryRegion);
             let result = false;
             for (const region0 of regions) {
+                // try/catch helper 区域没有语句:它只是把 try 体/处理器接到图上的
+                // 结构节点,不参与 `A || B` / `A && B` 的求值。合并进来会让逻辑语句
+                // 拿到 undefined 语句,decompile 时抛异常、整个方法降级
+                // (amcl n4/o8 的 clearDisplayListeners:`if (增强显示) try { off }`)。
+                if (!canMergeLogicalCondition(region0)) continue;
                 if (region0.getType() === "Condition") {
                     const pair = this.getDestNextPair(region0);
                     if (!pair) continue;
                     const [destRegion, nextRegion] = pair;
-                    if (nextRegion.getType() === "Condition" && this.regionGraph.inDegree(nextRegion) === 1) {
+                    if (canMergeLogicalCondition(nextRegion) && this.regionGraph.inDegree(nextRegion) === 1) {
                         const nextPair = this.getDestNextPair(nextRegion);
                         if (!nextPair) continue;
                         const nextDestRegion = nextPair[0];
@@ -1098,6 +1103,13 @@ export class StructureAnalysis {
         if (region.getStatements()[0] instanceof LabelStatement) return;
         region.addFirstStatement(new LabelStatement(region));
     }
+}
+
+/** 逻辑条件合并只接受真实的条件区域:try/catch helper 没有语句。 */
+function canMergeLogicalCondition(region: Region): boolean {
+    return region.getType() === "Condition"
+        && !region.isTryCatchHelperRegion()
+        && region.getStatements().length > 0;
 }
 
 function isTransparentJump(region: Region): boolean {

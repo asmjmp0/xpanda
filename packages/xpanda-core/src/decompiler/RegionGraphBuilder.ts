@@ -456,6 +456,7 @@ export class RegionGraphBuilder {
         let sawString = false;
         let sawReturn = false;
         let sawThrow = false;
+        const start = entry.getStartPC();
         const seen = new Set<PandaIRBasicBlock>();
         const queue: PandaIRBasicBlock[] = [entry];
         let budget = 6;
@@ -468,7 +469,14 @@ export class RegionGraphBuilder {
                 if (instruction.kind === "return") sawReturn = true;
                 if (instruction.kind === "load" && instruction.loadType === "STRING") sawString = true;
             }
-            for (const successor of this.graph.successors(block)) queue.push(successor);
+            for (const successor of this.graph.successors(block)) {
+                // A handler that jumps back into the loop (an empty catch whose
+                // "continue" lands on the latch) is not a constant-log handler:
+                // following the back edge would walk the whole loop body and find
+                // its strings/returns (`o8.clearDisplayListeners`).
+                if (successor.getStartPC() <= start) continue;
+                queue.push(successor);
+            }
         }
         return sawString && sawReturn && !sawThrow;
     }

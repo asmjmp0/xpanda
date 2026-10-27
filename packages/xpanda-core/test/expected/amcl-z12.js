@@ -34,7 +34,6 @@ import { x421 } from "@normalized:N&&&gamecontrol/src/main/ets/a13&1.0.0";
 export let d1361;
 export let c1361;
 export let b1361;
-let v301, v421;
 let local_0_0, local_0_2, local_0_3, local_0_4, local_0_5, local_0_6, local_0_7, local_0_8, local_0_9, local_0_10, local_0_11, local_0_12, local_0_13, local_0_14, local_0_15, local_0_16, local_0_18, local_0_19, local_0_20, local_0_21, local_0_22;
 let local_0_1 = function (p0, p1) {
   return {
@@ -1822,7 +1821,7 @@ export const p301 = {
   FUNC_TOP_RIGHT: "func_top_right",
   DEBUG_TOP_LEFT: "debug_top_left"
 };
-v421 = 6;
+export const v421 = 6;
 export const w421 = 5;
 export const n374 = 1;
 export const o374 = false;
@@ -1839,10 +1838,8 @@ local_0_5 = 0;
 local_0_6 = Math.floor(Math.random() * 1679616).toString(36);
 export const w1360 = 256;
 export const w412 = 6;
-v301 = 8;
+export const v301 = 8;
 export const u301 = 9;
 b1361 = "ime_chat";
 c1361 = "sys_edit";
 d1361 = "sys_vis";
-export { v301 };
-export { v421 };
