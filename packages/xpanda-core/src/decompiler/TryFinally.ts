@@ -113,6 +113,28 @@ function findSharedSentinelBlock(
     return null;
 }
 
+/** 块内是否 `X == hole` / `X != hole` 比较(X 为 handler 保存的异常) */
+export function comparesHoleWith(block: PandaIRBasicBlock, register: string): boolean {
+    const instructions = block.pandaInstructions;
+    const holeIndex = instructions.findIndex((instruction) => instruction.kind === "load" && instruction.loadType === "HOLE");
+    if (holeIndex < 0) return false;
+    const next = instructions[holeIndex + 1];
+    const holder = next && next.kind === "store" ? (next as any).destObj?.toString() : null;
+    if (!holder) return false;
+    let loadedSaved = false;
+    for (const instruction of instructions) {
+        if (instruction.kind === "load" && instruction.loadType === "OBJECT"
+            && (instruction as any).loadParam?.toString() === register) {
+            loadedSaved = true;
+        }
+        if (instruction.kind === "binaryOp" && (instruction as any).isCompareOp && loadedSaved
+            && (instruction as any).params.some((param: any) => param?.toString?.() === holder)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 /** 从 try 表提取 finally 计划;不是 finally 的 try 块返回 null */
 export function buildFinallyPlans(cfg: PandaIRCFG): FinallyPlan[] {
     const method = cfg.getPandaMethod();
@@ -151,15 +173,29 @@ export function buildFinallyPlans(cfg: PandaIRCFG): FinallyPlan[] {
             if (endTerminator.kind !== "jumpDirect" || endTerminator.destinationPC !== cleanupBlock.getStartPC()) continue;
         }
 
-        // cleanup 之后第一个带 ldhole 的条件块是 rethrow 检查
-        let guardBlock: PandaIRBasicBlock | null = null;
+        // cleanup 之后第一个带 ldhole 的条件块是 rethrow 检查。嵌套 finally 时
+        // cleanup 里还有内层 finally 自己的哨兵,所以优先找「和本 handler 保存的
+        // 异常寄存器比较 hole」的那个守卫(amcl l8 `jarFreeze`:
+        // `try { … } finally { try { … } finally { … } }`);找不到再退回第一个。
+        const savedRegister = handlerBlock.pandaInstructions[0].destObj?.toString() ?? null;
         const cleanupIndex = blocks.indexOf(cleanupBlock);
-        for (let i = cleanupIndex + 1; i < blocks.length; i++) {
-            if (isHoleLoad(blocks[i])) {
-                guardBlock = blocks[i];
-                break;
+        let guardBlock: PandaIRBasicBlock | null = null;
+        let matchedByRegister = false;
+        if (savedRegister) {
+            for (let i = cleanupIndex + 1; i < blocks.length; i++) {
+                if (isHoleLoad(blocks[i]) && comparesHoleWith(blocks[i], savedRegister)) {
+                    guardBlock = blocks[i];
+                    matchedByRegister = true;
+                    break;
+                }
             }
         }
+        let firstHoleBlock: PandaIRBasicBlock | null = null;
+        for (let i = cleanupIndex + 1; i < blocks.length; i++) {
+            if (isHoleLoad(blocks[i])) { firstHoleBlock = blocks[i]; break; }
+        }
+        matchedByRegister = matchedByRegister && guardBlock !== firstHoleBlock;
+        if (!guardBlock) guardBlock = firstHoleBlock;
         if (!guardBlock) continue;
         const guardSuccessors = cfg.graph.normalSuccessors(guardBlock);
         if (guardSuccessors.length !== 2) continue;
@@ -172,6 +208,20 @@ export function buildFinallyPlans(cfg: PandaIRCFG): FinallyPlan[] {
             && cleanupBlock.getStartPC() < guardBlock.getStartPC()
             && guardBlock.getStartPC() < afterBranch.getStartPC())) continue;
 
+        const endIsMethodTail = isImplicitMethodTail(cfg, afterBranch);
+        // 寄存器匹配出来的守卫只用于「外层 finally 包住内层 finally」这一种嵌套:
+        //  - 守卫的正常分支必须是方法隐式收尾(amcl i8 `c763` 的守卫被归约进了
+        //    resume 派发的分支,AST 上拿不到布局,建出计划反而会毁掉输出);
+        //  - 内层计划必须落在 cleanup..guard 之间(那才是 finally 体);
+        //  - try 体里不能再有自己的 finally 计划(amcl r2/p5 `openEditor` 三层计划
+        //    套在一起,认成外层计划会把整段 body 复制进 finally)。
+        if (matchedByRegister) {
+            if (!endIsMethodTail) continue;
+            const cleanupPC = cleanupBlock.getStartPC();
+            const guardPC = guardBlock.getStartPC();
+            if (plans.some((other) => other.startPC > tryBlock.startPC && other.startPC < endBlock.getStartPC())) continue;
+            if (!plans.some((other) => other.startPC > cleanupPC && other.guardStartPC < guardPC)) continue;
+        }
         plans.push({
             id: plans.length,
             startPC: tryBlock.startPC,
@@ -182,7 +232,7 @@ export function buildFinallyPlans(cfg: PandaIRCFG): FinallyPlan[] {
             sharedSentinel,
             guardStartPC: guardBlock.getStartPC(),
             guardEndPC: afterBranch.getStartPC(),
-            endIsMethodTail: isImplicitMethodTail(cfg, afterBranch),
+            endIsMethodTail,
             // 正常继续在 `if (pending != hole) throw else { CONTINUATION }` 的
             // 非抛出分支里。13.0.1.0 的 amcl 与 24+ 都是这个布局;空 else 取出来
             // 仍是空数组。方法尾的隐式 `return undefined` 由 endIsMethodTail 丢掉。
@@ -497,9 +547,18 @@ function locateMarker(
 ): MarkerPosition | null {
     if (statementMarker) {
         const list = findStatementList(astNode, statementMarker);
-        if (!list) return null;
-        const index = list.indexOf(statementMarker);
-        return index < 0 ? null : { list, index, inExpression: false };
+        const index = list ? list.indexOf(statementMarker) : -1;
+        if (list && index >= 0) return { list, index, inExpression: false };
+        // 标记对象可能已经不在树里:同一个角色会被 emit 多份(区域复制),plan 的标记
+        // 只指向最后 emit 的那份,而内层 finally 的裁剪可能正好把那份删掉。按标记值
+        // 重新找一份,避免 finally 因此静默丢失。
+        if (TYPE.isExpressionStatement(statementMarker) && TYPE.isStringLiteral(statementMarker.expression)) {
+            const occurrences: MarkerOccurrence[] = [];
+            collectMarkerOccurrences(astNode, statementMarker.expression.value, [], occurrences);
+            const first = occurrences[0];
+            if (first) return { list: first.list, index: first.index, inExpression: false };
+        }
+        return null;
     }
     if (expressionMarker) {
         const owner = findEnclosingStatement(astNode, expressionMarker);
@@ -1227,9 +1286,9 @@ function hoistDuplicatedFinallyTails(
     for (const plan of plans) {
         const cleanups: MarkerOccurrence[] = [];
         collectMarkerOccurrences(astNode, markerValue(plan, "cleanup"), [], cleanups);
-        if (cleanups.length < 2) continue;
         const guards: MarkerOccurrence[] = [];
         collectMarkerOccurrences(astNode, markerValue(plan, "guard"), [], guards);
+        if (cleanups.length < 2 && !(cleanups.length === 1 && guards.length >= 2)) continue;
         const tails: Array<{ list: TYPE.Statement[]; start: number; end: number; chain: MarkerOccurrence["chain"] }> = [];
         for (const cleanup of cleanups) {
             const guard = guards.find((candidate) => candidate.list === cleanup.list
@@ -1238,6 +1297,17 @@ function hoistDuplicatedFinallyTails(
             // end 标记也在里面);两条分支必须逐字相同才会被认成同一段。
             if (!guard) continue;
             tails.push({ list: cleanup.list, start: cleanup.index, end: cleanup.list.length - 1, chain: cleanup.chain });
+        }
+        if (tails.length < 2 && cleanups.length === 1 && guards.length >= 2) {
+            // cleanup 只有一份、守卫被复制进 if 的两条分支:await resume 派发的
+            // `if (resumeMode === undefined) { …; GUARD } else { GUARD }` 没有 goto,
+            // 归约把共用的守卫尾块按引用展开到两条分支上(amcl l8 `jarFreeze` 的
+            // 外层 finally)。把守卫尾块本身当共享尾块上提:
+            // `if (C) { A; GUARD } else { GUARD }` → `if (C) { A } GUARD`,
+            // 之后 cleanup/guard 落在同一层,常规布局才能把 cleanup 段挂成 finally。
+            for (const guard of guards) {
+                tails.push({ list: guard.list, start: guard.index, end: guard.list.length - 1, chain: guard.chain });
+            }
         }
         if (tails.length < 2) continue;
         const groups = new Map<string, typeof tails>();

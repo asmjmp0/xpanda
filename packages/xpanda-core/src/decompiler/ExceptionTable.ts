@@ -1,7 +1,7 @@
 import type { PandaIRCFG } from "../disasm/PandaIRCFG";
 import type { PandaIRBasicBlock } from "../disasm/PandaIRBasicBlock";
 import type { PandaMethodTryBlock } from "../file/method/PandaMethodTryBlock";
-import { buildFinallyPlans } from "./TryFinally";
+import { buildFinallyPlans, comparesHoleWith } from "./TryFinally";
 
 /**
  * try 表分类:ArkTS 把语言特性(for-in / for-of / async / generator)以及 finally
@@ -637,28 +637,6 @@ function decideProtectedEnd(
     // The protected range has to cover it, or the assignment sits
     // after the try and runs on the exception path too.
     return commitPC ?? endPC;
-}
-
-/** 块内是否 `X == hole` / `X != hole` 比较(X 为 handler 保存的异常) */
-function comparesHoleWith(block: PandaIRBasicBlock, register: string): boolean {
-    const instructions = block.pandaInstructions;
-    const holeIndex = instructions.findIndex((instruction) => instruction.kind === "load" && instruction.loadType === "HOLE");
-    if (holeIndex < 0) return false;
-    const next = instructions[holeIndex + 1];
-    const holder = next && next.kind === "store" ? (next as any).destObj?.toString() : null;
-    if (!holder) return false;
-    let loadedSaved = false;
-    for (const instruction of instructions) {
-        if (instruction.kind === "load" && instruction.loadType === "OBJECT"
-            && (instruction as any).loadParam?.toString() === register) {
-            loadedSaved = true;
-        }
-        if (instruction.kind === "binaryOp" && (instruction as any).isCompareOp && loadedSaved
-            && (instruction as any).params.some((param: any) => param?.toString?.() === holder)) {
-            return true;
-        }
-    }
-    return false;
 }
 
 /** 该基本块是否先 `lda vX` 再 `throw`(X 为 handler 保存的异常) */

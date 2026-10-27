@@ -305,39 +305,48 @@ local_0_15 = async function (p0, p1) {
   return v16;
 };
 local_0_14 = async function (p0, p1, p2) {
-  let v11 /*g50*/, v13 /*g50*/, v14 /*g50*/, v15 /*g50*/, v16;
+  let v0, v5 /*g50*/, v11 /*g50*/, v13 /*g50*/, v14 /*g50*/, v15 /*g50*/, v16;
+  let v7 /*g50*/ = g50;
   let v4 /*g50*/ = await g50.open(p0, g50.OpenMode.READ_ONLY | g50.OpenMode.NOFOLLOW);
-  let v0 = await g50.stat(v4.fd);
-  let v5 /*g50*/ = v0;
-  local_0_0(v0.isFile() && v0.size >= 22 && v0.size <= local_0_2, "源JAR不是受支持的普通文件");
-  v11 = await g50.open(p1, g50.OpenMode.CREATE | g50.OpenMode.WRITE_ONLY | g50.OpenMode.NOFOLLOW);
-  for (v13 = 0; v13 < v5.size; v13 += v15) {
-    local_0_1(p2);
-    v14 = new ArrayBuffer(Math.min(local_0_3, v5.size - v13));
-    v0 = await g50.read(v4.fd, v14, {
-      "length": v14.byteLength
-    });
-    v15 = v0;
-    local_0_0(v0 > 0 && v0 <= v14.byteLength, "源JAR被截断");
-    for (v16 = 0; v16 < v15; v16 += v0) {
-      local_0_1(p2);
-      v0 = await g50.write(v11.fd, v14.slice(v16, v15));
-      local_0_0(v0 > 0 && v0 <= v15 - v16, "JAR工作副本短写");
-    }
-  }
-  v13 = local_0_12(v5) === local_0_12(await g50.stat(v4.fd));
-  if (v13) {
-    v5 = local_0_12(v5);
-    v13 = v5 === local_0_12(await g50.stat(p0));
-  }
-  local_0_0(v13, "复制期间源JAR变化");
-  await g50.fsync(v11.fd);
   try {
-    if (v11 !== undefined) {
-      await g50.close(v11);
+    v7 = undefined;
+    v0 = await g50.stat(v4.fd);
+    v5 = v0;
+    local_0_0(v0.isFile() && v0.size >= 22 && v0.size <= local_0_2, "源JAR不是受支持的普通文件");
+    v11 = await g50.open(p1, g50.OpenMode.CREATE | g50.OpenMode.WRITE_ONLY | g50.OpenMode.NOFOLLOW);
+    v13 = 0;
+    while (true) {
+      v7 = v11;
+      if (v13 >= v5.size) break;
+      local_0_1(p2);
+      v14 = new ArrayBuffer(Math.min(local_0_3, v5.size - v13));
+      v0 = await g50.read(v4.fd, v14, {
+        "length": v14.byteLength
+      });
+      v15 = v0;
+      local_0_0(v0 > 0 && v0 <= v14.byteLength, "源JAR被截断");
+      for (v16 = 0; v16 < v15; v16 += v0) {
+        local_0_1(p2);
+        v0 = await g50.write(v11.fd, v14.slice(v16, v15));
+        local_0_0(v0 > 0 && v0 <= v15 - v16, "JAR工作副本短写");
+      }
+      v13 += v15;
     }
+    v13 = local_0_12(v5) === local_0_12(await g50.stat(v4.fd));
+    if (v13) {
+      v5 = local_0_12(v5);
+      v13 = v5 === local_0_12(await g50.stat(p0));
+    }
+    local_0_0(v13, "复制期间源JAR变化");
+    await g50.fsync(v11.fd);
   } finally {
-    await g50.close(v4);
+    try {
+      if (v7 !== undefined) {
+        await g50.close(v7);
+      }
+    } finally {
+      await g50.close(v4);
+    }
   }
 };
 local_0_13 = async function (p0) {

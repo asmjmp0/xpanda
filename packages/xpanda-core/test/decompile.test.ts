@@ -3401,6 +3401,10 @@ function verifyAmclSharedTryCatchJoin(clazz: PandaClass, code: string): void {
     if (body.includes("local_0_0(false,") || body.includes("local_0_0(true,")) {
         throw new Error(`amcl l8 t771: exists 被折叠成常量检查\n${body}`);
     }
+    // jarFreeze:嵌套 finally(外层 finally 体是内层的 try/finally)
+    if (!code.includes("  } finally {\n    try {\n      if (v7 !== undefined) {\n        await g50.close(v7);\n      }\n    } finally {\n      await g50.close(v4);\n    }\n  }")) {
+        throw new Error(`amcl l8 jarFreeze: 嵌套 finally 未还原\n${code}`);
+    }
     // runJarVerification:for-of 的 done 分支只跳出循环,cleanup 是真实 finally
     for (const fragment of [
         "if (v18.done) {\n        local_0_1(p4);\n        break;\n      }",
