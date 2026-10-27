@@ -800,6 +800,31 @@ export class StructureAnalysis {
             // 两条分支都已终止(return/throw)。区域类型可能不是 Tail:顺序归约
             // 吸收过后继、后继又被删掉时会留下 outDegree === 0 的 Linear 区域,
             // 这里按终止分支处理,if 整体成为 Tail。
+            //
+            // 但 catch 里的 `if (code !== ENOENT) throw` 的另一条分支往往就是
+            // try/catch 的汇合点(try 体的正常出口也落在它上面)。按引用展开会把整段
+            // 汇合代码复制进 catch,Try 归约随后又吸收一份,于是 try 体与 catch 体
+            // 各带一份续接代码(amcl l8 的 t771/q776:catch 里多出一整份
+            // runJarVerification 与 finally 尾块,finally 也因此找不到“紧跟 try”
+            // 的布局)。汇合点不展开,只把终止的那条收进 if,汇合点留在后继上,
+            // reduceTryRegion 的 case 3 随后就能让 try/catch 正常汇合。
+            const destJoin = this.isTryCatchJoin(region, destRegion);
+            const nextJoin = this.isTryCatchJoin(region, nextRegion);
+            if (destJoin !== nextJoin) {
+                // destRegion 是跳转目标,nextRegion 是落空分支
+                const inlined = destJoin ? nextRegion : destRegion;
+                if (destJoin) {
+                    region.addStatement(new IfPandaStatement(region, nextRegion, null));
+                } else {
+                    region.addStatement(new IfPandaStatement(region, null, destRegion));
+                }
+                this.regionGraph.removeEdge(region, inlined);
+                if (this.regionGraph.inDegree(inlined) === 0) {
+                    this.regionGraph.removeNode(inlined);
+                }
+                region.setType("Linear");
+                return true;
+            }
             region.addStatement(new IfPandaStatement(region, nextRegion, destRegion));
             this.regionGraph.removeEdge(region, nextRegion);
             if (this.regionGraph.inDegree(nextRegion) === 0) {
@@ -922,6 +947,50 @@ export class StructureAnalysis {
     private linearSuccessor(region: Region): Region | null {
         if (region.getType() !== "Linear") return null;
         return getOnlyOneSuccessor(this.regionGraph, region);
+    }
+
+    /**
+     * target 是否是 region(一个 catch handler)所在的 try/catch 的汇合点。
+     *
+     * 判据:target 恰好是两条路径的汇合点 —— handler(region)和 try 体各一条普通边,
+     * 也就是 `inDegree === 2`、前驱正好是「handler + try 体区域」。这样排除了
+     * handler 内部多处共用的尾块(一串 `return undefined`)和循环体内的合并点
+     * (try 体里多个分支跳过去的闩块,amcl a12 的 copyDirRecursive:那种块必须
+     * 展开进 catch 才能还原 for-of)。
+     *
+     * 汇合点还必须在环外:它是 try/catch 之后的直线续接;循环里的块留给循环归约。
+     *
+     * 只用于“catch 分支里那条不该展开的续接”:handler 末尾的条件跳转只是错误码
+     * 判断,真正的续接属于 try 体的正常出口,展开进 handler 会让整段续接代码
+     * 在 try 体和 catch 体各出现一次(amcl l8 的 t771/q776)。
+     */
+    private isTryCatchJoin(region: Region, target: Region): boolean {
+        if (this.regionGraph.inDegree(target) !== 2) return false;
+        const predecessors = this.regionGraph.normalPredecessors(target);
+        if (!predecessors.includes(region)) return false;
+        const other = predecessors.find((predecessor) => predecessor !== region);
+        if (!other) return false;
+        const bodies = this.regionGraph.exceptionPredecessors(region)
+            .map((tryRegion) => this.regionGraph.normalSuccessors(tryRegion)[0]);
+        if (!bodies.includes(other)) return false;
+        return !this.isInsideCycle(target);
+    }
+
+    /** 沿普通边从 region 出发能否回到 region(有界;超过上限按“在环里”保守处理) */
+    private isInsideCycle(region: Region): boolean {
+        const visited = new Set<Region>();
+        const queue: Region[] = [];
+        for (const next of this.regionGraph.normalSuccessors(region)) queue.push(next);
+        let steps = 0;
+        while (queue.length > 0 && steps < 512) {
+            const current = queue.shift()!;
+            if (current === region) return true;
+            if (visited.has(current)) continue;
+            visited.add(current);
+            steps++;
+            for (const next of this.regionGraph.normalSuccessors(current)) queue.push(next);
+        }
+        return steps >= 512;
     }
 
     /**

@@ -3340,6 +3340,70 @@ function verifyAmclLaunchGotoLoop(clazz: PandaClass, code: string): void {
 }
 
 /**
+ * 回归:catch 与 try 体共用的汇合点不能展开进 catch 分针(amcl l8,源码 ExportJarVerifier)。
+ *
+ * 源码 `try { await fs.lstat(targetDir); exists = true } catch (e) { if (e.code !== ENOENT) throw e }`
+ * 之后是整段校验流程;handler 末尾的 `if (代码 !== ENOENT) throw` 与 try 体都落到同一个
+ * 汇合点。旧实现把汇合点当成“两条终止分支”按引用展开进 catch 的 else,Try 归约再吸收
+ * 一份,于是 try 体和 catch 体各带一整份续接代码(catch 里多出一份 runJarVerification、
+ * 一份 finally 尾块),`exists` 也被折叠成两个常量检查:
+ *
+ *   try {
+ *     await g50.lstat(p1);
+ *     local_0_0(false, "解压目标已存在，拒绝接管");   // !exists,exists 恒为 true
+ *     await local_0_17(...);
+ *     return undefined;
+ *   } catch (catchAcc) {
+ *     if (catchAcc.code === 13900002) { local_0_0(true, …); await local_0_17(...); return; }
+ *     throw catchAcc;
+ *   }
+ *
+ * 现在必须是源码结构:try 只包住 lstat,续接代码只出现一次。该类仍有未还原的
+ * finally(`q776` 的 cleanup 落在 for-of 的 done 分支里),所以整类输出锁定在
+ * expected/amcl-r5-l8.js,后续修 finally 时按快照 diff 复核。
+ */
+function verifyAmclSharedTryCatchJoin(clazz: PandaClass, code: string): void {
+    if (clazz.name.content !== "L&entry/src/main/ets/r5/l8&;") {
+        throw new Error(`amcl l8: 类名不符 (${clazz.name.content})`);
+    }
+    NodeFactory.parse(code);
+    for (const leftover of ["created by SimpleAnalysis", "xpanda_goto", "decompiler_"]) {
+        if (code.includes(leftover)) {
+            throw new Error(`amcl l8: 反编译降级或残留伪语句 ${JSON.stringify(leftover)}\n${code}`);
+        }
+    }
+    const start = code.indexOf("export async function t771(");
+    if (start < 0) throw new Error(`amcl l8: 未找到 extractVerifiedExportJar(t771)\n${code}`);
+    const body = code.slice(start, code.indexOf("\n}\n", start));
+    for (const fragment of [
+        "v3 = false;\n  try {",
+        "await g50.lstat(p1);\n    v3 = true;",
+        "if (catchAcc.code !== 13900002) {",
+        'v3 = !v3;\n  local_0_0(v3, "解压目标已存在，拒绝接管");',
+    ]) {
+        if (!body.includes(fragment)) {
+            throw new Error(`amcl l8 t771: 缺少 ${JSON.stringify(fragment)}\n${body}`);
+        }
+    }
+    // 续接代码不能在 catch 里再复制一份
+    if (body.indexOf("await local_0_17(p0,") !== body.lastIndexOf("await local_0_17(p0,")) {
+        throw new Error(`amcl l8 t771: 续接代码被复制进 catch\n${body}`);
+    }
+    const calls = code.split("await local_0_17(p0,").length - 1;
+    if (calls !== 2) {
+        throw new Error(`amcl l8: runJarVerification 调用应为 2 次(仅校验 + 已验证解包),实际 ${calls}\n${code}`);
+    }
+    // `exists` 不能再折叠成 jarRequire 的常量实参
+    if (body.includes("local_0_0(false,") || body.includes("local_0_0(true,")) {
+        throw new Error(`amcl l8 t771: exists 被折叠成常量检查\n${body}`);
+    }
+    const expected = fs.readFileSync(path.join(__dirname, "expected", "amcl-r5-l8.js"), "utf-8");
+    if (code !== expected) {
+        throw new Error(`amcl l8: 输出与快照不一致\n${firstDifference(expected, code)}`);
+    }
+}
+
+/**
  * 回归:嵌套 try/finally 的 finally 还原(amcl)。
  *
  * 内层 finally 的 guard else 会一直延伸到外层 finally 的清理(q17 `c1599` 写临时
@@ -4568,6 +4632,7 @@ const amclClassTests: BinaryClassTest[] = [
     { label: "amcl readJarMainClass structure (amcl1.0.6.abc)", matches: (n) => n === "L&feature_core/src/main/ets/t11/d12&1.0.0;", run: verifyAmclReadJarMainClass },
     { label: "amcl display listeners loop + empty catch (amcl1.0.6.abc)", matches: (n) => n === "L&entry/src/main/ets/n4/o8&;", run: verifyAmclDisplayListenersLoop },
     { label: "amcl launch labelled-loop goto (amcl1.0.6.abc)", matches: (n) => n === "L&launch/src/main/ets/r16&1.0.0;", run: verifyAmclLaunchGotoLoop },
+    { label: "amcl shared try/catch join (amcl1.0.6.abc)", matches: (n) => n === "L&entry/src/main/ets/r5/l8&;", run: verifyAmclSharedTryCatchJoin },
     { label: "amcl nested try/finally restoration (amcl1.0.6.abc)", matches: (n) => n === "L&feature_core/src/main/ets/e11/i11&1.0.0;", run: verifyAmclNestedFinallyRestoration },
 ];
 
