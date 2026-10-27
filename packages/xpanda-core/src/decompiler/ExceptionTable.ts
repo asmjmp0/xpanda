@@ -467,7 +467,10 @@ export function classifyTryEntries(cfg: PandaIRCFG): ExceptionTable {
     // ArkTS 13 经典形状的 finally(正常完成块写 hole 哨兵再跳到 cleanup)由
     // TryFinally 在 AST 上还原成 try/finally,不能接进区域图
     // (landing pad 会破坏可归约性)。
-    const finallyPlans = buildFinallyPlans(cfg);
+    // 循环体尾部的计划只用于 AST 侧还原(没有 suppress 块、边界语义与经典 finally
+    // 不同),不参与「哪些 handler 是 finally 落点」的分类。eager 计划要保留:
+    // 它的起点仍标记「这个 try 有 finally」,共用起点的 handler 靠它做取舍。
+    const finallyPlans = buildFinallyPlans(cfg).filter((plan) => plan.tailCleanupRange === undefined);
     const finallyStartPCs = new Set(finallyPlans.map((plan) => plan.startPC));
     // startPC -> finally 计划里最长的保护范围:用户 catch 与 finally 共用起点时,
     // catch 条目的范围一定比 finally 短(catch 在 finally 里面结束)。

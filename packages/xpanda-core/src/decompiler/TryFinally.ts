@@ -69,6 +69,12 @@ export interface FinallyPlan {
     /** 内联副本的首/末指令 pc(按指令签名在出口块里找到的) */
     inlinedCleanupStartPC?: number;
     inlinedCleanupEndPC?: number;
+    /**
+     * cleanup 副本落在**循环体尾部**:cleanup/guard 被并进 do-while 的 test,
+     * 守卫的非抛出分支是循环回边。副本语句按 pc 区间 `[startPC, endPC)` 定位
+     * (共享那份在 handler 里,pc 更小)。
+     */
+    tailCleanupRange?: { startPC: number; endPC: number };
 }
 
 export interface FinallyRoleInfo {
@@ -355,12 +361,34 @@ export function buildFinallyPlans(cfg: PandaIRCFG): FinallyPlan[] {
         const throwBranch = guardSuccessors.find((successor) => successor.getTerminator().kind === "throw");
         const afterBranch = guardSuccessors.find((successor) => successor !== throwBranch);
         if (!throwBranch || !afterBranch) continue;
+        // 守卫的非抛出分支通常是往后的续接;cleanup/guard 落在循环体尾部时它是
+        // 循环回边(do-while 的 test),pc 比守卫小 —— 只对「第一个 hole 块」认这个
+        // 形态(寄存器匹配出来的另一个守卫带出回边,说明那是别的 finally 的守卫)。
+        // 24+ 的 finally handler 会接进区域图,由 foldEagerCatchToFinally 折回
+        // try/finally;那种版本上再认「循环体尾部」只会多套一层(hx360e LogExport)。
+        const version = cfg.getPandaMethod().getPandaFile()?.header.version;
+        const legacyHandlers = !version || version[0] < 24;
+        const loopLatch = legacyHandlers && !matchedByRegister && afterBranch.getStartPC() <= tryBlock.startPC;
         if (!(tryBlock.startPC < endBlock.getStartPC()
             && endBlock.getStartPC() <= cleanupBlock.getStartPC()
             && cleanupBlock.getStartPC() < guardBlock.getStartPC()
-            && guardBlock.getStartPC() < afterBranch.getStartPC())) continue;
+            && (guardBlock.getStartPC() < afterBranch.getStartPC() || loopLatch))) continue;
 
         const endIsMethodTail = isImplicitMethodTail(cfg, afterBranch);
+        if (loopLatch) {
+            plans.push({
+                id: plans.length,
+                startPC: tryBlock.startPC,
+                endPC: endBlock.getStartPC(),
+                cleanupStartPC,
+                guardStartPC: guardBlock.getStartPC(),
+                guardEndPC: afterBranch.getStartPC(),
+                endIsMethodTail,
+                restoreContinuation: true,
+                tailCleanupRange: { startPC: endBlock.getStartPC(), endPC: guardBlock.getStartPC() },
+            });
+            continue;
+        }
         if (eager) {
             // cleanup 副本必须能在 try 体的出口块里按指令形状找到,否则放弃
             const inlined = locateInlinedCleanupStart(
@@ -418,6 +446,9 @@ export function buildFinallyPlans(cfg: PandaIRCFG): FinallyPlan[] {
 export function buildFinallyRoles(plans: FinallyPlan[]): Map<number, FinallyRoleInfo> {
     const roles = new Map<number, FinallyRoleInfo>();
     for (const plan of plans) {
+        // eager / 循环体尾部形态不注册任何角色(起点按 pc 反查):还原不了时既不能
+        // 改动别的计划的角色,也不能插标记 —— 否则哨兵/守卫语句的去留会变。
+        if (plan.eagerCleanup || plan.tailCleanupRange) continue;
         roles.set(plan.startPC, { plan, role: "start" });
         // eager 形态只需要起点标记:cleanup/guard 那份副本不在 AST 里(不可达),
         // 内联副本按指令 pc 定位。
@@ -855,6 +886,50 @@ function applyEagerCleanupFinally(
     return true;
 }
 
+/**
+ * cleanup 副本落在循环体尾部(do-while 的 test 就是 finally 的重抛守卫)的布局:
+ *
+ *   do { … try 体 …; CLEANUP; acc = … } while (!acc)
+ *     →  do { … try { try 体 } finally { CLEANUP }; acc = … } while (!acc)
+ *
+ * 副本语句按指令 pc 定位(`[startPC, endPC)`);副本里夹着的归约语句(if/while 等
+ * 没有指令 pc)也算副本的一部分,循环 test 的脚手架留在原处。
+ */
+function applyTailCleanupFinally(
+    context: FinallyContext | undefined,
+    plan: FinallyPlan,
+    startList: TYPE.Statement[],
+    startIndex: number,
+): boolean {
+    const instructionPC = context?.statementInstructionPC;
+    const range = plan.tailCleanupRange;
+    if (!instructionPC || !range) return false;
+    const inRange = (pc: number | undefined): boolean =>
+        typeof pc === "number" && pc >= range.startPC && pc < range.endPC;
+    let cleanupIndex = -1;
+    for (let index = startIndex + 1; index < startList.length; index++) {
+        if (inRange(instructionPC.get(startList[index]))) { cleanupIndex = index; break; }
+    }
+    if (cleanupIndex < 0) return false;
+    let tailIndex = cleanupIndex;
+    while (tailIndex < startList.length) {
+        const pc = instructionPC.get(startList[tailIndex]);
+        if (typeof pc === "number" && !inRange(pc)) break;
+        tailIndex++;
+    }
+    const finallyStatements = startList.slice(cleanupIndex, tailIndex);
+    const tryStatements = startList.slice(startIndex + 1, cleanupIndex);
+    if (finallyStatements.length === 0 || tryStatements.length === 0) return false;
+    const tail = startList.slice(tailIndex);
+    const tryNode = TYPE.tryStatement(
+        TYPE.blockStatement(tryStatements),
+        null,
+        bodyBlock(finallyStatements),
+    );
+    startList.splice(startIndex + 1, startList.length - startIndex - 1, tryNode, ...tail);
+    return true;
+}
+
 /** 跑一遍计划;失败的 plan 连同原因返回(retry 非空时只重试这些 plan)。 */
 function applyPlans(
     astNode: any,
@@ -884,6 +959,11 @@ function applyPlans(
             if (plan.eagerCleanup) {
                 applied = applyEagerCleanupFinally(context, plan, startList, start.index);
                 if (!applied) reason = "eager cleanup not located";
+                break left;
+            }
+            if (plan.tailCleanupRange) {
+                applied = applyTailCleanupFinally(context, plan, startList, start.index);
+                if (!applied) reason = "tail cleanup not located";
                 break left;
             }
 
@@ -1170,10 +1250,11 @@ function applyPlans(
  */
 export function applyFinallyPlans(astNode: any, plans: FinallyPlan[], context?: FinallyContext): void {
     const failures = applyPlans(astNode, plans, context, null);
-    // eager(cleanup 已内联到出口前)的计划还原不了时不留注释:它没有 suppress 块,
-    // 也没有丢掉任何代码,原来的内联 cleanup 还在原处,只是缺 try 包装。
+    // eager / 循环体尾部的计划还原不了时不留注释:它们没有 suppress 块、也没有丢掉
+    // 任何代码(编译器内联的 cleanup 还在原处),只是缺 try 包装;留注释反而会改变
+    // 方法尾语句、扰动 simplify。
     for (const plan of Array.from(failures.keys())) {
-        if (plan.eagerCleanup) failures.delete(plan);
+        if (plan.eagerCleanup || plan.tailCleanupRange) failures.delete(plan);
     }
     // cleanup / guard 可能被共享尾块复制进了 if 的两条分支(区域归约把“必定退出”的
     // 尾块按引用展开到每条归约路径上,见 hoistDuplicatedFinallyTails)。先做一次

@@ -3410,6 +3410,14 @@ function verifyAmclSharedTryCatchJoin(clazz: PandaClass, code: string): void {
     if (!code.includes("  } finally {\n    try {\n      if (v7 !== undefined) {\n        await g50.close(v7);\n      }\n    } finally {\n      await g50.close(v4);\n    }\n  }")) {
         throw new Error(`amcl l8 jarFreeze: 嵌套 finally 未还原\n${code}`);
     }
+    // runJarVerification:条目校验循环里还有一层 try/finally(close(opened)),
+    // cleanup 被并进了 do-while 的 test,还原成循环体尾部的 try/finally
+    if (!code.includes("      try {\n        v0 = await g50.stat(v0.fd);")) {
+        throw new Error(`amcl l8 runJarVerification: 条目校验的 try 体丢失\n${code}`);
+    }
+    if (!code.includes("} finally {\n        v37 = hole;\n        await g50.close(v25);\n      }")) {
+        throw new Error(`amcl l8 runJarVerification: close(opened) 不在 finally 里\n${code}`);
+    }
     // runJarVerification:for-of 的 done 分支只跳出循环,cleanup 是真实 finally
     for (const fragment of [
         "if (v18.done) {\n        local_0_1(p4);\n        break;\n      }",
