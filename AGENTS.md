@@ -6,6 +6,16 @@ This file provides working guidance for AI coding agents in this repository.
 
 **xpanda** — a HarmonyOS `.abc` (Panda / ArkCompiler bytecode) decompiler, implemented in **pure TypeScript** (Node.js ≥ 18). Supports bytecode version `24.0.0.0` (backward compatible with 13.0.1.0). The repo is an npm workspaces monorepo split into four sub-projects: `xpanda-core` (core library), `xpanda-cli` (command line), `xpanda-mcp` (MCP Server), and `xpanda-web` (browser UI, React + Vite, pure frontend), all under `packages/`; cli/mcp/web depend on the core library via the package name `xpanda-core`. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for architecture details.
 
+## Skills
+
+Repo-local agent skills live in `.agents/skills/<name>/SKILL.md`. **Load the matching skill before starting the task** — use the `skill` tool with the id from the skill's `name` frontmatter field, and follow its workflow instead of improvising.
+
+| Skill | Use when |
+|---|---|
+| `.agents/skills/xpanda-structure-forensics/` | Decompiled output for a class is structurally wrong or missing — a vanished try/catch/finally, a continuation duplicated into a catch, a dropped catch body, a wrong loop shape, code only reachable from an exception path that is absent, or a "why is this not restored" report pointing at a line of output. |
+
+Each skill directory may ship its own helper scripts (e.g. `scripts/abc-inspect.ts`, run with `npx tsx`); read the skill's `SKILL.md` first, since it documents how they are meant to be used. When adding a new skill, put it under `.agents/skills/<name>/` with the same `SKILL.md` layout and add a row to this table.
+
 ## Requirements
 
 - Node.js ≥ 18
