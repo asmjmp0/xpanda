@@ -2,6 +2,7 @@ import * as TYPE from "@babel/types";
 import generate from "@babel/generator";
 import type { PandaIRCFG } from "../disasm/PandaIRCFG";
 import type { PandaIRBasicBlock } from "../disasm/PandaIRBasicBlock";
+import { ValueAnalysis } from "./ValueAnalysis";
 
 /**
  * ArkTS 13(字节码 13.0.1.0)的 try/finally 还原。
@@ -211,7 +212,33 @@ function findSharedSentinelBlock(
     return null;
 }
 
-/** 块内是否 `X == hole` / `X != hole` 比较(X 为 handler 保存的异常) */
+/**
+ * 守卫是否在比较「handler 保存的那个异常值」(值语义)。
+ *
+ * `comparesHoleWith` 只在同一个块里找 `lda vX; noteq` 的语法形状;寄存器先在别的块
+ * 被复制、或守卫读的是个 φ(正常路径写 hole、异常路径写异常)时它就认不出来。
+ * 这里用到达定义:守卫块里比较指令读到的寄存器,其到达定义集合里包含 handler
+ * 保存异常的那条 `sta`(或它的拷贝)就命中。
+ */
+function guardComparesSavedValue(
+    analysis: ValueAnalysis,
+    guardBlock: PandaIRBasicBlock,
+    savedDefinition: { id: number } | null,
+): boolean {
+    if (!savedDefinition) return false;
+    for (const instruction of guardBlock.pandaInstructions) {
+        if (!instruction.isCompareOp) continue;
+        const operands: any[] = Array.isArray(instruction.params) ? instruction.params : [];
+        for (const operand of operands) {
+            if (!operand || typeof operand !== "object" || typeof operand.index !== "number") continue;
+            const name = String(operand.toString());
+            if (analysis.definitionsAtRead(guardBlock, instruction, name).includes(savedDefinition.id)) return true;
+        }
+    }
+    return false;
+}
+
+/** 块内是否 `X == hole` / `X != hole` 比较(X 为 handler 保存的异常) *//** 块内是否 `X == hole` / `X != hole` 比较(X 为 handler 保存的异常) */
 export function comparesHoleWith(block: PandaIRBasicBlock, register: string): boolean {
     const instructions = block.pandaInstructions;
     const holeIndex = instructions.findIndex((instruction) => instruction.kind === "load" && instruction.loadType === "HOLE");
@@ -296,6 +323,19 @@ export function buildFinallyPlans(cfg: PandaIRCFG): FinallyPlan[] {
         if (savedRegister) {
             for (let i = cleanupIndex + 1; i < blocks.length; i++) {
                 if (isHoleLoad(blocks[i]) && comparesHoleWith(blocks[i], savedRegister)) {
+                    guardBlock = blocks[i];
+                    matchedByRegister = true;
+                    break;
+                }
+            }
+            if (!guardBlock) {
+                // 语法形状认不出来(寄存器在别的块被复制、或守卫读的是 φ)时按值找一次
+                const savedInstruction = handlerBlock.pandaInstructions[0];
+                let analysis: ValueAnalysis | null = null;
+                for (let i = cleanupIndex + 1; i < blocks.length; i++) {
+                    if (!isHoleLoad(blocks[i])) continue;
+                    analysis ??= new ValueAnalysis(cfg);
+                    if (!guardComparesSavedValue(analysis, blocks[i], analysis.definitionOf(savedInstruction))) continue;
                     guardBlock = blocks[i];
                     matchedByRegister = true;
                     break;
