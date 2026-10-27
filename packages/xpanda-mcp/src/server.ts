@@ -38,6 +38,7 @@ import { registerDecompileTools } from "./tools/decompile";
 import { registerDisasmTools } from "./tools/disasm";
 import { registerStringTools } from "./tools/strings";
 import { registerHapTools } from "./tools/hap";
+import { registerXrefTools } from "./tools/xref";
 
 async function main(): Promise<void> {
     const server = new McpServer({ name: "xpanda", version: "1.0.0" });
@@ -49,6 +50,7 @@ async function main(): Promise<void> {
     registerDisasmTools(server, registry);
     registerStringTools(server, registry);
     registerHapTools(server, registry);
+    registerXrefTools(server, registry);
 
     await server.connect(new StdioServerTransport());
     writeToStderr("xpanda-mcp: stdio server started");
