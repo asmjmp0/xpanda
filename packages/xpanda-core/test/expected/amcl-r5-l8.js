@@ -373,7 +373,7 @@ local_0_16 = async function (p0, p1) {
   return p0;
 };
 local_0_17 = async function (p0, p1, p2, p3, p4, p5) {
-  let v0, v3, v4, v8, v9, v15, v18, v19, v25, v37, v49, v50, v51, v52, v53, acc;
+  let v0, v3, v4, v8, v15, v18, v19, v25, v49, v50, v51, v52, v53, acc;
   local_0_1(p4);
   v4 = p1.startsWith("/") && !p1.split("/").some(function (p0) {
     return p0 === "." || p0 === "..";
@@ -395,71 +395,69 @@ local_0_17 = async function (p0, p1, p2, p3, p4, p5) {
   }
   v3 = p1 + "/jar-" + util.generateRandomUUID();
   await g50.mkdir(v3);
-  await local_0_14(p0, v3 + "/input.zip", p4);
-  v0 = await local_0_15(v3 + "/input.zip", p4);
-  for (v19 of p2) {
-    let local_1_3_0 = v19;
-    local_0_8(local_1_3_0, false);
-    acc = v0.some(function (p0) {
-      return !p0.directory && p0.name === local_1_3_0 && p0.size > 0;
-    });
-    local_0_0(acc, "缺少必需条目 " + local_1_3_0);
-  }
-  for (v19 of p3) {
-    let local_1_4_0 = local_0_8(v19.endsWith("/") ? v19 : v19 + "/", true) + "/";
-    acc = v0.some(function (p0) {
-      return !p0.directory && p0.name.startsWith(local_1_4_0) && p0.size > 0;
-    });
-    local_0_0(acc, "缺少必需资源前缀 " + v19);
-  }
-  local_0_1(p4);
-  if (p5 == null) {
-    p5 = v3 + "/contents";
-  }
-  await g50.mkdir(p5);
-  await zlib.decompressFile(v3 + "/input.zip", p5);
-  local_0_1(p4);
-  v15 = v0[Symbol.iterator]();
-  acc = false;
-  do {
-    v18 = v15.next();
-    if (v18.done) {
-      local_0_1(p4);
-      await local_0_13(v3);
-      if (hole == v9) {
-        return undefined;
-      }
-      throw v9;
-    }
-    v18 = v18.value;
-    local_0_1(p4);
-    v0 = await local_0_16(p5, v18);
-    acc = !v18.directory;
-    if (v18.directory) {
-      continue;
-    }
-    v25 = await g50.open(v0, g50.OpenMode.READ_ONLY | g50.OpenMode.NOFOLLOW);
-    v0 = await g50.stat(v25.fd);
-    v49 = v0;
-    local_0_0(v0.size === v18.size, "解压条目长度不同");
-    v50 = 0;
-    for (v51 = 0; v50 < v18.size; v50 += v53) {
-      local_0_1(p4);
-      v52 = new ArrayBuffer(Math.min(local_0_3, v18.size - v50));
-      v53 = await g50.read(v25.fd, v52, {
-        "length": v52.byteLength
+  try {
+    await local_0_14(p0, v3 + "/input.zip", p4);
+    v0 = await local_0_15(v3 + "/input.zip", p4);
+    for (v19 of p2) {
+      let local_1_3_0 = v19;
+      local_0_8(local_1_3_0, false);
+      acc = v0.some(function (p0) {
+        return !p0.directory && p0.name === local_1_3_0 && p0.size > 0;
       });
-      local_0_0(v53 > 0 && v53 <= v52.byteLength, "解压条目被截断");
-      v52 = new Uint8Array(v52, 0, v53);
-      v51 = n763(v51, v52);
+      local_0_0(acc, "缺少必需条目 " + local_1_3_0);
     }
-    v18 = v51 === v18.crc && local_0_12(v49) === local_0_12(await g50.stat(v25.fd));
-    local_0_0(v18, "解压条目CRC或身份不符");
-    v37 = hole;
-    await g50.close(v25);
-    acc = hole != hole;
-  } while (!acc);
-  throw v37;
+    for (v19 of p3) {
+      let local_1_4_0 = local_0_8(v19.endsWith("/") ? v19 : v19 + "/", true) + "/";
+      acc = v0.some(function (p0) {
+        return !p0.directory && p0.name.startsWith(local_1_4_0) && p0.size > 0;
+      });
+      local_0_0(acc, "缺少必需资源前缀 " + v19);
+    }
+    local_0_1(p4);
+    if (p5 == null) {
+      p5 = v3 + "/contents";
+    }
+    await g50.mkdir(p5);
+    await zlib.decompressFile(v3 + "/input.zip", p5);
+    local_0_1(p4);
+    v15 = v0[Symbol.iterator]();
+    acc = false;
+    do {
+      v18 = v15.next();
+      if (v18.done) {
+        local_0_1(p4);
+        break;
+      }
+      v18 = v18.value;
+      local_0_1(p4);
+      v0 = await local_0_16(p5, v18);
+      acc = !v18.directory;
+      if (v18.directory) {
+        continue;
+      }
+      v25 = await g50.open(v0, g50.OpenMode.READ_ONLY | g50.OpenMode.NOFOLLOW);
+      v0 = await g50.stat(v25.fd);
+      v49 = v0;
+      local_0_0(v0.size === v18.size, "解压条目长度不同");
+      v50 = 0;
+      for (v51 = 0; v50 < v18.size; v50 += v53) {
+        local_0_1(p4);
+        v52 = new ArrayBuffer(Math.min(local_0_3, v18.size - v50));
+        v53 = await g50.read(v25.fd, v52, {
+          "length": v52.byteLength
+        });
+        local_0_0(v53 > 0 && v53 <= v52.byteLength, "解压条目被截断");
+        v52 = new Uint8Array(v52, 0, v53);
+        v51 = n763(v51, v52);
+      }
+      v18 = v51 === v18.crc && local_0_12(v49) === local_0_12(await g50.stat(v25.fd));
+      local_0_0(v18, "解压条目CRC或身份不符");
+      await g50.close(v25);
+      acc = hole != hole;
+    } while (!acc);
+  } finally {
+    await local_0_13(v3);
+  }
 };
 export async function s771(p0, p1, p2, p3, p4) {
   await local_0_17(p0, p1, p2, p3, p4);

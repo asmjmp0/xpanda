@@ -564,7 +564,10 @@ export function classifyTryEntries(cfg: PandaIRCFG): ExceptionTable {
                 // The hole sentinel inside the try belongs to the inlined
                 // finally of the success path, not to this catch.
                 if (!registerFinallyHandlers && hasSentinelGuard(cfg, tryBlock)
-                    && !exitingCatch && !loopContinue) { push("classicFinally", false, { usesException, exits: exitingCatch, loopContinue }); continue; }
+                    && !exitingCatch && !loopContinue
+                    && !(catchOfSharedStart && usesException && isCatchHandler(handlerEntryBlock))) {
+                    push("classicFinally", false, { usesException, exits: exitingCatch, loopContinue }); continue;
+                }
             } else {
                 // 编译器派发/词法清理 handler:没有可见工作,不接进图。
                 push("unknown", false, { usesException, exits: exitingCatch, loopContinue });

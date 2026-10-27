@@ -574,6 +574,9 @@ function applyPlans(
     retry: Set<FinallyPlan> | null,
 ): Map<FinallyPlan, string> {
     const failures = new Map<FinallyPlan, string>();
+    // 嵌套 finally 先还原外层:外层 finally 体里还带着内层 try/finally 的原始语句,
+    // 先包外层再让内层在自己的作用域里还原(内层先还原会把外层的守卫卷进自己的
+    // try 体,外层随后找不到标记——amcl i8 `c763`)。
     for (const plan of plans) {
         if (retry && !retry.has(plan)) continue;
         let applied = false;
@@ -696,6 +699,28 @@ function applyPlans(
                 tryOwner.finalizer = bodyBlock(finallyStatements);
                 parentList.splice(parentIndex + 1, 0, ...guardContinuation, ...afterGuard);
                 applied = true;
+            } else if (tryOwner && tryOwner.handler && tryOwner.handler.body.body === cleanupList
+                && cleanupList.slice(0, finallyStart).some((statement) => !isHandlerWiring(statement))) {
+                // 用户 catch 与 finally 共用同一段续接:归约把 try 正常完成路径上的
+                // cleanup/guard 并进了 catch 体尾部(catch 里先是用户代码,再是
+                // cleanup/guard/续接),于是 cleanup 标记落在 handler 里而不是续接列表。
+                // 这里把 catch 体截断到 cleanup 之前(用户 catch 保留),cleanup 段挂成
+                // 同一个 try 的 finally,守卫之后的续接搬到 try/catch/finally 之后:
+                // 正常路径由 finally 收尾,异常路径先过 catch 再过 finally。
+                if (tryOwner.finalizer) { reason = "handler already has a finalizer"; break left; }
+                if (finallyStatements.length === 0) { reason = "empty finally body"; break left; }
+                const continuation = cleanupList.slice(guardEnd);
+                if (continuation.some((statement) => TYPE.isVariableDeclaration(statement)
+                    || TYPE.isFunctionDeclaration(statement) || TYPE.isClassDeclaration(statement))) {
+                    reason = "guard continuation declares"; break left;
+                }
+                const parentList = findStatementList(astNode, tryOwner);
+                const parentIndex = parentList ? parentList.indexOf(tryOwner) : -1;
+                if (!parentList || parentIndex < 0) { reason = "no parent list"; break left; }
+                cleanupList.splice(cleanup, cleanupList.length - cleanup);
+                tryOwner.finalizer = bodyBlock(finallyStatements);
+                parentList.splice(parentIndex + 1, 0, ...continuation);
+                applied = true;
             } else if (tryOwner && tryOwner.handler && tryOwner.handler.body.body === cleanupList) {
                 const tryStatements = startList.slice(tryStart);
                 const tryNode = TYPE.tryStatement(
@@ -810,6 +835,8 @@ function applyPlans(
                     bodyBlock(finallyStatements),
                 );
                 cleanupList.splice(ownerIndex, guardEnd - ownerIndex, tryNode, ...guardContinuation);
+                applied = true;
+            } else if (applyLoopExhaustedFinally(astNode, startList, tryStart, cleanupPos, guardPos, plan)) {
                 applied = true;
             } else {
                 // 折叠布局:只有整段 finally 都在嵌套列表尾部、且该嵌套列表的顶层语句
@@ -999,6 +1026,125 @@ function collectFinallyTailCopies(root: any, plan: FinallyPlan): FinallyTailCopy
 function isLoopStatement(node: any): boolean {
     return TYPE.isWhileStatement(node) || TYPE.isDoWhileStatement(node) || TYPE.isForStatement(node)
         || TYPE.isForInStatement(node) || TYPE.isForOfStatement(node);
+}
+
+/** 直接持有某个语句表的语句节点(以及从函数体到它的语句链) */
+interface StatementListOwner {
+    statement: TYPE.Statement | null;
+    chain: TYPE.Statement[];
+}
+
+function findStatementListOwner(root: any, list: TYPE.Statement[]): StatementListOwner | null {
+    const visit = (node: any, chain: TYPE.Statement[]): StatementListOwner | null => {
+        if (!node || typeof node !== "object" || !node.type) return null;
+        for (const key of TYPE.VISITOR_KEYS[node.type] ?? []) {
+            const value = node[key];
+            if (Array.isArray(value)) {
+                if (value === list) {
+                    return { statement: chain.length > 0 ? chain[chain.length - 1] : null, chain };
+                }
+                for (const item of value) {
+                    if (!item || typeof item !== "object" || !item.type) continue;
+                    const found = visit(item, TYPE.isStatement(item) ? chain.concat([item]) : chain);
+                    if (found) return found;
+                }
+            } else if (value && typeof value === "object") {
+                const found = visit(value, chain);
+                if (found) return found;
+            }
+        }
+        return null;
+    };
+    return visit(root, []);
+}
+
+/** 寄存器搬运语句(`v1 = v0` / `acc = v37`),循环之后的哨兵残渣只允许这种 */
+function isRegisterMove(statement: any): boolean {
+    if (!TYPE.isExpressionStatement(statement) || !TYPE.isAssignmentExpression(statement.expression)) return false;
+    const { left, right, operator } = statement.expression;
+    return operator === "=" && TYPE.isIdentifier(left) && TYPE.isIdentifier(right);
+}
+
+/**
+ * handler 体开头的接线语句:注入的 `acc = catchAcc`、finally 标记、寄存器搬运。
+ * 这些不算用户 catch 的正文,`applyPlans` 用它区分「handler 本身就是 finally」
+ * (v24 的 finally handler)和「用户 catch 后面又跟了同一段 cleanup」。
+ */
+function isHandlerWiring(statement: any): boolean {
+    return isFinallyMarker(statement) || isRegisterMove(statement);
+}
+
+/**
+ * 循环耗尽分支里的 finally。
+ *
+ * ArkTS 把 `for (… of …) { … }` 之后的代码放进 done 分支(done 就跳出循环),而
+ * try/finally 的 cleanup/guard 又跟在 for-of 之后,于是归约出来是:
+ *
+ *   do { … if (done) { <post-loop>; cleanup; guard } … } while (…)
+ *   acc = v37; throw acc;            // v37 = hole 的哨兵重抛
+ *
+ * done 路径本来就是 try 体的正常完成(guard 里 `if (hole == v9) return` 立刻返回),
+ * 循环之后的 `throw hole` 是编译器内联 finally 时的"跳到 cleanup"记号。还原成真实
+ * try/finally 后:
+ *  - done 分支只留 `<post-loop>` + `break`(跳出循环后继续执行 try 体尾部);
+ *  - 哨兵重抛整段丢弃(异常由 finally 自然处理);
+ *  - cleanup 段(`[cleanup 标记, guard 标记)`)成为 finally 体。
+ *
+ * 要求 done 分支就是紧贴循环体的那个 if(中间没有别的循环/switch),循环是 try 体
+ * 末尾唯一的结构语句,循环之后只剩寄存器恢复 + 哨兵 throw。
+ */
+function applyLoopExhaustedFinally(
+    astNode: any,
+    startList: TYPE.Statement[],
+    tryStart: number,
+    cleanupPos: MarkerPosition,
+    guardPos: MarkerPosition,
+    plan: FinallyPlan,
+): boolean {
+    // guard 的正常分支必须是方法的隐式收尾(落空等价于 `return undefined`),
+    // 否则 done 路径原本的返回值会被丢掉
+    if (!plan.endIsMethodTail) return false;
+    const cleanupList = cleanupPos.list;
+    if (guardPos.list !== cleanupList) return false;
+    const cleanup = cleanupPos.index;
+    const guard = guardPos.index;
+    if (cleanup < 0 || guard <= cleanup) return false;
+    const owner = findStatementListOwner(astNode, cleanupList);
+    if (!owner || !owner.statement || !TYPE.isIfStatement(owner.statement) || owner.chain.length < 2) return false;
+    // 分支必须是这个 if 的直接分支块,且 if 直接挂在循环体里
+    const ifStatement = owner.statement;
+    const branchBody = (branch: any): TYPE.Statement[] | null =>
+        branch && TYPE.isBlockStatement(branch) ? branch.body : null;
+    if (branchBody(ifStatement.consequent) !== cleanupList && branchBody(ifStatement.alternate) !== cleanupList) return false;
+    const loop = owner.chain[owner.chain.length - 2];
+    if (!isLoopStatement(loop)) return false;
+    const loopIndex = startList.indexOf(loop);
+    if (loopIndex < tryStart) return false;
+    // 循环之后:寄存器恢复 + 唯一的哨兵 throw
+    const tail = startList.slice(loopIndex + 1);
+    const throws = tail.filter((statement) => TYPE.isThrowStatement(statement));
+    if (throws.length !== 1) return false;
+    const throwIndex = tail.indexOf(throws[0]);
+    if (tail.slice(throwIndex + 1).some((statement) => !isRegisterMove(statement))) return false;
+    if (tail.slice(0, throwIndex).some((statement) => !isRegisterMove(statement))) return false;
+    // 哨兵 throw 只能抛一个寄存器(`acc = v37; throw acc;`)
+    const thrown = (throws[0] as TYPE.ThrowStatement).argument;
+    if (!thrown || !TYPE.isIdentifier(thrown)) return false;
+    const finallyStatements = cleanupList.slice(cleanupPos.inExpression ? cleanup : cleanup + 1, guard);
+    if (finallyStatements.length === 0) return false;
+    // done 分支尾部整段都是 cleanup/guard 脚手架
+    cleanupList.splice(cleanup, cleanupList.length - cleanup);
+    cleanupList.push(TYPE.breakStatement());
+    // 丢弃哨兵重抛及其前面的寄存器恢复
+    startList.splice(loopIndex + 1, startList.length - loopIndex - 1);
+    const tryStatements = startList.slice(tryStart);
+    const tryNode = TYPE.tryStatement(
+        TYPE.blockStatement(tryStatements),
+        null,
+        bodyBlock(finallyStatements),
+    );
+    startList.splice(tryStart, startList.length - tryStart, tryNode);
+    return true;
 }
 
 /**

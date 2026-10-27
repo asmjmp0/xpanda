@@ -3358,9 +3358,10 @@ function verifyAmclLaunchGotoLoop(clazz: PandaClass, code: string): void {
  *     throw catchAcc;
  *   }
  *
- * 现在必须是源码结构:try 只包住 lstat,续接代码只出现一次。该类仍有未还原的
- * finally(`q776` 的 cleanup 落在 for-of 的 done 分支里),所以整类输出锁定在
- * expected/amcl-r5-l8.js,后续修 finally 时按快照 diff 复核。
+ * 现在必须是源码结构:try 只包住 lstat,续接代码只出现一次。被 for-of 的 done
+ * 分支吞掉的 finally(`q776` 的 `await jarRemove(owner)`)由"循环耗尽分支里的
+ * finally"布局还原成 `if (vv.done) { …; break }` + 真实 `try { … } finally { … }`。
+ * 整类输出锁定在 expected/amcl-r5-l8.js。
  */
 function verifyAmclSharedTryCatchJoin(clazz: PandaClass, code: string): void {
     if (clazz.name.content !== "L&entry/src/main/ets/r5/l8&;") {
@@ -3371,6 +3372,9 @@ function verifyAmclSharedTryCatchJoin(clazz: PandaClass, code: string): void {
         if (code.includes(leftover)) {
             throw new Error(`amcl l8: 反编译降级或残留伪语句 ${JSON.stringify(leftover)}\n${code}`);
         }
+    }
+    if (code.includes("try/finally not restored")) {
+        throw new Error(`amcl l8: 仍有未还原的 finally\n${code}`);
     }
     const start = code.indexOf("export async function t771(");
     if (start < 0) throw new Error(`amcl l8: 未找到 extractVerifiedExportJar(t771)\n${code}`);
@@ -3397,9 +3401,65 @@ function verifyAmclSharedTryCatchJoin(clazz: PandaClass, code: string): void {
     if (body.includes("local_0_0(false,") || body.includes("local_0_0(true,")) {
         throw new Error(`amcl l8 t771: exists 被折叠成常量检查\n${body}`);
     }
+    // runJarVerification:for-of 的 done 分支只跳出循环,cleanup 是真实 finally
+    for (const fragment of [
+        "if (v18.done) {\n        local_0_1(p4);\n        break;\n      }",
+        "} finally {\n    await local_0_13(v3);\n  }",
+    ]) {
+        if (!code.includes(fragment)) {
+            throw new Error(`amcl l8: 缺少 ${JSON.stringify(fragment)}\n${code}`);
+        }
+    }
     const expected = fs.readFileSync(path.join(__dirname, "expected", "amcl-r5-l8.js"), "utf-8");
     if (code !== expected) {
         throw new Error(`amcl l8: 输出与快照不一致\n${firstDifference(expected, code)}`);
+    }
+}
+
+/**
+ * 回归:用户 catch 与 finally 共用起点时 catch 体不能整段消失(amcl i15,JdkInstaller)。
+ *
+ * 源码 `try { …for (const source of candidates) { try { … } catch (e) { alog().warn(…);
+ * …unlink… } finally { purgeNativeOwners(); for (path of paths) unlink } } … }`。
+ * catch 条目的保护范围比 finally 短,13.0.1.0 上又因为 try 范围里有 hole 哨兵被当成
+ * finally 落点(handler 不离开 try)整段丢掉:catch 体(告警 + waitForNativeOwners +
+ * 清理)从输出里消失,连带 for-of 后面的"下一个候选源"回边与 finally 尾块也不可达,
+ * 方法只剩第一个候选源的一次执行。
+ *
+ * 现在:catch 条目按"与 finally 共用起点的用户 catch"接进图,finally 由 TryFinally
+ * 挂到同一个 try 上(cleanup 落在 catch 体尾部时截断 catch、把 cleanup 段变成
+ * finally,守卫之后的续接搬回 try/catch/finally 之后)。
+ */
+function verifyAmclSharedCatchFinally(clazz: PandaClass, code: string): void {
+    if (clazz.name.content !== "L&launch/src/main/ets/i15&1.0.0;") {
+        throw new Error(`amcl i15: 类名不符 (${clazz.name.content})`);
+    }
+    NodeFactory.parse(code);
+    if (code.includes("created by SimpleAnalysis")) {
+        throw new Error(`amcl i15: 反编译降级\n${code}`);
+    }
+    const start = code.indexOf("async downloadCatalogArchive(p0, p1, p2) {");
+    if (start < 0) throw new Error(`amcl i15: 未找到 downloadCatalogArchive\n${code}`);
+    const body = code.slice(start, code.indexOf("\n  bridgeProgress(", start));
+    for (const fragment of [
+        // 用户 catch 体(此前整段丢失)
+        '"目录下载来源失败："',
+        // catch 与 finally 必须都在同一个 try 上
+        "} catch (catchAcc) {",
+        "} finally {",
+        // 循环之后的兜底(此前不可达)
+        '所选来源不可用，旧安装已保留',
+    ]) {
+        if (!body.includes(fragment)) {
+            throw new Error(`amcl i15 downloadCatalogArchive: 缺少 ${JSON.stringify(fragment)}\n${body}`);
+        }
+    }
+    // finally 必须在 catch 之后、方法尾部兜底之前
+    const catchAt = body.indexOf("目录下载来源失败");
+    const finallyAt = body.lastIndexOf("} finally {");
+    const tailAt = body.lastIndexOf("所选来源不可用");
+    if (!(catchAt < finallyAt && finallyAt < tailAt)) {
+        throw new Error(`amcl i15 downloadCatalogArchive: catch/finally/兜底顺序不对 (${catchAt}/${finallyAt}/${tailAt})`);
     }
 }
 
@@ -4633,6 +4693,7 @@ const amclClassTests: BinaryClassTest[] = [
     { label: "amcl display listeners loop + empty catch (amcl1.0.6.abc)", matches: (n) => n === "L&entry/src/main/ets/n4/o8&;", run: verifyAmclDisplayListenersLoop },
     { label: "amcl launch labelled-loop goto (amcl1.0.6.abc)", matches: (n) => n === "L&launch/src/main/ets/r16&1.0.0;", run: verifyAmclLaunchGotoLoop },
     { label: "amcl shared try/catch join (amcl1.0.6.abc)", matches: (n) => n === "L&entry/src/main/ets/r5/l8&;", run: verifyAmclSharedTryCatchJoin },
+    { label: "amcl shared-start catch + finally (amcl1.0.6.abc)", matches: (n) => n === "L&launch/src/main/ets/i15&1.0.0;", run: verifyAmclSharedCatchFinally },
     { label: "amcl nested try/finally restoration (amcl1.0.6.abc)", matches: (n) => n === "L&feature_core/src/main/ets/e11/i11&1.0.0;", run: verifyAmclNestedFinallyRestoration },
 ];
 
