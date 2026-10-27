@@ -40,6 +40,12 @@ export class PandaDecompilerMethodHandler {
      * 只在本次反编译内使用(不进入最终 JSON)。
      */
     private readonly statementBlockPC = new WeakMap<object, number>();
+    /**
+     * 语句 → 产生它的**指令** pc(同一条指令可能产出多条语句)。
+     * finally 的「已内联到出口前」形态要按指令定位 cleanup 副本(见 TryFinally 的
+     * eager 布局),块级 pc 太粗。
+     */
+    private readonly statementInstructionPC = new WeakMap<object, number>();
     /** 结构化分析产出的 try 语句 → try 表里该 try 保护范围的结束 pc */
     private readonly tryBodyEndPC = new WeakMap<object, number>();
 
@@ -100,9 +106,24 @@ export class PandaDecompilerMethodHandler {
             if (!handle || instruction.kind === "unknown") {
                 throw new PandaDecompileException(instruction.opcode.name + " not handled!");
             }
+            const instructionBefore = body ? new Set<object>(body as object[]) : null;
             if (handle(instruction, block, this, pandaLexical, node)) {
+                if (instructionBefore) {
+                    for (const statement of body as any[]) {
+                        if (statement && typeof statement === "object" && !instructionBefore.has(statement)) {
+                            this.statementInstructionPC.set(statement, instruction.pc);
+                        }
+                    }
+                }
                 stopped = true;
                 break;
+            }
+            if (instructionBefore) {
+                for (const statement of body as any[]) {
+                    if (statement && typeof statement === "object" && !instructionBefore.has(statement)) {
+                        this.statementInstructionPC.set(statement, instruction.pc);
+                    }
+                }
             }
         }
         if (body && before) {
@@ -187,6 +208,7 @@ export class PandaDecompilerMethodHandler {
                 applyFinallyPlans(block, plans, {
                     structures,
                     statementPC: this.statementBlockPC,
+                    statementInstructionPC: this.statementInstructionPC,
                     tryBodyEndPC: this.tryBodyEndPC,
                 });
             }

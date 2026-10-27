@@ -119,189 +119,196 @@ let local_0_9 = function (p0) {
   }
 };
 local_0_15 = async function (p0, p1) {
-  let v16, v17 /*s776*/, v21 /*w776*/, v22, v23, v26, v27, v28, v29, v31, v33, v34, v36, v37, v38, v46, v47, v48, v49, v50, v51, v52, v53, v54, v55, v56, v57, v58, v59 /*s776*/, v60, v61, v62 /*t776*/, v64, acc;
+  let v0 /*g50*/, v14 /*g50*/, v16, v17 /*s776*/, v21 /*w776*/, v22, v23, v26, v27, v28, v29, v31, v33, v34, v36, v37, v38, v46, v47, v48, v49, v50, v51, v52, v53, v54, v55, v56, v57, v58, v59 /*s776*/, v60, v61, v62 /*t776*/, v64, acc;
   let v4 /*g50*/ = await g50.open(p0, g50.OpenMode.READ_ONLY | g50.OpenMode.NOFOLLOW);
-  let v0 /*g50*/ = await g50.stat(v4.fd);
-  let v14 /*g50*/ = v0.size;
-  local_0_0(v0.size >= 22 && v0.size <= local_0_2, "JAR大小超出限制");
-  v16 = Math.min(v0.size, local_0_3);
-  v0 = await local_0_4(v4.fd, v0.size - v16, v16, p1);
-  v17 = new DataView(v0.buffer);
-  v21 = -1;
-  for (v22 = v16 - 22; v22 >= 0; v22 -= 1) {
-    v23 = v17.getUint32(v22, true);
-    if (v23 === 101010256) {
-      acc = v17.getUint16(v22 + 20, true);
-      if (v22 + 22 + acc === v16) {
-        v21 = v22;
-        break;
-      }
-    }
-  }
-  local_0_0(v21 >= 0, "未找到完整中央目录尾");
-  v26 = v17.getUint16(v21 + 10, true);
-  v27 = v17.getUint32(v21 + 12, true);
-  v28 = v17.getUint32(v21 + 16, true);
-  v14 = v14 - v16 + v21;
-  v29 = v17.getUint16(v21 + 4, true) === 0 && v17.getUint16(v21 + 6, true) === 0;
-  if (v29) {
-    v17 = v17.getUint16(v21 + 8, true);
-    v29 = v17 === v26;
-  }
-  local_0_0(v29, "不支持多磁盘JAR");
-  local_0_0(v26 !== 65535 && v27 !== 4294967295 && v28 !== 4294967295, "生成JAR暂不支持ZIP64");
-  local_0_0(v26 > 0 && v26 <= 60000 && v27 <= local_0_5 && v28 + v27 === v14, "中央目录数量、尺寸或范围异常");
-  v16 = [];
-  v21 = new Map();
-  v46 = v28;
-  v47 = 0;
-  for (v48 = 0; v48 < v26; v48 += 1) {
-    local_0_0(v46 + 46 <= v14, "中央目录被截断");
-    v49 = new DataView((await local_0_4(v4.fd, v46, 46, p1)).buffer);
-    local_0_0(v49.getUint32(0, true) === 33639248, "中央目录签名错误");
-    v50 = v49.getUint16(28, true);
-    v51 = v49.getUint16(30, true);
-    v52 = v49.getUint16(32, true);
-    v53 = v49.getUint16(8, true);
-    v54 = v49.getUint16(10, true);
-    v55 = v49.getUint32(42, true);
-    v56 = v49.getUint32(20, true);
-    v57 = v49.getUint32(24, true);
-    v59 = (v53 & ~2062) === 0;
-    if ((v53 & ~2062) === 0) {
-      v59 = v54 === 0;
-      if (v54 !== 0) {
-        v59 = v54 === 8;
-      }
-    }
-    local_0_0(v59, "不支持加密、压缩方法或ZIP标记");
-    v59 = v49.getUint16(34, true) === 0 && v50 > 0 && v50 <= 4096 && v51 <= 16384 && v46 + 46 + v50 + v51 + v52 <= v14;
-    local_0_0(v59, "中央目录条目越界");
-    local_0_0(v56 !== 4294967295 && v57 !== 4294967295 && v55 !== 4294967295, "生成JAR暂不支持ZIP64");
-    v59 = v57 <= local_0_6 && v56 <= local_0_2;
-    if (v57 <= local_0_6 && v56 <= local_0_2) {
-      v59 = v56 > 0;
-      if (v56 <= 0) {
-        v59 = v57 === 0;
-      }
-    }
-    if (v59) {
-      v59 = v57 <= 65536;
-      if (v57 > 65536) {
-        v59 = v57 <= v56 * 1024;
-      }
-    }
-    local_0_0(v59, "条目大小或膨胀比例超限");
-    if (v54 === 0) {
-      local_0_0(v56 === v57, "STORE条目长度不一致");
-    }
-    v58 = v49.getUint32(38, true) >>> 16 & 61440;
-    local_0_0(v58 === 0 || v58 === 32768 || v58 === 16384, "JAR含链接或特殊文件");
-    v0 = await local_0_4(v4.fd, v46 + 46, v50, p1);
-    v60 = local_0_7(v0, (v53 & 2048) !== 0);
-    v61 = v60.endsWith("/");
-    v62 = local_0_8(v60, v61);
-    v64 = !v21.has(v62);
-    local_0_0(v64, "JAR含重复条目");
-    v21.set(v62, v61);
-    v58 = v58 !== 16384 || v61;
-    if (v58) {
-      v58 = !v61 || v57 === 0;
-    }
-    local_0_0(v58, "目录属性或长度异常");
-    local_0_9(await local_0_4(v4.fd, v46 + 46 + v50, v51, p1));
-    v47 += v57;
-    local_0_0(v47 <= local_0_10, "JAR展开总大小超限");
-    acc = {
-      "name": v60,
-      "nameBytes": v0,
-      "directory": v61,
-      "method": v54,
-      "flags": v53,
-      "crc": v49.getUint32(16, true),
-      "compressed": v56,
-      "size": v57,
-      "localOffset": v55
-    };
-    v16.push(acc);
-    v46 += 46 + v50 + v51 + v52;
-  }
-  local_0_0(v46 === v14, "中央目录长度不匹配");
-  for (v23 of v21.keys()) {
-    v23 = v23.split("/");
-    v26 = "";
-    for (v27 = 0; v27 < v23.length - 1; v27 += 1) {
-      v29 = v27 === 0 ? "" : "/";
-      v26 += v29 + v23[v27];
-      local_0_0(v21.get(v26) !== false, "文件与目录路径冲突");
-    }
-  }
-  v29 = 0;
-  for (v31 of v16.slice().sort(function (p0, p1) {
-    return p0.localOffset - p1.localOffset;
-  })) {
-    local_0_0(v31.localOffset === v29 && v29 + 30 <= v28, "local条目重叠或含隐藏载荷");
-    v33 = new DataView((await local_0_4(v4.fd, v29, 30, p1)).buffer);
-    v34 = v33.getUint16(26, true);
-    v36 = v33.getUint16(28, true);
-    v38 = v33.getUint32(0, true) === 67324752
-      && v33.getUint16(6, true) === v31.flags
-      && v33.getUint16(8, true) === v31.method
-      && v34 === v31.nameBytes.length
-      && v36 <= 16384;
-    local_0_0(v38, "local与中央目录不一致");
-    v37 = v29 + 30 + v34 + v36 + v31.compressed;
-    local_0_0(v29 + 30 + v34 + v36 + v31.compressed <= v28, "条目数据越界");
-    local_0_0(local_0_11(v31.nameBytes, await local_0_4(v4.fd, v29 + 30, v34, p1)), "local文件名不同");
-    v29 = v29 + 30 + v34;
-    local_0_9(await local_0_4(v4.fd, v29, v36, p1));
-    if ((v31.flags & 8) === 0) {
-      v34 = v33.getUint32(14, true) === v31.crc && v33.getUint32(18, true) === v31.compressed;
-      if (v34) {
-        v33 = v33.getUint32(22, true);
-        v34 = v33 === v31.size;
-      }
-      local_0_0(v34, "local校验字段不一致");
-      v29 = v37;
-    } else {
-      v34 = v33.getUint32(14, true) === 0 || v33.getUint32(14, true) === v31.crc;
-      if (v34) {
-        acc = v33.getUint32(18, true);
-        v34 = acc;
-        acc = acc === 0;
-        v34 = v34 === 0;
-        if (!acc) {
-          v33.getUint32(18, true) === v31.compressed;
-          v34 = v33.getUint32(18, true) === v31.compressed;
+  try {
+    v0 = await g50.stat(v4.fd);
+    v14 = v0.size;
+    local_0_0(v0.size >= 22 && v0.size <= local_0_2, "JAR大小超出限制");
+    v16 = Math.min(v0.size, local_0_3);
+    v0 = await local_0_4(v4.fd, v0.size - v16, v16, p1);
+    v17 = new DataView(v0.buffer);
+    v21 = -1;
+    for (v22 = v16 - 22; v22 >= 0; v22 -= 1) {
+      v23 = v17.getUint32(v22, true);
+      if (v23 === 101010256) {
+        acc = v17.getUint16(v22 + 20, true);
+        if (v22 + 22 + acc === v16) {
+          v21 = v22;
+          break;
         }
       }
-      if (v34) {
-        acc = v33.getUint32(22, true);
-        v34 = acc;
-        acc = acc === 0;
-        v34 = v34 === 0;
-        if (!acc) {
+    }
+    local_0_0(v21 >= 0, "未找到完整中央目录尾");
+    v26 = v17.getUint16(v21 + 10, true);
+    v27 = v17.getUint32(v21 + 12, true);
+    v28 = v17.getUint32(v21 + 16, true);
+    v14 = v14 - v16 + v21;
+    v29 = v17.getUint16(v21 + 4, true) === 0 && v17.getUint16(v21 + 6, true) === 0;
+    if (v29) {
+      v17 = v17.getUint16(v21 + 8, true);
+      v29 = v17 === v26;
+    }
+    local_0_0(v29, "不支持多磁盘JAR");
+    local_0_0(v26 !== 65535 && v27 !== 4294967295 && v28 !== 4294967295, "生成JAR暂不支持ZIP64");
+    local_0_0(v26 > 0 && v26 <= 60000 && v27 <= local_0_5 && v28 + v27 === v14, "中央目录数量、尺寸或范围异常");
+    v16 = [];
+    v21 = new Map();
+    v46 = v28;
+    v47 = 0;
+    for (v48 = 0; v48 < v26; v48 += 1) {
+      local_0_0(v46 + 46 <= v14, "中央目录被截断");
+      v49 = new DataView((await local_0_4(v4.fd, v46, 46, p1)).buffer);
+      local_0_0(v49.getUint32(0, true) === 33639248, "中央目录签名错误");
+      v50 = v49.getUint16(28, true);
+      v51 = v49.getUint16(30, true);
+      v52 = v49.getUint16(32, true);
+      v53 = v49.getUint16(8, true);
+      v54 = v49.getUint16(10, true);
+      v55 = v49.getUint32(42, true);
+      v56 = v49.getUint32(20, true);
+      v57 = v49.getUint32(24, true);
+      v59 = (v53 & ~2062) === 0;
+      if ((v53 & ~2062) === 0) {
+        v59 = v54 === 0;
+        if (v54 !== 0) {
+          v59 = v54 === 8;
+        }
+      }
+      local_0_0(v59, "不支持加密、压缩方法或ZIP标记");
+      v59 = v49.getUint16(34, true) === 0
+        && v50 > 0
+        && v50 <= 4096
+        && v51 <= 16384
+        && v46 + 46 + v50 + v51 + v52 <= v14;
+      local_0_0(v59, "中央目录条目越界");
+      local_0_0(v56 !== 4294967295 && v57 !== 4294967295 && v55 !== 4294967295, "生成JAR暂不支持ZIP64");
+      v59 = v57 <= local_0_6 && v56 <= local_0_2;
+      if (v57 <= local_0_6 && v56 <= local_0_2) {
+        v59 = v56 > 0;
+        if (v56 <= 0) {
+          v59 = v57 === 0;
+        }
+      }
+      if (v59) {
+        v59 = v57 <= 65536;
+        if (v57 > 65536) {
+          v59 = v57 <= v56 * 1024;
+        }
+      }
+      local_0_0(v59, "条目大小或膨胀比例超限");
+      if (v54 === 0) {
+        local_0_0(v56 === v57, "STORE条目长度不一致");
+      }
+      v58 = v49.getUint32(38, true) >>> 16 & 61440;
+      local_0_0(v58 === 0 || v58 === 32768 || v58 === 16384, "JAR含链接或特殊文件");
+      v0 = await local_0_4(v4.fd, v46 + 46, v50, p1);
+      v60 = local_0_7(v0, (v53 & 2048) !== 0);
+      v61 = v60.endsWith("/");
+      v62 = local_0_8(v60, v61);
+      v64 = !v21.has(v62);
+      local_0_0(v64, "JAR含重复条目");
+      v21.set(v62, v61);
+      v58 = v58 !== 16384 || v61;
+      if (v58) {
+        v58 = !v61 || v57 === 0;
+      }
+      local_0_0(v58, "目录属性或长度异常");
+      local_0_9(await local_0_4(v4.fd, v46 + 46 + v50, v51, p1));
+      v47 += v57;
+      local_0_0(v47 <= local_0_10, "JAR展开总大小超限");
+      acc = {
+        "name": v60,
+        "nameBytes": v0,
+        "directory": v61,
+        "method": v54,
+        "flags": v53,
+        "crc": v49.getUint32(16, true),
+        "compressed": v56,
+        "size": v57,
+        "localOffset": v55
+      };
+      v16.push(acc);
+      v46 += 46 + v50 + v51 + v52;
+    }
+    local_0_0(v46 === v14, "中央目录长度不匹配");
+    for (v23 of v21.keys()) {
+      v23 = v23.split("/");
+      v26 = "";
+      for (v27 = 0; v27 < v23.length - 1; v27 += 1) {
+        v29 = v27 === 0 ? "" : "/";
+        v26 += v29 + v23[v27];
+        local_0_0(v21.get(v26) !== false, "文件与目录路径冲突");
+      }
+    }
+    v29 = 0;
+    for (v31 of v16.slice().sort(function (p0, p1) {
+      return p0.localOffset - p1.localOffset;
+    })) {
+      local_0_0(v31.localOffset === v29 && v29 + 30 <= v28, "local条目重叠或含隐藏载荷");
+      v33 = new DataView((await local_0_4(v4.fd, v29, 30, p1)).buffer);
+      v34 = v33.getUint16(26, true);
+      v36 = v33.getUint16(28, true);
+      v38 = v33.getUint32(0, true) === 67324752
+        && v33.getUint16(6, true) === v31.flags
+        && v33.getUint16(8, true) === v31.method
+        && v34 === v31.nameBytes.length
+        && v36 <= 16384;
+      local_0_0(v38, "local与中央目录不一致");
+      v37 = v29 + 30 + v34 + v36 + v31.compressed;
+      local_0_0(v29 + 30 + v34 + v36 + v31.compressed <= v28, "条目数据越界");
+      local_0_0(local_0_11(v31.nameBytes, await local_0_4(v4.fd, v29 + 30, v34, p1)), "local文件名不同");
+      v29 = v29 + 30 + v34;
+      local_0_9(await local_0_4(v4.fd, v29, v36, p1));
+      if ((v31.flags & 8) === 0) {
+        v34 = v33.getUint32(14, true) === v31.crc && v33.getUint32(18, true) === v31.compressed;
+        if (v34) {
           v33 = v33.getUint32(22, true);
           v34 = v33 === v31.size;
         }
+        local_0_0(v34, "local校验字段不一致");
+        v29 = v37;
+      } else {
+        v34 = v33.getUint32(14, true) === 0 || v33.getUint32(14, true) === v31.crc;
+        if (v34) {
+          acc = v33.getUint32(18, true);
+          v34 = acc;
+          acc = acc === 0;
+          v34 = v34 === 0;
+          if (!acc) {
+            v33.getUint32(18, true) === v31.compressed;
+            v34 = v33.getUint32(18, true) === v31.compressed;
+          }
+        }
+        if (v34) {
+          acc = v33.getUint32(22, true);
+          v34 = acc;
+          acc = acc === 0;
+          v34 = v34 === 0;
+          if (!acc) {
+            v33 = v33.getUint32(22, true);
+            v34 = v33 === v31.size;
+          }
+        }
+        local_0_0(v34, "local描述符前置字段不一致");
+        local_0_0(v37 + 12 <= v28, "数据描述符被截断");
+        v29 = new DataView((await local_0_4(v4.fd, v37, 4, p1)).buffer).getUint32(0, true) === 134695760 ? 4 : 0;
+        v29 = v37 + v29;
+        local_0_0(v29 + 12 <= v28, "数据描述符越界");
+        v33 = new DataView((await local_0_4(v4.fd, v29, 12, p1)).buffer);
+        v36 = v33.getUint32(0, true) === v31.crc && v33.getUint32(4, true) === v31.compressed;
+        if (v36) {
+          v33 = v33.getUint32(8, true);
+          v36 = v33 === v31.size;
+        }
+        local_0_0(v36, "数据描述符不一致");
+        v29 += 12;
       }
-      local_0_0(v34, "local描述符前置字段不一致");
-      local_0_0(v37 + 12 <= v28, "数据描述符被截断");
-      v29 = new DataView((await local_0_4(v4.fd, v37, 4, p1)).buffer).getUint32(0, true) === 134695760 ? 4 : 0;
-      v29 = v37 + v29;
-      local_0_0(v29 + 12 <= v28, "数据描述符越界");
-      v33 = new DataView((await local_0_4(v4.fd, v29, 12, p1)).buffer);
-      v36 = v33.getUint32(0, true) === v31.crc && v33.getUint32(4, true) === v31.compressed;
-      if (v36) {
-        v33 = v33.getUint32(8, true);
-        v36 = v33 === v31.size;
-      }
-      local_0_0(v36, "数据描述符不一致");
-      v29 += 12;
     }
+    local_0_0(v29 === v28, "中央目录前含额外数据");
+  } finally {
+    await g50.close(v4);
   }
-  local_0_0(v29 === v28, "中央目录前含额外数据");
-  await g50.close(v4);
   return v16;
 };
 local_0_14 = async function (p0, p1, p2) {

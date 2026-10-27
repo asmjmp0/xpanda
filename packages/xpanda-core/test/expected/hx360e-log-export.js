@@ -35,10 +35,10 @@ export class LogExport {
           v12 += v14;
         }
         v5 = "# " + p0 + " size=" + v6 + " tail=" + v13 + "\n" + v11.join("") + "";
-        return v5;
       } finally {
         fs.closeSync(v1);
       }
+      return v5;
     } catch (catchAcc) {
       hilog.error(local_0_0, local_0_1, "readLogTail failed: %{public}s", JSON.stringify(catchAcc));
       return "(read failed: " + p0 + ")\n";

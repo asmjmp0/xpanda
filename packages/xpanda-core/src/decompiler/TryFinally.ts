@@ -58,6 +58,16 @@ export interface FinallyPlan {
     guardExpr?: TYPE.Expression;
     endMarker?: TYPE.Statement;
     endExpr?: TYPE.Expression;
+    /**
+     * 编译器已经把 cleanup 内联到正常出口之前(`try { …; CLEANUP; return X }`),
+     * 异常路径的 handler 入口里带着 await resume 派发,所以没有可用的 suppress 块。
+     * 这种计划只需要起点标记 + `inlinedCleanupStartPC`:还原时把 try 体末尾的
+     * cleanup 副本剪出来当 finally,`return` 移到 try/finally 之后。
+     */
+    eagerCleanup?: boolean;
+    /** 内联副本的首/末指令 pc(按指令签名在出口块里找到的) */
+    inlinedCleanupStartPC?: number;
+    inlinedCleanupEndPC?: number;
 }
 
 export interface FinallyRoleInfo {
@@ -66,6 +76,94 @@ export interface FinallyRoleInfo {
 }
 
 const MARKER_PREFIX = "__xpanda_finally_marker__";
+
+/**
+ * 指令的「值形状」文本:去掉 pc 前缀、字面量池下标和寄存器编号。
+ *
+ * 编译器把同一段 cleanup 抄两遍时,除了寄存器分配和池下标,指令序列是一致的
+ * (`ldobjbyname acc = 478, "close"` vs `acc = 476, "close"`),按这个形状比较
+ * 才能把出口前的那份副本认出来。
+ */
+function instructionShape(instruction: any): string {
+    const text = String(instruction.toString());
+    const separator = text.indexOf("||");
+    const operands = (separator >= 0 ? text.slice(separator + 2) : text)
+        .replace(/acc = \d+,/g, "acc = ,")
+        .replace(/\bv\d+\b/g, "v")
+        .replace(/\bp\d+\b/g, "p")
+        .replace(/\s+/g, " ")
+        .trim();
+    return ((instruction.opcode?.name ?? "") + " " + operands).trim();
+}
+
+/**
+ * 在 try 体的出口块里找「cleanup 副本」的第一条指令(编译器把 finally 内联到
+ * return 之前的形态)。
+ *
+ * 做法:把共享 cleanup 块(handler 落点)的指令形状序列当签名,在 try 范围里
+ * 终止于 `return` 的那个块中按最长公共前缀匹配,要求匹配长度够长、且匹配之后
+ * 只剩返回脚手架。找不到返回 null(计划放弃,不影响现有输出)。
+ */
+function locateInlinedCleanupStart(
+    cfg: PandaIRCFG,
+    blocks: PandaIRBasicBlock[],
+    startPC: number,
+    endPC: number,
+    cleanupBlock: PandaIRBasicBlock,
+    guardBlock: PandaIRBasicBlock,
+): { startPC: number; endPC: number } | null {
+    const shared = cleanupBlock.pandaInstructions.map(instructionShape);
+    while (shared.length > 0 && shared[0].startsWith("mov ")) shared.shift();
+    if (shared.length < 6) return null;
+    // 出口块:try 范围里、终止于 return、pc 最大的那个块
+    let exitBlock: PandaIRBasicBlock | null = null;
+    for (const block of blocks) {
+        const pc = block.getStartPC();
+        if (pc < startPC || pc >= endPC) continue;
+        if (block.getTerminator().kind !== "return") continue;
+        if (!exitBlock || pc > exitBlock.getStartPC()) exitBlock = block;
+    }
+    if (!exitBlock) return null;
+    // 从出口块往前收,直到能匹配上 cleanup 形状(编译器可能把 cleanup 和 return
+    // 拆成了相邻的两个块,amcl l8 `jarInspect` 的 4240 只负责返回)。
+    const window: Array<{ pc: number; shape: string }> = [];
+    let current: PandaIRBasicBlock | null = exitBlock;
+    const visited = new Set<PandaIRBasicBlock>();
+    for (let step = 0; step < 4 && current && !visited.has(current); step++) {
+        visited.add(current);
+        const instructions = current.pandaInstructions;
+        for (let index = instructions.length - 1; index >= 0; index--) {
+            window.unshift({ pc: instructions[index].pc, shape: instructionShape(instructions[index]) });
+        }
+        let bestStart = -1;
+        let bestLength = 0;
+        for (let index = 0; index < window.length; index++) {
+            let length = 0;
+            while (length < shared.length && index + length < window.length
+                && window[index + length].shape === shared[length]) length++;
+            if (length > bestLength) {
+                bestLength = length;
+                bestStart = index;
+            }
+        }
+        if (bestStart >= 0 && bestLength >= 6) {
+            // 副本必须紧贴出口:匹配点之后只剩 resume 派发的收尾 + 返回,块尾是 return
+            const tailAfter = window.length - (bestStart + bestLength);
+            const lastShape = window[window.length - 1].shape;
+            const pc = window[bestStart].pc;
+            const endPc = window[bestStart + bestLength - 1].pc;
+            if (tailAfter <= 12 && lastShape === "return"
+                && typeof pc === "number" && pc > startPC && pc < guardBlock.getStartPC()
+                && typeof endPc === "number") return { startPC: pc, endPC: endPc };
+            return null;
+        }
+        const predecessors = cfg.graph.normalPredecessors
+            ? cfg.graph.normalPredecessors(current)
+            : [];
+        current = predecessors.length === 1 ? predecessors[0] : null;
+    }
+    return null;
+}
 
 function isHoleLoad(block: PandaIRBasicBlock): boolean {
     return block.pandaInstructions.some((instruction) => instruction.kind === "load" && instruction.loadType === "HOLE");
@@ -155,13 +253,27 @@ export function buildFinallyPlans(cfg: PandaIRCFG): FinallyPlan[] {
         // finally 落点:先 sta 保存异常,再恢复寄存器并落到 cleanup,不会立刻 throw
         if (handlerBlock.pandaInstructions[0]?.kind !== "store") continue;
         const handlerSuccessors = cfg.graph.normalSuccessors(handlerBlock);
-        if (handlerSuccessors.length !== 1 || handlerBlock.getTerminator().kind === "throw") continue;
-        const cleanupBlock = handlerSuccessors[0];
+        if (handlerBlock.getTerminator().kind === "throw") continue;
+        // 编译器把 cleanup 内联到正常出口之前时(`try { …; CLEANUP; return X }`),
+        // 异常路径的 handler 入口带着 await resume 派发,有两条正常边:跳转边直达
+        // 守卫,落空边才是 cleanup。amcl l8 `jarInspect` 就是这种形态。
+        let eager = false;
+        let cleanupBlock: PandaIRBasicBlock | null = null;
+        if (handlerSuccessors.length === 1) {
+            cleanupBlock = handlerSuccessors[0];
+        } else if (handlerSuccessors.length === 2 && endBlock === handlerBlock
+            && (handlerBlock.getTerminator().kind === "jumpEqual" || handlerBlock.getTerminator().kind === "jumpNotEqual")) {
+            eager = true;
+            cleanupBlock = handlerSuccessors.find((successor) => successor.getStartPC() !== handlerBlock.getTerminator().destinationPC) ?? null;
+        }
+        if (!cleanupBlock) continue;
         // 正常完成路径:结束块自己写 hole 并跳到 cleanup(经典布局),或者哨兵写在
         // 结束块之后的共享汇合块里(24+ 的 `try { … } catch { … } finally { … }`)。
-        const sharedSentinel = !isHoleLoad(endBlock);
+        const sharedSentinel = !eager && !isHoleLoad(endBlock);
         let cleanupStartPC = cleanupBlock.getStartPC();
-        if (sharedSentinel) {
+        if (eager) {
+            // 没有 suppress 块:正常路径的 cleanup 已经内联在 return 之前
+        } else if (sharedSentinel) {
             // 哨兵写在一个被 try 正常完成路径与用户 catch 完成路径共用的块里:
             // finally 从那个块开始(它的寄存器写入是 cleanup 的输入),
             // 两条路径各自的恢复指令留在原来的分支里。
@@ -209,6 +321,26 @@ export function buildFinallyPlans(cfg: PandaIRCFG): FinallyPlan[] {
             && guardBlock.getStartPC() < afterBranch.getStartPC())) continue;
 
         const endIsMethodTail = isImplicitMethodTail(cfg, afterBranch);
+        if (eager) {
+            // cleanup 副本必须能在 try 体的出口块里按指令形状找到,否则放弃
+            const inlined = locateInlinedCleanupStart(
+                cfg, blocks, tryBlock.startPC, endBlock.getStartPC(), cleanupBlock, guardBlock);
+            if (!inlined) continue;
+            plans.push({
+                id: plans.length,
+                startPC: tryBlock.startPC,
+                endPC: endBlock.getStartPC(),
+                cleanupStartPC,
+                guardStartPC: guardBlock.getStartPC(),
+                guardEndPC: afterBranch.getStartPC(),
+                endIsMethodTail,
+                restoreContinuation: true,
+                eagerCleanup: true,
+                inlinedCleanupStartPC: inlined.startPC,
+                inlinedCleanupEndPC: inlined.endPC,
+            });
+            continue;
+        }
         // 寄存器匹配出来的守卫只用于「外层 finally 包住内层 finally」这一种嵌套:
         //  - 守卫的正常分支必须是方法隐式收尾(amcl i8 `c763` 的守卫被归约进了
         //    resume 派发的分支,AST 上拿不到布局,建出计划反而会毁掉输出);
@@ -247,6 +379,9 @@ export function buildFinallyRoles(plans: FinallyPlan[]): Map<number, FinallyRole
     const roles = new Map<number, FinallyRoleInfo>();
     for (const plan of plans) {
         roles.set(plan.startPC, { plan, role: "start" });
+        // eager 形态只需要起点标记:cleanup/guard 那份副本不在 AST 里(不可达),
+        // 内联副本按指令 pc 定位。
+        if (plan.eagerCleanup) continue;
         if (!plan.sharedSentinel) roles.set(plan.endPC, { plan, role: "suppress" });
         roles.set(plan.cleanupStartPC, { plan, role: "cleanup" });
         roles.set(plan.guardStartPC, { plan, role: "guard" });
@@ -619,10 +754,66 @@ export interface FinallyContext {
     structures: FinallyStructure[];
     /** 反编译时 emit 的语句 → 来源基本块起始 pc(区域复制会产生多条同 pc 语句) */
     statementPC: WeakMap<object, number>;
+    /** 语句 → 产生它的指令 pc(定位「已内联到出口前」的 cleanup 副本) */
+    statementInstructionPC?: WeakMap<object, number>;
     /** 结构化分析产出的 try 语句 → try 表里该 try 保护范围的结束 pc */
     tryBodyEndPC?: WeakMap<object, number>;
 }
 
+
+/**
+ * 「cleanup 已内联到出口前」的 finally:把 try 体末尾的 cleanup 副本剪出来当 finally,
+ * 终止的 `return` 移到 try/finally 之后。
+ *
+ *   try { …; CLEANUP; return X }        →   try { … } finally { CLEANUP }
+ *                                          return X
+ *
+ * 这里的 cleanup 副本按指令 pc 定位(`FinallyContext.statementInstructionPC`),
+ * 因为编译器把同一段代码抄了一份,pc 和共享那份不同。
+ */
+function applyEagerCleanupFinally(
+    context: FinallyContext | undefined,
+    plan: FinallyPlan,
+    startList: TYPE.Statement[],
+    startIndex: number,
+): boolean {
+    const instructionPC = context?.statementInstructionPC;
+    const inlinedStart = plan.inlinedCleanupStartPC;
+    const inlinedEnd = plan.inlinedCleanupEndPC;
+    if (!instructionPC || inlinedStart === undefined || inlinedEnd === undefined) return false;
+    // cleanup 副本 = [inlinedStart, inlinedEnd] 里的指令产出的语句;之后的语句是
+    // 出口路径(return 的值从 cleanup 之后才装进 acc)。
+    let cleanupIndex = -1;
+    let afterCleanupIndex = -1;
+    for (let index = startIndex + 1; index < startList.length; index++) {
+        const pc = instructionPC.get(startList[index]);
+        if (typeof pc !== "number") continue;
+        if (cleanupIndex < 0) {
+            if (pc === inlinedStart) cleanupIndex = index;
+            continue;
+        }
+        if (pc > inlinedEnd) { afterCleanupIndex = index; break; }
+    }
+    if (cleanupIndex < 0) return false;
+    if (afterCleanupIndex < 0) afterCleanupIndex = startList.length;
+    const finallyStatements = startList.slice(cleanupIndex, afterCleanupIndex);
+    const tryStatements = startList.slice(startIndex + 1, cleanupIndex);
+    const after = startList.slice(afterCleanupIndex);
+    if (finallyStatements.length === 0 || tryStatements.length === 0) return false;
+    // 出口路径必须以 return 收尾(中间只允许寄存器搬运/标记)
+    const returnIndex = after.findIndex((statement) => TYPE.isReturnStatement(statement));
+    if (returnIndex < 0) return false;
+    if (after.slice(returnIndex + 1).some((statement) => !isRegisterMove(statement) && !isFinallyMarker(statement))) {
+        return false;
+    }
+    const tryNode = TYPE.tryStatement(
+        TYPE.blockStatement(tryStatements),
+        null,
+        bodyBlock(finallyStatements),
+    );
+    startList.splice(startIndex + 1, startList.length - startIndex - 1, tryNode, ...after);
+    return true;
+}
 
 /** 跑一遍计划;失败的 plan 连同原因返回(retry 非空时只重试这些 plan)。 */
 function applyPlans(
@@ -650,6 +841,11 @@ function applyPlans(
             if (!start) { reason = "start marker not found"; break left; }
             const startList = start.list;
             const tryStart = start.byPC ? start.index : (start.inExpression ? start.index : start.index + 1);
+            if (plan.eagerCleanup) {
+                applied = applyEagerCleanupFinally(context, plan, startList, start.index);
+                if (!applied) reason = "eager cleanup not located";
+                break left;
+            }
 
             // ---- cleanup / guard ----
             const cleanupPos = locateMarker(astNode, plan.cleanupMarker, plan.cleanupExpr);
@@ -934,6 +1130,11 @@ function applyPlans(
  */
 export function applyFinallyPlans(astNode: any, plans: FinallyPlan[], context?: FinallyContext): void {
     const failures = applyPlans(astNode, plans, context, null);
+    // eager(cleanup 已内联到出口前)的计划还原不了时不留注释:它没有 suppress 块,
+    // 也没有丢掉任何代码,原来的内联 cleanup 还在原处,只是缺 try 包装。
+    for (const plan of Array.from(failures.keys())) {
+        if (plan.eagerCleanup) failures.delete(plan);
+    }
     // cleanup / guard 可能被共享尾块复制进了 if 的两条分支(区域归约把“必定退出”的
     // 尾块按引用展开到每条归约路径上,见 hoistDuplicatedFinallyTails)。先做一次
     // AST 级尾块去重,再重试失败的 plan;仍然还原不了就整体回滚,

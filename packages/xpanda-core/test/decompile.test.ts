@@ -3401,6 +3401,11 @@ function verifyAmclSharedTryCatchJoin(clazz: PandaClass, code: string): void {
     if (body.includes("local_0_0(false,") || body.includes("local_0_0(true,")) {
         throw new Error(`amcl l8 t771: exists 被折叠成常量检查\n${body}`);
     }
+    // jarInspect:编译器把 cleanup 内联在 return 之前,还原成 try/finally 后
+    // return 在 finally 之后(此前 close(file) 只走正常路径,异常时文件不关)
+    if (!code.includes("  } finally {\n    await g50.close(v4);\n  }\n  return v16;\n};")) {
+        throw new Error(`amcl l8 jarInspect: 内联 cleanup 的 finally 未还原\n${code}`);
+    }
     // jarFreeze:嵌套 finally(外层 finally 体是内层的 try/finally)
     if (!code.includes("  } finally {\n    try {\n      if (v7 !== undefined) {\n        await g50.close(v7);\n      }\n    } finally {\n      await g50.close(v4);\n    }\n  }")) {
         throw new Error(`amcl l8 jarFreeze: 嵌套 finally 未还原\n${code}`);

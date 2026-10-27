@@ -480,16 +480,22 @@ export async function w762(p0, p1) {
   let v3, v7;
   local_0_0(p1);
   v3 = await local_0_3(p0);
-  v7 = await local_0_4(v3, p0, p1);
-  await g50.close(v3);
+  try {
+    v7 = await local_0_4(v3, p0, p1);
+  } finally {
+    await g50.close(v3);
+  }
   return v7;
 }
 export async function x762(p0, p1) {
   let v3, v7;
   local_0_0(p1);
   v3 = await local_0_3(p0);
-  v7 = await local_0_4(v3, p0, p1, true, false);
-  await g50.close(v3);
+  try {
+    v7 = await local_0_4(v3, p0, p1, true, false);
+  } finally {
+    await g50.close(v3);
+  }
   return v7;
 }
 local_0_6 = function (p0, p1, p2) {
