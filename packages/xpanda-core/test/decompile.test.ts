@@ -3454,6 +3454,85 @@ function verifyAmclLaunchGotoLoop(): void {
 }
 
 /**
+ * 回归:嵌套 try/finally 的 finally 还原(amcl)。
+ *
+ * 内层 finally 的 guard else 会一直延伸到外层 finally 的清理(q17 `c1599` 写临时
+ * 文件后 rename、再 fsync 目录;i11 `n1195` 同形)。以前整段 else 因为含 `hole`
+ * 被丢掉,外层 finally 的清理/守卫随之消失,只剩 `/* xpanda ... *\/` 注释。
+ * 现在按本 plan 的 end 标记切出真正的续接;没有 end 标记时,只有尾段里带着外层
+ * plan 标记(invariant:外层 startPC 更小)才保留。
+ */
+function verifyAmclNestedFinallyRestoration(): void {
+    const abcPath = path.join(__dirname, "resources", "amcl1.0.6.abc");
+    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
+    pandaFile.parseAssembly();
+    const decompiler = new PandaDecompiler();
+    const decompile = (name: string): string => {
+        const pandaClass = pandaFile.getAllClasses().find((c) => c.name.content === name);
+        if (!pandaClass) throw new Error(`amcl: 未找到 ${name}`);
+        const code = decompiler.decompileClass(pandaClass);
+        NodeFactory.parse(code);
+        if (code.includes("try/finally not restored")) {
+            throw new Error(`${name}: 仍有未还原的 finally\n${code}`);
+        }
+        return code;
+    };
+
+    const q17 = decompile("L&mods/src/main/ets/q17&1.0.0;");
+    const c1599Start = q17.indexOf("export function c1599(");
+    if (c1599Start < 0) throw new Error(`amcl q17: 未找到 c1599\n${q17.slice(0, 800)}`);
+    const c1599 = q17.slice(c1599Start, q17.indexOf("\nexport function", c1599Start));
+    if ((c1599.match(/\} finally \{/g) ?? []).length !== 2) {
+        throw new Error(`amcl q17 c1599: 外层/内层 finally 缺失\n${c1599}`);
+    }
+    for (const fragment of [
+        "g50.renameSync(p0 + \".writing\", p0);",
+        "if (v4 !== undefined) {",
+        "g50.closeSync(v4);",
+        "g50.closeSync(v0);",
+    ]) {
+        if (!c1599.includes(fragment)) throw new Error(`amcl q17 c1599: 缺少 ${JSON.stringify(fragment)}\n${c1599}`);
+    }
+
+    // 整类输出锁定在 expected/amcl-e11-i11.js(最小的嵌套 finally 样本)
+    const i11 = decompile("L&feature_core/src/main/ets/e11/i11&1.0.0;");
+    const i11Expected = fs.readFileSync(path.join(__dirname, "expected", "amcl-e11-i11.js"), "utf-8");
+    if (i11 !== i11Expected) {
+        throw new Error(`amcl i11: 输出与快照不一致\n${firstDifference(i11Expected, i11)}`);
+    }
+    const n1195Start = i11.indexOf("export function n1195(");
+    if (n1195Start < 0) throw new Error(`amcl i11: 未找到 n1195\n${i11.slice(0, 800)}`);
+    if (!i11.includes("for (v8 of g50.listFileSync(p0 + \"/mc-install-work\")) {")
+        || i11.includes("[Symbol.iterator]()")) {
+        throw new Error(`amcl i11: u996 的迭代器循环没有还原成 for-of\n${i11}`);
+    }
+    const n1195 = i11.slice(n1195Start, i11.indexOf("\nexport function", n1195Start));
+    if ((n1195.match(/\} finally \{/g) ?? []).length !== 2
+        || !n1195.includes("g50.renameSync(p0 + \".writing\", p0);")) {
+        throw new Error(`amcl i11 n1195: 文件写入/目录 fsync 的 finally 未还原\n${n1195}`);
+    }
+
+    const k11 = decompile("L&feature_core/src/main/ets/e11/k11&1.0.0;");
+    const b1223Start = k11.indexOf("export async function b1223(");
+    if (b1223Start < 0) throw new Error(`amcl k11: 未找到 b1223\n${k11.slice(0, 800)}`);
+    const b1223 = k11.slice(b1223Start, k11.indexOf("\nexport function", b1223Start));
+    if ((b1223.match(/\} finally \{/g) ?? []).length < 2 || !b1223.includes("g50.renameSync(v5, v4);")) {
+        throw new Error(`amcl k11 b1223: 嵌套 finally 未还原\n${b1223}`);
+    }
+
+    const u1 = decompile("L&commons/src/main/ets/h1/u1&1.0.0;");
+    const c52Start = u1.indexOf("export async function c52(");
+    if (c52Start < 0) throw new Error(`amcl u1: 未找到 c52\n${u1.slice(0, 800)}`);
+    const c52 = u1.slice(c52Start, u1.indexOf("\nexport function", c52Start));
+    for (const fragment of ["await g50.close(v0);", "local_0_7(v3);"]) {
+        if (!c52.includes(fragment)) throw new Error(`amcl u1 c52: 缺少 ${JSON.stringify(fragment)}\n${c52}`);
+    }
+
+    decompile("L&commons/src/main/ets/h1/p1&1.0.0;");
+    decompile("L&entry/src/main/ets/r5/s5&;");
+}
+
+/**
  * 回归:字节码 24.0.0.0 的 try/catch/finally 结构还原(hx360e1.0.2.abc 的 LogExport)。
  *
  * 该版本把真正的 catch / finally handler 的 codeSize 全写成 0,旧逻辑会把
@@ -4786,6 +4865,10 @@ async function main(): Promise<void> {
 
     console.log("[test] amcl launch labelled-loop goto (amcl1.0.6.abc)");
     verifyAmclLaunchGotoLoop();
+    console.log("    ok");
+
+    console.log("[test] amcl nested try/finally restoration (amcl1.0.6.abc)");
+    verifyAmclNestedFinallyRestoration();
     console.log("    ok");
 
     console.log("[test] lnga SOURCE_FILE + qr login short circuit (lnga1.2.6.abc)");

@@ -282,14 +282,35 @@ function branchEndsWithThrow(branch: TYPE.Statement | null | undefined): boolean
     return false;
 }
 
-function extractGuardContinuation(guard: TYPE.IfStatement): TYPE.Statement[] {
+interface GuardContinuation {
+    statements: TYPE.Statement[];
+    /** 由 end 标记切出来的尾段:它明确位于 afterBranch 之后,不再做 hole 检查 */
+    fromEndMarker: boolean;
+}
+
+function extractGuardContinuation(guard: TYPE.IfStatement, endMarker: string | null): GuardContinuation {
+    // 守卫的 else 可能一直延伸到方法尾,里面还嵌着后面的 try/finally(n1195):
+    // end 标记就在该分支里,标记之后才是真正的正常继续。整段 else 直接搬出来会把
+    // 守卫自身的哨兵比较和后续 finally 的 hole 判断混进来,甚至两端都以 throw
+    // 结束而整段丢弃。
+    const splitAtEnd = (branch: TYPE.Statement | null | undefined): TYPE.Statement[] | null => {
+        if (!endMarker) return null;
+        const statements = branchStatements(branch);
+        const index = statements.findIndex((statement) => TYPE.isExpressionStatement(statement)
+            && TYPE.isStringLiteral(statement.expression) && statement.expression.value === endMarker);
+        return index >= 0 ? statements.slice(index + 1) : null;
+    };
+    const fromConsequent = splitAtEnd(guard.consequent);
+    if (fromConsequent) return { statements: fromConsequent, fromEndMarker: true };
+    const fromAlternate = splitAtEnd(guard.alternate);
+    if (fromAlternate) return { statements: fromAlternate, fromEndMarker: true };
     if (branchEndsWithThrow(guard.consequent) && !branchEndsWithThrow(guard.alternate)) {
-        return branchStatements(guard.alternate).slice();
+        return { statements: branchStatements(guard.alternate).slice(), fromEndMarker: false };
     }
     if (branchEndsWithThrow(guard.alternate) && !branchEndsWithThrow(guard.consequent)) {
-        return branchStatements(guard.consequent).slice();
+        return { statements: branchStatements(guard.consequent).slice(), fromEndMarker: false };
     }
-    return [];
+    return { statements: [], fromEndMarker: false };
 }
 
 /**
@@ -370,6 +391,57 @@ function locateMarker(
     return null;
 }
 
+/** 尾段开头几层就是另一个哨兵重抛守卫(区域复制留下的重复段,i8) */
+function startsWithSentinelGuard(statements: TYPE.Statement[]): boolean {
+    const head = statements.slice(0, 8);
+    const code = head.map((statement) => generate(statement).code).join("\n");
+    return /\bhole\b/.test(code) && /\bthrow\b/.test(code);
+}
+
+/** 尾段里是否有比当前 plan 更外层的 plan 标记(外层 finally 的正常继续) */
+function hasEnclosingPlanMarker(statements: TYPE.Statement[], plans: FinallyPlan[], current: FinallyPlan): boolean {
+    const starts = new Map(plans.map((plan) => [plan.id, plan.startPC]));
+    let found = false;
+    const visit = (node: any): void => {
+        if (found || !node || typeof node !== "object" || !node.type) return;
+        if (TYPE.isStringLiteral(node) && node.value.startsWith(MARKER_PREFIX)) {
+            const id = Number(node.value.slice(MARKER_PREFIX.length).split("_")[0]);
+            const startPC = starts.get(id);
+            if (startPC !== undefined && startPC < current.startPC) found = true;
+            return;
+        }
+        for (const key of TYPE.VISITOR_KEYS[node.type] ?? []) {
+            const value = node[key];
+            if (Array.isArray(value)) value.forEach(visit);
+            else visit(value);
+        }
+    };
+    statements.forEach(visit);
+    return found;
+}
+
+/**
+ * finally 的结构元数据(方法级):try 体范围与 cleanup/guard 的 pc。
+ * 区域归约后 AST 布局可能丢信息,这里保留字节码侧的事实。
+ */
+export interface FinallyStructure {
+    planId: number;
+    tryStartPC: number;
+    /** try 正常完成块(写 hole 的 suppress 块) */
+    tryEndPC: number;
+    cleanupStartPC: number;
+    guardStartPC: number;
+    guardEndPC: number;
+}
+
+/** applyFinallyPlans 的上下文:结构表 + 语句到来源基本块 pc 的映射 */
+export interface FinallyContext {
+    structures: FinallyStructure[];
+    /** 反编译时 emit 的语句 → 来源基本块起始 pc(区域复制会产生多条同 pc 语句) */
+    statementPC: WeakMap<object, number>;
+}
+
+
 /**
  * 在函数体 AST 上把标记区间替换成 try/finally;失败时清掉标记并留下注释。
  *
@@ -379,20 +451,21 @@ function locateMarker(
  *     cleanup/guard 也可能被结构化进 test 或最后一个分支的尾部:
  *     此时用表达式标记定位到包含它的语句,并在尾部分支情形把 finally 上提。
  */
-export function applyFinallyPlans(astNode: any, plans: FinallyPlan[]): void {
-    let failed = 0;
+export function applyFinallyPlans(astNode: any, plans: FinallyPlan[], context?: FinallyContext): void {
+    const failures: string[] = [];
     for (const plan of plans) {
         let applied = false;
+        let reason = "unknown";
         left: {
             // ---- try 体起点 ----
             const start = locateMarker(astNode, plan.startMarker, plan.startExpr);
-            if (!start) break left;
+            if (!start) { reason = "start marker not found"; break left; }
             const startList = start.list;
             const tryStart = start.inExpression ? start.index : start.index + 1;
 
             // ---- cleanup / guard ----
             const cleanupPos = locateMarker(astNode, plan.cleanupMarker, plan.cleanupExpr);
-            if (!cleanupPos) break left;
+            if (!cleanupPos) { reason = "cleanup marker not found"; break left; }
             const cleanupList = cleanupPos.list;
             const cleanup = cleanupPos.index;
             // cleanup 落在 test 序列里时,包含它的整条语句(通常是 `if (sentinel === undefined) { cleanup }`)
@@ -400,9 +473,9 @@ export function applyFinallyPlans(astNode: any, plans: FinallyPlan[]): void {
             const finallyStart = cleanupPos.inExpression ? cleanup : cleanup + 1;
 
             const guardPos = locateMarker(astNode, plan.guardMarker, plan.guardExpr);
-            if (!guardPos || guardPos.list !== cleanupList) break left;
+            if (!guardPos || guardPos.list !== cleanupList) { reason = "guard marker missing or in another list"; break left; }
             const guard = guardPos.index;
-            if (cleanup < 0 || guard <= cleanup) break left;
+            if (cleanup < 0 || guard <= cleanup) { reason = "cleanup/guard order"; break left; }
 
             // 守卫语句(if (sentinel != hole) throw sentinel)可能把“之后”的块收进
             // else 分支,此时 endMarker 不在同一层。以守卫本身(第一个 IfStatement)
@@ -412,6 +485,7 @@ export function applyFinallyPlans(astNode: any, plans: FinallyPlan[]): void {
             // 否则 try/finally 后面的代码会整体消失(exportLogs 的成功返回路径)。
             let guardEnd: number;
             let guardContinuation: TYPE.Statement[] = [];
+            let continuationFromEndMarker = false;
             if (guardPos.inExpression) {
                 // 表达式标记所在的语句就是守卫检查本身
                 guardEnd = guard + 1;
@@ -420,11 +494,16 @@ export function applyFinallyPlans(astNode: any, plans: FinallyPlan[]): void {
                 while (guardEnd < cleanupList.length && !TYPE.isIfStatement(cleanupList[guardEnd])) guardEnd++;
                 if (guardEnd < cleanupList.length && TYPE.isIfStatement(cleanupList[guardEnd])) {
                     const guardStatement = cleanupList[guardEnd] as TYPE.IfStatement;
-                    guardContinuation = extractGuardContinuation(guardStatement);
+                    const endMarkerValue = plan.endMarker && TYPE.isExpressionStatement(plan.endMarker)
+                        && TYPE.isStringLiteral(plan.endMarker.expression) ? plan.endMarker.expression.value
+                        : (plan.endExpr && TYPE.isStringLiteral(plan.endExpr) ? plan.endExpr.value : null);
+                    const extracted = extractGuardContinuation(guardStatement, endMarkerValue);
+                    guardContinuation = extracted.statements;
+                    continuationFromEndMarker = extracted.fromEndMarker;
                     guardEnd++;
                 } else {
                     const end = locateMarker(astNode, plan.endMarker, plan.endExpr);
-                    if (!end || end.list !== cleanupList || end.index <= guard) break left;
+                    if (!end || end.list !== cleanupList || end.index <= guard) { reason = "no usable end marker"; break left; }
                     guardEnd = end.index;
                 }
             }
@@ -434,9 +513,16 @@ export function applyFinallyPlans(astNode: any, plans: FinallyPlan[]): void {
             if (!plan.restoreContinuation || plan.endIsMethodTail || guardEnd < cleanupList.length) {
                 guardContinuation = [];
             }
-            // else 里还夹着 hole 哨兵比较时,那不是干净的正常继续,搬出来会把
-            // 已经在 try 里的尾部再贴一份(amcl i8 的复制校验)。
-            if (guardContinuation.some((statement) => generate(statement).code.includes("hole"))) {
+            // else 里还夹着 hole 哨兵比较时,多数是区域复制把尾部又抄了一份
+            // (amcl i8 的复制校验),搬出来会重复执行。两种例外:
+            //  - 按 end 标记切出来的尾段(标记之后就是 afterBranch):只有开头立刻又是
+            //    一个哨兵重抛守卫才是重复段(n1195 的尾段里嵌着下一个 finally,不丢);
+            //  - 尾段里带着更外层 plan 的标记:那是外层 finally 的正常继续(q17 的嵌套
+            //    try/finally),搬出来才能让外层 finally 继续还原。
+            if (continuationFromEndMarker) {
+                if (startsWithSentinelGuard(guardContinuation)) guardContinuation = [];
+            } else if (!hasEnclosingPlanMarker(guardContinuation, plans, plan)
+                && guardContinuation.some((statement) => generate(statement).code.includes("hole"))) {
                 guardContinuation = [];
             }
 
@@ -456,7 +542,7 @@ export function applyFinallyPlans(astNode: any, plans: FinallyPlan[]): void {
                 );
                 const parentList = findStatementList(astNode, tryOwner);
                 const parentIndex = parentList ? parentList.indexOf(tryOwner) : -1;
-                if (parentIndex < 0) break left;
+                if (parentIndex < 0) { reason = "no parent list"; break left; }
                 parentList!.splice(parentIndex, 1, tryNode, ...guardContinuation);
                 applied = true;
             } else if (tryOwner && tryOwner.handler && cleanupList !== startList) {
@@ -466,9 +552,9 @@ export function applyFinallyPlans(astNode: any, plans: FinallyPlan[]): void {
                 const parentList = findStatementList(astNode, tryOwner);
                 const parentIndex = parentList ? parentList.indexOf(tryOwner) : -1;
                 if (!parentList || parentList !== cleanupList || parentIndex < 0
-                    || cleanup !== parentIndex + 1 || finallyStart > guard) break left;
+                    || cleanup !== parentIndex + 1 || finallyStart > guard) { reason = "cleanup not right after the try/catch"; break left; }
                 const finallyStatements = cleanupList.slice(finallyStart, guard);
-                if (finallyStatements.length === 0) break left;
+                if (finallyStatements.length === 0) { reason = "empty finally body"; break left; }
                 let continuation = guardContinuation;
                 let removeThrough = guardEnd;
                 const guardStatement = cleanupList[guardEnd - 1];
@@ -496,7 +582,7 @@ export function applyFinallyPlans(astNode: any, plans: FinallyPlan[]): void {
                 applied = true;
             } else if (cleanupList === startList) {
                 // 常规布局:try 体 = [tryStart, cleanup),守卫之后是 try/finally 之后的语句
-                if (!(cleanup > tryStart)) break left;
+                if (!(cleanup > tryStart)) { reason = "empty try body"; break left; }
                 const tryStatements = startList.slice(tryStart, cleanup);
                 const tryNode = TYPE.tryStatement(
                     TYPE.blockStatement(tryStatements),
@@ -508,10 +594,10 @@ export function applyFinallyPlans(astNode: any, plans: FinallyPlan[]): void {
             } else {
                 // 折叠布局:只有整段 finally 都在嵌套列表尾部、且该嵌套列表的顶层语句
                 // 是 startList 的最后一条时,才能把 finally 整体上提。
-                if (guardEnd !== cleanupList.length) break left;
+                if (guardEnd !== cleanupList.length) { reason = "guard not at list tail"; break left; }
                 const owner = startList[startList.length - 1];
                 const cleanupAnchor = plan.cleanupMarker ?? plan.cleanupExpr;
-                if (!owner || !cleanupAnchor || !containsNode(owner, cleanupAnchor)) break left;
+                if (!owner || !cleanupAnchor || !containsNode(owner, cleanupAnchor)) { reason = "cleanup not inside last statement"; break left; }
                 const tryStatements = startList.slice(tryStart);
                 cleanupList.splice(cleanup, guardEnd - cleanup);
                 const tryNode = TYPE.tryStatement(
@@ -523,12 +609,17 @@ export function applyFinallyPlans(astNode: any, plans: FinallyPlan[]): void {
                 applied = true;
             }
         }
-        if (!applied) failed++;
+        if (!applied) {
+            failures.push(`plan ${plan.id}: start=${plan.startPC} end=${plan.endPC}`
+                + ` cleanup=${plan.cleanupStartPC} guard=${plan.guardStartPC} (${reason})`);
+        }
     }
-    if (failed > 0) {
-        // 兜底:无法还原时留一条注释,避免 finally 静默消失
+    if (failures.length > 0) {
+        // 兜底:无法还原时留一条注释,避免 finally 静默消失。
+        // 带上 plan 的 pc 与失败原因,便于后续定位(不影响可执行语义)。
         const statement = TYPE.emptyStatement();
-        TYPE.addComment(statement, "leading", " xpanda: try/finally not restored ", false);
+        const detail = context ? ` [${failures.join("; ")}]` : "";
+        TYPE.addComment(statement, "leading", ` xpanda: try/finally not restored${detail} `, false);
         if (Array.isArray(astNode.body)) astNode.body.push(statement);
     }
     stripMarkers(astNode);

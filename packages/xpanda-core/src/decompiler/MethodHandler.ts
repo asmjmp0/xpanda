@@ -12,6 +12,7 @@ import {
     createFinallyMarkerExpression,
     FinallyPlan,
     FinallyRoleInfo,
+    FinallyStructure,
     stripFinallyMarkers,
 } from "./TryFinally";
 import { PandaDecompileException } from "../PandaParseException";
@@ -33,6 +34,12 @@ export class PandaDecompilerMethodHandler {
     readonly codeGenerator: CodeGenerator;
     /** 当前正在反编译的方法的 finally 标记角色;嵌套方法会临时切换 */
     private finallyRoles: Map<number, FinallyRoleInfo> | null = null;
+    /**
+     * 语句 → 来源基本块起始 pc。区域归约会把字节码结构打散,但每条 emit 出来的
+     * 语句仍能回指它的块;applyFinallyPlans 用它按 pc 范围判断语句归属。
+     * 只在本次反编译内使用(不进入最终 JSON)。
+     */
+    private readonly statementBlockPC = new WeakMap<object, number>();
 
     constructor(codeGenerator: CodeGenerator) {
         this.codeGenerator = codeGenerator;
@@ -56,6 +63,8 @@ export class PandaDecompilerMethodHandler {
     }
 
     handleBlock(block: PandaIRBasicBlock, pandaLexical: PandaLexical, node: any): void {
+        const body: unknown[] | null = Array.isArray(node?.body) ? node.body : null;
+        const before = body ? new Set<object>(body as object[]) : null;
         const roleInfo = this.finallyRoles?.get(block.getStartPC());
         if (roleInfo) {
             // try 正常完成块只有寄存器恢复和 hole 哨兵赋值,整体丢弃
@@ -79,14 +88,25 @@ export class PandaDecompilerMethodHandler {
                 this.codeGenerator.getNodeUtils().insertToSequenceExpression(marker, node);
             }
         }
+        let stopped = false;
         for (const instruction of block.pandaInstructions) {
             const handle = HANDLES[instruction.kind];
             if (!handle || instruction.kind === "unknown") {
                 throw new PandaDecompileException(instruction.opcode.name + " not handled!");
             }
-            const stop = handle(instruction, block, this, pandaLexical, node);
-            if (stop) return;
+            if (handle(instruction, block, this, pandaLexical, node)) {
+                stopped = true;
+                break;
+            }
         }
+        if (body && before) {
+            for (const statement of body) {
+                if (statement && typeof statement === "object" && !before.has(statement)) {
+                    this.statementBlockPC.set(statement, block.getStartPC());
+                }
+            }
+        }
+        if (stopped) return;
     }
 
     insertFunctionPreamble(method: PandaMethod, pandaLexical: PandaLexical, node: any): void {
@@ -137,6 +157,14 @@ export class PandaDecompilerMethodHandler {
             // ArkTS 13 的 finally 落点不在区域图里:结构化成功后在 AST 上补 try/finally
             const savedRoles = this.finallyRoles;
             const plans: FinallyPlan[] = buildFinallyPlans(pandaIRCFG);
+            const structures: FinallyStructure[] = plans.map((plan) => ({
+                planId: plan.id,
+                tryStartPC: plan.startPC,
+                tryEndPC: plan.endPC,
+                cleanupStartPC: plan.cleanupStartPC,
+                guardStartPC: plan.guardStartPC,
+                guardEndPC: plan.guardEndPC,
+            }));
             this.finallyRoles = buildFinallyRoles(plans);
             let structured = false;
             try {
@@ -149,7 +177,9 @@ export class PandaDecompilerMethodHandler {
             } finally {
                 this.finallyRoles = savedRoles;
             }
-            if (structured) applyFinallyPlans(block, plans);
+            if (structured) {
+                applyFinallyPlans(block, plans, { structures, statementPC: this.statementBlockPC });
+            }
             else stripFinallyMarkers(block);
         }
         const name = inner.name.content;

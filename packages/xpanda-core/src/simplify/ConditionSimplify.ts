@@ -1151,6 +1151,12 @@ export class ConditionSimplify implements ISimplify {
                 // do-while 的 body 会重新执行,保守整环纳入
                 segments.push([cur.node]);
                 innermostLoopHandled = true;
+            } else if (cur.isTryStatement()) {
+                // 异常路径:try 体内任意位置抛出的异常都会进入 catch/finally。
+                // 被删除语句保存的旧值可能在那里被读取(amcl i11 u996 的
+                // `v2 = v0`,catch 里 `v0 = v2` 恢复累加器),必须算作后续读取。
+                if (cur.node.handler) segments.push(cur.node.handler.body.body);
+                if (cur.node.finalizer) segments.push(cur.node.finalizer.body);
             } else if (cur.isSwitchStatement()) {
                 const cases = cur.node.cases;
                 const caseIndex = cases.findIndex((c) => c.consequent.includes(child.node as TYPE.Statement));

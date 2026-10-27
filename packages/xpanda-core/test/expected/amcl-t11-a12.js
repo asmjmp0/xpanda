@@ -461,6 +461,7 @@ export function f1268(p0, p1, p2, p3, p4, p5, p6, p7) {
         v0 = JSON.stringify(v0);
         g50.writeSync(acc.fd, v0);
       } finally {
+        v2 = p3;
         g50.closeSync(acc);
       }
       try {

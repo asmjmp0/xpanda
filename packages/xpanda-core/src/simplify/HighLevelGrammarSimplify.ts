@@ -829,6 +829,20 @@ export class HighLevelGrammarSimplify implements ISimplify {
     }
 
     /** `it.next()` 且 it 是指定迭代器变量。 */
+    /**
+     * `it.next()` 之前的寄存器保活拷贝:纯标识符/字面量赋值(`v2 = v0`),且不读
+     * 循环变量(for-of 会先给循环变量赋元素,原形态读到的还是上一轮的结果对象)。
+     */
+    private isIteratorLoopPrefixStatement(stmt: TYPE.Statement, vvName: string): boolean {
+        if (!isExpressionStatementNode(stmt) || !isAssignmentExpressionNode(stmt.expression)) return false;
+        const assign = stmt.expression;
+        if (assign.operator !== "=" || !isIdentifierNode(assign.left)) return false;
+        const right = assign.right;
+        if (isIdentifierNode(right)) return right.name !== vvName;
+        return TYPE.isStringLiteral(right) || TYPE.isNumericLiteral(right)
+            || isBooleanLiteral(right) || isNullLiteralNode(right);
+    }
+
     private isNextCallOf(expr: TYPE.Node | null | undefined, itName: string): boolean {
         if (!isCallExpression(expr) || expr.arguments.length !== 0) return false;
         const callee = expr.callee;
@@ -1522,12 +1536,29 @@ export class HighLevelGrammarSimplify implements ISimplify {
         if (!isBlockStatementNode(body.node)) return false;
         const bodyStatements = (body as NodePath<TYPE.BlockStatement>).get('body')
         if (bodyStatements.length < 3) return false;
-        // body[0] 必须是 `vv = it.next()`
-        const nextStatement = bodyStatements[0].node;
+        // `vv = it.next()` 之前可以有若干寄存器保活拷贝(try/catch 包住循环时,
+        // ArkTS 在循环体开头写 `v2 = v0`,异常路径再从 v2 恢复)。它们每次迭代
+        // 都执行、只读局部临时量,留在 for-of 体开头等价。
+        let nextIndex = -1;
+        for (let i = 0; i < bodyStatements.length; i++) {
+            const statement = bodyStatements[i].node;
+            if (!isExpressionStatementNode(statement) || !isAssignmentExpressionNode(statement.expression)) continue;
+            const assign = statement.expression;
+            if (assign.operator === "=" && isIdentifierNode(assign.left)
+                && this.isNextCallOf(assign.right, init.left.name)) {
+                nextIndex = i;
+                break;
+            }
+        }
+        if (nextIndex < 0 || bodyStatements.length < nextIndex + 2) return false;
+        const nextStatement = bodyStatements[nextIndex].node;
         if (!isExpressionStatementNode(nextStatement) || !isAssignmentExpressionNode(nextStatement.expression)) return false;
         const nextAssign = nextStatement.expression;
         if (nextAssign.operator !== "=" || !isIdentifierNode(nextAssign.left)
             || !this.isNextCallOf(nextAssign.right, init.left.name)) return false;
+        for (let i = 0; i < nextIndex; i++) {
+            if (!this.isIteratorLoopPrefixStatement(bodyStatements[i].node, nextAssign.left.name)) return false;
+        }
         // 转换会删掉 `it = obj[Symbol.iterator]()`;循环体内不能再读取迭代器临时量。
         // ArkTS 会在提前 return 的分支里内联 `it.return()` 收尾,转换后 it 已不再赋值,
         // 保留这些读取会变成对 undefined 取属性。循环之后的读取只有在确定先被新的
@@ -1576,8 +1607,8 @@ export class HighLevelGrammarSimplify implements ISimplify {
             }
         }
 
-        const outStatement = bodyStatements[1];
-        if (!outStatement.isIfStatement()) return false;
+        const outStatement = bodyStatements[nextIndex + 1];
+        if (!outStatement || !outStatement.isIfStatement()) return false;
         const btest = outStatement.get('test');
         const consequent = outStatement.get('consequent');
         if (!isDoneMember(btest.node)) return false;
@@ -1591,7 +1622,8 @@ export class HighLevelGrammarSimplify implements ISimplify {
 
         // `vv = vv.value` 由 for-of 的循环变量赋值替代。先判定再替换,
         // 否则 `vv.value` 已被改写后这条赋值就认不出来了。
-        const skipSelfValueAssignment = this.isSelfValueAssignment(bodyStatements[2].node, vv.name);
+        const valueStatement = bodyStatements[nextIndex + 2];
+        const skipSelfValueAssignment = !!valueStatement && this.isSelfValueAssignment(valueStatement.node, vv.name);
         // 只有“直接读取迭代器结果 `.value`”的形态才需要把 `vv.value` 换成 `vv`。
         // 存在解包语句时,后面的 `vv` 已经是元素,`vv.value` 是元素自身的属性,
         // 改写会把它错误地当成元素本身(`typeof v6.value === "string"` → `typeof v6`).
@@ -1608,8 +1640,9 @@ export class HighLevelGrammarSimplify implements ISimplify {
             });
         }
         const arr:TYPE.Statement[] = [];
-        for (let i = 2; i < bodyStatements.length; i++) {
-            if (i === 2 && skipSelfValueAssignment) continue;
+        for (let i = 0; i < nextIndex; i++) arr.push(bodyStatements[i].node);
+        for (let i = nextIndex + 2; i < bodyStatements.length; i++) {
+            if (i === nextIndex + 2 && skipSelfValueAssignment) continue;
             arr.push(bodyStatements[i].node);
         }
         const blockStatement = blockStatementBuilder(arr);
