@@ -1436,22 +1436,12 @@ class ContentDetailPage extends ViewPU {
     this.__answersSortOptions.set(p0);
   }
   aboutToAppear() {
-    let v2 /*ContentDetailController*/;
     let local_1_0 = this;
     local_1_0.pageActive = true;
     if (local_1_0.activeContentId.length === 0) {
       local_1_0.activeContentId = local_1_0.contentId;
     }
-    switch (local_1_0.session) {
-      case null:
-      case undefined:
-        v2 = undefined;
-        break;
-      default:
-        local_1_0.session.getState().status;
-        v2 = local_1_0.session.getState().status;
-    }
-    local_1_0.authenticated = v2 === SessionStatus.AUTHENTICATED;
+    local_1_0.authenticated = local_1_0.session?.getState().status === SessionStatus.AUTHENTICATED;
     local_1_0.restoreAnswerDoubleTapAction();
     AppStorage.setOrCreate("detailImmersiveActive", local_1_0.immersiveReading);
     local_1_0.indicator = new FeedPullDownIndicatorHost(local_1_0.getUIContext(), 0);
@@ -1686,8 +1676,14 @@ class ContentDetailPage extends ViewPU {
     };
     this.segmentLikeBusy = true;
     try {
-      this.applySegmentMeta(local_1_0, this.segmentSheetMarkIndex, v8);
-      this.applySegmentMeta(local_1_0, this.segmentSheetMarkIndex, await this.segmentReactionRepository.toggleSegmentLike(v7, this.activeContentId, v5, this.segmentSheetMarkIndex));
+      try {
+        this.applySegmentMeta(local_1_0, this.segmentSheetMarkIndex, v8);
+        this.applySegmentMeta(local_1_0, this.segmentSheetMarkIndex, await this.segmentReactionRepository.toggleSegmentLike(v7, this.activeContentId, v5, this.segmentSheetMarkIndex));
+      } catch (catchAcc) {
+        hilog.warn(53249, "SegmentReaction", "toggle failed content=%{public}s like=%{public}s message=%{public}s", this.activeContentId, "" + v6.isLike + "", catchAcc instanceof Error ? catchAcc.message : "" + catchAcc + "");
+        this.applySegmentMeta(local_1_0, this.segmentSheetMarkIndex, v6);
+        this.notifySegmentLikeFailure();
+      }
     } finally {
       this.segmentLikeBusy = false;
     }

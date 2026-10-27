@@ -1219,8 +1219,10 @@ function verifyZhihuTryFinally(clazz: PandaClass, code: string, ctx: BinaryConte
     if (!/try \{[\s\S]*?\n    \} finally \{\n      if \(this\.isCurrent\(p0\)\) \{\n        this\.emit\(\);\n      \}\n    \}/.test(notificationCode)) {
         throw new Error(`NotificationState.fetchPage: finally 未还原为 isCurrent(p0) 收尾\n${notificationCode}`);
     }
-    // loadMore: cleanup 首块是条件比较
-    if (!/try \{\s*await this\.fetchPage\(this\.generation, this\.nextCursor\);\s*\} finally \{\s*if \(this\.isCurrent\(this\.generation\)\) \{\s*this\.loadingMore = false;\s*this\.emit\(\);/.test(notificationCode)) {
+    // loadMore: 源码是 try/catch/finally — catch 与 finally 共用同一个 try 起点,
+    // 用户 catch(catchAcc) 现在会正常接进区域图(以前整段被当成 classicFinally 丢掉),
+    // finally 仍然是 cleanup 首块的条件比较。
+    if (!/try \{\s*await this\.fetchPage\(this\.generation, this\.nextCursor\);\s*\} catch \(catchAcc\) \{[\s\S]*?\n    \} finally \{\n      if \(this\.isCurrent\(this\.generation\)\) \{\n        this\.loadingMore = false;\n        this\.emit\(\);/.test(notificationCode)) {
         throw new Error(`NotificationState.loadMore: finally 未还原\n${notificationCode}`);
     }
 

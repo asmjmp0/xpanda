@@ -904,6 +904,11 @@ export class StructureAnalysis {
         // 继续执行的分支可能还没归约成 Linear(例如内层 try),留给下一轮定点迭代
         const continuation = handlerDead ? bodySRegion : handlerSRegion;
         if (continuation === null) return false;
+        // continuation 还是“未归约的循环头”(存在来自环内、位于保护范围里的回边)时
+        // 也留给下一轮:此刻 try 体只能吸收循环之前的初始化,循环整体会被搬到 try
+        // 外面(TrackedThreadStore.performRefresh:编译器把用户 catch 的保护范围截在
+        // 循环回边之前,循环头 in-degree > 1,顺序归约吸收不了)。
+        if (this.hasBackEdgeInside(continuation, body, region.tryRegion?.catchEndPC ?? null)) return false;
         this.emitTryStatement(region, body, handler, info);
         this.regionGraph.removeEdge(region, body);
         this.regionGraph.removeNode(body);
@@ -917,6 +922,21 @@ export class StructureAnalysis {
     private linearSuccessor(region: Region): Region | null {
         if (region.getType() !== "Linear") return null;
         return getOnlyOneSuccessor(this.regionGraph, region);
+    }
+
+    /**
+     * continuation 是否是 try 体内部那个尚未归约的循环头:它在 try 体起点之后,
+     * 且有一个来自保护范围(`catchEndPC` 之前)的回边前驱。
+     */
+    private hasBackEdgeInside(region: Region, body: Region, endPC: number | null): boolean {
+        if (endPC === null) return false;
+        const pc = region.block?.getStartPC();
+        const bodyPC = body.block?.getStartPC();
+        if (pc === undefined || bodyPC === undefined || pc <= bodyPC) return false;
+        return this.regionGraph.normalPredecessors(region).some((predecessor) => {
+            const predecessorPC = predecessor.block?.getStartPC();
+            return predecessorPC !== undefined && predecessorPC > pc && predecessorPC < endPC;
+        });
     }
 
     private singlePredecessor(n: Region): Region | null {
@@ -1207,6 +1227,7 @@ function jumpsBackward<T extends Region>(graph: ValueGraph<T>, region: T, next: 
     }
     return false;
 }
+
 
 function getOnlyOneSuccessor<T>(graph: ValueGraph<T>, node: T): T | null {
     if (graph.outDegree(node) === 0) return null;

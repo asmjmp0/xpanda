@@ -337,6 +337,9 @@ export function isCatchHandler(block: PandaIRBasicBlock): boolean {
         if (instruction.kind === "load") {
             return instruction.loadType === "STRING" || instruction.loadType === "GLOBAL";
         }
+        // tryldglobalbyname 是独立的 loadGlobal kind:`catch (e) { e instanceof Error
+        // … }` 的入口块里只有它和 instanceof/比较,不带 STRING/GLOBAL 载入。
+        if (instruction.kind === "loadGlobal") return true;
         if (instruction.kind === "loadObjectBy" || instruction.kind === "storeObject") return true;
         if (instruction.kind === "call") return true;
         return instruction.opcode.name === "ldexternalmodulevar" || instruction.opcode.name === "newobjrange";
@@ -470,11 +473,16 @@ export function classifyTryEntries(cfg: PandaIRCFG): ExceptionTable {
             // (f1268 写 version.json 失败)。跳回循环头的 catch 是 continue
             // (c1268 清单失败),单独注册,不按“回到 try 内”丢掉。
             const loopContinue = continuesAtLoopHead(cfg, handlerEntryBlock, startPC, endPC);
-            const exitingCatch = (usesException || ignoredException || commitPC !== null)
-                && handlerExits(cfg, handlerEntryBlock, startPC, endPC);
-            if (finallyStartPCs.has(startPC) && !exitingCatch) { push("classicFinally", false, { usesException, exits: exitingCatch, loopContinue }); continue; }
             const finallyHandler = isFinallyHandler(cfg, handlerEntryBlock) && !usesException;
             const catchHandler = isCatchHandler(handlerEntryBlock) || ignoredException || commitPC !== null;
+            const exitingCatch = (usesException || ignoredException || commitPC !== null)
+                && handlerExits(cfg, handlerEntryBlock, startPC, endPC);
+            // 用户 catch 可以和 finally 共用同一个 try 起点(源码 `try { … }
+            // catch { … } finally { … }`):入口块里有可见工作(读 .message /
+            // instanceof / 调日志)就说明它是 catch,不能因为起点同时是 finally
+            // 起点就整段丢掉(ReplyDialog.handleImagePick 的 `[MPUP] error`
+            // 分支曾整个消失)。
+            if (finallyStartPCs.has(startPC) && !exitingCatch && !catchHandler) { push("classicFinally", false, { usesException, exits: exitingCatch, loopContinue }); continue; }
             if (finallyHandler) {
                 // 24.0.0.0 把 finally 内联在出口前,异常路径的清理只能靠它的
                 // handler 输出,再由 foldEagerCatchToFinally 还原成 try/finally。

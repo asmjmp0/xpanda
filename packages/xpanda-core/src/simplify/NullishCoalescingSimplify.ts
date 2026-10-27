@@ -1,11 +1,13 @@
 import { Program } from "@babel/types";
 import traverse from "@babel/traverse";
 import * as TYPE from "@babel/types";
-import { collectReadNames, isNodeEqual, isPureExpression } from "./AstUtils";
+import { collectAssignedNames, collectReadNames, isNodeEqual, isPureExpression } from "./AstUtils";
 
 
 const {
     assignmentExpression,
+    binaryExpression,
+    conditionalExpression,
     expressionStatement,
     file,
     identifier,
@@ -19,6 +21,7 @@ const {
     isNullLiteral,
     isStatement,
     logicalExpression,
+    nullLiteral,
 } = TYPE;
 
 /**
@@ -213,67 +216,242 @@ export class NullishCoalescingSimplify {
 
     private foldSwitch(path: any): boolean {
         const switchNode = path.node as TYPE.SwitchStatement;
-        if (switchNode.cases.length !== 2) return false;
-
         const nullCase = switchNode.cases.find((c) => isNullLiteral(c.test));
         const undefinedCase = switchNode.cases.find((c) => isIdentifier(c.test, { name: "undefined" }));
         if (!nullCase || !undefinedCase || nullCase === undefinedCase) return false;
+        const defaultCase = switchNode.cases.find((c) => c.test === null) ?? null;
+        // 只处理 null/undefined(可选 default)三种 case;带其它 case 的是源码 switch
+        const extraCases = switchNode.cases.filter(
+            (c) => c !== nullCase && c !== undefinedCase && c !== defaultCase);
+        if (extraCases.length > 0) return false;
 
-        const prev = path.getPrevSibling();
-        if (!prev || !isExpressionStatement(prev.node) || !isAssignmentExpression(prev.node.expression)) return false;
-        const prevAssign = prev.node.expression;
-        if (prevAssign.operator !== "=" || !isIdentifier(prevAssign.left)) return false;
-        const target = prevAssign.left.name;
+        // 两个 nullish case 的落点:返回 { target, value } / undefined(空 case) / null(不是可折形态)。
+        // 两个 case 都赋值时右值必须相同;只有一个赋值时依赖 fallthrough,
+        // 有值的 case 必须排在最后(nullish 对只在 null/undefined 上命中,顺序不影响)。
+        const pair = this.caseAssignedPair(nullCase, undefinedCase);
+        if (!pair) return false;
+        const target = pair.target;
+        if (defaultCase) {
+            // `switch (X) { case null: case undefined: T = undefined; break; default: T = E }`
+            // 是 `X?.…` 的 lowering,不是 `??`:nullish 时取 undefined,其余取 E。
+            if (!isIdentifier(pair.value, { name: "undefined" })) return false;
+            return this.foldNullishDefault(path, switchNode, defaultCase, target);
+        }
+        return this.foldNullishPair(path, switchNode, pair, nullCase, undefinedCase);
+    }
 
-        // 每个 case 要么为空(fallthrough),要么是 `target = value; [break;]`。
-        // 两个 case 都赋值时,右值必须完全相同。
-        const nullValue = this.caseAssignedValue(nullCase, target);
-        const undefinedValue = this.caseAssignedValue(undefinedCase, target);
-        if (nullValue === null || undefinedValue === null) return false;
-        if (nullValue === undefined && undefinedValue === undefined) return false;
-        if (nullValue !== undefined && undefinedValue !== undefined && !isNodeEqual(nullValue, undefinedValue)) return false;
+    /**
+     * `X = D; switch (D) { case null: case undefined: X = E; break }` → `X = D ?? E`。
+     *
+     * 判别式是 target 自身时也可以没有紧邻的 `X = D`(值早就在 X 里,
+     * zhihu DefaultCreationPublishRepository 的 `v1 = v1 ?? v2`):此时输出
+     * `X = X ?? E`,不删前一条语句。
+     */
+    private foldNullishPair(
+        path: any,
+        switchNode: TYPE.SwitchStatement,
+        pair: AssignedPair,
+        nullCase: TYPE.SwitchCase,
+        undefinedCase: TYPE.SwitchCase,
+    ): boolean {
+        const target = pair.target;
+        const fallback = pair.value;
         // 只有一个 case 赋值时依赖 fallthrough:有值的 case 必须排在后面,
         // 否则判别式为较早 case 的值时不会执行赋值(例如 null 有值、undefined 为空)。
-        if ((nullValue === undefined) !== (undefinedValue === undefined)) {
-            const bodyCase = nullValue !== undefined ? nullCase : undefinedCase;
+        if (pair.nullValue === undefined || pair.undefinedValue === undefined) {
+            const bodyCase = pair.nullValue !== undefined ? nullCase : undefinedCase;
             if (switchNode.cases[switchNode.cases.length - 1] !== bodyCase) return false;
         }
-        const fallback = nullValue !== undefined ? nullValue : undefinedValue!;
-
         const discriminant = switchNode.discriminant;
-        let value: TYPE.Expression;
-        if (isIdentifier(discriminant, { name: target })) {
-            // switch 读的是刚赋给 target 的值
-            value = prevAssign.right;
-        } else if (isNodeEqual(discriminant, prevAssign.right) && isPureExpression(discriminant)) {
-            // 复制传播把判别式换成了成员表达式;要求重复求值无副作用
-            value = discriminant;
-        } else {
-            return false;
-        }
+        const resolved = this.resolvePairValue(path, target, discriminant);
+        if (!resolved) return false;
 
-        const replacement = expressionStatement(
-            assignmentExpression("=", identifier(target), logicalExpression("??", value, fallback)),
-        );
-        path.replaceWith(replacement);
-        prev.remove();
+        path.replaceWith(expressionStatement(
+            assignmentExpression("=", identifier(target), logicalExpression("??", resolved.value, fallback)),
+        ));
+        if (resolved.remove) resolved.remove.remove();
         return true;
     }
 
     /**
-     * 读取 case 体的赋值右值:
-     *   - 空 case(靠 fallthrough)返回 undefined;
-     *   - 不是 `target = value; [break;]` 返回 null。
+     * 找到 `target` 里与判别式同值的那份表达式:
+     *  - 判别式就是 target 本身 → `X = X ?? E`;
+     *  - 紧邻的 `X = D`(D 与判别式相同)→ `X = D ?? E` 并删掉那条赋值;
+     *  - `X = D` 与 switch 之间只隔着与 X 无关的语句时,同样折叠并删掉赋值;
+     *  - 中间读过 X(但没写)→ 保留赋值,输出 `X = X ?? E`。
      */
-    private caseAssignedValue(caseNode: TYPE.SwitchCase, target: string): TYPE.Expression | null | undefined {
+    private resolvePairValue(
+        path: any,
+        target: string,
+        discriminant: TYPE.Expression,
+    ): { value: TYPE.Expression; remove: any | null } | null {
+        const prev = path.getPrevSibling();
+        const prevAssign = prev && isExpressionStatement(prev.node) && isAssignmentExpression(prev.node.expression)
+            ? prev.node.expression
+            : null;
+        if (prevAssign && prevAssign.operator === "=" && isIdentifier(prevAssign.left, { name: target })) {
+            if (isIdentifier(discriminant, { name: target })) return { value: prevAssign.right, remove: prev };
+            if (isNodeEqual(discriminant, prevAssign.right) && isPureExpression(discriminant)) {
+                return { value: discriminant, remove: prev };
+            }
+        }
+        if (isIdentifier(discriminant, { name: target })) return { value: identifier(target), remove: null };
+        // 非相邻:往前找给 target 赋同一个值的语句,中间不能读/写 target
+        let cursor = prev;
+        for (let steps = 0; cursor && cursor.node && steps < 8; steps++, cursor = cursor.getPrevSibling()) {
+            const node = cursor.node;
+            if (!isStatement(node)) return null;
+            if (collectAssignedNames(node).has(target)) {
+                if (!isExpressionStatement(node) || !isAssignmentExpression(node.expression)) return null;
+                const assign = node.expression;
+                if (assign.operator !== "=" || !isIdentifier(assign.left, { name: target })) return null;
+                if (!isNodeEqual(assign.right, discriminant)) return null;
+                if (!isPureExpression(discriminant)) return null;
+                return { value: discriminant, remove: cursor };
+            }
+            if (collectReadNames(node).has(target)) return null;
+        }
+        return null;
+    }
+
+    /**
+     * `switch (X) { case null: case undefined: T = undefined; break; default: T = E }`
+     * → `T = X == null ? undefined : E`;E 的链根就是 X 时进一步还原成可选链
+     * (`session?.getState().status`)。
+     */
+    private foldNullishDefault(
+        path: any,
+        switchNode: TYPE.SwitchStatement,
+        defaultCase: TYPE.SwitchCase,
+        target: string,
+    ): boolean {
+        const body = defaultCase.consequent;
+        if (body.length === 0) return false;
+        const last = body[body.length - 1];
+        const statements = isBreakStatement(last) ? body.slice(0, -1) : body.slice();
+        const value = this.assignedValueOf(statements, target);
+        if (value === null || isIdentifier(value, { name: "undefined" })) return false;
+        const discriminant = switchNode.discriminant;
+        const nullishTest = binaryExpression("==", discriminant as TYPE.Expression, nullLiteral());
+        const optional = makeGuardedOptionalChain(value, discriminant as TYPE.Expression);
+        if (optional) {
+            path.replaceWith(expressionStatement(assignmentExpression("=", identifier(target), optional)));
+            return true;
+        }
+        path.replaceWith(expressionStatement(assignmentExpression(
+            "=",
+            identifier(target),
+            conditionalExpression(nullishTest, identifier("undefined"), value),
+        )));
+        return true;
+    }
+
+    /**
+     * 读取两个 nullish case 的落点。
+     * 返回 null 表示形态不符;`value` 是两个 case 共同的赋值右值。
+     */
+    private caseAssignedPair(nullCase: TYPE.SwitchCase, undefinedCase: TYPE.SwitchCase): AssignedPair | null {
+        const nullBody = this.caseBodyShape(nullCase);
+        if (nullBody === null) return null;
+        const undefinedBody = this.caseBodyShape(undefinedCase);
+        if (undefinedBody === null) return null;
+        const nullAssign = nullBody;
+        const undefinedAssign = undefinedBody;
+        // 两边都没赋值、或赋值目标不同:不是 `X ?? D`
+        if (nullAssign === undefined && undefinedAssign === undefined) return null;
+        const first = nullAssign ?? undefinedAssign!;
+        if (undefinedAssign !== undefined && nullAssign !== undefined
+            && !isNodeEqual(nullAssign.value, undefinedAssign.value)) return null;
+        if (nullAssign !== undefined && undefinedAssign !== undefined
+            && (nullAssign.target !== undefinedAssign.target)) return null;
+        return {
+            target: first.target,
+            value: first.value,
+            nullValue: nullAssign ? nullAssign.value : undefined,
+            undefinedValue: undefinedAssign ? undefinedAssign.value : undefined,
+        };
+    }
+
+    /**
+     * 读取单个 case 体:`[E;] target = value; [break;]`,E 与 value 完全相同
+     * (编译器把同一个值先物化到 acc 再赋值,复制传播后变成两句)。
+     * 空 case(靠 fallthrough)返回 undefined;形态不符返回 null。
+     */
+    private caseBodyShape(caseNode: TYPE.SwitchCase): { target: string; value: TYPE.Expression } | null | undefined {
         const body = caseNode.consequent;
         if (body.length === 0) return undefined;
-        if (body.length > 2) return null;
-        if (body.length === 2 && !isBreakStatement(body[1])) return null;
-        const statement = body[0];
-        if (!isExpressionStatement(statement) || !isAssignmentExpression(statement.expression)) return null;
-        const assign = statement.expression;
+        const last = body[body.length - 1];
+        const statements = isBreakStatement(last) ? body.slice(0, -1) : body.slice();
+        if (statements.length === 0) return undefined;
+        const assignment = statements[statements.length - 1];
+        if (!isExpressionStatement(assignment) || !isAssignmentExpression(assignment.expression)) return null;
+        const assign = assignment.expression;
+        if (assign.operator !== "=" || !isIdentifier(assign.left)) return null;
+        // 赋值之前只允许重复求值的同一个表达式(丢弃它不会改变求值次数)
+        for (let i = 0; i < statements.length - 1; i++) {
+            const extra = statements[i];
+            if (!isExpressionStatement(extra) || !isNodeEqual(extra.expression, assign.right)) return null;
+        }
+        return { target: assign.left.name, value: assign.right };
+    }
+
+    /** 读 case 体里唯一的一条 `target = value`(前面允许重复表达式),不含 break */
+    private assignedValueOf(statements: TYPE.Statement[], target: string): TYPE.Expression | null {
+        if (statements.length === 0) return null;
+        const assignment = statements[statements.length - 1];
+        if (!isExpressionStatement(assignment) || !isAssignmentExpression(assignment.expression)) return null;
+        const assign = assignment.expression;
         if (assign.operator !== "=" || !isIdentifier(assign.left) || assign.left.name !== target) return null;
+        for (let i = 0; i < statements.length - 1; i++) {
+            const extra = statements[i];
+            if (!isExpressionStatement(extra) || !isNodeEqual(extra.expression, assign.right)) return null;
+        }
         return assign.right;
     }
+}
+
+/** 一个 nullish 分支的赋值信息 */
+interface AssignedPair {
+    target: string;
+    value: TYPE.Expression;
+    /** 空 case 时为 undefined */
+    nullValue: TYPE.Expression | undefined;
+    undefinedValue: TYPE.Expression | undefined;
+}
+
+/**
+ * `X == null ? undefined : E` 里 E 的链根就是 X 时还原成可选链:
+ * `X.a().b` → `X?.a().b`。守卫只在 switch 判别式里求值一次,这里不引入新的求值。
+ */
+function makeGuardedOptionalChain(chain: TYPE.Expression, guard: TYPE.Expression): TYPE.Expression | null {
+    if (isNodeEqual(chain, guard)) return null;
+    // 链里已经有 `?.` 时(如 `obj.find(f)?.name`)只把链根补成可选,外层链接
+    // 保持原 optional 标志,整条仍是同一个可选链。
+    if (TYPE.isOptionalMemberExpression(chain)) {
+        const inner = makeGuardedOptionalChain(chain.object as TYPE.Expression, guard);
+        if (!inner) return null;
+        return TYPE.optionalMemberExpression(inner as any, chain.property as any, chain.computed, chain.optional);
+    }
+    if (TYPE.isOptionalCallExpression(chain)) {
+        const inner = makeGuardedOptionalChain(chain.callee as TYPE.Expression, guard);
+        if (!inner) return null;
+        return TYPE.optionalCallExpression(inner as any, chain.arguments as any, chain.optional);
+    }
+    if (TYPE.isMemberExpression(chain)) {
+        if (isNodeEqual(chain.object, guard)) {
+            return TYPE.optionalMemberExpression(chain.object as any, chain.property as any, chain.computed, true);
+        }
+        const inner = makeGuardedOptionalChain(chain.object as TYPE.Expression, guard);
+        if (!inner) return null;
+        return TYPE.optionalMemberExpression(inner as any, chain.property as any, chain.computed, false);
+    }
+    if (TYPE.isCallExpression(chain)) {
+        if (isNodeEqual(chain.callee, guard)) {
+            return TYPE.optionalCallExpression(chain.callee as any, chain.arguments as any, true);
+        }
+        const inner = makeGuardedOptionalChain(chain.callee as TYPE.Expression, guard);
+        if (!inner) return null;
+        return TYPE.optionalCallExpression(inner as any, chain.arguments as any, false);
+    }
+    return null;
 }

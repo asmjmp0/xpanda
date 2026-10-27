@@ -109,6 +109,9 @@ export class SimplifyExport {
         // 可选链/`??` 还原后才出现的累加器枢纽(`acc = v20?.client; v6 = f(acc)`)
         // 轮内的复制传播已经跑完,这里补一轮“把右值搬进下一条语句的唯一读取”。
         TempVariableSimplify.foldNextReadAssignments(node);
+        // 可选链/`??` 还原之后才成型的 nullish switch(default 分支就是值、case 体里
+        // 还带一份重复求值)再还原一次:这一步的输入形态在流水线前段还没稳定下来。
+        new NullishCoalescingSimplify().simplify(node);
         // 区域归约把共享尾块复制到每条路径:到这里各路径的语句形状已经归一化
         // (else 已展开、守卫链已合成 switch、可选链/for-of 已还原),再做重复
         // 尾块消除。必须放在 simplifyTail 之后:守卫链→switch 需要分支体保留

@@ -218,6 +218,15 @@ function containsNode(node: any, target: any): boolean {
     return false;
 }
 
+/** list 里直接包含 target 的语句下标(没有则 -1) */
+function findStatementIndexContaining(list: TYPE.Statement[], target: any): number {
+    for (let index = 0; index < list.length; index++) {
+        const item = list[index];
+        if (item && typeof item === "object" && TYPE.isStatement(item) && containsNode(item, target)) return index;
+    }
+    return -1;
+}
+
 /** 包含 target 的最近一层语句节点(把 test 序列里的标记提升成语句级边界) */
 function findEnclosingStatement(root: any, target: any): TYPE.Statement | null {
     let found: TYPE.Statement | null = null;
@@ -589,6 +598,13 @@ function applyPlans(
             // try/catch/finally;否则 finally 嵌在 catch 所在的 try 体里(常规布局)。
             const catchEndPC = tryOwner && context?.tryBodyEndPC ? context.tryBodyEndPC.get(tryOwner) : undefined;
             const catchInsideFinally = catchEndPC !== undefined && catchEndPC <= plan.cleanupStartPC;
+            // 折叠布局里 cleanup/guard 可能被区域复制进 try 体的多条分支分支尾
+            // (g10)。每一份都只是“正常完成路径”上的同一段收尾,把它们统一上提到
+            // try 体末尾只留一份,等价于每条分支末尾 goto 到同一条收尾:分支走到
+            // 末尾本来就会继续执行后面的语句,所以不需要真的发 goto。
+            const bodyTailCopies = tryOwner && tryOwner.block.body === startList
+                ? collectFinallyTailCopies(tryOwner.block, plan)
+                : null;
             if (tryOwner && tryOwner.handler && cleanupList === startList && catchInsideFinally) {
                 // cleanup/guard 落在 try 体尾部:两条分支共享、必定退出的尾块被
                 // hoistDuplicatedFinallyTails 提到 if 之后,finally 的 cleanup 就成了
@@ -618,6 +634,33 @@ function applyPlans(
                 const parentIndex = parentList ? parentList.indexOf(tryOwner) : -1;
                 if (parentIndex < 0) { reason = "no parent list"; break left; }
                 parentList!.splice(parentIndex, 1, tryNode, ...guardContinuation);
+                applied = true;
+            } else if (tryOwner && tryOwner.handler && bodyTailCopies
+                && (catchInsideFinally || catchEndPC === undefined)) {
+                // 用户 catch + 折叠布局:cleanup/guard 被结构化进 try 体的分支尾部,
+                // cleanup 直接挂到已有 try/catch 的 finally 上(catch 必须先于 finally
+                // 执行,在 try 体里再套一层 try/finally 会把顺序反过来:n8 的 start)。
+                const finalizer = bodyTailCopies[0].body;
+                if (finalizer.length === 0) { reason = "empty finally body"; break left; }
+                const reference = finalizer.map((statement) => generate(statement).code).join("\n");
+                if (bodyTailCopies.some((copy) => copy.body.map((statement) => generate(statement).code).join("\n") !== reference)) {
+                    reason = "cleanup copies differ"; break left;
+                }
+                const parentList = findStatementList(astNode, tryOwner);
+                const parentIndex = parentList ? parentList.indexOf(tryOwner) : -1;
+                if (!parentList || parentIndex < 0) { reason = "no parent list"; break left; }
+                const perList = new Map<TYPE.Statement[], FinallyTailCopy[]>();
+                for (const copy of bodyTailCopies) {
+                    const group = perList.get(copy.list) ?? [];
+                    group.push(copy);
+                    perList.set(copy.list, group);
+                }
+                for (const [list, group] of perList) {
+                    group.sort((a, b) => b.start - a.start);
+                    for (const copy of group) list.splice(copy.start, copy.end - copy.start);
+                }
+                tryOwner.finalizer = TYPE.blockStatement(finalizer);
+                parentList.splice(parentIndex + 1, 0, ...guardContinuation);
                 applied = true;
             } else if (tryOwner && tryOwner.handler && cleanupList !== startList) {
                 // 用户 catch 在 try 范围内终止,finally 的 cleanup/guard 落在这条
@@ -664,6 +707,21 @@ function applyPlans(
                     TYPE.blockStatement(finallyStatements),
                 );
                 startList.splice(tryStart, guardEnd - tryStart, tryNode, ...guardContinuation);
+                applied = true;
+            } else if (plan.startMarker && !start.byPC && !start.inExpression && start.index === 0) {
+                // 起始标记落在嵌套语句的头部:try 体的第一个基本块就是循环头
+                // (`try { do { … } while (…) } finally { … }`),结构化后标记被插在
+                // do-while 循环体的首条。try 体因此是 cleanupList 里从“包含标记的
+                // 那条语句”到 cleanup 前的整段,而不是标记所在列表的后续语句。
+                const ownerIndex = findStatementIndexContaining(cleanupList, plan.startMarker);
+                if (ownerIndex < 0 || cleanup <= ownerIndex) { reason = "nested start owner not found"; break left; }
+                const tryStatements = cleanupList.slice(ownerIndex, cleanup);
+                const tryNode = TYPE.tryStatement(
+                    TYPE.blockStatement(tryStatements),
+                    null,
+                    TYPE.blockStatement(finallyStatements),
+                );
+                cleanupList.splice(ownerIndex, guardEnd - ownerIndex, tryNode, ...guardContinuation);
                 applied = true;
             } else {
                 // 折叠布局:只有整段 finally 都在嵌套列表尾部、且该嵌套列表的顶层语句
@@ -758,6 +816,101 @@ interface MarkerOccurrence {
 
 function markerValue(plan: FinallyPlan, role: FinallyRole): string {
     return MARKER_PREFIX + plan.id + "_" + role;
+}
+
+/** 计划的 cleanup 标记值(语句标记或 test 序列里的表达式标记) */
+function cleanupMarkerValueOf(plan: FinallyPlan): string {
+    if (plan.cleanupMarker && TYPE.isExpressionStatement(plan.cleanupMarker)
+        && TYPE.isStringLiteral(plan.cleanupMarker.expression)) return plan.cleanupMarker.expression.value;
+    if (plan.cleanupExpr && TYPE.isStringLiteral(plan.cleanupExpr)) return plan.cleanupExpr.value;
+    return "";
+}
+
+/** 折叠布局里的一段 finally 收尾副本(cleanup 标记 → guard 语句,正好走到列表末尾) */
+interface FinallyTailCopy {
+    list: TYPE.Statement[];
+    start: number;
+    end: number;
+    /** cleanup 之后、guard 之前的语句(即 finally 体) */
+    body: TYPE.Statement[];
+}
+
+/**
+ * 收集 try 体里所有“finally 收尾尾块”的副本。
+ *
+ * ArkTS 会把 finally 内联到每一条正常出口前,区域归约再把这段尾块按分支引用展开,
+ * 于是同一段 `cleanup; if (pending != hole) throw` 会出现在多条分支的末尾
+ * (g10 的嵌套 if)。这些副本都只是同一个收尾:分支走到末尾会继续执行后面的语句,
+ * 所以把每一份都摘掉、只留一份上提到 try 体末尾,等价于每条分支末尾 goto 到同一段
+ * 收尾(前向跳转,天然由 fall-through 实现,不需要真的发 goto)。
+ *
+ * 只在“这份副本从 cleanup 标记到 guard 语句正好走到列表末尾、且不嵌在循环里”时
+ * 才可摘除:这样每条路径最多执行它一次,上提后仍然恰好一次。任何一份不满足
+ * (中间还有别的语句、在循环体里、cleanup 落在条件 test 序列里)就整体放弃。
+ */
+function collectFinallyTailCopies(root: any, plan: FinallyPlan): FinallyTailCopy[] | null {
+    const cleanupValue = cleanupMarkerValueOf(plan);
+    if (cleanupValue.length === 0) return null;
+    let guardValue = "";
+    if (plan.guardMarker && TYPE.isExpressionStatement(plan.guardMarker)
+        && TYPE.isStringLiteral(plan.guardMarker.expression)) guardValue = plan.guardMarker.expression.value;
+    else if (plan.guardExpr && TYPE.isStringLiteral(plan.guardExpr)) guardValue = plan.guardExpr.value;
+    if (guardValue.length === 0) return null;
+
+    const copies: FinallyTailCopy[] = [];
+    const walk = (node: any, insideLoop: boolean): boolean => {
+        if (!node || typeof node !== "object" || !node.type) return true;
+        const nextInsideLoop = insideLoop || isLoopStatement(node);
+        for (const key of TYPE.VISITOR_KEYS[node.type] ?? []) {
+            const value = node[key];
+            if (!Array.isArray(value)) {
+                if (!walk(value, nextInsideLoop)) return false;
+                continue;
+            }
+            const list = value as any[];
+            for (let index = 0; index < list.length; index++) {
+                const item = list[index];
+                if (!item || typeof item !== "object" || !item.type) continue;
+                if (!TYPE.isStatement(item)) {
+                    if (!walk(item, nextInsideLoop)) return false;
+                    continue;
+                }
+                if (TYPE.isExpressionStatement(item) && TYPE.isStringLiteral(item.expression)
+                    && item.expression.value === cleanupValue) {
+                    if (nextInsideLoop) return false;
+                    let guardIndex = -1;
+                    for (let next = index; next < list.length; next++) {
+                        if (containsOwnMarker(list[next], guardValue)) { guardIndex = next; break; }
+                    }
+                    if (guardIndex < 0) return false;
+                    // 守卫标记之后的语句(哨兵比较)属于尾部,收尾到守卫的 if 语句为止,
+                    // 并且必须正好走到列表末尾。
+                    let end = guardIndex + 1;
+                    while (end < list.length && !TYPE.isIfStatement(list[end])) end++;
+                    if (end >= list.length) return false;
+                    if (end + 1 !== list.length) return false;
+                    copies.push({
+                        list: list as TYPE.Statement[],
+                        start: index,
+                        end: end + 1,
+                        body: list.slice(index + 1, guardIndex) as TYPE.Statement[],
+                    });
+                    continue;
+                }
+                // cleanup 标记落在语句内部的表达式里(test 序列)不是可摘的尾块
+                if (containsOwnMarker(item, cleanupValue)) return false;
+                if (!walk(item, nextInsideLoop)) return false;
+            }
+        }
+        return true;
+    };
+    if (!walk(root, false) || copies.length === 0) return null;
+    return copies;
+}
+
+function isLoopStatement(node: any): boolean {
+    return TYPE.isWhileStatement(node) || TYPE.isDoWhileStatement(node) || TYPE.isForStatement(node)
+        || TYPE.isForInStatement(node) || TYPE.isForOfStatement(node);
 }
 
 /**
