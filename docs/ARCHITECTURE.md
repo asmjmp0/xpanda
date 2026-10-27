@@ -42,7 +42,7 @@ The main thread always performs parsing, disassembly, lexical analysis, and AST 
 | `src/hap/` | HAP application package adapter: read-only ZIP (`ZipFile.ts`) + `.abc` entries / `module.json` / `resources.index` (`HapFile.ts`) |
 | `src/res/` | `resources.index` parsing (Restool & RestoolV2 formats) into queryable resource items |
 | `src/disasm/` | Disassembly: generated opcode table, unified instruction model, CFG, lexical analysis |
-| `src/decompiler/` | Structure analysis (region reduction), statement tree, instruction handlers, dominator graph, fallback analysis, try/finally restoration; `ExceptionTable.ts` classifies every try-table entry (user catch / ignored / empty-join / finally epilogue / protocol glue) and drives the CFG exception edges |
+| `src/decompiler/` | Structure analysis (region reduction), statement tree, instruction handlers, dominator graph, reaching-definition value analysis, fallback analysis, try/finally restoration; `ExceptionTable.ts` classifies every try-table entry (user catch / ignored / empty-join / finally epilogue / protocol glue) and drives the CFG exception edges |
 | `src/codegen/` | `CodeGenerator` — thin wrapper around `src/ast/` |
 | `src/ast/` | Babel AST construction & text generation (`NodeFactory` / `NodeUtils` / `FormatCode`) |
 | `src/simplify/` | Optimizer pipeline |
@@ -179,9 +179,28 @@ Linear output: `label_<pc>: { … }` blocks, `decompiler_goto(label_N)` for dire
 
 ### 7.5 try/finally restoration (`TryFinally.ts`)
 
-ArkTS 13 compiles `finally` into a state machine (hole sentinel, cleanup block, rethrow guard). The 24+ inlined form is attributed to the Try region (`kind = "finallyEpilogue"`) and emitted as `try { … } catch (e) { cleanup; throw e }`, which the tail pass `foldEagerCatchToFinally` turns into `try/finally` once the optimizer has made the two cleanup copies textually identical. The classic hole-in-body form still goes through `buildFinallyPlans`, which identifies it **structurally** — not by block sizes: the try-end block writes the hole sentinel and jumps to cleanup; the handler starts with `sta` and does not throw immediately; a later hole-compare block with a throw successor is the guard. PC ordering is strictly validated. Roles (start / cleanup / guard / suppress) become `__xpanda_finally_marker__` strings inserted by `MethodHandler`; `applyFinallyPlans` rewrites three layouts (same statement list / nested list tails / try+real-catch shape) into `try { … } finally { … }`. Any unresolved plan leaves a `/* xpanda: try/finally not restored */` comment; markers are always stripped. Current `es2abc` also inlines `finally` before every `return` and keeps a second copy in a `hole` epilogue handler; that shape, and the same epilogue used by `for-of` close, is described in [Bytecode patterns](./BYTECODE_PATTERNS.md).
+ArkTS 13 compiles `finally` into a state machine (hole sentinel, cleanup block, rethrow guard). The 24+ inlined form is attributed to the Try region (`kind = "finallyEpilogue"`) and emitted as `try { … } catch (e) { cleanup; throw e }`, which the tail pass `foldEagerCatchToFinally` turns into `try/finally` once the optimizer has made the two cleanup copies textually identical. The classic hole-in-body form still goes through `buildFinallyPlans`, which identifies it **structurally** — not by block sizes: the try-end block writes the hole sentinel and jumps to cleanup; the handler starts with `sta` and does not throw immediately; a later hole-compare block with a throw successor is the guard. PC ordering is strictly validated, and a guard that compares the *saved* register is preferred over "the first hole block", which is how nested finallys are told apart. Roles (start / cleanup / guard / suppress) become `__xpanda_finally_marker__` strings inserted by `MethodHandler`; a `suppress` role drops the try-end block outright. `applyFinallyPlans` then picks a layout from the marker positions:
 
-### 7.6 Graph utilities
+| Layout | Shape | Plan flag / layout function |
+|---|---|---|
+| regular | try start / cleanup / guard in one statement list | — |
+| nested tails | cleanup+guard at the tail of nested lists, hoisted after the enclosing statement | — |
+| try + real catch | the same try start carries a user catch — either the catch's tail holds the cleanup (truncate the catch, attach the `finally`) or the cleanup follows the `try/catch` (wrap it) | — |
+| duplicated body tails | a shared always-exiting tail was expanded into both `if` branches; `hoistDuplicatedFinallyTails` dedups it and the plan is retried | — |
+| loop exhausted | cleanup parked in the `for-of` done branch, body ends with the sentinel `throw` — the branch tail becomes `break`, the wrap is a real `try/finally` | `applyLoopExhaustedFinally` |
+| loop tail | cleanup/guard folded into the do-while test; sliced by instruction pc, loop-test scaffolding left in place (13.0.1.0 only) | `tailCleanupRange` |
+| loop body-tail guard | cleanup at the loop body tail, guard is a statement group whose non-throw edge is a bare `jmp` to the loop head (sentinel compare materialized into the test): wrap the try body, drop the guard scaffolding, turn the test into `true` (13.0.1.0 only) | `loopTailGuard` |
+| eager | cleanup inlined before an exiting `return`, no hole-writing suppress block; the copy is found by instruction *shape* and moved into the `finally` | `eagerCleanup` |
+
+Any plan that cannot be placed leaves a `/* xpanda: try/finally not restored [plan …] */` comment (eager and `tailCleanupRange` plans produce none — they lose no code); markers are always stripped. The two loop-tail modes are gated to version < 24 (on 24+ the registered handler is folded by `foldEagerCatchToFinally`, and taking them there nests an extra try/catch), require the guard to be the *first* hole block, and the body-tail form additionally requires the after-branch block to contain nothing but the `jmp` — a loop-increment block means real body code follows, so the classic layouts must still win. Current `es2abc` also inlines `finally` before every `return` and keeps a second copy in a `hole` epilogue handler; that shape, and the same epilogue used by `for-of` close, is described in [Bytecode patterns](./BYTECODE_PATTERNS.md).
+
+### 7.6 Value analysis (`ValueAnalysis.ts`)
+
+Reaching definitions over the CFG: for every block and register it keeps the set of reaching definitions (normal edges only — an exception landing pad has no normal predecessor, so its in-set stays empty and must be read conservatively), and answers "which definition does this read see" (`definitionsAtRead`) and "who reads this definition" (`readersOf` / `isReadOutside`). `instructionAccess` collects the explicit register operands (destObj / srcObj / loadParam / callParams / …); `acc` is just another register.
+
+Registers are heavily reused (`v6` is both the hole sentinel and a read buffer), so name-level checks cannot separate value versions. The first consumer is the finally guard: when the syntactic `comparesHoleWith` test fails (the register is copied in another block, or the guard reads a φ of {hole, exception}), `guardComparesSavedValue` decides it by value. It is also the natural base for the SSA direction in §16 — today the AST optimizer still re-derives value versions from usage patterns, and the `suppress` decision is deliberately all-or-nothing because a name-level answer would drop stores the code after the finally still reads.
+
+### 7.7 Graph utilities
 
 - `ValueGraph.ts`: insertion-ordered directed graph with three edge kinds (`true` / `false` / `exception`); normal and exception edges between the same pair coexist. `edgeValueOrThrow` (conditional edges), `normalSuccessors` / `exceptionSuccessors` / `exceptionPredecessors`, `edgeKind`, DFS post-order.
 - `DominatorGraph.ts`: iterative dominator computation (Cooper-Harvey-Kennedy style) with a 100000-iteration safety timeout; `dominatesStrictly`; `LoopFinder` for natural loops.
@@ -365,3 +384,10 @@ Before updating snapshots in `test/expected/`, confirm the output change is *exp
 8. The `finally` handler's reads are live at *every* try exit; liveness models without exception edges must merge exit reads into `finalizerReads`, or try-block stores get deleted as dead.
 9. Catch parameters must not be named `acc` (they shadow the accumulator); `NodeFactory.tryStatementNode` uses `catchAcc` and re-materializes `acc = catchAcc` at handler entry.
 10. Runtime requires only Node.js ≥ 18; `typescript` / `tsx` are dev-only. Degraded output may contain `decompiler_goto`, `xpanda_goto`, or `export … from` forms that need matching parser settings to re-parse.
+
+## 16. Roadmap
+
+Two directions, both aimed at removing work that is currently pattern-matched out of the generated AST. They are tracked in the README roadmap as well.
+
+1. **Keep improving structured output** (§7.3, §7.5). Region reduction still degrades to `SimpleAnalysis` on irreducible graphs and over-limit expansions, and a few `try/finally` plans still end as a `try/finally not restored` note. Work items: more reduction cases for shared/irreducible tails, fewer heuristics that depend on statement shape, and additional finally layouts for exception shapes that are currently unmodelled — each rule gated narrowly and measured on the whole `amcl1.0.6.abc` sample (changed-class count in the commit message).
+2. **Add an SSA layer** (§7.6). There is no value-level IR between the CFG (§6.3) and decompilation (§7): register versions are re-derived from usage patterns by the AST optimizer (§9), which is why `vN = v0` spill chains and materialized-condition temporaries can survive into the output. An SSA form — def-use chains, φ nodes at joins, following the design of the [React Compiler](https://github.com/react/react/tree/main/compiler) — would let dead-store elimination, copy propagation and accumulator folding run once on the IR, before structuring, and would give structure analysis and the finally guards direct value-version answers instead of the conservative name-level checks they use today (`ValueAnalysis` is the first step in that direction).

@@ -18,7 +18,7 @@ Supported bytecode versions: `24.0.0.0` (backward compatible with `13.0.1.0`; Ar
 
 - **Pure TypeScript, zero native dependencies**: parses `.abc` files and emits readable JavaScript that can run as-is;
 - **Classes and functions**: class fields, accessors, prototype methods, closures and lexical environments (`local` / `sendable` env);
-- **Control flow**: `if/else`, `while/do-while`, `for`, `try/catch`, and more; falls back to labeled linear output when structural analysis fails;
+- **Control flow**: `if/else`, `while/do-while`, `for`, `try/catch/finally`, and more; falls back to labeled linear output when structural analysis fails;
 - **Modules**: ES Module `import` / `export`;
 - **Babel AST optimizer**: register-temp copy propagation, dead-store elimination, function/class syntax recovery, call rewriting and compound-assignment folding;
 - **MCP Server**: lets AI clients such as Claude Code, OpenCode and Cursor analyze `.abc` files on demand;
@@ -166,6 +166,19 @@ npm run web          # vite dev server → http://localhost:5173
 - Zero-dependency syntax highlighting with line numbers.
 
 See [packages/xpanda-web/README.md](packages/xpanda-web/README.md) for details.
+
+## Roadmap
+
+- **Keep improving structured output.** Region reduction still falls back to labeled
+  linear output on irreducible graphs and a few `try/finally` shapes still end as a
+  `try/finally not restored` note; the work is in `StructureAnalysis.ts` and
+  `TryFinally.ts`, with every new rule measured against the whole sample set.
+- **Add an SSA layer.** Build def-use chains and φ nodes on the CFG — following the
+  design of the [React Compiler](https://github.com/react/react/tree/main/compiler) —
+  so dead stores, copy propagation and accumulator folding run once on the IR, before
+  structuring, instead of being re-derived from the generated AST. That should remove
+  the `vN = v0` spill chains and materialized-condition temporaries that the optimizer
+  currently has to pattern-match.
 
 ## References
 

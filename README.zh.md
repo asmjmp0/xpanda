@@ -18,7 +18,7 @@
 
 - **纯 TypeScript、零原生依赖**:解析 `.abc` 并输出可直接阅读、可直接运行的 JavaScript;
 - **类与函数还原**:类字段、访问器、原型方法、闭包、词法环境(`local` / `sendable` env);
-- **控制流还原**:`if/else`、`while/do-while`、`for`、`try/catch` 等;结构化失败时自动降级为带标签的线性输出;
+- **控制流还原**:`if/else`、`while/do-while`、`for`、`try/catch/finally` 等;结构化失败时自动降级为带标签的线性输出;
 - **模块还原**:ES Module 的 `import` / `export`;
 - **Babel AST 优化器**:寄存器临时变量复制传播、死存储消除、函数/类语法还原、调用形式重写、复合赋值折叠;
 - **MCP Server**:可接入 Claude Code、OpenCode、Cursor 等 AI 客户端按需分析 `.abc`;
@@ -165,6 +165,17 @@ npm run web          # vite dev server → http://localhost:5173
 - 零依赖语法高亮,带行号。
 
 详见 [packages/xpanda-web/README.md](packages/xpanda-web/README.md)。
+
+## 规划(Roadmap)
+
+1. **继续优化结构化输出。** 区域归约在不可归约图上仍会降级成带 label 的线性输出,
+   少数 `try/finally` 形态还会留下 `try/finally not restored` 注释;改进点在
+   `StructureAnalysis.ts` 与 `TryFinally.ts`,每条新规则都要在全量样本上量过影响面。
+2. **增加 SSA 层。** 在 CFG 上建立 def-use 链与 φ 节点(参考
+   [React Compiler](https://github.com/react/react/tree/main/compiler) 的设计),
+   让死存储消除、复制传播、累加器折叠在**结构化之前**于 IR 上做一次,而不是事后从
+   生成的 AST 里再反推 —— 目标是消掉优化器现在必须靠形态匹配才能识别的
+   `vN = v0` 寄存器搬运与条件物化临时变量。
 
 ## 参考实现
 

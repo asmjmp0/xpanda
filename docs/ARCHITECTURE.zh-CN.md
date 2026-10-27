@@ -42,7 +42,7 @@ JavaScript 源码(落盘 / stdout / 编程 API)
 | `src/hap/` | HAP 应用包适配:只读 ZIP(`ZipFile.ts`)+ `.abc` 条目 / `module.json` / `resources.index`(`HapFile.ts`) |
 | `src/res/` | `resources.index` 解析(兼容 Restool 与 RestoolV2 格式)为可查询的资源项 |
 | `src/disasm/` | 反汇编:生成的 opcode 表、统一指令模型、CFG、词法分析 |
-| `src/decompiler/` | 结构化分析(Region 归约)、语句树、指令 handle、支配树、降级方案、try/finally 还原;`ExceptionTable.ts` 分类每个 try 表条目(用户 catch / 忽略异常 / 空 catch / 内联 finally 收尾 / 协议胶水),并驱动 CFG 的异常边 |
+| `src/decompiler/` | 结构化分析(Region 归约)、语句树、指令 handle、支配树、到达定义值分析、降级方案、try/finally 还原;`ExceptionTable.ts` 分类每个 try 表条目(用户 catch / 忽略异常 / 空 catch / 内联 finally 收尾 / 协议胶水),并驱动 CFG 的异常边 |
 | `src/codegen/` | `CodeGenerator` —— 包装 `src/ast/` 的轻封装 |
 | `src/ast/` | Babel AST 构建与文本生成(`NodeFactory` / `NodeUtils` / `FormatCode`) |
 | `src/simplify/` | 优化器流水线 |
@@ -177,9 +177,28 @@ ArkTS 为语言特性合成异常 handler —— **for-in、for-of、async 函�
 
 ### 7.5 try/finally 还原(`TryFinally.ts`)
 
-ArkTS 13 把 `finally` 编译成状态机(hole 哨兵、cleanup 块、重抛守卫)。24+ 的内联形态归属到 Try 区域(`kind = "finallyEpilogue"`),先输出成 `try { … } catch (e) { cleanup; throw e }`,等优化器把两份 cleanup 变成完全相同的文本后,由尾部 pass `foldEagerCatchToFinally` 折回 `try/finally`。“try 体里写 hole”的经典形态仍走 `buildFinallyPlans`,按**结构特征**识别 —— 不按块大小:try 结束块写入 hole 哨兵并跳到 cleanup;handler 以 `sta` 开始且不立即 throw;稍后某个 hole 比较块带 throw 后继即为守卫。PC 顺序严格校验。角色(start / cleanup / guard / suppress)成为 `__xpanda_finally_marker__` 字符串,由 `MethodHandler` 插入;`applyFinallyPlans` 按三种布局改写(同一语句列表 / 嵌套列表尾部 / try+真 catch 形态)为 `try { … } finally { … }`。无法定位的 plan 留下 `/* xpanda: try/finally not restored */` 注释;标记一律剥离。当前 `es2abc` 还会在每个 `return` 前内联一份 `finally`,并在 `hole` 收尾 handler 里再留一份;这个形态,以及 `for-of` 关闭所用的同一份收尾,见[字节码形态](./BYTECODE_PATTERNS.zh-CN.md)。
+ArkTS 13 把 `finally` 编译成状态机(hole 哨兵、cleanup 块、重抛守卫)。24+ 的内联形态归属到 Try 区域(`kind = "finallyEpilogue"`),先输出成 `try { … } catch (e) { cleanup; throw e }`,等优化器把两份 cleanup 变成完全相同的文本后,由尾部 pass `foldEagerCatchToFinally` 折回 `try/finally`。“try 体里写 hole”的经典形态仍走 `buildFinallyPlans`,按**结构特征**识别 —— 不按块大小:try 结束块写入 hole 哨兵并跳到 cleanup;handler 以 `sta` 开始且不立即 throw;稍后某个 hole 比较块带 throw 后继即为守卫。PC 顺序严格校验。角色(start / cleanup / guard / suppress)成为 `__xpanda_finally_marker__` 字符串,由 `MethodHandler` 插入;`applyFinallyPlans` 再按标记位置选布局:
 
-### 7.6 图工具
+| 布局 | 形态 | 计划开关 / 布局函数 |
+|---|---|---|
+| regular | try 起点 / cleanup / guard 在同一语句列表 | — |
+| 嵌套列表尾部 | cleanup+guard 落在嵌套列表尾部,整体提到外层语句之后 | — |
+| try + 真 catch | 同一 try 起点还带用户 catch —— cleanup 在 catch 体尾部(截断 catch,把 `finally` 挂到同一个 try),或紧跟 `try/catch`(再包一层) | — |
+| 复制的分支尾块 | 共享的「必定退出」尾块被展开进 `if` 两条分支;`hoistDuplicatedFinallyTails` 去重后重试该 plan | — |
+| 循环耗尽分支 | cleanup 落在 `for-of` 的 done 分支、循环体以哨兵 `throw` 收尾 —— 分支尾改成 `break`,包成真正的 `try/finally` | `applyLoopExhaustedFinally` |
+| 循环体尾部 | cleanup/guard 折进 do-while 的 test,按指令 pc 切片,循环 test 脚手架留在原地(仅 13.0.1.0) | `tailCleanupRange` |
+| 循环体尾部守卫 | cleanup 在循环体尾部,守卫是一组语句、其非抛出分支是一条只有 `jmp` 的回边(哨兵比较物化成 test):包住 try 体、删掉守卫脚手架、把 test 改成 `true`(仅 13.0.1.0) | `loopTailGuard` |
+| eager | cleanup 已内联到 `return` 之前,没有写 hole 的 suppress 块;按指令**形状**找到那份副本并移进 `finally` | `eagerCleanup` |
+
+无法定位的 plan 留下 `/* xpanda: try/finally not restored [plan …] */` 注释(eager 与 `tailCleanupRange` 不写:它们没有丢代码);标记一律剥离。后两种循环形态都限定字节码 < 24(24+ 的 handler 已由 `foldEagerCatchToFinally` 处理,在这里再认只会多套一层),且要求守卫是**第一个** hole 块;最末一种还要求守卫的非抛出后继块里只有那一条 `jmp` —— 循环增量块意味着后面还有真正的循环体代码,必须继续走经典布局。当前 `es2abc` 还会在每个 `return` 前内联一份 `finally`,并在 `hole` 收尾 handler 里再留一份;这个形态,以及 `for-of` 关闭所用的同一份收尾,见[字节码形态](./BYTECODE_PATTERNS.zh-CN.md)。
+
+### 7.6 值分析(`ValueAnalysis.ts`)
+
+在 CFG 上做到达定义分析:对每个基本块与寄存器记录可达定义集合(只走普通边 —— 异常落地块没有普通前驱,in-set 为空,必须按保守语义理解),并提供「这次读取看到的是哪个定义」(`definitionsAtRead`)与「这个定义被谁读了」(`readersOf` / `isReadOutside`)。`instructionAccess` 收集显式的寄存器操作数(destObj / srcObj / loadParam / callParams …);`acc` 只是另一个寄存器。
+
+寄存器复用很重(`v6` 既可能是 hole 哨兵,也可能是读缓冲区),按名字判断分不清值的版本。第一个消费者是 finally 守卫:语法形态的 `comparesHoleWith` 认不出来时(寄存器在别的块被复制,或守卫读的是 {hole, exception} 的 φ),`guardComparesSavedValue` 按值判定。它也是 §16 里 SSA 方向的天然起点 —— 目前 AST 优化器仍需从使用形态反推值的版本,而 `suppress` 的判断是刻意保持全有或全无的:按名字给出的结论会删掉 finally 之后仍被读取的存储。
+
+### 7.7 图工具
 
 - `ValueGraph.ts`:保持插入顺序、边分三种(`true` / `false` / `exception`)的有向图;同一对节点的普通边与异常边可以并存。提供 `edgeValueOrThrow`(条件边)、`normalSuccessors` / `exceptionSuccessors` / `exceptionPredecessors`、`edgeKind`、DFS 后序。
 - `DominatorGraph.ts`:迭代式支配树计算(Cooper-Harvey-Kennedy 风格),带 100000 次迭代安全超时;`dominatesStrictly`;`LoopFinder` 求自然环。
@@ -361,3 +380,10 @@ npm run typecheck
 8. **finally 的读取在 try 的每个出口都活跃**;没有异常边的活跃性模型必须把出口读取并入 `finalizerReads`,否则 try 块内的存储会被当成死存储删除。
 9. catch 参数不能叫 `acc`(会遮蔽累加器);`NodeFactory.tryStatementNode` 用 `catchAcc`,并在 handler 入口重新物化 `acc = catchAcc`。
 10. 运行时只需 Node.js ≥ 18;`typescript` / `tsx` 仅开发期使用。降级输出可能包含 `decompiler_goto`、`xpanda_goto` 或 `export … from` 形态,再解析时需要对应的 parser 配置。
+
+## 16. 规划(Roadmap)
+
+两个方向,目标都是把「事后从生成的 AST 里按形态反推」的活儿去掉。README 的 Roadmap 一节跟踪同样的两件事。
+
+1. **继续优化结构化输出**(§7.3、§7.5)。区域归约在不可归约图与超限展开上仍会降级到 `SimpleAnalysis`,少数 `try/finally` 计划还会留下 `try/finally not restored` 注释。工作点是:共享尾块 / 不可归约图的更多归约分支、减少依赖语句形态的启发式、以及为尚未建模的异常形态补 finally 布局 —— 每条规则都要窄口径开关,并在整个 `amcl1.0.6.abc` 样本上量影响面(提交信息里写清改动类数)。
+2. **增加 SSA 层**(§7.6)。CFG(§6.3)与反编译(§7)之间目前没有值级 IR:寄存器版本由 AST 优化器(§9)从使用形态反推,所以 `vN = v0` 的寄存器搬运与条件物化临时变量会漏进输出。引入 SSA 形态 —— def-use 链、汇合点的 φ 节点,参考 [React Compiler](https://github.com/react/react/tree/main/compiler) 的设计 —— 可以让死存储消除、复制传播、累加器折叠在 IR 上(结构化之前)只做一次,并给结构分析和 finally 守卫直接的值版本答案,取代目前保守的按名字判断(`ValueAnalysis` 是这个方向的第一步)。
