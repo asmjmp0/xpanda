@@ -61,27 +61,16 @@ export abstract class JumpStatement implements IPandaDecompileAble {
 }
 
 export class IfPandaStatement extends JumpStatement {
-    private tryCatchPandaStatement: TryCatchPandaStatement | null = null;
     private consequent: IPandaDecompileAble | null;
     private alternate: IPandaDecompileAble | null;
 
     constructor(private readonly test: Region, consequent: IPandaDecompileAble | null, alternate: IPandaDecompileAble | null) {
         super(test);
-        if (test.isTryCatchHelperRegion()) {
-            this.tryCatchPandaStatement = new TryCatchPandaStatement(consequent, alternate, test.catchBodyEndPC);
-            this.consequent = null;
-            this.alternate = null;
-            return;
-        }
         this.consequent = consequent;
         this.alternate = alternate;
     }
 
     decompile(methodHandler: PandaDecompilerMethodHandler, pandaLexical: PandaLexical, astNode: any): void {
-        if (this.tryCatchPandaStatement) {
-            this.tryCatchPandaStatement.decompile(methodHandler, pandaLexical, astNode);
-            return;
-        }
         const codeGenerator = methodHandler.getCodeGenerator();
         const factory = codeGenerator.getNodeFactory();
         let exp = this.generateTestExpression(methodHandler, pandaLexical);
@@ -300,6 +289,13 @@ export class TryCatchPandaStatement implements IPandaDecompileAble {
         private readonly catchBody: IPandaDecompileAble | null,
         /** 该 try 保护范围的结束 pc(try 表),用于判断 catch 与 finally 的嵌套关系 */
         private readonly tryBodyEndPC: number | null = null,
+        /**
+         * Try 区域的语义。`finallyEpilogue` 表示这是 24+ 内联 finally 的异常路径
+         * handler:结构化阶段先按 catch 输出(cleanup + 重抛),再由尾部
+         * foldEagerCatchToFinally 根据 try 体里内联的同一份 cleanup 折回 try/finally。
+         * 标记写在 AST 的 extra 上,让最终折叠能确认它来自 Try 区域。
+         */
+        private readonly kind: "catch" | "finallyEpilogue" = "catch",
     ) {}
 
     decompile(methodHandler: PandaDecompilerMethodHandler, pandaLexical: PandaLexical, astNode: any): void {
@@ -320,6 +316,9 @@ export class TryCatchPandaStatement implements IPandaDecompileAble {
         codeGenerator.getNodeUtils().insertNodeToBody(factory.expressionStatementNode(toAcc as any) as any, catchBodyNode);
         this.catchBody?.decompile(methodHandler, pandaLexical, catchBodyNode);
         const tryNode = factory.tryStatementNode(tryBodyNode, catchBodyNode);
+        if (this.kind === "finallyEpilogue") {
+            tryNode.extra = { ...(tryNode.extra ?? {}), xpandaTryKind: "finallyEpilogue" };
+        }
         if (this.tryBodyEndPC !== null) methodHandler.recordTryBodyEnd(tryNode, this.tryBodyEndPC);
         codeGenerator.getNodeUtils().insertNodeToBody(tryNode as any, astNode);
     }

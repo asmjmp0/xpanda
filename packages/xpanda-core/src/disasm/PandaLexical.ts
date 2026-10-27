@@ -179,7 +179,7 @@ export class PandaLexical {
             while (head < queue.length) {
                 const block = queue[head++];
                 const outStack = this.simulateBlockStack(block, stacks.get(block)!, startLevel, desc, counters);
-                for (const successor of pandaIRCFG.graph.successors(block)) {
+                for (const successor of pandaIRCFG.graph.normalSuccessors(block)) {
                     enqueue(successor, outStack);
                 }
             }

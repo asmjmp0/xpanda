@@ -109,7 +109,7 @@ Handler entry is almost always `sta vX` (the exception arrives in `acc`). Classi
 | Handler shape | What it is | Region graph |
 |---|---|---|
 | `sta e; throw e` (only `mov` / `poplexenv` / `nop` in between) | Pure rethrow bridge. Wraps a try body so the outer epilogue sees the exception, wraps a sync generator body, wraps `getpropiterator`. | Drop. Emitting `catch (e) { throw e }` breaks `for-of` and lexenv splitting. |
-| `sta e; <reads e: property / call / string / global>; …` | User `catch`. | Keep. `TryCatchHelperRegion`. |
+| `sta e; <reads e: property / call / string / global>; …` | User `catch`. | Keep. Try region (`kind: "catch"`): normal edge → try body, exception edge → handler. |
 | `sta pending` then later `pending !== hole` with a `throw pending` successor | `finally` epilogue, or the `break`/`return` close of `for-of`. | `finally`: on the inlined-finally shape, keep the handler so the cleanup is emitted, then fold the two copies. Classic hole-in-the-body shape stays with `TryFinally` and stays out of the region graph. |
 | `sta e; asyncfunctionreject cap; return` | Async function wrapper around the **whole** body. | Drop. The function is `async`. |
 | `sta e; setgeneratorstate 4; asyncgeneratorreject gen; return` | Async generator wrapper. | Drop. `asyncgeneratorreject` is not `asyncfunctionreject`; a classifier that only recognizes the latter must still reject this shape, or a user `catch` appears around the generator. |
@@ -335,7 +335,7 @@ The CFG does not contain a clean "try diamond". Handlers have no incoming contro
 Practical split:
 
 1. **Parse every catch-all with `codeSize === 0`.** Decide from the handler, not the version byte. Skip length-0 tries.
-2. **Keep** user `catch` handlers, and keep the `hole` epilogue when it is the only copy of a `finally` body (the inlined-finally shape). Splice `TryCatchHelperRegion` only for those.
+2. **Keep** user `catch` handlers, and keep the `hole` epilogue when it is the only copy of a `finally` body (the inlined-finally shape). Splice a Try region (`kind: "catch"` / `"finallyEpilogue"`) only for those; the handler is reached by an explicit `exception` edge, and classification drives the splice (`ExceptionTable.ts`).
 3. **Drop** pure rethrows, `for-in` acquisition, `for-of` / `for-await-of` close handlers, the async `asyncfunctionreject` wrapper, and the async-generator `asyncgeneratorreject` wrapper. Also drop the `THROW` / `RETURN` arms of a resume split so the suspend point reduces as a linear expression.
 4. **Restore on the AST**, where the copies are visible as text:
    - `for-of` / `for-await-of` / `for-in` from the loop head, not from the catch-alls.

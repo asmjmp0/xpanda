@@ -1,6 +1,5 @@
 import { PandaParseException } from "../PandaParseException";
 import type { PandaIRCFG } from "./PandaIRCFG";
-import { PandaIRBasicBlock } from "./PandaIRBasicBlock";
 
 /**
  * CFG 预处理 Pass(移植自 Java SplitJumpPandaIRCFGPass / SplitTryCatchPandaIRCFGPass)
@@ -36,54 +35,39 @@ export function runSplitJumpPass(ircfg: PandaIRCFG): boolean {
     return splitPCList.size > 0;
 }
 
+/**
+ * CFG 预处理 pass:按 try 表边界切块。
+ *
+ * 只负责切块:try 起点/终点、每个 handler 入口(以及非零 codeSize 的 handler 终点)
+ * 必须是基本块边界。受保护块与 handler 的归属改由 CFG 上的显式异常边表达
+ * (PandaIRCFG.getExceptionTable),不再在块上挂 catchBlockList。
+ * @Author: jmp0
+ */
 export function runSplitTryCatchPass(ircfg: PandaIRCFG): boolean {
-    const tryDescMap = collectTryDescriptors(ircfg);
-    if (tryDescMap.size === 0) return false;
-    for (const [pair, handlePCList] of tryDescMap) {
-        const catchBlockList: PandaIRBasicBlock[] = [];
-        for (const i of handlePCList) {
-            const b = ircfg.getBasicBlockByPC(i);
-            if (b) catchBlockList.push(b);
-        }
-        const [startPC, endPC] = pair;
-        const idx = ircfg.getBlockIndexPC(startPC);
-        if (idx === null) continue;
-        for (let i = idx; i < ircfg.pandaIRBasicBlocks.length; i++) {
-            const block = ircfg.pandaIRBasicBlocks[i];
-            if (block.getStartPC() >= startPC && block.getStartPC() + block.getSize() <= endPC) {
-                block.setCatchInfo(catchBlockList);
-            }
-        }
+    const splitPCList = collectTryBoundaryPCs(ircfg);
+    if (splitPCList.size === 0) return false;
+    for (const pc of splitPCList) {
+        splitBlockByPc(ircfg, pc);
     }
     return true;
 }
 
-function collectTryDescriptors(ircfg: PandaIRCFG): Map<[number, number], number[]> {
+function collectTryBoundaryPCs(ircfg: PandaIRCFG): Set<number> {
     const splitPCList = new Set<number>();
     const tryBlocks = ircfg.getPandaMethod().methodCode?.pandaMethodTryBlocks;
-    const tryDescMap = new Map<[number, number], number[]>();
-    if (tryBlocks) {
-        for (const tryBlock of tryBlocks) {
-            const tryStartPC = tryBlock.startPC;
-            const tryEndPC = tryStartPC + tryBlock.length;
-            splitPCList.add(tryStartPC);
-            splitPCList.add(tryEndPC);
-            const catchBlocks = tryBlock.pandaMethodCatchBlocks;
-            if (!catchBlocks) continue;
-            const catchPCList: number[] = [];
-            for (const catchBlock of catchBlocks) {
-                const handlerPC = catchBlock.handlerPC;
-                const catchEndPC = handlerPC + catchBlock.codeSize;
-                splitPCList.add(handlerPC);
-                const lastBlock = ircfg.pandaIRBasicBlocks[ircfg.pandaIRBasicBlocks.length - 1];
-                if (catchEndPC <= lastBlock.getTerminator().pc) splitPCList.add(catchEndPC);
-                catchPCList.push(handlerPC);
-            }
-            tryDescMap.set([tryStartPC, tryEndPC], catchPCList);
+    if (!tryBlocks) return splitPCList;
+    for (const tryBlock of tryBlocks) {
+        const tryStartPC = tryBlock.startPC;
+        const tryEndPC = tryStartPC + tryBlock.length;
+        splitPCList.add(tryStartPC);
+        splitPCList.add(tryEndPC);
+        for (const catchBlock of tryBlock.pandaMethodCatchBlocks ?? []) {
+            const handlerPC = catchBlock.handlerPC;
+            const catchEndPC = handlerPC + catchBlock.codeSize;
+            splitPCList.add(handlerPC);
+            const lastBlock = ircfg.pandaIRBasicBlocks[ircfg.pandaIRBasicBlocks.length - 1];
+            if (catchEndPC <= lastBlock.getTerminator().pc) splitPCList.add(catchEndPC);
         }
     }
-    for (const pc of splitPCList) {
-        splitBlockByPc(ircfg, pc);
-    }
-    return tryDescMap;
+    return splitPCList;
 }

@@ -109,7 +109,7 @@ handler 入口几乎总是 `sta vX`（异常从 `acc` 进来）。分类看这�
 | Handler 形态 | 是什么 | 区域图 |
 |---|---|---|
 | `sta e; throw e`（中间只允许 `mov` / `poplexenv` / `nop`） | 纯重抛跳板。用来把 try 体的异常送进外层收尾，也用来包同步 generator 的函数体，以及包 `getpropiterator`。 | 丢掉。生成 `catch (e) { throw e }` 会破坏 `for-of` 和词法环境切分。 |
-| `sta e; <读 e：属性 / 调用 / 字符串 / 全局>; …` | 用户 `catch`。 | 保留。接 `TryCatchHelperRegion`。 |
+| `sta e; <读 e：属性 / 调用 / 字符串 / 全局>; …` | 用户 `catch`。 | 保留。接 Try 区域（`kind: "catch"`）：普通边 → try 体，异常边 → handler。 |
 | `sta pending`，后面有 `pending !== hole`，并且有一条后继是 `throw pending` | `finally` 收尾，或者 `for-of` 的 `break`/`return` 关闭。 | `finally`：内联 finally 这种形态下要保留 handler，cleanup 才出得来，然后再把两份折回去。经典的“try 体里写 hole 再跳到 cleanup”仍交给 `TryFinally`，不进区域图。 |
 | `sta e; asyncfunctionreject cap; return` | 包住**整个**函数体的 async 包装。 | 丢掉。函数是 `async`。 |
 | `sta e; setgeneratorstate 4; asyncgeneratorreject gen; return` | async generator 包装。 | 丢掉。`asyncgeneratorreject` 不是 `asyncfunctionreject`；只认后者的分类器仍然必须拒绝这个形态，否则 generator 外面会出现一层用户 `catch`。 |
@@ -335,7 +335,7 @@ CFG 里没有干净的“try 菱形”。handler 没有控制流前驱，只能�
 实际拆分：
 
 1. **`codeSize === 0` 的 catch-all 也要解析。** 按 handler 分类，不要按版本字节。长度为 0 的 try 跳过。
-2. **保留**用户 `catch`，以及“这份 handler 是 `finally` 体唯一一份拷贝”时的 `hole` 收尾（内联 finally 形态）。只给这些接 `TryCatchHelperRegion`。
+2. **保留**用户 `catch`，以及“这份 handler 是 `finally` 体唯一一份拷贝”时的 `hole` 收尾（内联 finally 形态）。只给这些接 Try 区域（`kind: "catch"` / `"finallyEpilogue"`）；handler 由显式 `exception` 边到达，拼接由分类器（`ExceptionTable.ts`）决定。
 3. **丢掉**纯重抛、`for-in` 的获取、`for-of` / `for-await-of` 的关闭 handler、async 的 `asyncfunctionreject` 包装、async generator 的 `asyncgeneratorreject` 包装。resume 分流的 `THROW` / `RETURN` 臂也丢掉，让挂起点归约成一个线性表达式。
 4. **在 AST 上还原**，拷贝在那里是看得见的文本：
    - `for-of` / `for-await-of` / `for-in` 从循环头认，不从 catch-all 认。

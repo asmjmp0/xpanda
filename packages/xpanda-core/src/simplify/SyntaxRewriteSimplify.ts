@@ -202,6 +202,14 @@ export class SyntaxRewriteSimplify implements ISimplify {
      * 与 `try { <body>; <exit> } finally { <cleanup> }` 等价,后者才是源码结构。
      * 只在 cleanup 逐语句结构相同、且不读取 catch 参数 / try 体内声明的变量时改写。
      */
+    /**
+     * 24+ 把 finally 内联在每个出口前,异常路径只剩 handler 里的
+     * `cleanup; if (pending !== hole) throw pending`。结构化阶段把这个 handler 作为
+     * Try 区域的 `finallyEpilogue` 输出成 try/catch(AST 上带
+     * `extra.xpandaTryKind` 标记),这里再把两份相同的 cleanup 折回 try/finally。
+     * 折叠必须留到最后:只有优化器跑完,try 体里内联的 cleanup 与 handler 里的
+     * 那份才会在文本上完全一致。标记只是来源确认,不会放宽结构校验。
+     */
     public static foldEagerCatchToFinally(node: Program): boolean {
         let changed = false;
         traverse(file(node), {
@@ -255,6 +263,7 @@ export class SyntaxRewriteSimplify implements ISimplify {
                     null,
                     TYPE.blockStatement(cleanup),
                 ));
+                delete (path.node as any).extra?.xpandaTryKind;
                 changed = true;
             },
         });

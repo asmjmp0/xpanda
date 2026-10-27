@@ -42,7 +42,7 @@ JavaScript 源码(落盘 / stdout / 编程 API)
 | `src/hap/` | HAP 应用包适配:只读 ZIP(`ZipFile.ts`)+ `.abc` 条目 / `module.json` / `resources.index`(`HapFile.ts`) |
 | `src/res/` | `resources.index` 解析(兼容 Restool 与 RestoolV2 格式)为可查询的资源项 |
 | `src/disasm/` | 反汇编:生成的 opcode 表、统一指令模型、CFG、词法分析 |
-| `src/decompiler/` | 结构化分析(Region 归约)、语句树、指令 handle、支配树、降级方案、try/finally 还原 |
+| `src/decompiler/` | 结构化分析(Region 归约)、语句树、指令 handle、支配树、降级方案、try/finally 还原;`ExceptionTable.ts` 分类每个 try 表条目(用户 catch / 忽略异常 / 空 catch / 内联 finally 收尾 / 协议胶水),并驱动 CFG 的异常边 |
 | `src/codegen/` | `CodeGenerator` —— 包装 `src/ast/` 的轻封装 |
 | `src/ast/` | Babel AST 构建与文本生成(`NodeFactory` / `NodeUtils` / `FormatCode`) |
 | `src/simplify/` | 优化器流水线 |
@@ -114,9 +114,11 @@ JavaScript 源码(落盘 / stdout / 编程 API)
 
 ### 6.3 CFG 构建(`PandaDisAssembler.ts`、`ir.ts`)
 
-对指令字节做单遍扫描,产出以终止符切分的 `PandaIRBasicBlock`(入口块名为 `entry`,其余 `label_<pc>`),喂给 `PandaIRCFG`(块的 `ValueGraph`)。随后跑两个归一化 pass:`runSplitJumpPass`(在落在块中间的跳转目标处切块)与 `runSplitTryCatchPass`(在 try 起止与 handler 边界切块,并给覆盖到的块打上 catch 条目标记)。最后以规范的边值重建图。
+对指令字节做单遍扫描,产出以终止符切分的 `PandaIRBasicBlock`(入口块名为 `entry`,其余 `label_<pc>`),喂给 `PandaIRCFG`(块的 `ValueGraph`)。随后跑两个归一化 pass:`runSplitJumpPass`(在落在块中间的跳转目标处切块)与 `runSplitTryCatchPass`(只在 try 起止与 handler 边界切块;归属不再写成块上的 catch 标记,而由图的显式异常边表达)。最后以规范的边值重建图。
 
-**边语义**:`true` = 跳转方向,`false` = 顺序/fallthrough 方向。一切结构极性判定必须用 `edgeValueOrThrow` —— `successors()` 返回插入顺序,不代表边极性(见 §7.3)。
+**边语义**:三种边 —— `true` = 跳转方向,`false` = 顺序/fallthrough 方向,`exception` = try 表产生的“受保护块 → handler”异常边。`successors()` / 度数返回三种边的并集(同一对 `(a,b)` 可以同时是普通边与异常边,二者互不覆盖);结构极性判定用 `normalSuccessors()` / `edgeValueOrThrow`,绝不依赖 `successors()` 的顺序。
+
+**handler 分类**(`ExceptionTable.ts`,经 `PandaIRCFG.getExceptionTable()` 惰性构建):每个 try 表条目都按 handler 的指令形状归类 —— 用户 `catch`、忽略异常值的 catch、空 catch(empty join)、内联 finally 收尾、经典 hole 哨兵 finally、纯重抛跳板、for-in 取迭代器、for-of 关闭、async 拒绝派发、generator resume 臂、无保护范围。分类器同时决定 try 体的吸收边界(`protectedEndPC`),是 `RegionGraphBuilder` 的唯一事实来源。只有保留的条目会产生异常边;协议 handler 一条都没有,因此永远不会被归约成 `try`。
 
 ### 6.4 词法分析(`PandaLexical.ts`)
 
@@ -142,16 +144,22 @@ JavaScript 源码(落盘 / stdout / 编程 API)
 
 ### 7.2 语句树(`statements.ts`)
 
-归约产出、再降为 Babel AST 的语句:`LinearPandaStatement`(→ handle 输出)、`IfPandaStatement`(test 区域带 `tryCatchHelperRegion` 时重解释为 `TryCatchPandaStatement`)、`WhileStatement`(始终输出为 `while (true)` + 头部 `if (test) break`)、`DoWhileStatement`、`BreakStatement` / `ContinueStatement`、`GotoStatement`(`tryFixGoto` 把简单情形转成带 label 的 `while (true)` 循环,否则输出 `xpanda_goto(name)`)、`LabelStatement`、`And/OrLogicalExpressionStatement`(把 `A || B` 渲染为 `(A求值, cond) || (B求值, cond)` 序列,且**不会**盲目向嵌套逻辑操作数追加 `acc`)、`TryCatchPandaStatement`(catch 参数是 `catchAcc`,绝不叫 `acc`;handler 开头 `acc = catchAcc` 把异常搬回累加器)。
+归约产出、再降为 Babel AST 的语句:`LinearPandaStatement`(→ handle 输出)、`IfPandaStatement`、`WhileStatement`(始终输出为 `while (true)` + 头部 `if (test) break`)、`DoWhileStatement`、`BreakStatement` / `ContinueStatement`、`GotoStatement`(`tryFixGoto` 把简单情形转成带 label 的 `while (true)` 循环,否则输出 `xpanda_goto(name)`)、`LabelStatement`、`And/OrLogicalExpressionStatement`(把 `A || B` 渲染为 `(A求值, cond) || (B求值, cond)` 序列,且**不会**盲目向嵌套逻辑操作数追加 `acc`)、`TryCatchPandaStatement`(catch 参数是 `catchAcc`,绝不叫 `acc`;handler 开头 `acc = catchAcc` 把异常搬回累加器;内联 finally 收尾带 `kind = "finallyEpilogue"`,并给生成的 `TryStatement` 打 `extra.xpandaTryKind` 标记)。
 
 ### 7.3 结构化分析(`StructureAnalysis.ts`)—— Region 归约
 
-构造:`RegionGraphBuilder` 把 CFG 转为 Region 图(`RegionType = Linear | Condition | Tail`)。ArkTS 为语言特性合成异常 handler —— **for-in、for-of、async 函数、generator** —— 这些被排除在区域图之外;真实 try 在 try 入口前拼接 `TryCatchHelperRegion`(false 边 → try 体,true 边 → handler;handler 区域获得 `exceptionLandingPad`)。当前 `es2abc` 的 catch 表 `codeSize === 0` 不表示空 catch:13.0.1.0 和 24.0.0.0 上每条 handler 的 `codeSize` 都是 0,能否进入区域图要看 handler 本体。`for-of` / `for-in` / `try` / `async` / generator 的共用 lowering 写在[字节码形态](./BYTECODE_PATTERNS.zh-CN.md)。死代码(入度 0 的块)被迭代剪除。
+构造:`RegionGraphBuilder` 把 CFG 转为 Region 图(`RegionType = Linear | Condition | Tail`;Try 区域保持 `Condition` 类型,让循环/支配/尾块合并等所有启发式看到的形状与旧 helper 完全一致,再由 `tryRegion` 描述符区分)。真实 try 在 try 入口前拼接一个 **Try 区域**:
+
+- 普通边(`false`)→ try 体;
+- **异常边** → handler(第三边,`ValueGraph.putExceptionEdge`);
+- `tryRegion = { catchEndPC, kind: "catch" | "finallyEpilogue" }`,body/handler 以图上的边为准(多个 try 条目可以共用起点,后接的 Try 区域会改接前者的正常边,描述符里持引用会过期)。
+
+ArkTS 为语言特性合成异常 handler —— **for-in、for-of、async 函数、generator** —— 这些被分类器排除,永远不拼接。只有“正常控制流可达的块 + 保留下来的 handler 及其普通流闭包”(`collectRegionBlocks`)会建立区域,所以协议胶水及其下游清理代码不会作为孤岛进入图。当前 `es2abc` 的 catch 表 `codeSize === 0` 不表示空 catch:13.0.1.0 和 24.0.0.0 上每条 handler 的 `codeSize` 都是 0,能否进入区域图要看 handler 本体。`for-of` / `for-in` / `try` / `async` / generator 的共用 lowering 写在[字节码形态](./BYTECODE_PATTERNS.zh-CN.md)。不在集合里的块不会被建成区域;其后的入度清扫与入口可达性清扫只是兜底(也会清掉接线失败的 try 区域)。
 
 区域图上的归约循环:
 
 1. 基本块 `> 2000`(`MAX_STRUCTURED_BLOCKS`)→ `PandaDecompileException("too many blocks!")` → 降级 `SimpleAnalysis`。
-2. `reduceAcyclic`:Condition 区域 → `reduceIfRegion`(仅 if / if-else 汇合 / 双 Tail / try/catch 一条分支为死 Tail 时走 **`reduceTryCatchWithDeadBranch`**);Linear 区域 → `reduceSequence`(语句拼接,经 `simplifyConditionalSequence` 合并 `&&` / `||` 短路链,后者设置 `logicalRegion` 标志 —— 合并这类区域时该标志**必须传播**,否则后续阶段只能生成读 `acc` 的 test,丢掉 `A || B` 的计算)。
+2. `reduceAcyclic`:带 `tryRegion` 的 Condition 区域 → `reduceTryRegion`(try 体 vs handler:汇合 / 双 Tail / 一侧为死 Tail 时走 **`reduceTryCatchWithDeadBranch`**);其余 Condition 区域 → `reduceIfRegion`;Linear 区域 → `reduceSequence`(语句拼接,经 `simplifyConditionalSequence` 合并 `&&` / `||` 短路链,后者设置 `logicalRegion` 标志 —— 合并这类区域时该标志**必须传播**,否则后续阶段只能生成读 `acc` 的 test,丢掉 `A || B` 的计算)。
 3. `reduceCyclic`:自环与单前驱回边 → while / do-while;其余登记为未解决环。
 4. 停滞时:先用 `LoopFinder` / `refineLoop` 精化一个未解决环,否则 `coalesceTailRegion`(吸收 Tail 区域),否则 `fixIrreducibleByTailRegion` —— **Tail 复制**,把不可归约图变为可归约。迭代 `> 3000` 轮(`MAX_REDUCTION_ROUNDS`,与块数无关)仍卡住 → `"can not reduce the graph"` → `SimpleAnalysis`。
 5. `virtualizeIrregularExits`:把循环体内的词法出口转成 `continue` / `break` / 带 label 的 `goto`。条件出口只生成**一条**语句(`if (cond) break`);线性出口生成无条件语句。出口目标为死的出度 0 Tail(只有 `return` / `throw`)时视为"内联",经 `Region.copy()` 把 Tail 语句复制进该分支。
@@ -159,9 +167,9 @@ JavaScript 源码(落盘 / stdout / 编程 API)
 
 关键不变量:
 
-- **条件极性来自边值,而非后继顺序**:`conditionalExp` 描述 fallthrough(false 边)条件(`jnez` → false 边为 `!acc`,`jeqz` → false 边为 `acc`)。`coalesceTailRegion` 与 `virtualizeIrregularExits` 必须用 `edgeValueOrThrow`;折叠 *true* 边上的 Tail 需要 `expInvert()` —— 对 `logicalRegion`(表达式本身就是 fallthrough 条件)则改用取反分支的 `IfPandaStatement`。
-- `Region.copy()`(Tail 复制、出口内联)必须保留 `conditionalExp` / `logicalRegion` / `exceptionLandingPad` / `tryCatchHelperRegion`。
-- `reduceIfRegion` 消费完 try/catch 两条分支后必须清除 `tryCatchHelperRegion` 标志;否则下一个条件区域被误判为 try/catch,成功路径会落进 `catch`。
+- **条件极性来自边值,而非后继顺序**:`conditionalExp` 描述 fallthrough(false 边)条件(`jnez` → false 边为 `!acc`,`jeqz` → false 边为 `acc`)。`coalesceTailRegion` 与 `virtualizeIrregularExits` 必须用 `edgeValueOrThrow`;折叠 *true* 边上的 Tail 需要 `expInvert()` —— 对 `logicalRegion`(表达式本身就是 fallthrough 条件)则改用取反分支的 `IfPandaStatement`。Try 区域的 handler 在异常边上,异常边没有极性:`edgeValueForPolarity` 按旧 helper 的 true 边处理。
+- `Region.copy()`(Tail 复制、出口内联)必须保留 `conditionalExp` / `logicalRegion` / `exceptionLandingPad` / `tryRegion`。
+- Try 区域只由 `reduceTryRegion` 消费:它从边上读 body/handler,替换成 `TryCatchPandaStatement`,并当场清空描述符(`tryRegion = null`),所以同一个区域不会再被误判成 `try`(取代旧的 `tryCatchHelperRegion` 可变标志)。
 
 ### 7.4 降级分析(`SimpleAnalysis.ts`)
 
@@ -169,11 +177,11 @@ JavaScript 源码(落盘 / stdout / 编程 API)
 
 ### 7.5 try/finally 还原(`TryFinally.ts`)
 
-ArkTS 13 把 `finally` 编译成状态机(hole 哨兵、cleanup 块、重抛守卫)。`buildFinallyPlans` 按**结构特征**识别 —— 不按块大小:try 结束块写入 hole 哨兵并跳到 cleanup;handler 以 `sta` 开始且不立即 throw;稍后某个 hole 比较块带 throw 后继即为守卫。PC 顺序严格校验。角色(start / cleanup / guard / suppress)成为 `__xpanda_finally_marker__` 字符串,由 `MethodHandler` 插入;`applyFinallyPlans` 按三种布局改写(同一语句列表 / 嵌套列表尾部 / try+真 catch 形态)为 `try { … } finally { … }`。无法定位的 plan 留下 `/* xpanda: try/finally not restored */` 注释;标记一律剥离。当前 `es2abc` 还会在每个 `return` 前内联一份 `finally`,并在 `hole` 收尾 handler 里再留一份;这个形态,以及 `for-of` 关闭所用的同一份收尾,见[字节码形态](./BYTECODE_PATTERNS.zh-CN.md)。
+ArkTS 13 把 `finally` 编译成状态机(hole 哨兵、cleanup 块、重抛守卫)。24+ 的内联形态归属到 Try 区域(`kind = "finallyEpilogue"`),先输出成 `try { … } catch (e) { cleanup; throw e }`,等优化器把两份 cleanup 变成完全相同的文本后,由尾部 pass `foldEagerCatchToFinally` 折回 `try/finally`。“try 体里写 hole”的经典形态仍走 `buildFinallyPlans`,按**结构特征**识别 —— 不按块大小:try 结束块写入 hole 哨兵并跳到 cleanup;handler 以 `sta` 开始且不立即 throw;稍后某个 hole 比较块带 throw 后继即为守卫。PC 顺序严格校验。角色(start / cleanup / guard / suppress)成为 `__xpanda_finally_marker__` 字符串,由 `MethodHandler` 插入;`applyFinallyPlans` 按三种布局改写(同一语句列表 / 嵌套列表尾部 / try+真 catch 形态)为 `try { … } finally { … }`。无法定位的 plan 留下 `/* xpanda: try/finally not restored */` 注释;标记一律剥离。当前 `es2abc` 还会在每个 `return` 前内联一份 `finally`,并在 `hole` 收尾 handler 里再留一份;这个形态,以及 `for-of` 关闭所用的同一份收尾,见[字节码形态](./BYTECODE_PATTERNS.zh-CN.md)。
 
 ### 7.6 图工具
 
-- `ValueGraph.ts`:保持插入顺序、边带布尔值的有向图;`edgeValueOrThrow`、DFS 后序。
+- `ValueGraph.ts`:保持插入顺序、边分三种(`true` / `false` / `exception`)的有向图;同一对节点的普通边与异常边可以并存。提供 `edgeValueOrThrow`(条件边)、`normalSuccessors` / `exceptionSuccessors` / `exceptionPredecessors`、`edgeKind`、DFS 后序。
 - `DominatorGraph.ts`:迭代式支配树计算(Cooper-Harvey-Kennedy 风格),带 100000 次迭代安全超时;`dominatesStrictly`;`LoopFinder` 求自然环。
 
 ## 8. AST 构建与代码生成 —— `src/ast/` + `src/codegen/`
@@ -324,6 +332,9 @@ npm run preview --workspace xpanda-web # 预览构建产物
 ## 14. 验证与测试
 
 测试入口:`test/decompile.test.ts`。
+
+**测试夹具:一个二进制只加载一次、只跑一个 pass,一个类只反编译一次。**
+`loadPandaFile()` / `loadHapOnce()` 按文件(以及 `.abc` 条目)缓存解析后的容器;`parseAssembly()` 每个文件至多跑一次;`decompileClassOnce()` 用 `WeakMap` 按类缓存输出(AGENTS 规则 6 保证单类输出是纯函数)。类级回归写成 `BinaryClassTest[]` 表(`zhihuClassTests`、`yourpipeClassTests`、`amclClassTests` 等),由 `runClassSuite()` 执行:它只遍历一次 `getAllClasses()`,命中 matcher 的用例当场回调,声明的用例没匹配到就直接报错。用例内部的跨类断言通过 `ctx.decompileNamed()` / `ctx.decompileContaining()` 取类,底层是同一次遍历建好的 名字→类 索引,不会反复扫描。整套测试约 25s(旧夹具每个用例都重读容器并重跑 `parseAssembly()`,约 32s)。
 
 - 反编译 `test/resources/md5.abc`、`class.abc`、`aes.abc`、`yourpipe0.7.0.abc` 与 `zhihupp0.59.hap`;与 `test/expected/` 快照比较;所有输出用 Babel 再解析。
 - `md5.abc` 输出会**实际执行**,`md5("admin")` 与 Node `crypto` 比对;`aes.abc` 输出执行加解密自检(其快照钉住条件极性:`Counter.increment` 必须是 `!== 255`)。

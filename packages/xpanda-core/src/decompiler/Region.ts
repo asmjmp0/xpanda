@@ -11,6 +11,29 @@ import type { IPandaDecompileAble } from "./statements";
  */
 export type RegionType = "Linear" | "Condition" | "Tail";
 
+/**
+ * 结构化 try 的显式描述。
+ *
+ * 旧实现用一个"假的 Condition 区域"冒充 try:false 边当 try 体、true 边当 handler,
+ * 再用可变的 `tryCatchHelperRegion` 布尔标志传播语义。这里改成真正的 Try 区域:
+ *   - 正常边(false)→ try 体
+ *   - 异常边("exception")→ handler
+ * 异常边是控制流图的第三边,不参与条件极性,但参与可达性/支配/死代码判定。
+ */
+export class TryRegion {
+    /**
+     * try 体与 handler 不在这里保存:**边上才是唯一事实来源**
+     * (正常边 → try 体、异常边 → handler)。多个 try 表条目共用起点时,
+     * 后接的 Try 区域会改接前者的正常边,描述符里的引用会过期。
+     */
+    constructor(
+        /** try 表保护范围结束 pc(不含),AST 上用于判断 catch 与 finally 的嵌套关系 */
+        readonly catchEndPC: number | null,
+        /** 该 handler 的语义:真 catch,还是 24+ 内联 finally 的异常路径 */
+        readonly kind: "catch" | "finallyEpilogue",
+    ) {}
+}
+
 export class Region implements IPandaDecompileAble {
     block: PandaIRBasicBlock | null;
     type: RegionType;
@@ -18,19 +41,18 @@ export class Region implements IPandaDecompileAble {
     name: string;
     conditionalExp = false;
     exceptionLandingPad = false;
-    tryCatchHelperRegion = false;
     logicalRegion = false;
+    /**
+     * 非 null 时该区域是一个 Try 区域。类型仍为 "Condition":归约器里所有
+     * "条件区域"的图算法(循环/词法节点/尾块合并)必须与旧的 helper 完全一致,
+     * try 语义由该描述符单独分发。
+     */
+    tryRegion: TryRegion | null = null;
     /**
      * 该区域是某个 try 的入口时,保护范围的结束 pc(不含)。
      * reduceSequence 不能把这个位置之后的语句并进 try 体。
      */
     tryBodyEndPC: number | null = null;
-    /**
-     * try/catch helper 专用:该 try 保护范围的结束 pc(不含)。
-     * 不能复用 tryBodyEndPC —— 那个字段会被 reduceSequence 用来拒绝越界合并,
-     * helper 上设置它会改变归约行为。
-     */
-    catchBodyEndPC: number | null = null;
 
     constructor(block: PandaIRBasicBlock | null, type: RegionType) {
         this.block = block;
@@ -49,14 +71,6 @@ export class Region implements IPandaDecompileAble {
                 throw new PandaParseException("generateTestExpression");
             }
         }
-    }
-
-    /** helper region 构造(Java Region(name, type)) */
-    static helper(name: string): Region {
-        const r = new Region(null, "Condition");
-        r.name = name;
-        r.tryCatchHelperRegion = true;
-        return r;
     }
 
     getStatements(): IPandaDecompileAble[] {
@@ -94,7 +108,7 @@ export class Region implements IPandaDecompileAble {
         copyOne.conditionalExp = this.conditionalExp;
         copyOne.logicalRegion = this.logicalRegion;
         copyOne.exceptionLandingPad = this.exceptionLandingPad;
-        copyOne.tryCatchHelperRegion = this.tryCatchHelperRegion;
+        copyOne.tryRegion = this.tryRegion;
         copyOne.tryBodyEndPC = this.tryBodyEndPC;
         return copyOne;
     }
@@ -109,7 +123,7 @@ export class Region implements IPandaDecompileAble {
 
     isLogicalRegion(): boolean { return this.logicalRegion; }
     isConditionalExp(): boolean { return this.conditionalExp; }
-    isTryCatchHelperRegion(): boolean { return this.tryCatchHelperRegion; }
+    isTryRegion(): boolean { return this.tryRegion !== null; }
     isExceptionLandingPad(): boolean { return this.exceptionLandingPad; }
     setExceptionLandingPadFlag(): void { this.exceptionLandingPad = true; }
 
@@ -119,15 +133,5 @@ export class Region implements IPandaDecompileAble {
 
     toString(): string {
         return this.name;
-    }
-}
-
-export class TryCatchHelperRegion extends Region {
-    constructor(tryEntryRegion: Region, handleEntryRegion: Region) {
-        super(null, "Condition");
-        this.name = "tryCatchHelper_" + tryEntryRegion + "_" + handleEntryRegion;
-        this.tryCatchHelperRegion = true;
-        // 该 try 保护范围的结束 pc:AST 上要靠它判断 catch 是不是嵌在 finally 里
-        this.catchBodyEndPC = tryEntryRegion.tryBodyEndPC;
     }
 }

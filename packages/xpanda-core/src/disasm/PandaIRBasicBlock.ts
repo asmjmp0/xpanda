@@ -8,7 +8,6 @@ import type { PandaInstruction } from "./PandaInstruction";
  */
 export class PandaIRBasicBlock {
     readonly pandaInstructions: PandaInstruction[];
-    catchBlockList: PandaIRBasicBlock[] | null = null;
     private readonly pandaInstructionHashMap = new Map<number, number>();
 
     constructor(readonly name: string, pandaInstructions: PandaInstruction[], readonly pandaMethod: PandaMethod) {
@@ -43,10 +42,6 @@ export class PandaIRBasicBlock {
         return null;
     }
 
-    setCatchInfo(catchBlockList: PandaIRBasicBlock[]): void {
-        this.catchBlockList = catchBlockList;
-    }
-
     getParent(): PandaMethod {
         return this.pandaMethod;
     }
@@ -65,9 +60,6 @@ export class PandaIRBasicBlock {
     toString(): string {
         const sb: string[] = [];
         sb.push(this.name);
-        if (this.catchBlockList) {
-            sb.push(" catch by [" + this.catchBlockList.map((b) => b.name).join("") + "]");
-        }
         sb.push(":\n");
         for (const instruction of this.pandaInstructions) {
             sb.push("\t" + instruction.toString() + "\n");

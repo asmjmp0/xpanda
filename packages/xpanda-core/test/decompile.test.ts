@@ -10,6 +10,7 @@ import { NullishCoalescingSimplify } from "../src/simplify/NullishCoalescingSimp
 import { SyntaxRewriteSimplify } from "../src/simplify/SyntaxRewriteSimplify";
 import { restoreGotoLoops } from "../src/simplify/GotoLoopRestore";
 import { HapFile } from "../src/hap/HapFile";
+import type { PandaClass } from "../src/file/clazz/PandaClass";
 import { ResourceIndexFile } from "../src/res/ResourceIndexFile";
 import { formatLongLogicalChains } from "../src/ast/FormatCode";
 import { KIND_MAP } from "../src/disasm/PandaInstruction";
@@ -55,16 +56,12 @@ interface Sample {
     verify?: (code: string) => void;
 }
 
-function decompileSample(abcPath: string): { code: string; classes: number } {
-    const data = new Uint8Array(fs.readFileSync(abcPath));
-    const pandaFile = new PandaFile(data);
-    pandaFile.parseAssembly();
-
-    const decompiler = new PandaDecompiler();
+function decompileSample(abcFileName: string): { code: string; classes: number } {
+    const pandaFile = loadPandaFile(abcFileName, { parse: true });
     const parts: string[] = [];
     let classes = 0;
     for (const cls of pandaFile.getAllClasses()) {
-        const js = decompiler.decompileClass(cls);
+        const js = decompileClassOnce(cls);
         if (js.length > 0) {
             parts.push(js);
             classes++;
@@ -87,6 +84,119 @@ function firstDifference(expected: string, actual: string): string {
         }
     }
     return "";
+}
+
+/**
+ * 二进制加载/类反编译缓存。
+ *
+ * 同一个 .abc / .hap 只读一次、只解析一次;同一个类的反编译结果只算一次
+ * (AGENTS 规则 6:单类输出是该类的纯函数)。跨类用例通过 BinaryContext 的
+ * 索引取类,不再反复遍历 getAllClasses()。
+ */
+const abcCache = new Map<string, PandaFile>();
+const hapFileCache = new Map<string, HapFile>();
+const parsedAbc = new Set<string>();
+const classCodeCache = new WeakMap<object, string>();
+const sharedDecompiler = new PandaDecompiler();
+
+function resourcePath(fileName: string): string {
+    return path.join(__dirname, "resources", fileName);
+}
+
+function loadHapOnce(fileName: string): HapFile {
+    let hap = hapFileCache.get(fileName);
+    if (!hap) {
+        hap = new HapFile(new Uint8Array(fs.readFileSync(resourcePath(fileName))));
+        hapFileCache.set(fileName, hap);
+    }
+    return hap;
+}
+
+function loadPandaFile(fileName: string, options: { parse?: boolean; hapEntry?: string } = {}): PandaFile {
+    const { parse = false, hapEntry } = options;
+    const key = hapEntry ? `${fileName}#${hapEntry}` : fileName;
+    let pandaFile = abcCache.get(key);
+    if (!pandaFile) {
+        const data = hapEntry
+            ? loadHapOnce(fileName).readEntry(hapEntry)!
+            : new Uint8Array(fs.readFileSync(resourcePath(fileName)));
+        pandaFile = new PandaFile(data);
+        abcCache.set(key, pandaFile);
+    }
+    if (parse && !parsedAbc.has(key)) {
+        pandaFile.parseAssembly();
+        parsedAbc.add(key);
+    }
+    return pandaFile;
+}
+
+function decompileClassOnce(clazz: PandaClass): string {
+    let code = classCodeCache.get(clazz);
+    if (code === undefined) {
+        code = sharedDecompiler.decompileClass(clazz);
+        classCodeCache.set(clazz, code);
+    }
+    return code;
+}
+
+interface BinaryContext {
+    pandaFile: PandaFile;
+    /** 单次收集的类表与索引,跨类断言直接查表,不再重复遍历 */
+    classes: PandaClass[];
+    byName: Map<string, PandaClass>;
+    decompileNamed: (exactName: string) => string;
+    decompileContaining: (needle: string) => { clazz: PandaClass; code: string };
+}
+
+interface BinaryClassTest {
+    label: string;
+    matches: (className: string) => boolean;
+    run: (clazz: PandaClass, code: string, ctx: BinaryContext) => void;
+}
+
+/**
+ * 一个二进制一个 pass:遍历一次类表,把命中的用例当场回调。
+ * 同一个类被多个用例命中时共享同一份反编译结果(WeakMap 缓存)。
+ */
+function runClassSuite(
+    fileName: string,
+    tests: BinaryClassTest[],
+    options: { parse?: boolean; hapEntry?: string } = {},
+): void {
+    const pandaFile = loadPandaFile(fileName, options);
+    const classes = pandaFile.getAllClasses();
+    const byName = new Map<string, PandaClass>();
+    for (const clazz of classes) byName.set(clazz.name.content, clazz);
+    const ctx: BinaryContext = {
+        pandaFile,
+        classes,
+        byName,
+        decompileNamed: (exactName: string): string => {
+            const clazz = byName.get(exactName);
+            if (!clazz) throw new Error(`未找到类 ${exactName}`);
+            return decompileClassOnce(clazz);
+        },
+        decompileContaining: (needle: string) => {
+            const clazz = classes.find((candidate) => candidate.name.content.includes(needle));
+            if (!clazz) throw new Error(`未找到包含 ${needle} 的类`);
+            return { clazz, code: decompileClassOnce(clazz) };
+        },
+    };
+    const pending = tests.slice();
+    for (const clazz of classes) {
+        const name = clazz.name.content;
+        for (let index = pending.length - 1; index >= 0; index--) {
+            if (!pending[index].matches(name)) continue;
+            const test = pending.splice(index, 1)[0];
+            console.log(`[test] ${test.label}`);
+            test.run(clazz, decompileClassOnce(clazz), ctx);
+            console.log("    ok");
+        }
+        if (pending.length === 0) break;
+    }
+    if (pending.length > 0) {
+        throw new Error(`未找到测试类: ${pending.map((test) => test.label).join(", ")}`);
+    }
 }
 
 function runSandbox(code: string): { logs: string[]; sandbox: Record<string, unknown> } {
@@ -1011,8 +1121,7 @@ function guard(v4, v6) {
  *   4. module.json 摘要与 resources.index 可解析。
  */
 function verifyHapPackage(): void {
-    const hapPath = path.join(__dirname, "resources", "zhihupp0.59.hap");
-    const hap = new HapFile(new Uint8Array(fs.readFileSync(hapPath)));
+    const hap = loadHapOnce("zhihupp0.59.hap");
 
     const abcEntries = hap.getAbcEntries().map((entry) => entry.name);
     if (!abcEntries.includes("ets/modules.abc")) {
@@ -1027,17 +1136,15 @@ function verifyHapPackage(): void {
     const resourcesIndex = new ResourceIndexFile(hap.getResourcesIndexData()!);
     if (resourcesIndex.items.length === 0) throw new Error("hap: resources.index 解析为空");
 
-    const data = hap.readEntry("ets/modules.abc")!;
-    const pandaFile = new PandaFile(data);
+    const pandaFile = loadPandaFile("zhihupp0.59.hap", { hapEntry: "ets/modules.abc" });
     // 287 为该 abc 的全部类数,其中 276 个可产出有效反编译结果(其余无 func_main_0)
     const classes = pandaFile.getAllClasses();
     if (classes.length !== 287) throw new Error(`hap: 类数量不符合预期(期望 287,实际 ${classes.length})`);
 
-    const decompiler = new PandaDecompiler();
     for (const name of ["EntryAbility", "WorkSchedulerProbeExtensionAbility"]) {
         const clazz = classes.find((c) => c.name.content.includes(name));
         if (!clazz) throw new Error(`hap: 未找到类 ${name}`);
-        const code = decompiler.decompileClass(clazz);
+        const code = decompileClassOnce(clazz);
         if (!code.includes("super(...arguments)")) {
             throw new Error(`hap: ${name} 的 supercallforwardallargs 未还原为 super(...arguments)\n${code}`);
         }
@@ -1055,16 +1162,7 @@ function verifyHapPackage(): void {
  *   2. QrScanFixture 的 finally 里 `fileIo.closeSync(acc)` 使用 try 之前的
  *      文件句柄,不能被 try 体里已失效的 acc 版本污染。
  */
-function verifyZhihuTryFinally(): void {
-    const hapPath = path.join(__dirname, "resources", "zhihupp0.59.hap");
-    const hap = new HapFile(new Uint8Array(fs.readFileSync(hapPath)));
-    const pandaFile = new PandaFile(hap.readEntry("ets/modules.abc")!);
-    const decompiler = new PandaDecompiler();
-
-    const contentFilter = pandaFile.getAllClasses().find((clazz) => clazz.name.content.includes("ContentFilterRuntimeStore"));
-    if (!contentFilter) throw new Error("hap: 未找到 ContentFilterRuntimeStore");
-
-    const code = decompiler.decompileClass(contentFilter);
+function verifyZhihuTryFinally(clazz: PandaClass, code: string, ctx: BinaryContext): void {
     NodeFactory.parse(code);
     if (/\bhole\b/.test(code)) {
         throw new Error(`try/finally 还原: 仍残留 hole 哨兵\n${code}`);
@@ -1095,9 +1193,7 @@ function verifyZhihuTryFinally(): void {
         throw new Error(`ContentFilterRuntimeStore: 输出与快照不一致\n${firstDifference(expected, code)}`);
     }
 
-    const qrScan = pandaFile.getAllClasses().find((clazz) => clazz.name.content.includes("QrScanFixture"));
-    if (!qrScan) throw new Error("hap: 未找到 QrScanFixture");
-    const qrCode = decompiler.decompileClass(qrScan);
+    const qrCode = ctx.decompileContaining("QrScanFixture").code;
     NodeFactory.parse(qrCode);
     if (/\bhole\b/.test(qrCode)) {
         throw new Error(`QrScanFixture: 仍残留 hole 哨兵\n${qrCode}`);
@@ -1111,9 +1207,7 @@ function verifyZhihuTryFinally(): void {
 
     // 3. try 起点 / cleanup 落在条件 test 求值区,或 finally 被结构化折叠进
     //    最后一个分支尾部(NotificationState.fetchPage / loadMore、AppDatabase.close)。
-    const notificationState = pandaFile.getAllClasses().find((clazz) => clazz.name.content.includes("NotificationState"));
-    if (!notificationState) throw new Error("hap: 未找到 NotificationState");
-    const notificationCode = decompiler.decompileClass(notificationState);
+    const notificationCode = ctx.decompileContaining("NotificationState").code;
     NodeFactory.parse(notificationCode);
     if (notificationCode.includes("xpanda: try/finally not restored")) {
         throw new Error(`NotificationState: try/finally 未还原\n${notificationCode}`);
@@ -1130,9 +1224,7 @@ function verifyZhihuTryFinally(): void {
         throw new Error(`NotificationState.loadMore: finally 未还原\n${notificationCode}`);
     }
 
-    const appDatabase = pandaFile.getAllClasses().find((clazz) => clazz.name.content.includes("AppDatabase"));
-    if (!appDatabase) throw new Error("hap: 未找到 AppDatabase");
-    const databaseCode = decompiler.decompileClass(appDatabase);
+    const databaseCode = ctx.decompileContaining("AppDatabase").code;
     NodeFactory.parse(databaseCode);
     if (!/try \{\s*await acc;\s*\} finally \{\s*if \(this\.closing === acc\) \{\s*this\.closing = undefined;/.test(databaseCode)) {
         throw new Error(`AppDatabase.close: finally 未还原\n${databaseCode}`);
@@ -1146,14 +1238,7 @@ function verifyZhihuTryFinally(): void {
  * else 分支”的原始样本:finally 必须重新包住整个方法体,异常路径也要复位
  * `navigatorBusy`;`refreshQuestion` 则是常规布局。
  */
-function verifyZhihuContentDetailPages(): void {
-    const hapPath = path.join(__dirname, "resources", "zhihupp0.59.hap");
-    const hap = new HapFile(new Uint8Array(fs.readFileSync(hapPath)));
-    const pandaFile = new PandaFile(hap.readEntry("ets/modules.abc")!);
-    const clazz = pandaFile.getAllClasses().find((c) => c.name.content.includes("ContentDetailPages"));
-    if (!clazz) throw new Error("hap: 未找到 ContentDetailPages");
-
-    const code = new PandaDecompiler().decompileClass(clazz);
+function verifyZhihuContentDetailPages(clazz: PandaClass, code: string): void {
     NodeFactory.parse(code);
     if (/\bhole\b/.test(code)) {
         throw new Error(`ContentDetailPages: 仍残留 hole 哨兵\n${code}`);
@@ -1524,14 +1609,7 @@ function g(p0) {
  * 留下 `(acc = E, !(E))` 这类死赋值,最终输出不可读。
  * 修复后子逻辑区域直接作为操作数,整体应折成一条 `===` 的 `||` 链。
  */
-function verifyZhihuAppDestination(): void {
-    const hapPath = path.join(__dirname, "resources", "zhihupp0.59.hap");
-    const hap = new HapFile(new Uint8Array(fs.readFileSync(hapPath)));
-    const pandaFile = new PandaFile(hap.readEntry("ets/modules.abc")!);
-    const clazz = pandaFile.getAllClasses().find((c) => c.name.content.includes("navigation/AppDestination"));
-    if (!clazz) throw new Error("hap: 未找到 AppDestination");
-
-    const code = new PandaDecompiler().decompileClass(clazz);
+function verifyZhihuAppDestination(clazz: PandaClass, code: string): void {
     NodeFactory.parse(code);
     const start = code.indexOf("export function shouldReloadAfterAuthentication(");
     if (start < 0) throw new Error(`逻辑条件链: 未找到 shouldReloadAfterAuthentication\n${code}`);
@@ -1575,14 +1653,7 @@ function verifyZhihuAppDestination(): void {
  *   if (local_0_1.pending !== undefined)   ← 恒为 false 的死代码
  * 导致新监听者订阅时永远收不到暂存的目的地。
  */
-function verifyZhihuStartupDestinationChannel(): void {
-    const hapPath = path.join(__dirname, "resources", "zhihupp0.59.hap");
-    const hap = new HapFile(new Uint8Array(fs.readFileSync(hapPath)));
-    const pandaFile = new PandaFile(hap.readEntry("ets/modules.abc")!);
-    const clazz = pandaFile.getAllClasses().find((c) => c.name.content.includes("StartupDestinationChannel"));
-    if (!clazz) throw new Error("hap: 未找到 StartupDestinationChannel");
-
-    const code = new PandaDecompiler().decompileClass(clazz);
+function verifyZhihuStartupDestinationChannel(clazz: PandaClass, code: string): void {
     NodeFactory.parse(code);
 
     const subscribeStart = code.indexOf("subscribe(p0)");
@@ -1625,14 +1696,7 @@ function verifyZhihuStartupDestinationChannel(): void {
  *   zhuanlan 条件折成 `v6.length === v1 && v6[0] === "p" && ...` 并直接折进 return。
  * 同时在沙箱里执行解析函数,校验各 URL 形态的还原语义。
  */
-function verifyZhihuDeepLinkResolver(): void {
-    const hapPath = path.join(__dirname, "resources", "zhihupp0.59.hap");
-    const hap = new HapFile(new Uint8Array(fs.readFileSync(hapPath)));
-    const pandaFile = new PandaFile(hap.readEntry("ets/modules.abc")!);
-    const clazz = pandaFile.getAllClasses().find((c) => c.name.content.includes("navigation/DeepLinkResolver"));
-    if (!clazz) throw new Error("hap: 未找到 DeepLinkResolver");
-
-    const code = new PandaDecompiler().decompileClass(clazz);
+function verifyZhihuDeepLinkResolver(clazz: PandaClass, code: string): void {
     NodeFactory.parse(code);
 
     if (/\bacc\b/.test(code)) {
@@ -1748,14 +1812,7 @@ function verifyZhihuDeepLinkResolver(): void {
  *      `if (p2 ? !isImageMime(...) : !isFileMime(...))`,不残留 acc;
  *   3. 输出与快照一致,并在沙箱里执行时间戳/目录前缀/mime/lifecycle 语义校验。
  */
-function verifyZhihuShareContracts(): void {
-    const hapPath = path.join(__dirname, "resources", "zhihupp0.59.hap");
-    const hap = new HapFile(new Uint8Array(fs.readFileSync(hapPath)));
-    const pandaFile = new PandaFile(hap.readEntry("ets/modules.abc")!);
-    const clazz = pandaFile.getAllClasses().find((c) => c.name.content.includes("platform/ShareContracts"));
-    if (!clazz) throw new Error("hap: 未找到 ShareContracts");
-
-    const code = new PandaDecompiler().decompileClass(clazz);
+function verifyZhihuShareContracts(clazz: PandaClass, code: string): void {
     NodeFactory.parse(code);
     if (!code.includes("v0 = p0.path.substring(v0.length)")) {
         throw new Error(`ShareContracts: 自引用成员链未折叠\n${code}`);
@@ -1992,14 +2049,7 @@ function g(x, y) {
  * 旧输出会把 `v1 = 0, v2 = 2, acc = !(match[2].length === 0)` 留在 test 里。
  * `v1/v2` 是后续代码复用的常量,应提到 if 前;布尔物化 acc 应删除。
  */
-function verifyZhihuAbsoluteUrlParser(): void {
-    const hapPath = path.join(__dirname, "resources", "zhihupp0.59.hap");
-    const hap = new HapFile(new Uint8Array(fs.readFileSync(hapPath)));
-    const pandaFile = new PandaFile(hap.readEntry("ets/modules.abc")!);
-    const clazz = pandaFile.getAllClasses().find((c) => c.name.content.includes("AbsoluteUrlParser"));
-    if (!clazz) throw new Error("hap: 未找到 AbsoluteUrlParser");
-
-    const code = new PandaDecompiler().decompileClass(clazz);
+function verifyZhihuAbsoluteUrlParser(clazz: PandaClass, code: string): void {
     NodeFactory.parse(code);
     if (!code.includes("if (v0 === null || v0[2].length === 0)")) {
         throw new Error(`AbsoluteUrlParser: 条件未化简\n${code}`);
@@ -2035,14 +2085,7 @@ function verifyZhihuAbsoluteUrlParser(): void {
  *   do { v5 = v2.next(); ... } while (v9 !== p1);
  * 并且不再出现降级标记与任何 decompiler_ 伪语句。
  */
-function verifyZhihuForOfIteratorClose(): void {
-    const hapPath = path.join(__dirname, "resources", "zhihupp0.59.hap");
-    const hap = new HapFile(new Uint8Array(fs.readFileSync(hapPath)));
-    const pandaFile = new PandaFile(hap.readEntry("ets/modules.abc")!);
-    const clazz = pandaFile.getAllClasses().find((c) => c.name.content.includes("repository/DefaultOnlineHistoryRepository"));
-    if (!clazz) throw new Error("hap: 未找到 DefaultOnlineHistoryRepository");
-
-    const code = new PandaDecompiler().decompileClass(clazz);
+function verifyZhihuForOfIteratorClose(clazz: PandaClass, code: string): void {
     NodeFactory.parse(code);
     if (code.includes("created by SimpleAnalysis")) {
         throw new Error(`for...of 循环反汇编: local_0_0 仍降级为 SimpleAnalysis\n${code}`);
@@ -2088,14 +2131,7 @@ function verifyZhihuForOfIteratorClose(): void {
  *     结构化归约残留的死保存,累加器链已折成 `v8 = decodeReleaseDetail(JSON.stringify(v8))`。
  * 另用 test/expected/zhihu-app-update-client.js 锁定整个类的输出。
  */
-function verifyZhihuAppUpdateClient(): void {
-    const hapPath = path.join(__dirname, "resources", "zhihupp0.59.hap");
-    const hap = new HapFile(new Uint8Array(fs.readFileSync(hapPath)));
-    const pandaFile = new PandaFile(hap.readEntry("ets/modules.abc")!);
-    const clazz = pandaFile.getAllClasses().find((c) => c.name.content.includes("update/AppUpdateClient"));
-    if (!clazz) throw new Error("hap: 未找到 AppUpdateClient");
-
-    const code = new PandaDecompiler().decompileClass(clazz);
+function verifyZhihuAppUpdateClient(clazz: PandaClass, code: string): void {
     NodeFactory.parse(code);
     if (code.includes("created by SimpleAnalysis")) {
         throw new Error(`AppUpdateClient: 方法降级为 SimpleAnalysis\n${code}`);
@@ -2138,14 +2174,7 @@ function verifyZhihuAppUpdateClient(): void {
  * SabrResponseDecoder 的 `for (v11 of sabrReadFields(p0))` 体内正好有 switch/嵌套循环,
  * 是触发该路径的样本。
  */
-function verifyYourpipeSabrResponseDecoder(): void {
-    const abcPath = path.join(__dirname, "resources", "yourpipe0.7.0.abc");
-    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
-    const clazz = pandaFile.getAllClasses().find((c) =>
-        c.name.content.includes("extractor/sabr/SabrResponseDecoder"));
-    if (!clazz) throw new Error("yourpipe: 未找到 SabrResponseDecoder");
-
-    const code = new PandaDecompiler().decompileClass(clazz);
+function verifyYourpipeSabrResponseDecoder(clazz: PandaClass, code: string): void {
     NodeFactory.parse(code);
     if (code.includes("created by SimpleAnalysis") || code.includes("decompiler_") || /\bhole\b/.test(code)) {
         throw new Error(`SabrResponseDecoder: 反编译降级或残留伪语句\n${code}`);
@@ -2198,14 +2227,7 @@ function verifyYourpipeSabrResponseDecoder(): void {
  * getDestNextPair 返回 null;simplifyConditionalSequence 旧实现直接解引用抛 NPE,
  * 整个方法降级 SimpleAnalysis(输出 decompiler_goto)。
  */
-function verifyYourpipeMpvPlayerView(): void {
-    const abcPath = path.join(__dirname, "resources", "yourpipe0.7.0.abc");
-    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
-    const clazz = pandaFile.getAllClasses().find((c) =>
-        c.name.content.includes("components/MpvPlayerView"));
-    if (!clazz) throw new Error("yourpipe: 未找到 MpvPlayerView");
-
-    const code = new PandaDecompiler().decompileClass(clazz);
+function verifyYourpipeMpvPlayerView(clazz: PandaClass, code: string): void {
     NodeFactory.parse(code);
     if (code.includes("created by SimpleAnalysis") || code.includes("decompiler_")) {
         throw new Error(`MpvPlayerView: 反编译降级或残留伪语句\n${code}`);
@@ -2259,14 +2281,7 @@ function verifyYourpipeMpvPlayerView(): void {
  * 现在槽位除定义与导出语句外没有任何引用,直接内联成
  *   export default EnhancedLogger.getInstance(...);
  */
-function verifyYourpipeAnonymousDefaultExport(): void {
-    const abcPath = path.join(__dirname, "resources", "yourpipe0.7.0.abc");
-    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
-    const clazz = pandaFile.getAllClasses().find((c) =>
-        c.name.content.includes("mediaservice/src/main/ets/utils/Logger"));
-    if (!clazz) throw new Error("yourpipe: 未找到 mediaservice Logger");
-
-    const code = new PandaDecompiler().decompileClass(clazz);
+function verifyYourpipeAnonymousDefaultExport(clazz: PandaClass, code: string): void {
     NodeFactory.parse(code);
     if (!code.includes('export default EnhancedLogger.getInstance("[Mediaservice]");')) {
         throw new Error(`Logger: 匿名 default 导出未内联\n${code}`);
@@ -2281,14 +2296,7 @@ function verifyYourpipeAnonymousDefaultExport(): void {
  * `export default EntryAbility;` + 顶层类声明要合并成
  * `export default class EntryAbility extends UIAbility {}`。
  */
-function verifyAmclDefaultClassExport(): void {
-    const abcPath = path.join(__dirname, "resources", "amcl1.0.6.abc");
-    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
-    const clazz = pandaFile.getAllClasses().find((c) =>
-        c.name.content.includes("entryability/EntryAbility"));
-    if (!clazz) throw new Error("amcl: 未找到 EntryAbility");
-
-    const code = new PandaDecompiler().decompileClass(clazz);
+function verifyAmclDefaultClassExport(clazz: PandaClass, code: string): void {
     NodeFactory.parse(code);
     if (!code.includes("export default class EntryAbility extends UIAbility {")) {
         throw new Error(`EntryAbility: default 导出未合并进类声明\n${code}`);
@@ -2309,14 +2317,7 @@ function verifyAmclDefaultClassExport(): void {
  * `while (true)` + `continue`;循环被看见后,停顿计数器也能正好还原
  * (`v11 += 1; if (v11 >= 6)`,否则被常量传播成 `0 + 1 >= 6`)。整类输出有快照。
  */
-function verifyYourpipeSabrOfflineDownloader(): void {
-    const abcPath = path.join(__dirname, "resources", "yourpipe0.7.0.abc");
-    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
-    const clazz = pandaFile.getAllClasses().find((c) =>
-        c.name.content.includes("sabr/SabrOfflineDownloader"));
-    if (!clazz) throw new Error("yourpipe: 未找到 SabrOfflineDownloader");
-
-    const code = new PandaDecompiler().decompileClass(clazz);
+function verifyYourpipeSabrOfflineDownloader(clazz: PandaClass, code: string): void {
     NodeFactory.parse(code);
     if (code.includes("created by SimpleAnalysis") || code.includes("decompiler_")) {
         throw new Error(`SabrOfflineDownloader: 反编译降级或残留伪语句\n${code}`);
@@ -2354,14 +2355,7 @@ function verifyYourpipeSabrOfflineDownloader(): void {
  * 这条 case 体裁剪同时服务于 GotoLoopRestore 还原出来的循环(continue 后面的 break)。
  * 整类输出有快照。
  */
-function verifyYourpipeYoutubePageAttestationBootstrap(): void {
-    const abcPath = path.join(__dirname, "resources", "yourpipe0.7.0.abc");
-    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
-    const clazz = pandaFile.getAllClasses().find((c) =>
-        c.name.content.includes("features/player/YoutubePageAttestationBootstrap"));
-    if (!clazz) throw new Error("yourpipe: 未找到 YoutubePageAttestationBootstrap");
-
-    const code = new PandaDecompiler().decompileClass(clazz);
+function verifyYourpipeYoutubePageAttestationBootstrap(clazz: PandaClass, code: string): void {
     NodeFactory.parse(code);
     if (code.includes("created by SimpleAnalysis") || code.includes("decompiler_")) {
         throw new Error(`YoutubePageAttestationBootstrap: 反编译降级或残留伪语句\n${code}`);
@@ -2421,14 +2415,7 @@ function verifyYourpipeYoutubePageAttestationBootstrap(): void {
  * 的 YouTube 响应导航链正好覆盖这两条路径,可选链还原后累加器枢纽拷贝
  * (`acc = E; v14 = acc`)也应被折叠成 `v14 = E`。
  */
-function verifyYourpipeMusicSearchService(): void {
-    const abcPath = path.join(__dirname, "resources", "yourpipe0.7.0.abc");
-    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
-    const clazz = pandaFile.getAllClasses().find((c) =>
-        c.name.content.includes("features/home/MusicSearchService"));
-    if (!clazz) throw new Error("yourpipe: 未找到 MusicSearchService");
-
-    const code = new PandaDecompiler().decompileClass(clazz);
+function verifyYourpipeMusicSearchService(clazz: PandaClass, code: string): void {
     NodeFactory.parse(code);
     if (code.includes("created by SimpleAnalysis") || code.includes("decompiler_")) {
         throw new Error(`MusicSearchService: 反编译降级或残留伪语句\n${code}`);
@@ -2500,14 +2487,7 @@ function verifyYourpipeMusicSearchService(): void {
  * 旧版 ClassSyntaxSimplify 只接受裸标识符对象,访问器与
  * `acc.prototype.M = fn` / `acc.M = fn`(静态)全部留在类外。
  */
-function verifyYourpipeMediaThumb(): void {
-    const abcPath = path.join(__dirname, "resources", "yourpipe0.7.0.abc");
-    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
-    const clazz = pandaFile.getAllClasses().find((c) =>
-        c.name.content.includes("components/MediaThumb"));
-    if (!clazz) throw new Error("yourpipe: 未找到 MediaThumb");
-
-    const code = new PandaDecompiler().decompileClass(clazz);
+function verifyYourpipeMediaThumb(clazz: PandaClass, code: string): void {
     NodeFactory.parse(code);
     // 访问器定义(含 undefined 半边)必须全部并入类,不允许残留
     if (code.includes("__defineGetter__") || code.includes("__defineSetter__")) {
@@ -2559,15 +2539,7 @@ function verifyYourpipeMediaThumb(): void {
  * findActiveSubtitleText 同时覆盖二分查找与回看循环,parseVttSubtitles 覆盖
  * 嵌套的"行非空"循环与 `!!` 条件物化。
  */
-function verifyYourpipeVttSubtitleParser(): void {
-    const abcPath = path.join(__dirname, "resources", "yourpipe0.7.0.abc");
-    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
-    pandaFile.parseAssembly();
-    const clazz = pandaFile.getAllClasses().find((c) =>
-        c.name.content.includes("subtitle/VttSubtitleParser"));
-    if (!clazz) throw new Error("yourpipe: 未找到 VttSubtitleParser");
-
-    const code = new PandaDecompiler().decompileClass(clazz);
+function verifyYourpipeVttSubtitleParser(clazz: PandaClass, code: string): void {
     NodeFactory.parse(code);
 
     // 守卫全部提成循环 test:不再有 while(true) + if (...) break
@@ -2645,15 +2617,7 @@ function verifyYourpipeVttSubtitleParser(): void {
  * 后续条件折叠再把 acc 并进 if test;restoreSnapshot 还原成
  * `if (!p0 || !p0.items || p0.items.length === 0) return;`。
  */
-function verifyYourpipePlayQueueManager(): void {
-    const abcPath = path.join(__dirname, "resources", "yourpipe0.7.0.abc");
-    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
-    pandaFile.parseAssembly();
-    const clazz = pandaFile.getAllClasses().find((c) =>
-        c.name.content.includes("player/PlayQueueManager"));
-    if (!clazz) throw new Error("yourpipe: 未找到 PlayQueueManager");
-
-    const code = new PandaDecompiler().decompileClass(clazz);
+function verifyYourpipePlayQueueManager(clazz: PandaClass, code: string): void {
     NodeFactory.parse(code);
 
     if (!code.includes("if (!p0 || !p0.items || p0.items.length === 0) {")) {
@@ -2729,14 +2693,7 @@ const FeedServiceProvider = {};
  * 现在兜底只输出能按原样构成表达式的名字,其余标记用 undefined 占位。
  * 整类快照同时覆盖该类的播放器状态机/模式切换逻辑不被后续改动破坏。
  */
-function verifyYourpipeAVPlayerResourceObject(): void {
-    const abcPath = path.join(__dirname, "resources", "yourpipe0.7.0.abc");
-    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
-    const clazz = pandaFile.getAllClasses().find((c) =>
-        c.name.content.includes("components/AVPlayer"));
-    if (!clazz) throw new Error("yourpipe: 未找到 AVPlayer");
-
-    const code = new PandaDecompiler().decompileClass(clazz);
+function verifyYourpipeAVPlayerResourceObject(clazz: PandaClass, code: string): void {
     NodeFactory.parse(code);
     if (code.includes("accessor")) {
         throw new Error(`AVPlayer: ACCESSOR 标记残留(非法标识符)\n${code.slice(Math.max(0, code.indexOf("accessor") - 200), code.indexOf("accessor") + 200)}`);
@@ -2807,14 +2764,7 @@ function assertNoUndeclaredLexvars(code: string): void {
  *
  * 最后与 test/expected/yourpipe-http-downloader.js 整类输出快照比对。
  */
-function verifyYourpipeHttpDownloaderRetryTryCatch(): void {
-    const abcPath = path.join(__dirname, "resources", "yourpipe0.7.0.abc");
-    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
-    const clazz = pandaFile.getAllClasses().find((c) =>
-        c.name.content.includes("network/HttpDownloader"));
-    if (!clazz) throw new Error("yourpipe: 未找到 HttpDownloader");
-
-    const code = new PandaDecompiler().decompileClass(clazz);
+function verifyYourpipeHttpDownloaderRetryTryCatch(clazz: PandaClass, code: string): void {
     NodeFactory.parse(code);
     if (code.includes("created by SimpleAnalysis") || code.includes("decompiler_")) {
         throw new Error(`HttpDownloader: 反编译降级或残留伪语句\n${code}`);
@@ -2925,14 +2875,7 @@ function verifyYourpipeHttpDownloaderRetryTryCatch(): void {
  *
  * 断言尾块唯一、死预装载/物化残渣清零,并与整类输出快照比对。
  */
-function verifyYourpipeChannelInfoService(): void {
-    const abcPath = path.join(__dirname, "resources", "yourpipe0.7.0.abc");
-    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
-    const clazz = pandaFile.getAllClasses().find((c) =>
-        c.name.content.includes("features/user/ChannelInfoService"));
-    if (!clazz) throw new Error("yourpipe: 未找到 ChannelInfoService");
-
-    const code = new PandaDecompiler().decompileClass(clazz);
+function verifyYourpipeChannelInfoService(clazz: PandaClass, code: string): void {
     NodeFactory.parse(code);
     if (code.includes("created by SimpleAnalysis") || code.includes("decompiler_")) {
         throw new Error(`ChannelInfoService: 反编译降级或残留伪语句\n${code}`);
@@ -3028,15 +2971,7 @@ function verifyYourpipeChannelInfoService(): void {
  *
  * 两个类的完整输出分别锁定在 expected/amcl-i8.js / expected/amcl-z12.js。
  */
-function verifyAmclStructureMemory(): void {
-    const abcPath = path.join(__dirname, "resources", "amcl1.0.6.abc");
-    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
-    const decompiler = new PandaDecompiler();
-
-    const forOfClass = pandaFile.getAllClasses().find((c) =>
-        c.name.content === "L&entry/src/main/ets/r5/i8&;");
-    if (!forOfClass) throw new Error("amcl: 未找到 L&entry/src/main/ets/r5/i8&;");
-    const forOfCode = decompiler.decompileClass(forOfClass);
+function verifyAmclStructureMemory(clazz: PandaClass, forOfCode: string, ctx: BinaryContext): void {
     NodeFactory.parse(forOfCode);
     if (forOfCode.includes("created by SimpleAnalysis") || forOfCode.includes("decompiler_")) {
         throw new Error(`amcl i8: 反编译降级或残留伪语句\n${forOfCode.slice(0, 500)}`);
@@ -3067,10 +3002,7 @@ function verifyAmclStructureMemory(): void {
         throw new Error(`amcl i8: 输出与快照不一致\n${firstDifference(forOfExpected, forOfCode)}`);
     }
 
-    const expandedClass = pandaFile.getAllClasses().find((c) =>
-        c.name.content === "L&gamecontrol/src/main/ets/z12&1.0.0;");
-    if (!expandedClass) throw new Error("amcl: 未找到 L&gamecontrol/src/main/ets/z12&1.0.0;");
-    const expandedCode = decompiler.decompileClass(expandedClass);
+    const expandedCode = ctx.decompileNamed("L&gamecontrol/src/main/ets/z12&1.0.0;");
     NodeFactory.parse(expandedCode);
     // 共享后继的指数展开由结构分析里的区域级共享尾块消除收敛成线性结构
     // (StructureAnalysis.pruneRedundantTailBranches):w1359 / t1359 不再降级。
@@ -3115,10 +3047,7 @@ function verifyAmclStructureMemory(): void {
     // 条件折叠把 `v4 = v4.inheritsFrom.length` 并进外层 if 的 test 后,这次读取与
     // for-of 循环的最近公共祖先是 if 语句本身;hasNewerValueBefore 必须认得
     // “条件在分支(含循环体)之前求值”,否则 for-of 退化成手动迭代器循环。
-    const forOfGuardClass = pandaFile.getAllClasses().find((c) =>
-        c.name.content === "L&entry/src/main/ets/e4/s6&;");
-    if (!forOfGuardClass) throw new Error("amcl: 未找到 L&entry/src/main/ets/e4/s6&;");
-    const forOfGuardCode = decompiler.decompileClass(forOfGuardClass);
+    const forOfGuardCode = ctx.decompileNamed("L&entry/src/main/ets/e4/s6&;");
     NodeFactory.parse(forOfGuardCode);
     for (const fragment of [
         'if (v4 !== null && v4.inheritsFrom.length === 0) {',
@@ -3150,15 +3079,7 @@ function verifyAmclStructureMemory(): void {
  *
  * 整个类的输出锁定在 expected/amcl-commons-w1.js。
  */
-function verifyAmclUnreachableHandlerIsland(): void {
-    const abcPath = path.join(__dirname, "resources", "amcl1.0.6.abc");
-    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
-    pandaFile.parseAssembly();
-    const decompiler = new PandaDecompiler();
-    const pandaClass = pandaFile.getAllClasses().find((c) =>
-        c.name.content === "L&commons/src/main/ets/h1/w1&1.0.0;");
-    if (!pandaClass) throw new Error("amcl: 未找到 L&commons/src/main/ets/h1/w1&1.0.0;");
-    const code = decompiler.decompileClass(pandaClass);
+function verifyAmclUnreachableHandlerIsland(clazz: PandaClass, code: string): void {
     NodeFactory.parse(code);
     if (code.includes("created by SimpleAnalysis") || code.includes("decompiler_")) {
         throw new Error(`amcl commons/w1: 仍在降级或残留伪语句\n${code.slice(0, 800)}`);
@@ -3205,14 +3126,7 @@ function verifyAmclUnreachableHandlerIsland(): void {
  * GotoLoopRestore 还原成 `while (true) { ...; break; }`(见 verifyGotoLoopFallthrough)。
  * 整个类的输出锁定在 expected/amcl-r2-l3.js。
  */
-function verifyAmclStructuredCycleGuard(): void {
-    const abcPath = path.join(__dirname, "resources", "amcl1.0.6.abc");
-    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
-    pandaFile.parseAssembly();
-    const decompiler = new PandaDecompiler();
-    const pandaClass = pandaFile.getAllClasses().find((c) => c.name.content === "L&entry/src/main/ets/r2/l3&;");
-    if (!pandaClass) throw new Error("amcl: 未找到 L&entry/src/main/ets/r2/l3&;");
-    const code = decompiler.decompileClass(pandaClass);
+function verifyAmclStructuredCycleGuard(clazz: PandaClass, code: string): void {
     NodeFactory.parse(code);
     if (code.includes("created by SimpleAnalysis") || code.includes("decompiler_")) {
         throw new Error(`amcl r2/l3: 仍在降级或残留伪语句\n${code.slice(0, 800)}`);
@@ -3275,15 +3189,7 @@ function verifyAmclStructuredCycleGuard(): void {
  * close 由 for...of 的 break 隐式完成;`v30 = ""` 必须保留(耗尽路径会读
  * `v30.length`)。整类输出锁定在 expected/amcl-t11-a12.js。
  */
-function verifyAmclForOfCloseBlock(): void {
-    const abcPath = path.join(__dirname, "resources", "amcl1.0.6.abc");
-    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
-    pandaFile.parseAssembly();
-    const decompiler = new PandaDecompiler();
-    const pandaClass = pandaFile.getAllClasses().find(
-        (c) => c.name.content === "L&feature_core/src/main/ets/t11/a12&1.0.0;");
-    if (!pandaClass) throw new Error("amcl: 未找到 L&feature_core/src/main/ets/t11/a12&1.0.0;");
-    const code = decompiler.decompileClass(pandaClass);
+function verifyAmclForOfCloseBlock(clazz: PandaClass, code: string): void {
     NodeFactory.parse(code);
     if (code.includes("created by SimpleAnalysis") || code.includes("decompiler_")) {
         throw new Error(`amcl a12: 仍在降级或残留伪语句\n${code.slice(0, 800)}`);
@@ -3323,15 +3229,7 @@ function verifyAmclForOfCloseBlock(): void {
  * 区域图收不成一个节点(`can not reduce the graph`)。读 manifest 的 catch
  * 以若干 mov 开头再 `return ""`,也要当成忽略异常的 catch,不能剪掉。
  */
-function verifyAmclReadJarMainClass(): void {
-    const abcPath = path.join(__dirname, "resources", "amcl1.0.6.abc");
-    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
-    pandaFile.parseAssembly();
-    const decompiler = new PandaDecompiler();
-    const pandaClass = pandaFile.getAllClasses().find(
-        (c) => c.name.content === "L&feature_core/src/main/ets/t11/d12&1.0.0;");
-    if (!pandaClass) throw new Error("amcl: 未找到 L&feature_core/src/main/ets/t11/d12&1.0.0;");
-    const code = decompiler.decompileClass(pandaClass);
+function verifyAmclReadJarMainClass(clazz: PandaClass, code: string): void {
     NodeFactory.parse(code);
     if (code.includes("created by SimpleAnalysis") || code.includes("decompiler_")) {
         throw new Error(`amcl d12: 仍在降级或残留伪语句\n${code.slice(0, 800)}`);
@@ -3367,14 +3265,7 @@ function verifyAmclReadJarMainClass(): void {
  * 另外 `if (增强显示)` 条件与 try/catch helper 相邻时,逻辑条件合并曾把没有
  * 语句的 helper 当成 `A && B` 的操作数,decompile 时抛 TypeError 降级。
  */
-function verifyAmclDisplayListenersLoop(): void {
-    const abcPath = path.join(__dirname, "resources", "amcl1.0.6.abc");
-    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
-    pandaFile.parseAssembly();
-    const pandaClass = pandaFile.getAllClasses().find(
-        (c) => c.name.content === "L&entry/src/main/ets/n4/o8&;");
-    if (!pandaClass) throw new Error("amcl: 未找到 L&entry/src/main/ets/n4/o8&;");
-    const code = new PandaDecompiler().decompileClass(pandaClass);
+function verifyAmclDisplayListenersLoop(clazz: PandaClass, code: string): void {
     NodeFactory.parse(code);
     if (code.includes("created by SimpleAnalysis") || code.includes("decompiler_")
         || code.includes("xpanda_goto")) {
@@ -3414,14 +3305,7 @@ function verifyAmclDisplayListenersLoop(): void {
  * 现在应还原成 `continue`(label 无其它引用时一并去掉)。
  * 整类输出锁定在 expected/amcl-launch-r16.js。
  */
-function verifyAmclLaunchGotoLoop(): void {
-    const abcPath = path.join(__dirname, "resources", "amcl1.0.6.abc");
-    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
-    pandaFile.parseAssembly();
-    const pandaClass = pandaFile.getAllClasses().find(
-        (c) => c.name.content === "L&launch/src/main/ets/r16&1.0.0;");
-    if (!pandaClass) throw new Error("amcl: 未找到 L&launch/src/main/ets/r16&1.0.0;");
-    const code = new PandaDecompiler().decompileClass(pandaClass);
+function verifyAmclLaunchGotoLoop(clazz: PandaClass, code: string): void {
     NodeFactory.parse(code);
     if (code.includes("created by SimpleAnalysis") || code.includes("decompiler_")) {
         throw new Error(`amcl r16: 反编译降级或残留伪语句\n${code}`);
@@ -3462,20 +3346,14 @@ function verifyAmclLaunchGotoLoop(): void {
  * 现在按本 plan 的 end 标记切出真正的续接;没有 end 标记时,只有尾段里带着外层
  * plan 标记(invariant:外层 startPC 更小)才保留。
  */
-function verifyAmclNestedFinallyRestoration(): void {
-    const abcPath = path.join(__dirname, "resources", "amcl1.0.6.abc");
-    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
-    pandaFile.parseAssembly();
-    const decompiler = new PandaDecompiler();
+function verifyAmclNestedFinallyRestoration(clazz: PandaClass, code: string, ctx: BinaryContext): void {
     const decompile = (name: string): string => {
-        const pandaClass = pandaFile.getAllClasses().find((c) => c.name.content === name);
-        if (!pandaClass) throw new Error(`amcl: 未找到 ${name}`);
-        const code = decompiler.decompileClass(pandaClass);
-        NodeFactory.parse(code);
-        if (code.includes("try/finally not restored")) {
-            throw new Error(`${name}: 仍有未还原的 finally\n${code}`);
+        const helperCode = ctx.decompileNamed(name);
+        NodeFactory.parse(helperCode);
+        if (helperCode.includes("try/finally not restored")) {
+            throw new Error(`${name}: 仍有未还原的 finally\n${helperCode}`);
         }
-        return code;
+        return helperCode;
     };
 
     const q17 = decompile("L&mods/src/main/ets/q17&1.0.0;");
@@ -3495,7 +3373,11 @@ function verifyAmclNestedFinallyRestoration(): void {
     }
 
     // 整类输出锁定在 expected/amcl-e11-i11.js(最小的嵌套 finally 样本)
-    const i11 = decompile("L&feature_core/src/main/ets/e11/i11&1.0.0;");
+    const i11 = code;
+    NodeFactory.parse(i11);
+    if (i11.includes("try/finally not restored")) {
+        throw new Error("amcl i11: 仍有未还原的 finally\n" + i11);
+    }
     const i11Expected = fs.readFileSync(path.join(__dirname, "expected", "amcl-e11-i11.js"), "utf-8");
     if (i11 !== i11Expected) {
         throw new Error(`amcl i11: 输出与快照不一致\n${firstDifference(i11Expected, i11)}`);
@@ -3542,13 +3424,7 @@ function verifyAmclNestedFinallyRestoration(): void {
  * 路径先输出成 eager catch,再由 foldEagerCatchToFinally 折回 try/finally。
  * 整类输出锁定在 expected/hx360e-log-export.js。
  */
-function verifyHx360eExceptionStructure(): void {
-    const abcPath = path.join(__dirname, "resources", "hx360e1.0.2.abc");
-    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
-    const clazz = pandaFile.getAllClasses().find(
-        (c) => c.name.content === "L&entry/src/main/ets/common/LogExport&;");
-    if (!clazz) throw new Error("hx360e: 未找到 LogExport");
-    const code = new PandaDecompiler().decompileClass(clazz);
+function verifyHx360eExceptionStructure(clazz: PandaClass, code: string): void {
     NodeFactory.parse(code);
     if (code.includes("created by SimpleAnalysis") || code.includes("decompiler_")) {
         throw new Error(`LogExport: 反编译降级或残留伪语句\n${code}`);
@@ -3609,13 +3485,7 @@ function verifyHx360eExceptionStructure(): void {
  * `class AppLog {}`,类方法里的 local_1_0 读取同步改名为 AppLog。
  * 整类输出锁定在 expected/hx360e-app-log.js。
  */
-function verifyHx360eAppLogClass(): void {
-    const abcPath = path.join(__dirname, "resources", "hx360e1.0.2.abc");
-    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
-    const clazz = pandaFile.getAllClasses().find(
-        (c) => c.name.content === "L&entry/src/main/ets/common/AppLog&;");
-    if (!clazz) throw new Error("hx360e: 未找到 AppLog");
-    const code = new PandaDecompiler().decompileClass(clazz);
+function verifyHx360eAppLogClass(clazz: PandaClass, code: string): void {
     NodeFactory.parse(code);
     if (code.includes("created by SimpleAnalysis") || code.includes("decompiler_")) {
         throw new Error(`AppLog: 反编译降级或残留伪语句\n${code}`);
@@ -3663,13 +3533,7 @@ function verifyHx360eAppLogClass(): void {
  * 类方法里的 self-ref 槽读取(local_1_0.readMemMb)同步改名为 GamePage。
  * 整类输出锁定在 expected/hx360e-game-page.js。
  */
-function verifyHx360eGamePageClass(): void {
-    const abcPath = path.join(__dirname, "resources", "hx360e1.0.2.abc");
-    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
-    const clazz = pandaFile.getAllClasses().find(
-        (c) => c.name.content === "L&entry/src/main/ets/pages/GamePage&;");
-    if (!clazz) throw new Error("hx360e: 未找到 GamePage");
-    const code = new PandaDecompiler().decompileClass(clazz);
+function verifyHx360eGamePageClass(clazz: PandaClass, code: string): void {
     NodeFactory.parse(code);
     if (code.includes("created by SimpleAnalysis") || code.includes("decompiler_")) {
         throw new Error(`GamePage: 反编译降级或残留伪语句\n${code}`);
@@ -3706,16 +3570,10 @@ function verifyHx360eGamePageClass(): void {
  *    `if (!hasLib) { result = hasLib }` 领头的 if 链,链头折叠后必须还原成
  *    单个 return 逻辑链。
  */
-function verifyLngaQrLoginUtils(): void {
-    const abcPath = path.join(__dirname, "resources", "lnga1.2.6.abc");
-    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
-    const pandaClass = pandaFile.getAllClasses().find(
-        (c) => c.name.content === "Lcom.example.nga_oh/entry/ets/common/utils/NgaQrLoginUtils;");
-    if (!pandaClass) throw new Error("lnga: 未找到 NgaQrLoginUtils");
-    if (!pandaClass.sourceFile || !pandaClass.sourceFile.content.endsWith("common/utils/NgaQrLoginUtils.ts")) {
-        throw new Error(`lnga: SOURCE_FILE 标签未解析 (${pandaClass.sourceFile?.content ?? "null"})`);
+function verifyLngaQrLoginUtils(clazz: PandaClass, code: string): void {
+    if (!clazz.sourceFile || !clazz.sourceFile.content.endsWith("common/utils/NgaQrLoginUtils.ts")) {
+        throw new Error(`lnga: SOURCE_FILE 标签未解析 (${clazz.sourceFile?.content ?? "null"})`);
     }
-    const code = new PandaDecompiler().decompileClass(pandaClass);
     NodeFactory.parse(code);
     const expected = 'return v4 && v6 && v5 && v7 === "login" && v3 === "qrlogin_ui" && v8.length > 0;';
     if (!code.includes(expected)) {
@@ -3755,14 +3613,7 @@ function verifyLngaQrLoginUtils(): void {
  *    折叠并把闭包里的槽读取改名为类绑定。
  * 整类输出锁定在 expected/install-web-chrome-client-host-api-impl.js。
  */
-function verifyInstallWebChromeClientClass(): void {
-    const abcPath = path.join(__dirname, "resources", "install1.3.0.abc");
-    const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync(abcPath)));
-    const clazz = pandaFile.getAllClasses().find((c) =>
-        c.name.content === "Lpkg_modules/.ohpm/webview_flutter_ohos@63rxyovf6soepjs+sja1e6+fkzygj1xf5z4crizkc8u="
-        + "/pkg_modules/webview_flutter_ohos/src/main/ets/io.flutter.plugins/webview_flutter/WebChromeClientHostApiImpl;");
-    if (!clazz) throw new Error("install: 未找到 WebChromeClientHostApiImpl");
-    const code = new PandaDecompiler().decompileClass(clazz);
+function verifyInstallWebChromeClientClass(clazz: PandaClass, code: string): void {
     NodeFactory.parse(code);
     if (code.includes("created by SimpleAnalysis") || code.includes("decompiler_")) {
         throw new Error(`WebChromeClientHostApiImpl: 反编译降级或残留伪语句\n${code}`);
@@ -4535,14 +4386,7 @@ function accumulate(xs) {
  * resolveFeedTopics}`,还会把间接导出的名字塞进模块级 `let` 声明
  * (flutter 的 barrel 里是 69 个 `default`,直接生成非法 JS `let default;`)。
  */
-function verifyIndirectExportNameOrder(): void {
-    const hapPath = path.join(__dirname, "resources", "zhihupp0.59.hap");
-    const hap = new HapFile(new Uint8Array(fs.readFileSync(hapPath)));
-    const pandaFile = new PandaFile(hap.readEntry("ets/modules.abc")!);
-    const clazz = pandaFile.getAllClasses().find((c) => c.name.content.includes("HomeFeedMenuState"));
-    if (!clazz) throw new Error("hap: 未找到 HomeFeedMenuState");
-
-    const code = new PandaDecompiler().decompileClass(clazz);
+function verifyIndirectExportNameOrder(clazz: PandaClass, code: string): void {
     NodeFactory.parse(code);
     const expected = 'export { resolveFeedTopics as resolveHomeFeedTopics } from "@normalized:N&&&data/Index&1.0.0";';
     if (!code.includes(expected)) {
@@ -4633,6 +4477,69 @@ function verifyCoreBrowserSafe(): void {
     };
     visit(srcDir);
 }
+
+/**
+ * 按二进制登记的用例表。每个文件只跑一个 pass:遍历一次类表,
+ * 命中 matcher 的用例在同一个循环里回调自己的 (clazz, code, ctx)。
+ */
+const zhihuClassTests: BinaryClassTest[] = [
+    { label: "hap try/finally (zhihupp0.59.hap)", matches: (n) => n.includes("ContentFilterRuntimeStore"), run: verifyZhihuTryFinally },
+    { label: "hap ContentDetailPages (zhihupp0.59.hap)", matches: (n) => n.includes("ContentDetailPages"), run: verifyZhihuContentDetailPages },
+    { label: "hap AbsoluteUrlParser (zhihupp0.59.hap)", matches: (n) => n.includes("AbsoluteUrlParser"), run: verifyZhihuAbsoluteUrlParser },
+    { label: "hap for...of iterator close (zhihupp0.59.hap)", matches: (n) => n.includes("repository/DefaultOnlineHistoryRepository"), run: verifyZhihuForOfIteratorClose },
+    { label: "hap AppUpdateClient (zhihupp0.59.hap)", matches: (n) => n.includes("update/AppUpdateClient"), run: verifyZhihuAppUpdateClient },
+    { label: "hap AppDestination (zhihupp0.59.hap)", matches: (n) => n.includes("navigation/AppDestination"), run: verifyZhihuAppDestination },
+    { label: "hap StartupDestinationChannel (zhihupp0.59.hap)", matches: (n) => n.includes("StartupDestinationChannel"), run: verifyZhihuStartupDestinationChannel },
+    { label: "hap DeepLinkResolver (zhihupp0.59.hap)", matches: (n) => n.includes("navigation/DeepLinkResolver"), run: verifyZhihuDeepLinkResolver },
+    { label: "hap ShareContracts (zhihupp0.59.hap)", matches: (n) => n.includes("platform/ShareContracts"), run: verifyZhihuShareContracts },
+    { label: "indirect export name order", matches: (n) => n.includes("HomeFeedMenuState"), run: verifyIndirectExportNameOrder },
+];
+
+const yourpipeClassTests: BinaryClassTest[] = [
+    { label: "yourpipe SabrResponseDecoder (yourpipe0.7.0.abc)", matches: (n) => n.includes("extractor/sabr/SabrResponseDecoder"), run: verifyYourpipeSabrResponseDecoder },
+    { label: "yourpipe MpvPlayerView (yourpipe0.7.0.abc)", matches: (n) => n.includes("components/MpvPlayerView"), run: verifyYourpipeMpvPlayerView },
+    { label: "yourpipe anonymous default export (yourpipe0.7.0.abc)", matches: (n) => n.includes("mediaservice/src/main/ets/utils/Logger"), run: verifyYourpipeAnonymousDefaultExport },
+    { label: "yourpipe SabrOfflineDownloader goto loop (yourpipe0.7.0.abc)", matches: (n) => n.includes("sabr/SabrOfflineDownloader"), run: verifyYourpipeSabrOfflineDownloader },
+    { label: "yourpipe YoutubePageAttestationBootstrap switch case prune (yourpipe0.7.0.abc)", matches: (n) => n.includes("features/player/YoutubePageAttestationBootstrap"), run: verifyYourpipeYoutubePageAttestationBootstrap },
+    { label: "yourpipe MusicSearchService (yourpipe0.7.0.abc)", matches: (n) => n.includes("features/home/MusicSearchService"), run: verifyYourpipeMusicSearchService },
+    { label: "yourpipe MediaThumb accessors (yourpipe0.7.0.abc)", matches: (n) => n.includes("components/MediaThumb"), run: verifyYourpipeMediaThumb },
+    { label: "yourpipe VttSubtitleParser loops (yourpipe0.7.0.abc)", matches: (n) => n.includes("subtitle/VttSubtitleParser"), run: verifyYourpipeVttSubtitleParser },
+    { label: "yourpipe PlayQueueManager guard (yourpipe0.7.0.abc)", matches: (n) => n.includes("player/PlayQueueManager"), run: verifyYourpipePlayQueueManager },
+    { label: "yourpipe AVPlayer resource object (yourpipe0.7.0.abc)", matches: (n) => n.includes("components/AVPlayer"), run: verifyYourpipeAVPlayerResourceObject },
+    { label: "yourpipe HttpDownloader retry try/catch (yourpipe0.7.0.abc)", matches: (n) => n.includes("network/HttpDownloader"), run: verifyYourpipeHttpDownloaderRetryTryCatch },
+    { label: "yourpipe ChannelInfoService shared tail merge (yourpipe0.7.0.abc)", matches: (n) => n.includes("features/user/ChannelInfoService"), run: verifyYourpipeChannelInfoService },
+];
+
+const amclClassTests: BinaryClassTest[] = [
+    { label: "amcl default class export (amcl1.0.6.abc)", matches: (n) => n.includes("entryability/EntryAbility"), run: verifyAmclDefaultClassExport },
+    { label: "amcl structure/simplify memory (amcl1.0.6.abc)", matches: (n) => n === "L&entry/src/main/ets/r5/i8&;", run: verifyAmclStructureMemory },
+    { label: "amcl unreachable handler island (amcl1.0.6.abc)", matches: (n) => n === "L&commons/src/main/ets/h1/w1&1.0.0;", run: verifyAmclUnreachableHandlerIsland },
+    { label: "amcl structured cycle guard (amcl1.0.6.abc)", matches: (n) => n === "L&entry/src/main/ets/r2/l3&;", run: verifyAmclStructuredCycleGuard },
+    { label: "amcl break for...of close block (amcl1.0.6.abc)", matches: (n) => n === "L&feature_core/src/main/ets/t11/a12&1.0.0;", run: verifyAmclForOfCloseBlock },
+    { label: "amcl readJarMainClass structure (amcl1.0.6.abc)", matches: (n) => n === "L&feature_core/src/main/ets/t11/d12&1.0.0;", run: verifyAmclReadJarMainClass },
+    { label: "amcl display listeners loop + empty catch (amcl1.0.6.abc)", matches: (n) => n === "L&entry/src/main/ets/n4/o8&;", run: verifyAmclDisplayListenersLoop },
+    { label: "amcl launch labelled-loop goto (amcl1.0.6.abc)", matches: (n) => n === "L&launch/src/main/ets/r16&1.0.0;", run: verifyAmclLaunchGotoLoop },
+    { label: "amcl nested try/finally restoration (amcl1.0.6.abc)", matches: (n) => n === "L&feature_core/src/main/ets/e11/i11&1.0.0;", run: verifyAmclNestedFinallyRestoration },
+];
+
+const hx360eClassTests: BinaryClassTest[] = [
+    { label: "hx360e 24.0.0.0 try/catch/finally structure (hx360e1.0.2.abc)", matches: (n) => n === "L&entry/src/main/ets/common/LogExport&;", run: verifyHx360eExceptionStructure },
+    { label: "hx360e 24.0.0.0 class static field init (hx360e1.0.2.abc)", matches: (n) => n === "L&entry/src/main/ets/common/AppLog&;", run: verifyHx360eAppLogClass },
+    { label: "hx360e 24.0.0.0 named-route page class (hx360e1.0.2.abc)", matches: (n) => n === "L&entry/src/main/ets/pages/GamePage&;", run: verifyHx360eGamePageClass },
+];
+
+const lngaClassTests: BinaryClassTest[] = [
+    { label: "lnga SOURCE_FILE + qr login short circuit (lnga1.2.6.abc)", matches: (n) => n === "Lcom.example.nga_oh/entry/ets/common/utils/NgaQrLoginUtils;", run: verifyLngaQrLoginUtils },
+];
+
+const installClassTests: BinaryClassTest[] = [
+    {
+        label: "install '#'-less class record names + prototype residue (install1.3.0.abc)",
+        matches: (n) => n === "Lpkg_modules/.ohpm/webview_flutter_ohos@63rxyovf6soepjs+sja1e6+fkzygj1xf5z4crizkc8u="
+            + "/pkg_modules/webview_flutter_ohos/src/main/ets/io.flutter.plugins/webview_flutter/WebChromeClientHostApiImpl;",
+        run: verifyInstallWebChromeClientClass,
+    },
+];
 
 async function main(): Promise<void> {
     console.log("[test] simplify return liveness");
@@ -4751,145 +4658,13 @@ async function main(): Promise<void> {
     verifyHapPackage();
     console.log("    ok");
 
-    console.log("[test] hap try/finally (zhihupp0.59.hap)");
-    verifyZhihuTryFinally();
-    console.log("    ok");
-
-    console.log("[test] hap ContentDetailPages (zhihupp0.59.hap)");
-    verifyZhihuContentDetailPages();
-    console.log("    ok");
-
-    console.log("[test] hap AbsoluteUrlParser (zhihupp0.59.hap)");
-    verifyZhihuAbsoluteUrlParser();
-    console.log("    ok");
-
-    console.log("[test] hap for...of iterator close (zhihupp0.59.hap)");
-    verifyZhihuForOfIteratorClose();
-    console.log("    ok");
-
-    console.log("[test] hap AppUpdateClient (zhihupp0.59.hap)");
-    verifyZhihuAppUpdateClient();
-    console.log("    ok");
-
-    console.log("[test] hap AppDestination (zhihupp0.59.hap)");
-    verifyZhihuAppDestination();
-    console.log("    ok");
-
-    console.log("[test] hap StartupDestinationChannel (zhihupp0.59.hap)");
-    verifyZhihuStartupDestinationChannel();
-    console.log("    ok");
-
-    console.log("[test] hap DeepLinkResolver (zhihupp0.59.hap)");
-    verifyZhihuDeepLinkResolver();
-    console.log("    ok");
-
-    console.log("[test] hap ShareContracts (zhihupp0.59.hap)");
-    verifyZhihuShareContracts();
-    console.log("    ok");
-
-    console.log("[test] yourpipe SabrResponseDecoder (yourpipe0.7.0.abc)");
-    verifyYourpipeSabrResponseDecoder();
-    console.log("    ok");
-
-    console.log("[test] yourpipe MpvPlayerView (yourpipe0.7.0.abc)");
-    verifyYourpipeMpvPlayerView();
-    console.log("    ok");
-
-    console.log("[test] yourpipe anonymous default export (yourpipe0.7.0.abc)");
-    verifyYourpipeAnonymousDefaultExport();
-    console.log("    ok");
-
-    console.log("[test] amcl default class export (amcl1.0.6.abc)");
-    verifyAmclDefaultClassExport();
-    console.log("    ok");
-
-    console.log("[test] yourpipe SabrOfflineDownloader goto loop (yourpipe0.7.0.abc)");
-    verifyYourpipeSabrOfflineDownloader();
-    console.log("    ok");
-
-    console.log("[test] yourpipe YoutubePageAttestationBootstrap switch case prune (yourpipe0.7.0.abc)");
-    verifyYourpipeYoutubePageAttestationBootstrap();
-    console.log("    ok");
-
-    console.log("[test] yourpipe MusicSearchService (yourpipe0.7.0.abc)");
-    verifyYourpipeMusicSearchService();
-    console.log("    ok");
-
-    console.log("[test] yourpipe MediaThumb accessors (yourpipe0.7.0.abc)");
-    verifyYourpipeMediaThumb();
-    console.log("    ok");
-
-    console.log("[test] yourpipe VttSubtitleParser loops (yourpipe0.7.0.abc)");
-    verifyYourpipeVttSubtitleParser();
-    console.log("    ok");
-
-    console.log("[test] yourpipe PlayQueueManager guard (yourpipe0.7.0.abc)");
-    verifyYourpipePlayQueueManager();
-    console.log("    ok");
-
-    console.log("[test] yourpipe AVPlayer resource object (yourpipe0.7.0.abc)");
-    verifyYourpipeAVPlayerResourceObject();
-    console.log("    ok");
-
-    console.log("[test] yourpipe HttpDownloader retry try/catch (yourpipe0.7.0.abc)");
-    verifyYourpipeHttpDownloaderRetryTryCatch();
-    console.log("    ok");
-
-    console.log("[test] yourpipe ChannelInfoService shared tail merge (yourpipe0.7.0.abc)");
-    verifyYourpipeChannelInfoService();
-    console.log("    ok");
-
-    console.log("[test] amcl structure/simplify memory (amcl1.0.6.abc)");
-    verifyAmclStructureMemory();
-    console.log("    ok");
-
-    console.log("[test] amcl unreachable handler island (amcl1.0.6.abc)");
-    verifyAmclUnreachableHandlerIsland();
-    console.log("    ok");
-
-    console.log("[test] amcl structured cycle guard (amcl1.0.6.abc)");
-    verifyAmclStructuredCycleGuard();
-    console.log("    ok");
-
-    console.log("[test] amcl break for...of close block (amcl1.0.6.abc)");
-    verifyAmclForOfCloseBlock();
-    console.log("    ok");
-
-    console.log("[test] amcl readJarMainClass structure (amcl1.0.6.abc)");
-    verifyAmclReadJarMainClass();
-    console.log("    ok");
-
-    console.log("[test] amcl display listeners loop + empty catch (amcl1.0.6.abc)");
-    verifyAmclDisplayListenersLoop();
-    console.log("    ok");
-
-    console.log("[test] amcl launch labelled-loop goto (amcl1.0.6.abc)");
-    verifyAmclLaunchGotoLoop();
-    console.log("    ok");
-
-    console.log("[test] amcl nested try/finally restoration (amcl1.0.6.abc)");
-    verifyAmclNestedFinallyRestoration();
-    console.log("    ok");
-
-    console.log("[test] lnga SOURCE_FILE + qr login short circuit (lnga1.2.6.abc)");
-    verifyLngaQrLoginUtils();
-    console.log("    ok");
-
-    console.log("[test] install '#'-less class record names + prototype residue (install1.3.0.abc)");
-    verifyInstallWebChromeClientClass();
-    console.log("    ok");
-
-    console.log("[test] hx360e 24.0.0.0 try/catch/finally structure (hx360e1.0.2.abc)");
-    verifyHx360eExceptionStructure();
-    console.log("    ok");
-
-    console.log("[test] hx360e 24.0.0.0 class static field init (hx360e1.0.2.abc)");
-    verifyHx360eAppLogClass();
-    console.log("    ok");
-
-    console.log("[test] hx360e 24.0.0.0 named-route page class (hx360e1.0.2.abc)");
-    verifyHx360eGamePageClass();
-    console.log("    ok");
+    // 一个二进制一个 pass:类表只遍历一次,类只反编译一次。
+    runClassSuite("zhihupp0.59.hap", zhihuClassTests, { hapEntry: "ets/modules.abc" });
+    runClassSuite("yourpipe0.7.0.abc", yourpipeClassTests, { parse: true });
+    runClassSuite("amcl1.0.6.abc", amclClassTests, { parse: true });
+    runClassSuite("hx360e1.0.2.abc", hx360eClassTests);
+    runClassSuite("lnga1.2.6.abc", lngaClassTests);
+    runClassSuite("install1.3.0.abc", installClassTests);
 
     console.log("[test] simplify sequenced test prefix fold");
     verifySequencedTestPrefixFold();
@@ -4923,10 +4698,6 @@ async function main(): Promise<void> {
     verifyDefineFieldByNameKind();
     console.log("    ok");
 
-    console.log("[test] indirect export name order");
-    verifyIndirectExportNameOrder();
-    console.log("    ok");
-
     console.log("[test] core entry stays browser-safe");
     verifyCoreBrowserSafe();
     console.log("    ok");
@@ -4939,9 +4710,7 @@ async function main(): Promise<void> {
 
     for (const sample of samples) {
         console.log(`[test] ${sample.abc}`);
-        const { code, classes } = decompileSample(
-            path.join(__dirname, "resources", sample.abc),
-        );
+        const { code, classes } = decompileSample(sample.abc);
         if (classes === 0) throw new Error(`${sample.abc}: 没有反编译出任何类`);
 
         const expectedPath = path.join(__dirname, "expected", sample.expected);

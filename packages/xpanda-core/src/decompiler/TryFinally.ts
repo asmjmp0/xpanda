@@ -86,7 +86,7 @@ export function buildFinallyPlans(cfg: PandaIRCFG): FinallyPlan[] {
         if (!isHoleLoad(endBlock)) continue;
         // finally 落点:先 sta 保存异常,再恢复寄存器并落到 cleanup,不会立刻 throw
         if (handlerBlock.pandaInstructions[0]?.kind !== "store") continue;
-        const handlerSuccessors = cfg.graph.successors(handlerBlock);
+        const handlerSuccessors = cfg.graph.normalSuccessors(handlerBlock);
         if (handlerSuccessors.length !== 1 || handlerBlock.getTerminator().kind === "throw") continue;
         const cleanupBlock = handlerSuccessors[0];
         // 正常完成块必须显式跳到 cleanup 起点
@@ -103,7 +103,7 @@ export function buildFinallyPlans(cfg: PandaIRCFG): FinallyPlan[] {
             }
         }
         if (!guardBlock) continue;
-        const guardSuccessors = cfg.graph.successors(guardBlock);
+        const guardSuccessors = cfg.graph.normalSuccessors(guardBlock);
         if (guardSuccessors.length !== 2) continue;
         if (guardBlock.getTerminator().kind !== "jumpEqual" && guardBlock.getTerminator().kind !== "jumpNotEqual") continue;
         const throwBranch = guardSuccessors.find((successor) => successor.getTerminator().kind === "throw");
@@ -335,7 +335,7 @@ function isImplicitMethodTail(cfg: PandaIRCFG, block: PandaIRBasicBlock): boolea
         const terminator = current.getTerminator();
         if (terminator.isReturnIns()) return true;
         if (terminator.isThrowIns() || terminator.isConditional() || !terminator.isJump()) return false;
-        const successors = cfg.graph.successors(current);
+        const successors = cfg.graph.normalSuccessors(current);
         if (successors.length !== 1) return false;
         current = successors[0];
     }

@@ -42,7 +42,7 @@ The main thread always performs parsing, disassembly, lexical analysis, and AST 
 | `src/hap/` | HAP application package adapter: read-only ZIP (`ZipFile.ts`) + `.abc` entries / `module.json` / `resources.index` (`HapFile.ts`) |
 | `src/res/` | `resources.index` parsing (Restool & RestoolV2 formats) into queryable resource items |
 | `src/disasm/` | Disassembly: generated opcode table, unified instruction model, CFG, lexical analysis |
-| `src/decompiler/` | Structure analysis (region reduction), statement tree, instruction handlers, dominator graph, fallback analysis, try/finally restoration |
+| `src/decompiler/` | Structure analysis (region reduction), statement tree, instruction handlers, dominator graph, fallback analysis, try/finally restoration; `ExceptionTable.ts` classifies every try-table entry (user catch / ignored / empty-join / finally epilogue / protocol glue) and drives the CFG exception edges |
 | `src/codegen/` | `CodeGenerator` — thin wrapper around `src/ast/` |
 | `src/ast/` | Babel AST construction & text generation (`NodeFactory` / `NodeUtils` / `FormatCode`) |
 | `src/simplify/` | Optimizer pipeline |
@@ -116,9 +116,11 @@ One instruction class instead of ~200 per-opcode subclasses. Every instruction c
 
 ### 6.3 CFG construction (`PandaDisAssembler.ts`, `ir.ts`)
 
-A single pass over the instruction bytes produces terminator-delimited `PandaIRBasicBlock`s (entry block named `entry`, others `label_<pc>`), which feed a `PandaIRCFG` (a `ValueGraph` of blocks). Two normalizing passes then run: `runSplitJumpPass` (split blocks at jump targets that fall mid-block) and `runSplitTryCatchPass` (split at try start/end and handler boundaries, then tag covered blocks with their catch entries). Finally the graph is rebuilt with canonical edge values.
+A single pass over the instruction bytes produces terminator-delimited `PandaIRBasicBlock`s (entry block named `entry`, others `label_<pc>`), which feed a `PandaIRCFG` (a `ValueGraph` of blocks). Two normalizing passes then run: `runSplitJumpPass` (split blocks at jump targets that fall mid-block) and `runSplitTryCatchPass` (split at try start/end and handler boundaries; it no longer tags blocks with catch entries — ownership is expressed by graph edges). Finally the graph is rebuilt with canonical edge values.
 
-**Edge semantics**: `true` = jump-taken direction, `false` = sequential/fallthrough. All structural polarity decisions must use `edgeValueOrThrow` — `successors()` returns insertion order, not edge polarity (see §7.3).
+**Edge semantics**: three kinds — `true` = jump-taken direction, `false` = sequential/fallthrough, `exception` = try-table edge from a protected block to its handler. `successors()` / degrees return the union (an `(a,b)` pair may be both a normal and an exception edge, and the two never overwrite each other); structural polarity decisions use `normalSuccessors()` / `edgeValueOrThrow`, never `successors()` order.
+
+**Handler classification** (`ExceptionTable.ts`, lazily via `PandaIRCFG.getExceptionTable()`): every try-table entry is classified from the handler's instructions — user `catch`, ignored-exception catch, empty-join catch, inlined-finally epilogue, classic hole-sentinel finally, pure rethrow bridge, for-in acquisition, for-of close, async reject dispatch, generator resume arm, or no protected range. The classifier also decides the protected-range cut (`protectedEndPC`) and is the single source of truth for `RegionGraphBuilder`. Only kept entries produce exception edges; protocol handlers get none, so they can never be reduced as `try` statements.
 
 ### 6.4 Lexical analysis (`PandaLexical.ts`)
 
@@ -144,16 +146,22 @@ Responsibilities:
 
 ### 7.2 Statement tree (`statements.ts`)
 
-Statements produced by reduction before being lowered to Babel AST: `LinearPandaStatement` (→ handler output), `IfPandaStatement` (if the test region carries `tryCatchHelperRegion` it is re-interpreted as a `TryCatchPandaStatement`), `WhileStatement` (always emitted as `while (true)` with a head `if (test) break`), `DoWhileStatement`, `BreakStatement` / `ContinueStatement`, `GotoStatement` (`tryFixGoto` converts simple cases into labeled `while (true)` loops, otherwise `xpanda_goto(name)`), `LabelStatement`, `And/OrLogicalExpressionStatement` (render `A || B` as `(A-eval, cond) || (B-eval, cond)` sequences while *not* blindly appending `acc` to nested logical operands), and `TryCatchPandaStatement` (catch parameter is `catchAcc`, never `acc`; the handler starts with `acc = catchAcc` to move the exception back into the accumulator).
+Statements produced by reduction before being lowered to Babel AST: `LinearPandaStatement` (→ handler output), `IfPandaStatement`, `WhileStatement` (always emitted as `while (true)` with a head `if (test) break`), `DoWhileStatement`, `BreakStatement` / `ContinueStatement`, `GotoStatement` (`tryFixGoto` converts simple cases into labeled `while (true)` loops, otherwise `xpanda_goto(name)`), `LabelStatement`, `And/OrLogicalExpressionStatement` (render `A || B` as `(A-eval, cond) || (B-eval, cond)` sequences while *not* blindly appending `acc` to nested logical operands), and `TryCatchPandaStatement` (catch parameter is `catchAcc`, never `acc`; the handler starts with `acc = catchAcc` to move the exception back into the accumulator; an inlined-finally epilogue carries `kind = "finallyEpilogue"` and marks the emitted `TryStatement` with `extra.xpandaTryKind`).
 
 ### 7.3 Structure analysis (`StructureAnalysis.ts`) — region reduction
 
-Construction: `RegionGraphBuilder` converts the CFG into a Region graph (`RegionType = Linear | Condition | Tail`). Synthetic exception handlers that ArkTS emits for language features — **for-in, for-of, async functions, generators** — are excluded from the region graph; genuine try blocks get a `TryCatchHelperRegion` spliced in front of the try entry (false edge → try body, true edge → handler; the handler region receives `exceptionLandingPad`). Catch-table `codeSize === 0` is not an emptiness signal for current `es2abc`: that compiler writes 0 for every handler, on 13.0.1.0 and 24.0.0.0 alike, and which handlers enter the graph is decided from the handler body. The shared lowering of `for-of` / `for-in` / `try` / `async` / generators is written up in [Bytecode patterns](./BYTECODE_PATTERNS.md). Dead code (in-degree-0 blocks) is pruned iteratively.
+Construction: `RegionGraphBuilder` converts the CFG into a Region graph (`RegionType = Linear | Condition | Tail`; a try region keeps the `Condition` type so every loop/dominance/tail heuristic sees exactly the old helper shape, and is distinguished by the `tryRegion` descriptor). Genuine try blocks get a **Try region** spliced in front of the try entry:
+
+- normal edge (`false`) → try body;
+- **exception edge** → handler (the third edge, `ValueGraph.putExceptionEdge`);
+- `tryRegion = { catchEndPC, kind: "catch" | "finallyEpilogue" }`, with the body/handler read from the graph edges (multiple try entries can share one start, so a descriptor-held reference would go stale).
+
+Protocol handlers that ArkTS emits for for-in, for-of, async functions and generators are classified out and never spliced. Region nodes are created only for blocks reachable from the entry along normal flow plus kept handlers and their normal-flow closure (`collectRegionBlocks`), so protocol glue and its downstream cleanup never enter the graph as islands. Catch-table `codeSize === 0` is not an emptiness signal for current `es2abc`: that compiler writes 0 for every handler, on 13.0.1.0 and 24.0.0.0 alike, and which handlers enter the graph is decided from the handler body. The shared lowering of `for-of` / `for-in` / `try` / `async` / generators is written up in [Bytecode patterns](./BYTECODE_PATTERNS.md). Blocks outside that set are never turned into regions; the in-degree sweep and the entry-reachability sweep that follow are safety nets (they also drop regions whose try could not be wired).
 
 Reduction loop over the region graph:
 
 1. `> 2000` basic blocks (`MAX_STRUCTURED_BLOCKS`) → `PandaDecompileException("too many blocks!")` → falls back to `SimpleAnalysis`.
-2. `reduceAcyclic`: Condition regions → `reduceIfRegion` (if-only / if-else converging / both-tails / **`reduceTryCatchWithDeadBranch`** for try/catch where one branch is a dead out-degree-0 tail); Linear regions → `reduceSequence` (statement concatenation, merging `&&` / `||` short-circuit chains via `simplifyConditionalSequence`, which sets the `logicalRegion` flag — that flag **must be propagated** when such regions merge, otherwise later stages can only generate `acc`-based tests and lose the `A || B` computation).
+2. `reduceAcyclic`: Condition regions with a `tryRegion` → `reduceTryRegion` (try body vs handler: converging / both-tail / **`reduceTryCatchWithDeadBranch`** when one side is a dead out-degree-0 tail); other Condition regions → `reduceIfRegion`; Linear regions → `reduceSequence` (statement concatenation, merging `&&` / `||` short-circuit chains via `simplifyConditionalSequence`, which sets the `logicalRegion` flag — that flag **must be propagated** when such regions merge, otherwise later stages can only generate `acc`-based tests and lose the `A || B` computation).
 3. `reduceCyclic`: self-loops and single-predecessor back edges → while / do-while; anything else is registered as an unresolved cycle.
 4. When progress stalls: refine one unresolved cycle (`LoopFinder` / `refineLoop`), else `coalesceTailRegion` (absorb tail regions), else `fixIrreducibleByTailRegion` — **tail duplication** to make irreducible graphs reducible. If still stuck after `> 3000` rounds (`MAX_REDUCTION_ROUNDS`, counted independently of the block count) → `"can not reduce the graph"` → `SimpleAnalysis`.
 5. `virtualizeIrregularExits`: turns lexical exits out of loops into `continue` / `break` / labeled `goto`. Condition exits emit **exactly one** statement (`if (cond) break`); linear exits an unconditional one. Exits whose target is a dead out-degree-0 Tail (`return` / `throw` only) are "inlined" by copying the tail's statements into the branch via `Region.copy()`.
@@ -161,9 +169,9 @@ Reduction loop over the region graph:
 
 Critical invariants:
 
-- **Conditional polarity comes from edge values, not successor order**: `conditionalExp` describes the fallthrough (false-edge) condition (`jnez` → false edge is `!acc`, `jeqz` → false edge is `acc`). `coalesceTailRegion` and `virtualizeIrregularExits` must use `edgeValueOrThrow`; folding a tail on the *true* edge requires `expInvert()` — and for `logicalRegion`s (whose expression is already the fallthrough condition) an inverted-branch `IfPandaStatement` instead.
-- `Region.copy()` (tail duplication, inlined exits) must preserve `conditionalExp` / `logicalRegion` / `exceptionLandingPad` / `tryCatchHelperRegion`.
-- After `reduceIfRegion` consumes a try/catch pair, the `tryCatchHelperRegion` flag must be cleared; otherwise the next condition region is misinterpreted as try/catch and the success path ends up inside `catch`.
+- **Conditional polarity comes from edge values, not successor order**: `conditionalExp` describes the fallthrough (false-edge) condition (`jnez` → false edge is `!acc`, `jeqz` → false edge is `acc`). `coalesceTailRegion` and `virtualizeIrregularExits` must use `edgeValueOrThrow`; folding a tail on the *true* edge requires `expInvert()` — and for `logicalRegion`s (whose expression is already the fallthrough condition) an inverted-branch `IfPandaStatement` instead. A Try region's handler lives on an exception edge, which has no polarity: `edgeValueForPolarity` treats it as the old helper's `true` edge.
+- `Region.copy()` (tail duplication, inlined exits) must preserve `conditionalExp` / `logicalRegion` / `exceptionLandingPad` / `tryRegion`.
+- A Try region is consumed only by `reduceTryRegion`, which reads its body/handler from the edges and replaces them with `TryCatchPandaStatement`; the descriptor is cleared (`tryRegion = null`) at that moment, so the region can never be mistaken for a `try` again (this replaces the old mutable `tryCatchHelperRegion` flag).
 
 ### 7.4 Fallback analysis (`SimpleAnalysis.ts`)
 
@@ -171,11 +179,11 @@ Linear output: `label_<pc>: { … }` blocks, `decompiler_goto(label_N)` for dire
 
 ### 7.5 try/finally restoration (`TryFinally.ts`)
 
-ArkTS 13 compiles `finally` into a state machine (hole sentinel, cleanup block, rethrow guard). `buildFinallyPlans` identifies it **structurally** — not by block sizes: the try-end block writes the hole sentinel and jumps to cleanup; the handler starts with `sta` and does not throw immediately; a later hole-compare block with a throw successor is the guard. PC ordering is strictly validated. Roles (start / cleanup / guard / suppress) become `__xpanda_finally_marker__` strings inserted by `MethodHandler`; `applyFinallyPlans` rewrites three layouts (same statement list / nested list tails / try+real-catch shape) into `try { … } finally { … }`. Any unresolved plan leaves a `/* xpanda: try/finally not restored */` comment; markers are always stripped. Current `es2abc` also inlines `finally` before every `return` and keeps a second copy in a `hole` epilogue handler; that shape, and the same epilogue used by `for-of` close, is described in [Bytecode patterns](./BYTECODE_PATTERNS.md).
+ArkTS 13 compiles `finally` into a state machine (hole sentinel, cleanup block, rethrow guard). The 24+ inlined form is attributed to the Try region (`kind = "finallyEpilogue"`) and emitted as `try { … } catch (e) { cleanup; throw e }`, which the tail pass `foldEagerCatchToFinally` turns into `try/finally` once the optimizer has made the two cleanup copies textually identical. The classic hole-in-body form still goes through `buildFinallyPlans`, which identifies it **structurally** — not by block sizes: the try-end block writes the hole sentinel and jumps to cleanup; the handler starts with `sta` and does not throw immediately; a later hole-compare block with a throw successor is the guard. PC ordering is strictly validated. Roles (start / cleanup / guard / suppress) become `__xpanda_finally_marker__` strings inserted by `MethodHandler`; `applyFinallyPlans` rewrites three layouts (same statement list / nested list tails / try+real-catch shape) into `try { … } finally { … }`. Any unresolved plan leaves a `/* xpanda: try/finally not restored */` comment; markers are always stripped. Current `es2abc` also inlines `finally` before every `return` and keeps a second copy in a `hole` epilogue handler; that shape, and the same epilogue used by `for-of` close, is described in [Bytecode patterns](./BYTECODE_PATTERNS.md).
 
 ### 7.6 Graph utilities
 
-- `ValueGraph.ts`: insertion-ordered directed graph with boolean edge values; `edgeValueOrThrow`, DFS post-order.
+- `ValueGraph.ts`: insertion-ordered directed graph with three edge kinds (`true` / `false` / `exception`); normal and exception edges between the same pair coexist. `edgeValueOrThrow` (conditional edges), `normalSuccessors` / `exceptionSuccessors` / `exceptionPredecessors`, `edgeKind`, DFS post-order.
 - `DominatorGraph.ts`: iterative dominator computation (Cooper-Harvey-Kennedy style) with a 100000-iteration safety timeout; `dominatesStrictly`; `LoopFinder` for natural loops.
 
 ## 8. AST Construction & Code Generation — `src/ast/` + `src/codegen/`
@@ -328,6 +336,9 @@ npm run preview --workspace xpanda-web # serve the build
 ## 14. Verification & Testing
 
 Entry point: `test/decompile.test.ts`.
+
+**Harness: one load per binary, one pass per binary, one decompile per class.**
+`loadPandaFile()` / `loadHapOnce()` cache the parsed container keyed by file (and `.abc` entry); `parseAssembly()` runs at most once per file; `decompileClassOnce()` caches per-class output in a `WeakMap` (AGENTS rule 6 makes that a pure function). Class-level regressions are declared as `BinaryClassTest[]` tables (`zhihuClassTests`, `yourpipeClassTests`, `amclClassTests`, …) and executed by `runClassSuite()`, which walks `getAllClasses()` **once**, invokes every matching test on the spot, and fails if a declared test never matched. Cross-class assertions inside a test use `ctx.decompileNamed()` / `ctx.decompileContaining()`, backed by a name→class index built during the same pass — no repeated traversal. This keeps the suite at roughly 25 s (it was ~32 s when every test re-read the container and re-ran `parseAssembly()`).
 
 - Decompiles `test/resources/md5.abc`, `class.abc`, `aes.abc`, `yourpipe0.7.0.abc`, and `zhihupp0.59.hap`; compares against snapshots in `test/expected/`; re-parses all output with Babel.
 - `md5.abc` output is **executed** and `md5("admin")` is checked against Node `crypto`; `aes.abc` output runs an encrypt/decrypt self-check (and its snapshot pins conditional polarity: `Counter.increment` must be `!== 255`).

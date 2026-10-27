@@ -4,7 +4,7 @@ import type { PandaLexical } from "../disasm/PandaLexical";
 import { DominatorGraph, LoopFinder } from "./DominatorGraph";
 import { ValueGraph } from "./ValueGraph";
 import { RegionGraphBuilder } from "./RegionGraphBuilder";
-import { Region } from "./Region";
+import { Region, TryRegion } from "./Region";
 import {
     AndLogicalExpressionStatement,
     BreakStatement,
@@ -527,7 +527,7 @@ export class StructureAnalysis {
         const alternate = (statement as any).alternate;
         if (!(consequent instanceof Region) || !(alternate instanceof Region)) return false;
         if (consequent === alternate) return false;
-        if (alternate.isTryCatchHelperRegion()) return false;
+        if (alternate.isTryRegion()) return false;
         if ((refCount.get(statement) ?? 0) !== 1 || (refCount.get(consequent) ?? 0) !== 1) return false;
         const tail = consequent.getStatements();
         if (tail.length === 0) return false;
@@ -579,7 +579,7 @@ export class StructureAnalysis {
 
     private reduceAcyclic(region: Region): boolean {
         switch (region.getType()) {
-            case "Condition": return this.reduceIfRegion(region);
+            case "Condition": return region.isTryRegion() ? this.reduceTryRegion(region) : this.reduceIfRegion(region);
             case "Linear": return this.reduceSequence(region);
             case "Tail": return false;
         }
@@ -592,12 +592,16 @@ export class StructureAnalysis {
         }
         for (const succ of succs) {
             if (succ === region) {
+                // try 的 handler 恰好是自身(handler == join)是退化形态,不是自环:
+                // 当成自环会造出 do-while 并顺手删掉异常边。
+                if (this.regionGraph.isExceptionEdge(region, succ)
+                    && this.regionGraph.normalSuccessors(region).every((s) => s !== region)) continue;
                 let loopStatement: IPandaDecompileAble;
                 if (succs.length === 1) {
                     loopStatement = new WhileStatement(null, region);
                     region.setType("Tail");
                 } else {
-                    if (!this.regionGraph.edgeValueOrThrow(region, succ)) region.expInvert();
+                    if (!this.edgeValueForPolarity(region, succ)) region.expInvert();
                     loopStatement = new DoWhileStatement(region);
                     region.setType("Linear");
                 }
@@ -611,7 +615,7 @@ export class StructureAnalysis {
         if (region.getType() !== "Condition") return false;
         for (const succ of succs) {
             if (this.linearSuccessor(succ) === region && this.singlePredecessor(succ) === region) {
-                if (!this.regionGraph.edgeValueOrThrow(region, succ)) region.expInvert();
+                if (!this.edgeValueForPolarity(region, succ)) region.expInvert();
                 const loop = new WhileStatement(region, succ);
                 region.setType("Linear");
                 this.regionGraph.removeEdge(region, succ);
@@ -626,6 +630,15 @@ export class StructureAnalysis {
             this.unresolvedCycles.add(region);
         }
         return false;
+    }
+
+    /**
+     * 条件极性:异常边不是跳转边。旧模型里 try 区域是 Condition、handler 走
+     * true 边,所以这里按 true 处理,保证循环/出口虚拟化的行为不变。
+     */
+    private edgeValueForPolarity(a: Region, b: Region): boolean {
+        if (this.regionGraph.isExceptionEdge(a, b)) return true;
+        return this.regionGraph.edgeValueOrThrow(a, b);
     }
 
     private isCyclic(n: Region): boolean {
@@ -664,10 +677,15 @@ export class StructureAnalysis {
         const region = tailRegions[0];
         let nodeIndex = 0;
         for (const predecessor of this.regionGraph.predecessors(region)) {
-            const value = this.regionGraph.edgeValueOrThrow(predecessor, region);
             const copyNode = region.copy();
             copyNode.setName(copyNode.getName() + "_" + nodeIndex++);
             this.regionGraph.addNode(copyNode);
+            if (this.regionGraph.isExceptionEdge(predecessor, region)) {
+                // Try 区域只有一条异常边,复制的是它的 handler 目标。
+                this.regionGraph.putExceptionEdge(predecessor, copyNode);
+                continue;
+            }
+            const value = this.regionGraph.edgeValueOrThrow(predecessor, region);
             this.regionGraph.putEdgeValue(predecessor, copyNode, value);
         }
         this.regionGraph.removeNode(region);
@@ -707,6 +725,10 @@ export class StructureAnalysis {
         // 合并后 region 的语句里会出现对 region 自己的引用(语句图成环),
         // decompile 按引用展开会无限递归;这种合并不能做,留给循环归约处理。
         if (this.statementsReferenceRegion(nextRegion, region)) return false;
+        // nextRegion 是某个 Try 的 handler(经异常边到达)时不能被普通前驱吸收:
+        // 吸收后 Try 的异常边会随 removeNode 一起消失,catch 体丢失、归约卡死
+        // (m11 的 merge)。handler 自己向后吸收不受影响。
+        if (this.regionGraph.exceptionPredecessors(nextRegion).length > 0) return false;
         // try 入口只能吸收保护范围之内的块。范围后的真实语句是 try/catch 的
         // 续接(d1268 的 copyDirRecursive);纯跳转块可以并进来,让 try 与 catch
         // 仍汇合到同一个后继。
@@ -725,8 +747,10 @@ export class StructureAnalysis {
         region.addRegion(nextRegion);
         this.regionGraph.removeEdge(region, nextRegion);
         replaceSuccessor(this.regionGraph, region, nextRegion);
-        if (nextRegion.isTryCatchHelperRegion()) {
-            region.tryCatchHelperRegion = true;
+        if (nextRegion.isTryRegion()) {
+            // Try 区域没有语句,合并后由当前区域接管 try 语义:正常边指向 try 体、
+            // 异常边指向 handler(边已由 replaceSuccessor 一起转移)。
+            region.tryRegion = nextRegion.tryRegion;
         }
         this.regionGraph.removeNode(nextRegion);
         return true;
@@ -742,7 +766,7 @@ export class StructureAnalysis {
         const nextRegion = pair[1];
         const destSRegion = this.linearSuccessor(destRegion);
         const nextSRegion = this.linearSuccessor(nextRegion);
-        if (nextRegion === destSRegion && !region.isTryCatchHelperRegion()) {
+        if (nextRegion === destSRegion) {
             region.addStatement(new IfPandaStatement(region, null, destRegion));
             this.regionGraph.removeEdge(region, destRegion);
             if (this.regionGraph.inDegree(destRegion) === 0) {
@@ -750,7 +774,7 @@ export class StructureAnalysis {
             }
             region.setType("Linear");
             return true;
-        } else if (destRegion === nextSRegion && !region.isTryCatchHelperRegion()) {
+        } else if (destRegion === nextSRegion) {
             region.addStatement(new IfPandaStatement(region, nextRegion, null));
             this.regionGraph.removeEdge(region, nextRegion);
             if (this.regionGraph.inDegree(nextRegion) === 0) {
@@ -760,9 +784,6 @@ export class StructureAnalysis {
             return true;
         } else if (destSRegion === nextSRegion && destSRegion !== null) {
             region.addStatement(new IfPandaStatement(region, nextRegion, destRegion));
-            // 条件已经被消费成 if/try-catch 语句,不能把 helper 标志留给后续归约
-            // (否则该区域吸收下一段代码后会再次被当成 try/catch,把普通条件输出成 try/catch)
-            region.tryCatchHelperRegion = false;
             this.regionGraph.removeEdge(region, nextRegion);
             if (this.regionGraph.inDegree(nextRegion) === 0) {
                 this.regionGraph.removeNode(nextRegion);
@@ -778,9 +799,8 @@ export class StructureAnalysis {
             || (this.regionGraph.outDegree(destRegion) === 0 && this.regionGraph.outDegree(nextRegion) === 0)) {
             // 两条分支都已终止(return/throw)。区域类型可能不是 Tail:顺序归约
             // 吸收过后继、后继又被删掉时会留下 outDegree === 0 的 Linear 区域,
-            // 这里按终止分支处理,try/catch 整体成为 Tail。
+            // 这里按终止分支处理,if 整体成为 Tail。
             region.addStatement(new IfPandaStatement(region, nextRegion, destRegion));
-            region.tryCatchHelperRegion = false;
             this.regionGraph.removeEdge(region, nextRegion);
             if (this.regionGraph.inDegree(nextRegion) === 0) {
                 this.regionGraph.removeNode(nextRegion);
@@ -791,10 +811,61 @@ export class StructureAnalysis {
             }
             region.setType("Tail");
             return true;
-        } else if (region.isTryCatchHelperRegion() && this.reduceTryCatchWithDeadBranch(region, destRegion, nextRegion, destSRegion, nextSRegion)) {
-            return true;
         }
         return false;
+    }
+
+    /**
+     * Try 区域的归约:正常边 → try 体,异常边 → handler。
+     *
+     * 与 if 的三种收敛形态一一对应,但分支语义固定(consequent = try 体,
+     * alternate = handler),不再依赖边极性:
+     *   1. try 体与 handler 归约后汇合到同一后继;
+     *   2. 两边都已终止(return/throw);
+     *   3. 一边终止、另一边继续(见 reduceTryCatchWithDeadBranch)。
+     */
+    private reduceTryRegion(region: Region): boolean {
+        const info = region.tryRegion!;
+        // 以边为准:正常边 → try 体,异常边 → handler
+        const body = this.regionGraph.normalSuccessors(region)[0];
+        const handler = this.regionGraph.exceptionSuccessors(region)[0];
+        // handler 就是汇合点/自身的退化 Try:catch 没有独立语句,退化成普通流程
+        if (!body || !handler || handler === region) {
+            region.tryRegion = null;
+            return false;
+        }
+        const bodySRegion = this.linearSuccessor(body);
+        const handlerSRegion = this.linearSuccessor(handler);
+        // case 4 的判定用 out-degree(顺序归约吸收过后继会留下 outDegree === 0 的
+        // Linear 区域);死分支归约(下面)才要求真的是 Tail。
+        const bodyDead = this.regionGraph.outDegree(body) === 0;
+        const handlerDead = this.regionGraph.outDegree(handler) === 0;
+        if (!bodyDead && !handlerDead && handlerSRegion !== null && bodySRegion === handlerSRegion) {
+            // 两条分支汇合:try/catch 之后从汇合点继续
+            this.emitTryStatement(region, body, handler, info);
+            this.regionGraph.removeEdge(region, body);
+            if (this.regionGraph.inDegree(body) === 0) this.regionGraph.removeNode(body);
+            this.regionGraph.removeEdge(region, handler);
+            if (this.regionGraph.inDegree(handler) === 0) this.regionGraph.removeNode(handler);
+            this.regionGraph.putEdgeValue(region, bodySRegion, false);
+            region.setType("Linear");
+            return true;
+        }
+        if (bodyDead && handlerDead) {
+            this.emitTryStatement(region, body, handler, info);
+            this.regionGraph.removeEdge(region, body);
+            if (this.regionGraph.inDegree(body) === 0) this.regionGraph.removeNode(body);
+            this.regionGraph.removeEdge(region, handler);
+            if (this.regionGraph.inDegree(handler) === 0) this.regionGraph.removeNode(handler);
+            region.setType("Tail");
+            return true;
+        }
+        return this.reduceTryCatchWithDeadBranch(region, body, handler, bodySRegion, handlerSRegion, info);
+    }
+
+    private emitTryStatement(region: Region, body: Region, handler: Region, info: TryRegion): void {
+        region.addStatement(new TryCatchPandaStatement(body, handler, info.catchEndPC, info.kind));
+        region.tryRegion = null;
     }
 
     /**
@@ -809,29 +880,35 @@ export class StructureAnalysis {
      */
     private reduceTryCatchWithDeadBranch(
         region: Region,
-        destRegion: Region,
-        nextRegion: Region,
-        destSRegion: Region | null,
-        nextSRegion: Region | null,
+        body: Region,
+        handler: Region,
+        bodySRegion: Region | null,
+        handlerSRegion: Region | null,
+        info: TryRegion,
     ): boolean {
-        const destDead = destRegion.getType() === "Tail" && this.regionGraph.outDegree(destRegion) === 0;
-        const nextDead = nextRegion.getType() === "Tail" && this.regionGraph.outDegree(nextRegion) === 0;
-        if (!destDead && !nextDead) return false;
-        // 两条分支必须只被这个 try/catch 使用,才能安全地把语句搬进 TryCatchPandaStatement
-        if (this.singlePredecessor(destRegion) !== region || this.singlePredecessor(nextRegion) !== region) {
+        const bodyDead = body.getType() === "Tail" && this.regionGraph.outDegree(body) === 0;
+        const handlerDead = handler.getType() === "Tail" && this.regionGraph.outDegree(handler) === 0;
+        if (!bodyDead && !handlerDead) return false;
+        // 两条分支必须只被这个 try 区域使用,才能安全地把语句搬进 TryCatchPandaStatement。
+        // 只看普通前驱:异常边只是把该区域登记成另一个 try 的 handler,不是控制流
+        // 前驱;把它算进去会让共享 handler 的嵌套 try 永远无法归约
+        // (m11 的 merge:同一个块既是内层 try 的 body,又是外层 try 的 handler)。
+        // body 只看普通前驱(异常边只是把该区域登记成另一个 try 的 handler);
+        // handler 本来就只经异常边到达,所以用全部前驱。
+        const bodyPreds = this.regionGraph.normalPredecessors(body);
+        const handlerPreds = this.regionGraph.predecessors(handler);
+        if (bodyPreds.length !== 1 || handlerPreds.length !== 1
+            || bodyPreds[0] !== region || handlerPreds[0] !== region) {
             return false;
         }
-        // 继续执行的分支可能还没归约成 Linear(例如内层的 tryCatchHelper),留给下一轮定点迭代
-        const continuation = destDead ? nextSRegion : destSRegion;
+        // 继续执行的分支可能还没归约成 Linear(例如内层 try),留给下一轮定点迭代
+        const continuation = handlerDead ? bodySRegion : handlerSRegion;
         if (continuation === null) return false;
-        // 参数顺序固定为 (consequent = false 边 = try 体, alternate = true 边 = catch 体)
-        region.addStatement(new IfPandaStatement(region, nextRegion, destRegion));
-        // 与 reduceIfRegion 的 case 3/4 一样,语句生成后 helper 标志必须清掉
-        region.tryCatchHelperRegion = false;
-        this.regionGraph.removeEdge(region, nextRegion);
-        this.regionGraph.removeNode(nextRegion);
-        this.regionGraph.removeEdge(region, destRegion);
-        this.regionGraph.removeNode(destRegion);
+        this.emitTryStatement(region, body, handler, info);
+        this.regionGraph.removeEdge(region, body);
+        this.regionGraph.removeNode(body);
+        this.regionGraph.removeEdge(region, handler);
+        this.regionGraph.removeNode(handler);
         this.regionGraph.putEdgeValue(region, continuation, false);
         region.setType("Linear");
         return true;
@@ -848,10 +925,11 @@ export class StructureAnalysis {
     }
 
     private getDestNextPair(region: Region): [Region, Region] | null {
-        if (this.regionGraph.outDegree(region) === 1) {
+        const successors = this.regionGraph.normalSuccessors(region);
+        if (successors.length !== 2) {
             return null;
         }
-        const blockIterator = this.regionGraph.successors(region);
+        const blockIterator = successors;
         const region1 = blockIterator[0];
         let destBlock: Region;
         let nextBlock: Region;
@@ -1021,7 +1099,7 @@ export class StructureAnalysis {
                 // INLINE 复制一份 Tail 语句作为 if 分支,不能直接引用目标区域
                 // (它还有别的前驱,后续还会被合并/改名)。
                 const target = desc.type === "INLINE" ? to.copy() : conditionalStatementOf(desc.type, to);
-                const onTrueEdge = this.regionGraph.edgeValueOrThrow(from, to);
+                const onTrueEdge = this.edgeValueForPolarity(from, to);
                 if (onTrueEdge && from.isLogicalRegion()) {
                     // 逻辑区域(`&&` 合并)的表达式是 fallthrough 条件,expInvert 不生效,
                     // true 边上的出口用取反分支表达。
@@ -1052,7 +1130,7 @@ export class StructureAnalysis {
 
     private coalesceTailRegion(n: Region, regions: Iterable<Region>): boolean {
         const succs = this.regionGraph.successors(n);
-        if (succs.length === 2 && n.getType() === "Condition" && !n.isTryCatchHelperRegion()) {
+        if (succs.length === 2 && n.getType() === "Condition" && !n.isTryRegion()) {
             const contains = (r: Region) => {
                 if (Array.isArray(regions)) return regions.includes(r);
                 return (regions as Set<Region>).has(r);
@@ -1108,7 +1186,7 @@ export class StructureAnalysis {
 /** 逻辑条件合并只接受真实的条件区域:try/catch helper 没有语句。 */
 function canMergeLogicalCondition(region: Region): boolean {
     return region.getType() === "Condition"
-        && !region.isTryCatchHelperRegion()
+        && !region.isTryRegion()
         && region.getStatements().length > 0;
 }
 
@@ -1136,15 +1214,22 @@ function getOnlyOneSuccessor<T>(graph: ValueGraph<T>, node: T): T | null {
 }
 
 function replaceSuccessor<T>(graph: ValueGraph<T>, node: T, node2: T): void {
-    for (const successor of graph.successors(node2)) {
+    for (const successor of graph.normalSuccessors(node2)) {
         const value = graph.edgeValueOrThrow(node2, successor);
         graph.putEdgeValue(node, successor, value);
+    }
+    // Try 区域的异常边必须一起转移,否则合并后 handler 不可达
+    for (const successor of graph.exceptionSuccessors(node2)) {
+        graph.putExceptionEdge(node, successor);
     }
 }
 
 function replacePredecessors<T>(graph: ValueGraph<T>, node: T, node2: T): void {
-    for (const predecessor of graph.predecessors(node2)) {
+    for (const predecessor of graph.normalPredecessors(node2)) {
         const value = graph.edgeValueOrThrow(predecessor, node2);
         graph.putEdgeValue(predecessor, node, value);
+    }
+    for (const predecessor of graph.exceptionPredecessors(node2)) {
+        graph.putExceptionEdge(predecessor, node);
     }
 }

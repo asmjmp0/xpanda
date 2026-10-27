@@ -1,7 +1,7 @@
 import type { PandaIRCFG } from "../disasm/PandaIRCFG";
 import type { PandaLexical } from "../disasm/PandaLexical";
 import { LinearPandaStatement } from "./statements";
-import { checkIsAsyncException, checkIsGeneratorException } from "./RegionGraphBuilder";
+import { checkIsAsyncException, checkIsGeneratorException } from "./ExceptionTable";
 import type { PandaDecompilerMethodHandler } from "./MethodHandler";
 import * as TYPE from "@babel/types";
 
@@ -17,6 +17,8 @@ export class SimpleAnalysis {
     private readonly statements: LinearPandaStatement[] = [];
 
     constructor(private readonly irCFG: PandaIRCFG) {
+        // 确保显式异常边已建立(SimpleAnalysis 可能在没有 StructureAnalysis 时单独使用)
+        irCFG.getExceptionTable();
         this.checkIsAsync();
         this.checkAndSpecialFunction();
         for (const basicBlock of irCFG.pandaIRBasicBlocks) {
@@ -64,15 +66,12 @@ export class SimpleAnalysis {
         if (this.isGeneratorFunction) utils.setIsGeneratorBlock(astNode);
         for (const statement of this.statements) {
             const blockStatementNode = factory.blockStatementNode();
-            if (statement.block.catchBlockList) {
-                for (const b of statement.block.catchBlockList) {
-                    const arrayObject = codeGenerator.arrayObject();
-                    codeGenerator.addToArray(arrayObject, factory.identifierNode(b.name));
-                    const callExpressionNode = factory.callExpressionNode(factory.identifierNode("decompiler_exception_handled_by") as any, arrayObject as any);
-                    utils.insertNodeToBody(factory.expressionStatementNode(callExpressionNode as any) as any, blockStatementNode);
-                }
-            }
-            if (this.exceptionHandleBlocks.has(statement.block)) {
+            for (const handler of this.irCFG.graph.exceptionSuccessors(statement.block)) {
+                const arrayObject = codeGenerator.arrayObject();
+                codeGenerator.addToArray(arrayObject, factory.identifierNode(handler.name));
+                const callExpressionNode = factory.callExpressionNode(factory.identifierNode("decompiler_exception_handled_by") as any, arrayObject as any);
+                utils.insertNodeToBody(factory.expressionStatementNode(callExpressionNode as any) as any, blockStatementNode);
+            }            if (this.exceptionHandleBlocks.has(statement.block)) {
                 const assignment = factory.assignmentExpressionNode("=", factory.identifierNode("acc") as any, factory.identifierNode("decompiler_exception_detail") as any);
                 utils.insertNodeToBody(factory.expressionStatementNode(assignment as any) as any, blockStatementNode);
             }
