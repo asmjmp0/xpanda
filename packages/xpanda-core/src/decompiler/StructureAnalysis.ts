@@ -104,8 +104,8 @@ export class StructureAnalysis {
             const regions = this.regionGraph.depthFirstPostOrder(this.entryRegion);
             let result = false;
             for (const region of regions) {
-                if (region.getType() === "Linear") {
-                    const instructions = region.block!.pandaInstructions;
+                if (region.getType() === "Linear" && region.block) {
+                    const instructions = region.block.pandaInstructions;
                     if (instructions.length === 1 && instructions[0].isJump()) {
                         // An exception landing pad that is only a jump is an empty
                         // catch. Folding it makes the catch edge land on the shared

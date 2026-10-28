@@ -1198,7 +1198,9 @@ function verifyZhihuTryFinally(clazz: PandaClass, code: string, ctx: BinaryConte
     if (/\bhole\b/.test(qrCode)) {
         throw new Error(`QrScanFixture: 仍残留 hole 哨兵\n${qrCode}`);
     }
-    if (!qrCode.includes("} finally {") || !qrCode.includes("fileIo.closeSync(acc);")) {
+    // The cleanup must close the handle opened before the try; the register
+    // name depends on the try/catch shape (acc vs a vN spill).
+    if (!qrCode.includes("} finally {") || !/fileIo\.closeSync\((?:acc|v\d+)\);/.test(qrCode)) {
         throw new Error(`QrScanFixture: try/finally 未还原\n${qrCode}`);
     }
     if (qrCode.includes("acc = new Uint8Array(v6)")) {
@@ -4009,6 +4011,68 @@ function verifyLngaQrLoginUtils(clazz: PandaClass, code: string): void {
 }
 
 /**
+ * 回归:24.0.0.0 的 codeSize === 0 用户 catch 形状(lnga1.2.6.abc)。
+ *
+ * 这些 handler 都没有 `sta` 保存异常、入口不是 `mov` 前缀,旧判定整段丢掉:
+ *  - 常量/标志返回:`catch { return false }`(DraftStore / MovingPhotoCache …);
+ *  - 记录日志或设置 UI 状态后汇合正常流程(PreferencesStore.init /
+ *    EntryAbility.updateBreakpoint / SearchPanel.doSearch / SavedThreadStore.reload);
+ *  - catch-and-wrap 且 `newobjrange` 不在入口块(NgaRsaCipher 的 5 段嵌套)。
+ * 入口跳到 try 正常完成之后的 join 时,try 体必须吸收中间的纯 mov 完成块,
+ * 否则区域归约会把握手后的整段方法复制进 catch(EntryAbility.updateBreakpoint)。
+ */
+function verifyLngaCatchShapes(ctx: { decompileContaining: (needle: string) => { code: string } }): void {
+    const rsa = ctx.decompileContaining("NgaRsaCipher").code;
+    NodeFactory.parse(rsa);
+    const rsaMessages = [
+        "RSA密钥生成器创建失败", "RSA密钥转换失败", "RSA密码器创建失败",
+        "RSA加密初始化失败", "RSA加密失败",
+    ];
+    for (const message of rsaMessages) {
+        if (!rsa.includes(`throw new Error("${message}");`)) {
+            throw new Error(`lnga NgaRsaCipher: catch 未还原(${message})\n${rsa}`);
+        }
+    }
+    if (!/try \{[\s\S]*?createAsyKeyGenerator[\s\S]*?\} catch \(catchAcc\) \{\s*throw new Error\("RSA密钥生成器创建失败"\);/.test(rsa)) {
+        throw new Error(`lnga NgaRsaCipher: 外层 catch-and-wrap 结构不符\n${rsa}`);
+    }
+
+    const preferences = ctx.decompileContaining("PreferencesStore").code;
+    if (!/async init\(p0, p1\) \{\s*try \{[\s\S]*?\} catch \(catchAcc\) \{\s*local_0_0\.error\("init failed: %\{public\}s", p1\);/.test(preferences)) {
+        throw new Error(`lnga PreferencesStore.init: 记录日志的 catch 未还原\n${preferences}`);
+    }
+
+    const search = ctx.decompileContaining("SearchPanel").code;
+    if (!/async doSearch\(p0\) \{[\s\S]*?catch \(catchAcc\) \{[\s\S]*?"搜索失败，请检查网络后重试"/.test(search)) {
+        throw new Error(`lnga SearchPanel.doSearch: 整体 try/catch 未还原\n${search}`);
+    }
+
+    const saved = ctx.decompileContaining("SavedThreadStore").code;
+    if (!/catch \(catchAcc\) \{\s*local_0_1\.warn\("reload skip file: %\{public\}s", v5\[v6\]\);/.test(saved)) {
+        throw new Error(`lnga SavedThreadStore.reload: 循环内嵌套 catch 未还原\n${saved}`);
+    }
+
+    const audio = ctx.decompileContaining("AudioPlayer").code;
+    const toggleStart = audio.indexOf("togglePlay() {");
+    if (toggleStart < 0) throw new Error(`lnga AudioPlayer: 未找到 togglePlay\n${audio}`);
+    const toggle = audio.slice(toggleStart, audio.indexOf("\n  }\n", toggleStart));
+    if ((toggle.match(/catch \(catchAcc\) \{\}/g) ?? []).length !== 3) {
+        throw new Error(`lnga AudioPlayer.togglePlay: 三个空 catch 未还原\n${toggle}`);
+    }
+
+    const ability = ctx.decompileContaining("EntryAbility").code;
+    const bpStart = ability.indexOf("updateBreakpoint(p0) {");
+    if (bpStart < 0) throw new Error(`lnga EntryAbility: 未找到 updateBreakpoint\n${ability}`);
+    const breakpoint = ability.slice(bpStart, ability.indexOf("\n  }\n", bpStart));
+    if (!/try \{\s*v0 = 1;\s*v0 = display\.getDefaultDisplaySync\(\)\.densityPixels;\s*\} catch \(catchAcc\) \{\s*local_0_0\.error\("getDefaultDisplaySync failed"\);/.test(breakpoint)) {
+        throw new Error(`lnga EntryAbility.updateBreakpoint: try/catch 结构不符\n${breakpoint}`);
+    }
+    if ((breakpoint.match(/Breakpoint changed to/g) ?? []).length !== 1) {
+        throw new Error(`lnga EntryAbility.updateBreakpoint: 汇合后的方法尾被复制进 catch\n${breakpoint}`);
+    }
+}
+
+/**
  * 回归:用户 catch 与 finally 共用同一个 try 起点时的还原(lnga1.2.6.abc 的
  * SettingsPanel.clearCache)。
  *
@@ -5122,6 +5186,7 @@ const hx360eClassTests: BinaryClassTest[] = [
 const lngaClassTests: BinaryClassTest[] = [
     { label: "lnga SOURCE_FILE + qr login short circuit (lnga1.2.6.abc)", matches: (n) => n === "Lcom.example.nga_oh/entry/ets/common/utils/NgaQrLoginUtils;", run: verifyLngaQrLoginUtils },
     { label: "lnga shared-start catch + finally (lnga1.2.6.abc)", matches: (n) => n === "Lcom.example.nga_oh/entry/ets/pages/SettingsPanel;", run: verifyLngaSettingsPanelException },
+    { label: "lnga v24 catch shapes (lnga1.2.6.abc)", matches: (n) => n === "Lcom.example.nga_oh/entry/ets/common/security/NgaRsaCipher;", run: (_clazz, _code, ctx) => verifyLngaCatchShapes(ctx) },
 ];
 
 const installClassTests: BinaryClassTest[] = [

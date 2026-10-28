@@ -174,8 +174,18 @@ export class RegionGraphBuilder {
                 if (!this.isReachableRegion(entryRegion, tryEntryRegion)) continue;
                 const endPC = this.tryBodyEndPC.get(tryEntry);
                 if (endPC !== undefined) tryEntryRegion.tryBodyEndPC = endPC;
+                // `try { … } catch {}`: the handler PC is the block the success
+                // path already continues at, so the catch body is empty and the
+                // block stays the normal continuation.
+                let handlerRegion = handleEntryRegion;
+                if (entry.kind === "emptyJoin") {
+                    handlerRegion = new Region(null, "Linear");
+                    handlerRegion.name = "empty_catch";
+                    this.regionGraph.addNode(handlerRegion);
+                    this.regionGraph.putEdgeValue(handlerRegion, handleEntryRegion, false);
+                }
                 const tryRegion = this.createTryRegion(
-                    tryEntryRegion, handleEntryRegion, endPC ?? null,
+                    tryEntryRegion, handlerRegion, endPC ?? null,
                     entry.kind === "finallyEpilogue" ? "finallyEpilogue" : "catch");
                 for (const predecessor of this.regionGraph.normalPredecessors(tryEntryRegion).slice()) {
                     const value = this.regionGraph.edgeValueOrThrow(predecessor, tryEntryRegion);
@@ -183,7 +193,7 @@ export class RegionGraphBuilder {
                     this.regionGraph.putEdgeValue(predecessor, tryRegion, value);
                 }
                 this.regionGraph.putEdgeValue(tryRegion, tryEntryRegion, false);
-                this.regionGraph.putExceptionEdge(tryRegion, handleEntryRegion);
+                this.regionGraph.putExceptionEdge(tryRegion, handlerRegion);
                 pending.delete(handleEntry);
                 progress = true;
             }
@@ -289,6 +299,10 @@ export class RegionGraphBuilder {
             const joinRegion = this.btor.get(joinBlock);
             if (!tryRegion || !bridgeRegion || !joinRegion || tryRegion === entryRegion) continue;
             if (bridgeRegion.isExceptionLandingPad() || tryRegion.isTryRegion()) continue;
+            // The main wiring already created the synthetic empty catch for a
+            // v24 `emptyJoin` entry; wiring a second helper here would nest
+            // `try { try { … } catch {} } catch {}`.
+            if (this.exceptionHandlers.get(handlerBlock)?.kind === "emptyJoin") continue;
             if (!this.isReachableRegion(entryRegion, tryRegion)) continue;
             if (this.regionGraph.outDegree(tryRegion) !== 1
                 || this.regionGraph.successors(tryRegion)[0] !== bridgeRegion) continue;

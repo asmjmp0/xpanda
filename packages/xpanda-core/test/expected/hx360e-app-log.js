@@ -27,13 +27,10 @@ export class AppLog {
       if (!fs.accessSync(AppLog.dir)) {
         fs.mkdirSync(AppLog.dir, true);
       }
-    } catch (catchAcc) {
-      AppLog.rotateIfNeeded();
-      AppLog.i("app", "=== HX360E start === api=" + deviceInfo.sdkApiVersion + " model=" + deviceInfo.productModel + " os=" + deviceInfo.osFullName + "" + (" display=" + deviceInfo.displayVersion + ""));
-      return;
-    }
+    } catch (catchAcc) {}
     AppLog.rotateIfNeeded();
     AppLog.i("app", "=== HX360E start === api=" + deviceInfo.sdkApiVersion + " model=" + deviceInfo.productModel + " os=" + deviceInfo.osFullName + "" + (" display=" + deviceInfo.displayVersion + ""));
+    return;
   }
   static i(p0, p1) {
     hilog.info(local_0_0, local_0_1, "[%{public}s] %{public}s", p0, p1);
@@ -63,11 +60,15 @@ export class AppLog {
       return;
     }
     v0 = "" + AppLog.now() + " " + p0 + " " + p1 + ": " + p2 + "\n";
-    v1 = fs.openSync(AppLog.file, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.APPEND);
     try {
-      fs.writeSync(v1.fd, v0);
-    } finally {
-      fs.closeSync(v1);
+      v1 = fs.openSync(AppLog.file, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.APPEND);
+      try {
+        fs.writeSync(v1.fd, v0);
+      } finally {
+        fs.closeSync(v1);
+      }
+    } catch (catchAcc) {
+      return;
     }
   }
   static now() {
@@ -83,14 +84,15 @@ export class AppLog {
     return v2 + (v0 + "");
   }
   static rotateIfNeeded() {
-    if (!fs.accessSync(AppLog.file)) {
-      return;
-    }
-    if (fs.statSync(AppLog.file).size <= local_0_2) {
-      return;
-    }
-    fs.copyFileSync(AppLog.file, AppLog.prevFile);
-    fs.truncateSync(AppLog.file, 0);
-    return;
+    try {
+      if (!fs.accessSync(AppLog.file)) {
+        return;
+      }
+      if (fs.statSync(AppLog.file).size <= local_0_2) {
+        return;
+      }
+      fs.copyFileSync(AppLog.file, AppLog.prevFile);
+      fs.truncateSync(AppLog.file, 0);
+    } catch (catchAcc) {}
   }
 }

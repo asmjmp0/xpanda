@@ -295,23 +295,26 @@ class GamePage extends ViewPU {
     this.__dbgY.set(p0);
   }
   static readMemMb() {
+    let v3 /*fs*/, v4;
     let v0 = [0, 0, 0];
-    let v3 /*fs*/ = fs.readTextSync("/proc/self/status");
-    let v4 = new RegExp("VmRSS:\\s+(\\d+)").exec(v3);
-    v3 = new RegExp("VmSize:\\s+(\\d+)").exec(v3);
-    if (v4 !== null) {
-      v4 = Number(v4[1]) / 1024;
-      v0[0] = Math.round(v4);
-    }
-    if (v3 !== null) {
-      v3 = Number(v3[1]) / 1024;
-      v0[1] = Math.round(v3);
-    }
-    v3 = fs.readTextSync("/proc/meminfo");
-    v3 = new RegExp("MemAvailable:\\s+(\\d+)").exec(v3);
-    if (v3 !== null) {
-      v0[2] = Math.round(Number(v3[1]) / 1024);
-    }
+    try {
+      v3 = fs.readTextSync("/proc/self/status");
+      v4 = new RegExp("VmRSS:\\s+(\\d+)").exec(v3);
+      v3 = new RegExp("VmSize:\\s+(\\d+)").exec(v3);
+      if (v4 !== null) {
+        v4 = Number(v4[1]) / 1024;
+        v0[0] = Math.round(v4);
+      }
+      if (v3 !== null) {
+        v3 = Number(v3[1]) / 1024;
+        v0[1] = Math.round(v3);
+      }
+      v3 = fs.readTextSync("/proc/meminfo");
+      v3 = new RegExp("MemAvailable:\\s+(\\d+)").exec(v3);
+      if (v3 !== null) {
+        v0[2] = Math.round(Number(v3[1]) / 1024);
+      }
+    } catch (catchAcc) {}
     return v0;
   }
   static getEntryName() {
@@ -396,7 +399,11 @@ class GamePage extends ViewPU {
     } catch (catchAcc) {
       hilog.error(local_0_0, local_0_1, "gamepad watcher failed: %{public}s", JSON.stringify(catchAcc));
     }
-    local_2_0.showPad = testNapi.emulator.showTouchOverlayEnabled();
+    try {
+      local_2_0.showPad = testNapi.emulator.showTouchOverlayEnabled();
+    } catch (catchAcc) {
+      local_2_0.showPad = true;
+    }
     local_2_0.refreshDebugEnabled();
     local_2_0.debugTimer = setInterval(function () {
       return local_2_0.refreshDebugText();
@@ -524,33 +531,35 @@ class GamePage extends ViewPU {
   pollPrompt() {
     let v0 /*testNapi*/;
     if (this.promptKind === "") {
-      v0 = testNapi.prompt.keyboardRequest();
-      if (v0 === null) {
-        v0 = testNapi.prompt.msgboxRequest();
-        if (v0 === null) {
-          v0 = testNapi.prompt.discRequest();
-          if (v0 !== null) {
-            this.promptId = v0.id;
-            this.promptTitle = "请更换光盘";
-            this.promptMessage = v0.message;
-            this.promptDiscLabels = v0.discLabels;
-            this.promptDiscPaths = v0.discPaths;
-            this.promptKind = "disc";
-          }
+      try {
+        v0 = testNapi.prompt.keyboardRequest();
+        if (v0 !== null) {
+          this.promptId = v0.id;
+          this.promptTitle = v0.title;
+          this.promptMessage = v0.description;
+          this.promptInput = v0.defaultText;
+          this.promptKind = "keyboard";
           return;
         }
-        this.promptId = v0.id;
-        this.promptTitle = v0.title;
-        this.promptMessage = v0.text;
-        this.promptButtons = v0.buttons;
-        this.promptKind = "msgbox";
-        return;
-      }
-      this.promptId = v0.id;
-      this.promptTitle = v0.title;
-      this.promptMessage = v0.description;
-      this.promptInput = v0.defaultText;
-      this.promptKind = "keyboard";
+        v0 = testNapi.prompt.msgboxRequest();
+        if (v0 !== null) {
+          this.promptId = v0.id;
+          this.promptTitle = v0.title;
+          this.promptMessage = v0.text;
+          this.promptButtons = v0.buttons;
+          this.promptKind = "msgbox";
+          return;
+        }
+        v0 = testNapi.prompt.discRequest();
+        if (v0 !== null) {
+          this.promptId = v0.id;
+          this.promptTitle = "请更换光盘";
+          this.promptMessage = v0.message;
+          this.promptDiscLabels = v0.discLabels;
+          this.promptDiscPaths = v0.discPaths;
+          this.promptKind = "disc";
+        }
+      } catch (catchAcc) {}
     }
     return;
   }
@@ -601,13 +610,15 @@ class GamePage extends ViewPU {
     local_2_1.bootProbeTimer = setInterval(function () {
       let v1 /*GamePage*/, v2 /*testNapi*/;
       local_2_0 += 1;
-      v1 = GamePage.readMemMb();
       try {
-        v2 = testNapi.vulkanStatus().frames;
-      } catch (catchAcc) {
-        v2 = -1;
-      }
-      AppLog.i("probe", "t=" + local_2_0 /*ticks*/ * 200 + "ms rss=" + v1[0] + "MB vm=" + v1[1] + "MB avail=" + v1[2] + "MB frames=" + v2 + "");
+        v1 = GamePage.readMemMb();
+        try {
+          v2 = testNapi.vulkanStatus().frames;
+        } catch (catchAcc) {
+          v2 = -1;
+        }
+        AppLog.i("probe", "t=" + local_2_0 /*ticks*/ * 200 + "ms rss=" + v1[0] + "MB vm=" + v1[1] + "MB avail=" + v1[2] + "MB frames=" + v2 + "");
+      } catch (catchAcc) {}
       if (local_2_0 /*ticks*/ >= 300) {
         local_2_1.stopBootProbe();
       }
@@ -711,11 +722,14 @@ class GamePage extends ViewPU {
     }
   }
   handlePhysicalAxis(p0) {
-    let v1 = p0.getHorizontalAxisValue();
-    let v2 = -p0.getVerticalAxisValue();
-    if (v1 !== 0 || v2 !== 0) {
-      this.stickToKeys(true, v1, v2);
-    }
+    let v1, v2;
+    try {
+      v1 = p0.getHorizontalAxisValue();
+      v2 = -p0.getVerticalAxisValue();
+      if (v1 !== 0 || v2 !== 0) {
+        this.stickToKeys(true, v1, v2);
+      }
+    } catch (catchAcc) {}
   }
   handlePhysicalKey(p0) {
     let v0 = this.physicalPadKey(p0.keyCode);

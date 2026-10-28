@@ -226,6 +226,40 @@ export function isIgnoredExceptionCatch(cfg: PandaIRCFG, entry: PandaIRBasicBloc
     return sawString && sawReturn && !sawThrow;
 }
 
+/**
+ * Empty catch whose handler block *is* the try's normal continuation: the
+ * compiler lowers `try { … } catch {}` by making the handler PC the block the
+ * success path already falls through to. The handler is reachable normally, so
+ * using it as the catch body would copy the whole continuation into the catch
+ * (`hx360e AppLog.init` duplicated `rotateIfNeeded` + the second try + log).
+ * RegionGraphBuilder replaces the handler with an empty region; the block stays
+ * the normal continuation.
+ */
+export function isEmptyJoinHandler(
+    cfg: PandaIRCFG,
+    handlerEntryBlock: PandaIRBasicBlock,
+    endPC: number,
+): boolean {
+    if (cfg.graph.normalPredecessors(handlerEntryBlock).length === 0) return false;
+    // A finally suppress block writes the hole sentinel and is then shared as a
+    // normal-completion join; it is not an empty catch (`FollowListPanel.loadMore`
+    // try/finally lost its plan and leaked `hole`).
+    if (handlerEntryBlock.pandaInstructions.some((instruction) => instruction.opcode.name === "ldhole"
+        || (instruction.kind === "load" && (instruction as any).loadType === "HOLE"))) return false;
+    let block = cfg.getBasicBlockByPC(endPC);
+    const seen = new Set<PandaIRBasicBlock>();
+    while (block && block !== handlerEntryBlock) {
+        if (seen.has(block) || block.getStartPC() >= handlerEntryBlock.getStartPC()) return false;
+        seen.add(block);
+        const instructions = block.pandaInstructions;
+        if (instructions.length !== 1 || block.getTerminator().kind !== "jumpDirect") return false;
+        const successors = cfg.graph.normalSuccessors(block);
+        if (successors.length !== 1) return false;
+        block = successors[0];
+    }
+    return block === handlerEntryBlock;
+}
+
 /** True when a much larger try of the same method strictly contains this range. */
 export function nestedInMuchLargerTry(cfg: PandaIRCFG, tryBlock: { startPC: number; length: number }): boolean {
     const tries = cfg.getPandaMethod().methodCode?.pandaMethodTryBlocks;
@@ -394,6 +428,251 @@ export function isCatchAndWrapHandler(block: PandaIRBasicBlock): boolean {
     if (instructions[0]?.kind !== "mov") return false;
     return instructions.some((instruction) => instruction.opcode.name === "newobjrange")
         && instructions.some((instruction) => instruction.kind === "throw");
+}
+
+/**
+ * Handler forward body, bounded and stopped at the first block that is also
+ * reachable from outside the handler (a join with the normal flow). Compiler
+ * dispatch handlers often fall through into the method tail; walking past the
+ * join would count normal-path reads as handler work.
+ */
+interface HandlerForwardBody {
+    blocks: PandaIRBasicBlock[];
+    /** The body falls out to a join with the normal flow or a loop back edge. */
+    rejoin: boolean;
+    /** The single join block the body falls out to, when all paths share it. */
+    joinTarget: PandaIRBasicBlock | null;
+}
+
+function handlerForwardBody(
+    cfg: PandaIRCFG,
+    entry: PandaIRBasicBlock,
+    tryStart: number,
+    tryEnd: number,
+    budget = 32,
+): HandlerForwardBody {
+    const closure: PandaIRBasicBlock[] = [];
+    const closureSeen = new Set<PandaIRBasicBlock>();
+    const closureStack: PandaIRBasicBlock[] = [entry];
+    while (closureStack.length > 0 && closure.length < budget) {
+        const block = closureStack.pop()!;
+        if (closureSeen.has(block)) continue;
+        closureSeen.add(block);
+        const pc = block.getStartPC();
+        if (block !== entry && pc >= tryStart && pc < tryEnd) continue;
+        closure.push(block);
+        for (const successor of cfg.graph.normalSuccessors(block)) {
+            if (successor.getStartPC() <= pc) continue;
+            closureStack.push(successor);
+        }
+    }
+    const members = new Set(closure);
+    const isJoin = (block: PandaIRBasicBlock): boolean => block !== entry
+        && cfg.graph.normalPredecessors(block).some((predecessor) => !members.has(predecessor));
+    const body: PandaIRBasicBlock[] = [];
+    const seen = new Set<PandaIRBasicBlock>();
+    const stack: PandaIRBasicBlock[] = [entry];
+    let rejoin = false;
+    const joinTargets = new Set<PandaIRBasicBlock>();
+    while (stack.length > 0 && body.length < budget) {
+        const block = stack.pop()!;
+        if (seen.has(block)) continue;
+        const pc = block.getStartPC();
+        if (block !== entry && pc >= tryStart && pc < tryEnd) continue;
+        seen.add(block);
+        body.push(block);
+        for (const successor of cfg.graph.normalSuccessors(block)) {
+            // A join block belongs to the normal continuation, not to the catch
+            // body: including it would copy the whole method tail into the
+            // catch (`EntryAbility.updateBreakpoint`).
+            if (successor.getStartPC() <= pc) {
+                rejoin = true;
+                continue;
+            }
+            if (isJoin(successor)) {
+                rejoin = true;
+                joinTargets.add(successor);
+                continue;
+            }
+            stack.push(successor);
+        }
+    }
+    return { blocks: body, rejoin, joinTarget: joinTargets.size === 1 ? Array.from(joinTargets)[0] : null };
+}
+
+interface HandlerBodyFlags {
+    work: boolean;
+    call: boolean;
+    throws: boolean;
+    hole: boolean;
+    dispatch: boolean;
+    returns: boolean;
+}
+
+function scanHandlerBody(blocks: PandaIRBasicBlock[]): HandlerBodyFlags {
+    const flags: HandlerBodyFlags = {
+        work: false, call: false, throws: false, hole: false, dispatch: false, returns: false,
+    };
+    for (const block of blocks) {
+        for (const instruction of block.pandaInstructions) {
+            if (isCatchBodyWork(instruction)) flags.work = true;
+            if (instruction.kind === "call" || instruction.opcode.name === "newobjrange") flags.call = true;
+            if (instruction.kind === "throw") flags.throws = true;
+            if (instruction.opcode.name === "ldhole"
+                || (instruction.kind === "load" && (instruction as any).loadType === "HOLE")) flags.hole = true;
+            const name = instruction.opcode.name;
+            if (name === "asyncfunctionawaituncaught" || name === "suspendgenerator"
+                || name === "resumegenerator" || name === "getresumemode"
+                || name === "asyncfunctionreject") flags.dispatch = true;
+            if (instruction.kind === "return" || name === "asyncfunctionresolve") flags.returns = true;
+        }
+    }
+    return flags;
+}
+
+/**
+ * v24 zero-size handler whose exception value is unused, identified by its
+ * body shape:
+ *  - constant/flag catch: only moves, constant loads, property stores and a
+ *    return (`catch { return false }`, `catch { this.loading = false }`);
+ *  - work catch: logging / UI / fallback work that rejoins the normal flow or
+ *    returns, when the handler is exception-only (no normal predecessor).
+ * Compiler cleanup handlers (inline finally / await dispatch) either have a
+ * normal predecessor, contain the hole sentinel, or contain await dispatch
+ * instructions, so they stay out.
+ */
+function isIgnoredCatchByBody(
+    cfg: PandaIRCFG,
+    entry: PandaIRBasicBlock,
+    tryStart: number,
+    tryEnd: number,
+    sharedStartKept: boolean,
+): boolean {
+    if (isFinallyHandler(cfg, entry)) return false;
+    // A handler whose entry saves the exception (`sta vX`) is either a user
+    // catch that reads it later or compiler machinery; the ignored-catch rules
+    // do not model the saved value across blocks (`TopicListPanel.loadTopics`
+    // compared a call result against the exception register).
+    if (entry.pandaInstructions[0]?.kind === "store") return false;
+    // A handler with a normal predecessor is shared with the success path: its
+    // body is already emitted there, and registering a catch would duplicate
+    // it (`AudioPlayer.togglePlay`'s shared `return undefined` block).
+    if (cfg.graph.normalPredecessors(entry).length > 0) return false;
+    const { blocks, rejoin, joinTarget } = handlerForwardBody(cfg, entry, tryStart, tryEnd);
+    if (blocks.length === 0) return false;
+    const flags = scanHandlerBody(blocks);
+    if (flags.throws || flags.hole || flags.dispatch) return false;
+    // Work catch: may rejoin the normal flow, so a return is not required.
+    if (flags.work) return !sharedStartKept && (flags.returns || rejoin);
+    if (!flags.returns) {
+        // Empty catch whose handler is only a jump/move to a shared *terminal*
+        // continuation (`try { pause() } catch {}` next to another catch that
+        // owns the return block). A jump into the continuing method body is a
+        // compiler skip-block trampoline; registering it needs the try body to
+        // absorb the completion copies, which duplicates reads/defaults
+        // (`hx360e AppLog.init`).
+        if (!rejoin || !joinTarget) return false;
+        const terminal = joinTarget.pandaInstructions.some((instruction) => instruction.kind === "return")
+            && !joinTarget.pandaInstructions.some((instruction) => instruction.kind === "call");
+        if (!terminal) return false;
+        return blocks.every((block) => block.pandaInstructions.every((instruction) =>
+            instruction.kind === "jumpDirect" || instruction.kind === "mov" || instruction.kind === "nop"));
+    }
+    return true;
+}
+
+/**
+ * Empty catch that rejoins the loop latch: `try { unlinkSync(…) } catch {}`
+ * inside a loop compiles to a handler whose body is only register moves plus a
+ * jump to the increment block. It has no visible work and no return; the only
+ * forwarded jump is the loop back edge.
+ */
+function isEmptyContinueCatch(
+    cfg: PandaIRCFG,
+    entry: PandaIRBasicBlock,
+    tryStart: number,
+    tryEnd: number,
+): boolean {
+    if (isFinallyHandler(cfg, entry)) return false;
+    if (cfg.graph.normalPredecessors(entry).length > 0) return false;
+    const { blocks } = handlerForwardBody(cfg, entry, tryStart, tryEnd, 12);
+    if (blocks.length === 0) return false;
+    const flags = scanHandlerBody(blocks);
+    if (flags.throws || flags.hole || flags.dispatch || flags.call || flags.work || flags.returns) return false;
+    // A bare `jmp` handler is the compiler's "skip one success-path block"
+    // trampoline; the join is shared with the normal flow and registering it
+    // pulls the surrounding spills into the catch
+    // (GameInstall.installArchive). Only register an empty catch when the
+    // handler at least restores registers (`mov; jmp`).
+    const hasMove = blocks.some((block) => block.pandaInstructions.some((instruction) => instruction.kind === "mov"));
+    if (!hasMove) return false;
+    const last = blocks[blocks.length - 1];
+    if (!last || last.getTerminator().kind !== "jumpDirect") return false;
+    const successors = cfg.graph.normalSuccessors(last);
+    return successors.length === 1 && successors[0].getStartPC() <= last.getStartPC();
+}
+
+/**
+ * `catch (e) { throw new Error(…) }` where the object construction sits in a
+ * later block than the handler entry (register spills first). The entry-only
+ * check above covers the compact form.
+ */
+function handlerWrapsNewError(
+    cfg: PandaIRCFG,
+    entry: PandaIRBasicBlock,
+    tryStart: number,
+    tryEnd: number,
+): boolean {
+    if (cfg.graph.normalPredecessors(entry).length > 0) return false;
+    const { blocks } = handlerForwardBody(cfg, entry, tryStart, tryEnd, 12);
+    let sawNew = false;
+    for (const block of blocks) {
+        for (const instruction of block.pandaInstructions) {
+            if (instruction.opcode.name === "newobjrange") sawNew = true;
+            else if (sawNew && instruction.kind === "throw") return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * Join block a new-style ignored catch falls out to. The try body has to absorb
+ * the register-copy completion block in front of it, otherwise region reduction
+ * merges the shared continuation into the catch and emits the method tail twice
+ * (`EntryAbility.updateBreakpoint`: try body → `mov v0, v1` → join).
+ */
+function ignoredCatchJoinTarget(
+    cfg: PandaIRCFG,
+    entry: PandaIRBasicBlock,
+    tryStart: number,
+    tryEnd: number,
+): PandaIRBasicBlock | null {
+    if (isFinallyHandler(cfg, entry)) return null;
+    if (cfg.graph.normalPredecessors(entry).length > 0) return null;
+    return handlerForwardBody(cfg, entry, tryStart, tryEnd).joinTarget;
+}
+
+/** The try completion path from `endPC` to the join is jumps and pure `mov`s. */
+function completionReachesJoin(
+    cfg: PandaIRCFG,
+    endPC: number,
+    joinTarget: PandaIRBasicBlock,
+): boolean {
+    const targetPC = joinTarget.getStartPC();
+    let block = cfg.getBasicBlockByPC(endPC);
+    const seen = new Set<PandaIRBasicBlock>();
+    while (block && block.getStartPC() < targetPC) {
+        if (seen.has(block)) return false;
+        seen.add(block);
+        const instructions = block.pandaInstructions;
+        const transparentJump = instructions.length === 1 && block.getTerminator().kind === "jumpDirect";
+        const pureMoves = instructions.every((instruction) => instruction.kind === "mov" || instruction.kind === "nop");
+        if (!transparentJump && !pureMoves) return false;
+        const successors = cfg.graph.normalSuccessors(block);
+        if (successors.length !== 1) return false;
+        block = successors[0];
+    }
+    return block === joinTarget;
 }
 
 /**
@@ -691,6 +970,20 @@ export function classifyTryEntries(cfg: PandaIRCFG): ExceptionTable {
         if (plan.endPC > previous) finallyEndByStart.set(plan.startPC, plan.endPC);
     }
     const registerFinallyHandlers = isNewHandlerEncoding(cfg);
+    // v24 finally handler entry: start → longest protected range. A nested
+    // sub-exit try (the per-await inline cleanup copy) shares its start with the
+    // finally entry; it must not be re-registered as a user catch.
+    const finallyHandlerEndByStart = new Map<number, number>();
+    for (const candidate of method.methodCode!.pandaMethodTryBlocks!) {
+        const candidateCatch = candidate.pandaMethodCatchBlocks[0];
+        if (!candidateCatch) continue;
+        const candidateHandler = cfg.getBasicBlockByPC(candidateCatch.handlerPC);
+        if (!candidateHandler) continue;
+        if (!isFinallyHandler(cfg, candidateHandler) || catchUsesException(candidateHandler)) continue;
+        const candidateEnd = candidate.startPC + candidate.length;
+        const previousEnd = finallyHandlerEndByStart.get(candidate.startPC) ?? 0;
+        if (candidateEnd > previousEnd) finallyHandlerEndByStart.set(candidate.startPC, candidateEnd);
+    }
     for (const tryBlock of method.methodCode!.pandaMethodTryBlocks!) {
         const catchBlock = tryBlock.pandaMethodCatchBlocks[0];
         if (!catchBlock) continue;
@@ -739,6 +1032,13 @@ export function classifyTryEntries(cfg: PandaIRCFG): ExceptionTable {
         const commitPC = handleCodeLength === 0 ? skippedCommitEnd(cfg, handlerEntryBlock, endPC) : null;
         if (handleCodeLength === 0) {
             if (isPureRethrowHandler(handlerEntryBlock)) { push("pureRethrow", false); continue; }
+            // Handler block == success continuation: `try { … } catch {}` with the
+            // compiler's empty handler. Register it with an empty catch body.
+            if (registerFinallyHandlers && !isFinallyHandler(cfg, handlerEntryBlock)
+                && isEmptyJoinHandler(cfg, handlerEntryBlock, endPC)) {
+                push("emptyJoin", true, { protectedEndPC: endPC });
+                continue;
+            }
             // 用户 catch 会把入口 `sta` 保存的异常再读出来(传给日志、读
             // .message、再抛)。它和 finally 计划、内层 finally 的 hole
             // 可以共用同一个 try 范围,不能因为这些特征被整段丢掉
@@ -753,16 +1053,22 @@ export function classifyTryEntries(cfg: PandaIRCFG): ExceptionTable {
                 }
                 return riskyTryValues;
             };
+            const loopContinue = continuesAtLoopHead(cfg, handlerEntryBlock, startPC, endPC);
+            const finallyHandler = isFinallyHandler(cfg, handlerEntryBlock) && !usesException;
+            // New v24 shapes: constant/flag catches, work catches that rejoin the
+            // normal flow, empty catches that continue a loop, and wrap-in-error
+            // catches whose `newobjrange` sits after the entry block.
+            const sharedStartKept = registerFinallyHandlers
+                && (finallyHandlerEndByStart.get(startPC) ?? 0) > endPC;
+            const ignoredByBody = registerFinallyHandlers && !finallyHandler && !sharedStartKept
+                && (isIgnoredCatchByBody(cfg, handlerEntryBlock, startPC, endPC, sharedStartKept)
+                    || (handlerWrapsNewError(cfg, handlerEntryBlock, startPC, endPC) && !readsTryValues())
+                    || isEmptyContinueCatch(cfg, handlerEntryBlock, startPC, endPC));
             const ignoredExitingCatch = isIgnoredExitingCatch(cfg, handlerEntryBlock, startPC, endPC, finallyPlans);
             const ignoredException = isIgnoredExceptionCatch(cfg, handlerEntryBlock)
                 || (isCatchAndWrapHandler(handlerEntryBlock) && !readsTryValues())
-                || (ignoredExitingCatch && !readsTryValues());
-            // 用户 catch 若每条路径都 return/throw,即使保护范围里有内层
-            // finally 的 hole,接进图也不会把循环后续代码拆进 catch
-            // (f1268 写 version.json 失败)。跳回循环头的 catch 是 continue
-            // (c1268 清单失败),单独注册,不按“回到 try 内”丢掉。
-            const loopContinue = continuesAtLoopHead(cfg, handlerEntryBlock, startPC, endPC);
-            const finallyHandler = isFinallyHandler(cfg, handlerEntryBlock) && !usesException;
+                || (ignoredExitingCatch && !readsTryValues())
+                || ignoredByBody;
             // 用户 catch 与 finally 共用起点时,catch 条目的保护范围更短;只有这种
             // 条目才允许用“忽略异常、入口带寄存器恢复”的判据,否则会把大量
             // finally 落点误判成 catch(amcl 上 try 数量翻倍)。
@@ -855,9 +1161,14 @@ function decideProtectedEnd(
 ): number | null {
     const startPC = tryBlock.startPC;
     const endPC = startPC + tryCodeLength;
+    const newIgnored = isNewHandlerEncoding(cfg) && !isFinallyHandler(cfg, handlerEntryBlock)
+        && (isIgnoredCatchByBody(cfg, handlerEntryBlock, startPC, endPC, false)
+            || handlerWrapsNewError(cfg, handlerEntryBlock, startPC, endPC)
+            || isEmptyContinueCatch(cfg, handlerEntryBlock, startPC, endPC));
     const userCatch = catchUsesException(handlerEntryBlock)
         || isIgnoredExceptionCatch(cfg, handlerEntryBlock)
         || isCatchHandler(handlerEntryBlock)
+        || newIgnored
         || (catchOfSharedStart && isIgnoringCatchHandler(handlerEntryBlock) && !isFinallyHandler(cfg, handlerEntryBlock))
         || commitPC !== null;
     const nestedWide = nestedInMuchLargerTry(cfg, tryBlock) && tryCodeLength > 64;
@@ -867,6 +1178,8 @@ function decideProtectedEnd(
     // The mov an empty catch jumps over belongs to the success path.
     // The protected range has to cover it, or the assignment sits
     // after the try and runs on the exception path too.
+    const joinTarget = newIgnored ? ignoredCatchJoinTarget(cfg, handlerEntryBlock, startPC, endPC) : null;
+    if (joinTarget && completionReachesJoin(cfg, endPC, joinTarget)) return joinTarget.getStartPC();
     return commitPC ?? endPC;
 }
 
