@@ -66,6 +66,11 @@ export class PandaDecompiler {
         builder.push("\n* class name:" + pandaClass.name.content + "\n");
         builder.push("* Source code created from a .abc file.\n");
         builder.push("* powered by xpanda decompiler, author: jmp0\n");
+        // 空模块:类记录只有 func_main_0 且字节码仅为 returnundefined(接口/纯类型源文件被
+        // ArkTS 擦除后的产物),显式标注避免"反编译没有输出"的困惑
+        if (this.isEmptyModuleRecord(pandaClass, pandaLexical, funcMain0Method)) {
+            builder.push("* empty module: no runtime code in this class record (interface / type-only source file)\n");
+        }
 
         // 导出变量声明
         if (pandaClass.pandaClassModuleData) {
@@ -119,6 +124,21 @@ export class PandaDecompiler {
             }
         }
         return utils.toJson(programNode);
+    }
+
+    /**
+     * 空模块判定:类记录只有一个方法 func_main_0,且其字节码仅有一条 returnundefined。
+     * 接口/纯类型源文件被 ArkTS 编译时擦除,但仍会生成类记录承载模块元数据
+     * (pkgName / isCommonjs / hasTopLevelAwait / isSharedModule / moduleRecordIdx 字段),
+     * 此时反编译输出只有头注释,需要显式标注。
+     */
+    private isEmptyModuleRecord(pandaClass: PandaClass, pandaLexical: PandaLexical, funcMain0Method: PandaMethod): boolean {
+        if (pandaClass.pandaMethods.size !== 1) return false;
+        if (!pandaLexical.has(funcMain0Method)) return false;
+        const blocks = pandaLexical.getPandaIRCFG(funcMain0Method).pandaIRBasicBlocks;
+        if (blocks.length !== 1) return false;
+        const instructions = blocks[0].pandaInstructions;
+        return instructions.length === 1 && instructions[0].isReturnIns();
     }
 
     private decompileSingleFunction(pandaIRCFG: any, pandaLexical: PandaLexical, programNode: any): void {

@@ -3456,6 +3456,26 @@ function verifyAmclSharedTryCatchJoin(clazz: PandaClass, code: string): void {
  * `no usable end marker`,于是内层 finally 没还原、循环 test 把重抛吞掉
  * (异常时静默结束循环)。现在由 FinallyPlan.loopTailGuard 布局还原。
  */
+/**
+ * 回归:无代码但有非空 export 表的空模块(amcl)。
+ * `n5` 是纯 re-export 的 barrel 文件:func_main_0 仅 returnundefined,模块元数据
+ * 只有一条改名间接导出。输出必须带 empty module 标记,且 export 表语句要原样保留
+ * (防止把空模块当成"没有输出"丢弃时连带丢掉 export 表)。
+ */
+function verifyAmclEmptyModuleBarrelExport(clazz: PandaClass, code: string): void {
+    if (clazz.name.content !== "L&entry/src/main/n5&;") {
+        throw new Error(`amcl n5: 类名不符 (${clazz.name.content})`);
+    }
+    NodeFactory.parse(code);
+    if (!code.includes("* empty module: no runtime code in this class record")) {
+        throw new Error(`amcl n5: 缺少 empty module 标记\n${code}`);
+    }
+    const body = code.replace(/\/\*[\s\S]*?\*\//g, "").trim();
+    if (body !== 'export { f1061 as t302 } from "@normalized:N&&&entry/src/main/ets/d8/j9&";') {
+        throw new Error(`amcl n5: 空模块应只保留 export 表语句\n${code}`);
+    }
+}
+
 function verifyAmclSharedCatchFinally(clazz: PandaClass, code: string): void {
     if (clazz.name.content !== "L&launch/src/main/ets/i15&1.0.0;") {
         throw new Error(`amcl i15: 类名不符 (${clazz.name.content})`);
@@ -4753,6 +4773,7 @@ const amclClassTests: BinaryClassTest[] = [
     { label: "amcl shared try/catch join (amcl1.0.6.abc)", matches: (n) => n === "L&entry/src/main/ets/r5/l8&;", run: verifyAmclSharedTryCatchJoin },
     { label: "amcl shared-start catch + loop-tail finally (amcl1.0.6.abc)", matches: (n) => n === "L&launch/src/main/ets/i15&1.0.0;", run: verifyAmclSharedCatchFinally },
     { label: "amcl nested try/finally restoration (amcl1.0.6.abc)", matches: (n) => n === "L&feature_core/src/main/ets/e11/i11&1.0.0;", run: verifyAmclNestedFinallyRestoration },
+    { label: "amcl empty module with export table (amcl1.0.6.abc)", matches: (n) => n === "L&entry/src/main/n5&;", run: verifyAmclEmptyModuleBarrelExport },
 ];
 
 const hx360eClassTests: BinaryClassTest[] = [
@@ -4772,6 +4793,27 @@ const installClassTests: BinaryClassTest[] = [
         matches: (n) => n === "Lpkg_modules/.ohpm/webview_flutter_ohos@63rxyovf6soepjs+sja1e6+fkzygj1xf5z4crizkc8u="
             + "/pkg_modules/webview_flutter_ohos/src/main/ets/io.flutter.plugins/webview_flutter/WebChromeClientHostApiImpl;",
         run: verifyInstallWebChromeClientClass,
+    },
+    {
+        /**
+         * 回归:接口/纯类型源文件的空模块标注(install1.3.0.abc)。
+         * FlutterUiDisplayListener 是 flutter_ohos 的 interface,ArkTS 编译时接口被擦除,
+         * 类记录只剩 5 个模块元数据字段 + 一条 returnundefined 的 func_main_0;
+         * simplify 后输出只剩头注释,必须带 empty module 标记,且不得有语句残留。
+         */
+        label: "install empty interface module marker (install1.3.0.abc)",
+        matches: (n) => n === "Lpkg_modules/.ohpm/@ohos+flutter_ohos@zl5sgaygqsqrqqtvxitwwita9ctgsvucjvbitoqeitg="
+            + "/pkg_modules/@ohos/flutter_ohos/src/main/ets/embedding/engine/renderer/FlutterUiDisplayListener;",
+        run: (_clazz, code) => {
+            NodeFactory.parse(code);
+            if (!code.includes("* empty module: no runtime code in this class record")) {
+                throw new Error(`FlutterUiDisplayListener: 缺少 empty module 标记\n${code}`);
+            }
+            const body = code.replace(/\/\*[\s\S]*?\*\//g, "").trim();
+            if (body.length !== 0) {
+                throw new Error(`FlutterUiDisplayListener: 空模块不应有语句残留\n${code}`);
+            }
+        },
     },
 ];
 
