@@ -1,6 +1,7 @@
 import type { PandaIRBasicBlock } from "../disasm/PandaIRBasicBlock";
 import type { PandaLexical } from "../disasm/PandaLexical";
-import type { CodeGenerator } from "../codegen/CodeGenerator";
+import { NodeFactory } from "../ast/NodeFactory";
+import { NodeUtils } from "../ast/NodeUtils";
 import type { PandaDecompilerMethodHandler } from "./MethodHandler";
 import type { Region } from "./Region";
 
@@ -50,7 +51,7 @@ export abstract class JumpStatement implements IPandaDecompileAble {
     }
 
     protected generateTestExpressionByExp(methodHandler: PandaDecompilerMethodHandler, exp: boolean): any {
-        const factory = methodHandler.getCodeGenerator().getNodeFactory();
+        const factory = NodeFactory;
         if (!exp) return factory.unaryExpressionNode("!", factory.identifierNode("acc") as any);
         return factory.identifierNode("acc");
     }
@@ -71,24 +72,23 @@ export class IfPandaStatement extends JumpStatement {
     }
 
     decompile(methodHandler: PandaDecompilerMethodHandler, pandaLexical: PandaLexical, astNode: any): void {
-        const codeGenerator = methodHandler.getCodeGenerator();
-        const factory = codeGenerator.getNodeFactory();
+        const factory = NodeFactory;
         let exp = this.generateTestExpression(methodHandler, pandaLexical);
         if (this.consequent === null) {
             exp = factory.unaryExpressionNode("!", exp as any);
             const alertBlock = factory.blockStatementNode();
             this.alternate!.decompile(methodHandler, pandaLexical, alertBlock);
-            codeGenerator.getNodeUtils().insertNodeToBody(factory.ifStatementNode(exp as any, alertBlock, null) as any, astNode);
+            NodeUtils.insertNodeToBody(factory.ifStatementNode(exp as any, alertBlock, null) as any, astNode);
         } else if (this.alternate === null) {
             const consequentBlock = factory.blockStatementNode();
             this.consequent.decompile(methodHandler, pandaLexical, consequentBlock);
-            codeGenerator.getNodeUtils().insertNodeToBody(factory.ifStatementNode(exp as any, consequentBlock, null) as any, astNode);
+            NodeUtils.insertNodeToBody(factory.ifStatementNode(exp as any, consequentBlock, null) as any, astNode);
         } else {
             const consequentBlock = factory.blockStatementNode();
             this.consequent.decompile(methodHandler, pandaLexical, consequentBlock);
             const alertBlock = factory.blockStatementNode();
             this.alternate.decompile(methodHandler, pandaLexical, alertBlock);
-            codeGenerator.getNodeUtils().insertNodeToBody(factory.ifStatementNode(exp as any, consequentBlock, alertBlock) as any, astNode);
+            NodeUtils.insertNodeToBody(factory.ifStatementNode(exp as any, consequentBlock, alertBlock) as any, astNode);
         }
     }
 }
@@ -108,8 +108,7 @@ export class WhileStatement extends JumpStatement {
     }
 
     decompile(methodHandler: PandaDecompilerMethodHandler, pandaLexical: PandaLexical, astNode: any): void {
-        const codeGenerator = methodHandler.getCodeGenerator();
-        const factory = codeGenerator.getNodeFactory();
+        const factory = NodeFactory;
         const block = factory.blockStatementNode();
         if (this.headStms !== null) {
             for (const headStm of this.headStms) {
@@ -120,14 +119,14 @@ export class WhileStatement extends JumpStatement {
                 testNode = factory.unaryExpressionNode("!", testNode as any);
             }
             const jumpOutBlock = factory.ifStatementNode(testNode as any, factory.breakStatement(), null);
-            codeGenerator.getNodeUtils().insertNodeToBody(jumpOutBlock as any, block);
+            NodeUtils.insertNodeToBody(jumpOutBlock as any, block);
         }
         for (const bodyStm of this.bodyStms) {
             bodyStm.decompile(methodHandler, pandaLexical, block);
         }
         const trueNode = factory.booleanLiteralNode(true);
         const doWhileNode = factory.whileStatementNode(trueNode, block);
-        codeGenerator.getNodeUtils().insertNodeToBody(doWhileNode as any, astNode);
+        NodeUtils.insertNodeToBody(doWhileNode as any, astNode);
     }
 }
 
@@ -140,15 +139,14 @@ export class DoWhileStatement extends JumpStatement {
     }
 
     decompile(methodHandler: PandaDecompilerMethodHandler, pandaLexical: PandaLexical, astNode: any): void {
-        const codeGenerator = methodHandler.getCodeGenerator();
-        const factory = codeGenerator.getNodeFactory();
+        const factory = NodeFactory;
         const block = factory.blockStatementNode();
         for (const bodyStm of this.bodyStms) {
             bodyStm.decompile(methodHandler, pandaLexical, block);
         }
         const testNode = factory.unaryExpressionNode("!", this.generateTestExpression(methodHandler, pandaLexical) as any);
         const doWhileNode = factory.doWhileStatementNode(testNode as any, block);
-        codeGenerator.getNodeUtils().insertNodeToBody(doWhileNode as any, astNode);
+        NodeUtils.insertNodeToBody(doWhileNode as any, astNode);
     }
 }
 
@@ -156,12 +154,11 @@ export class BreakStatement implements IPandaDecompileAble {
     constructor(private readonly comment: string | null) {}
 
     decompile(methodHandler: PandaDecompilerMethodHandler, _pandaLexical: PandaLexical, astNode: any): void {
-        const codeGenerator = methodHandler.getCodeGenerator();
-        const breakStatement = codeGenerator.getNodeFactory().breakStatement();
+        const breakStatement = NodeFactory.breakStatement();
         if (this.comment) {
-            codeGenerator.getNodeFactory().addTrailingComment(breakStatement as any, this.comment);
+            NodeFactory.addTrailingComment(breakStatement as any, this.comment);
         }
-        codeGenerator.getNodeUtils().insertNodeToBody(breakStatement as any, astNode);
+        NodeUtils.insertNodeToBody(breakStatement as any, astNode);
     }
 }
 
@@ -169,12 +166,11 @@ export class ContinueStatement implements IPandaDecompileAble {
     constructor(private readonly comment: string | null) {}
 
     decompile(methodHandler: PandaDecompilerMethodHandler, _pandaLexical: PandaLexical, astNode: any): void {
-        const codeGenerator = methodHandler.getCodeGenerator();
-        const continueStatement = codeGenerator.getNodeFactory().continueStatement();
+        const continueStatement = NodeFactory.continueStatement();
         if (this.comment) {
-            codeGenerator.getNodeFactory().addTrailingComment(continueStatement as any, this.comment);
+            NodeFactory.addTrailingComment(continueStatement as any, this.comment);
         }
-        codeGenerator.getNodeUtils().insertNodeToBody(continueStatement as any, astNode);
+        NodeUtils.insertNodeToBody(continueStatement as any, astNode);
     }
 }
 
@@ -183,14 +179,13 @@ export class GotoStatement implements IPandaDecompileAble {
 
     decompile(methodHandler: PandaDecompilerMethodHandler, _pandaLexical: PandaLexical, astNode: any): void {
         const name = this.dest.getName();
-        const codeGenerator = methodHandler.getCodeGenerator();
-        const factory = codeGenerator.getNodeFactory();
-        if (!codeGenerator.getNodeUtils().tryFixGoto(astNode, name)) {
+        const factory = NodeFactory;
+        if (!NodeUtils.tryFixGoto(astNode, name)) {
             const identifierNode = factory.identifierNode("xpanda_goto");
-            const arrayObject = codeGenerator.arrayObject();
-            codeGenerator.addToArray(arrayObject, factory.identifierNode(name));
+            const arrayObject = [];
+            arrayObject.push(factory.identifierNode(name));
             const callExpressionNode = factory.callExpressionNode(identifierNode as any, arrayObject as any);
-            codeGenerator.getNodeUtils().insertNodeToBody(factory.expressionStatementNode(callExpressionNode as any) as any, astNode);
+            NodeUtils.insertNodeToBody(factory.expressionStatementNode(callExpressionNode as any) as any, astNode);
         }
     }
 }
@@ -199,9 +194,8 @@ export class LabelStatement implements IPandaDecompileAble {
     constructor(private readonly region: Region) {}
 
     decompile(methodHandler: PandaDecompilerMethodHandler, _pandaLexical: PandaLexical, astNode: any): void {
-        const codeGenerator = methodHandler.getCodeGenerator();
-        const label = codeGenerator.getNodeFactory().labeledStatementNode(this.region.getName(), null as any);
-        codeGenerator.getNodeUtils().insertNodeToBody(label as any, astNode);
+        const label = NodeFactory.labeledStatementNode(this.region.getName(), null as any);
+        NodeUtils.insertNodeToBody(label as any, astNode);
     }
 }
 
@@ -227,9 +221,8 @@ export abstract class LogicalExpressionStatement extends JumpStatement {
     }
 
     generateTestExpressionPublic(methodHandler: PandaDecompilerMethodHandler, pandaLexical: PandaLexical): any {
-        const codeGenerator = methodHandler.getCodeGenerator();
-        const factory = codeGenerator.getNodeFactory();
-        const utils = codeGenerator.getNodeUtils();
+        const factory = NodeFactory;
+        const utils = NodeUtils;
         const type = this.getType();
         const sequenceFirst = factory.sequenceExpressionNode([]);
         this.first.decompile(methodHandler, pandaLexical, sequenceFirst);
@@ -267,10 +260,9 @@ export abstract class LogicalExpressionStatement extends JumpStatement {
     }
 
     decompile(methodHandler: PandaDecompilerMethodHandler, pandaLexical: PandaLexical, astNode: any): void {
-        const codeGenerator = methodHandler.getCodeGenerator();
-        if (codeGenerator.getNodeUtils().isSequenceExpression(astNode)) {
+        if (NodeUtils.isSequenceExpression(astNode)) {
             const node = this.generateTestExpressionPublic(methodHandler, pandaLexical);
-            codeGenerator.getNodeUtils().insertToSequenceExpression(node as any, astNode);
+            NodeUtils.insertToSequenceExpression(node as any, astNode);
         }
     }
 }
@@ -299,8 +291,7 @@ export class TryCatchPandaStatement implements IPandaDecompileAble {
     ) {}
 
     decompile(methodHandler: PandaDecompilerMethodHandler, pandaLexical: PandaLexical, astNode: any): void {
-        const codeGenerator = methodHandler.getCodeGenerator();
-        const factory = codeGenerator.getNodeFactory();
+        const factory = NodeFactory;
         const tryBodyNode = factory.blockStatementNode();
         this.tryBody?.decompile(methodHandler, pandaLexical, tryBodyNode);
         const catchBodyNode = factory.blockStatementNode();
@@ -313,13 +304,13 @@ export class TryCatchPandaStatement implements IPandaDecompileAble {
             factory.identifierNode("acc") as any,
             factory.identifierNode("catchAcc") as any,
         );
-        codeGenerator.getNodeUtils().insertNodeToBody(factory.expressionStatementNode(toAcc as any) as any, catchBodyNode);
+        NodeUtils.insertNodeToBody(factory.expressionStatementNode(toAcc as any) as any, catchBodyNode);
         this.catchBody?.decompile(methodHandler, pandaLexical, catchBodyNode);
         const tryNode = factory.tryStatementNode(tryBodyNode, catchBodyNode);
         if (this.kind === "finallyEpilogue") {
             tryNode.extra = { ...(tryNode.extra ?? {}), xpandaTryKind: "finallyEpilogue" };
         }
         if (this.tryBodyEndPC !== null) methodHandler.recordTryBodyEnd(tryNode, this.tryBodyEndPC);
-        codeGenerator.getNodeUtils().insertNodeToBody(tryNode as any, astNode);
+        NodeUtils.insertNodeToBody(tryNode as any, astNode);
     }
 }

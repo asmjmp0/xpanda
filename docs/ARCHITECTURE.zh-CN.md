@@ -43,7 +43,6 @@ JavaScript 源码(落盘 / stdout / 编程 API)
 | `src/res/` | `resources.index` 解析(兼容 Restool 与 RestoolV2 格式)为可查询的资源项 |
 | `src/disasm/` | 反汇编:生成的 opcode 表、统一指令模型、CFG、词法分析 |
 | `src/decompiler/` | 结构化分析(Region 归约)、语句树、指令 handle、支配树、到达定义值分析、降级方案、try/finally 还原;`ExceptionTable.ts` 分类每个 try 表条目(用户 catch / 忽略异常 / 空 catch / 内联 finally 收尾 / 协议胶水),并驱动 CFG 的异常边 |
-| `src/codegen/` | `CodeGenerator` —— 包装 `src/ast/` 的轻封装 |
 | `src/ast/` | Babel AST 构建与文本生成(`NodeFactory` / `NodeUtils` / `FormatCode`) |
 | `src/simplify/` | 优化器流水线 |
 | `src/parallel/` *(已移至 xpanda-cli)* | 按类并行的 simplify worker 池(worker_threads / os,仅 Node 可用,现位于 `packages/xpanda-cli/src/parallel/`) |
@@ -55,7 +54,7 @@ JavaScript 源码(落盘 / stdout / 编程 API)
 | `resources/isa.yaml` | ArkCompiler 指令集描述(v24.0.0.0) |
 | `test/` | 集成测试、样本(`*.abc`、`*.hap`)与快照(`test/expected/*.js`) |
 
-依赖方向:`cli / PandaDecompiler → decompiler → disasm → file → codec`;`decompiler / codegen → ast`;`SimplifyExport → simplify`;`parallel → PandaDecompiler / file`;`mcp / hap → res`;`web → PandaDecompiler / hap`。
+依赖方向:`cli / PandaDecompiler → decompiler → disasm → file → codec`;`decompiler → ast`;`SimplifyExport → simplify`;`parallel → PandaDecompiler / file`;`mcp / hap → res`;`web → PandaDecompiler / hap`。
 
 ## 3. 文件格式层 —— `src/file/`
 
@@ -203,9 +202,8 @@ ArkTS 13 把 `finally` 编译成状态机(hole 哨兵、cleanup 块、重抛守�
 - `ValueGraph.ts`:保持插入顺序、边分三种(`true` / `false` / `exception`)的有向图;同一对节点的普通边与异常边可以并存。提供 `edgeValueOrThrow`(条件边)、`normalSuccessors` / `exceptionSuccessors` / `exceptionPredecessors`、`edgeKind`、DFS 后序。
 - `DominatorGraph.ts`:迭代式支配树计算(Cooper-Harvey-Kennedy 风格),带 100000 次迭代安全超时;`dominatesStrictly`;`LoopFinder` 求自然环。
 
-## 8. AST 构建与代码生成 —— `src/ast/` + `src/codegen/`
+## 8. AST 构建 —— `src/ast/`
 
-- `codegen/CodeGenerator.ts`:轻封装,暴露 `NodeFactory` / `NodeUtils`(取代 Java 版的 GraalVM JS 桥)。
 - `ast/NodeFactory.ts`:Babel 节点构造。`parse` 用 `sourceType: "module"` + `allowUndeclaredExports`;`generate` 跑 jsesc-minimal + `FormatCode`。`identifierNode(name, type?)` 把类型附加为尾随块注释(类型提示以注释形式保留)。`tryStatementNode` 把 catch 参数命名为 **`catchAcc`**,避免遮蔽累加器。async / generator 标志挂在 `body.extra` 上。
 - `ast/NodeUtils.ts`:语句插入(合法时解包进 `SequenceExpression`)、序列表达式辅助、async/generator 标记、`setReturnTypeCall`(`callIns` 标记,由 `CallResultSimplify` 消费)、`covert2SingleBlock`(在 `panda_jmp0_reserved_lex_begin` 哨兵处折 popLexEnv)、`tryFixGoto`。
 - `ast/FormatCode.ts`:只影响输出文本的折行。超过 **120 字符**的行在顶层(深度 0)`||` / `&&` / `??` 处拆分,新行以操作符开头(ASI 安全)。含顶层三目的行不折;模板字符串、引号、注释与正则字面量被跟踪,内部内容保持完整。

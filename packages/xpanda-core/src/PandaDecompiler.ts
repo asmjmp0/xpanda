@@ -1,7 +1,6 @@
 import { PandaFile, ENTRY_FUNCTION_MAIN } from "./file/PandaFile";
 import { PandaClass, ImportType, ExportType } from "./file/clazz/PandaClass";
 import { PandaLexical } from "./disasm/PandaLexical";
-import { CodeGenerator } from "./codegen/CodeGenerator";
 import { PandaDecompilerMethodHandler } from "./decompiler/MethodHandler";
 import { StructureAnalysis } from "./decompiler/StructureAnalysis";
 import { SimpleAnalysis } from "./decompiler/SimpleAnalysis";
@@ -16,12 +15,10 @@ import type { PandaMethod } from "./file/method/PandaMethod";
  * @Author: jmp0
  */
 export class PandaDecompiler {
-    private readonly codeGenerator: CodeGenerator;
     private readonly methodHandler: PandaDecompilerMethodHandler;
 
     constructor() {
-        this.codeGenerator = new CodeGenerator();
-        this.methodHandler = new PandaDecompilerMethodHandler(this.codeGenerator);
+        this.methodHandler = new PandaDecompilerMethodHandler();
     }
 
     /** decompileRaw 等价:输出 AST JSON */
@@ -29,8 +26,8 @@ export class PandaDecompiler {
         // 生成名计数按类复位,保证单类输出不依赖处理顺序(并行反编译的前提)
         this.methodHandler.reset();
         const pandaLexical = new PandaLexical(pandaClass);
-        const factory = this.codeGenerator.getNodeFactory();
-        const utils = this.codeGenerator.getNodeUtils();
+        const factory = NodeFactory;
+        const utils = NodeUtils;
         const funcMain0Method = pandaClass.pandaMethods.get(ENTRY_FUNCTION_MAIN);
         if (!funcMain0Method) return "//no function main...";
         const programNode = factory.programNode();
@@ -80,9 +77,9 @@ export class PandaDecompiler {
                 if (exp.type === ExportType.LOCAL && exp.localName !== null) nameSet.add(exp.localName);
             }
             if (nameSet.size > 0) {
-                const arrayObject = this.codeGenerator.arrayObject();
+                const arrayObject = [];
                 for (const s of nameSet) {
-                    this.codeGenerator.addToArray(arrayObject, factory.variableDeclaratorNode(factory.identifierNode(s) as any, null));
+                    arrayObject.push(factory.variableDeclaratorNode(factory.identifierNode(s) as any, null));
                 }
                 utils.insertNodeToBody(factory.variableDeclarationNode(arrayObject as any, "let") as any, programNode);
             }

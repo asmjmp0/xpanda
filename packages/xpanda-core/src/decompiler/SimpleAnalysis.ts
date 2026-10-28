@@ -1,5 +1,7 @@
 import type { PandaIRCFG } from "../disasm/PandaIRCFG";
 import type { PandaLexical } from "../disasm/PandaLexical";
+import { NodeFactory } from "../ast/NodeFactory";
+import { NodeUtils } from "../ast/NodeUtils";
 import { LinearPandaStatement } from "./statements";
 import { checkIsAsyncException, checkIsGeneratorException } from "./ExceptionTable";
 import type { PandaDecompilerMethodHandler } from "./MethodHandler";
@@ -58,17 +60,16 @@ export class SimpleAnalysis {
     }
 
     analysis(methodHandler: PandaDecompilerMethodHandler, pandaLexical: PandaLexical, astNode: any): void {
-        const codeGenerator = methodHandler.getCodeGenerator();
-        const factory = codeGenerator.getNodeFactory();
-        const utils = codeGenerator.getNodeUtils();
+        const factory = NodeFactory;
+        const utils = NodeUtils;
         factory.addLeadingComment(astNode, "The function was created by SimpleAnalysis,because StructureAnalysis failed.");
         if (this.isAsyncFunction) utils.setIsAsyncBlock(astNode);
         if (this.isGeneratorFunction) utils.setIsGeneratorBlock(astNode);
         for (const statement of this.statements) {
             const blockStatementNode = factory.blockStatementNode();
             for (const handler of this.irCFG.graph.exceptionSuccessors(statement.block)) {
-                const arrayObject = codeGenerator.arrayObject();
-                codeGenerator.addToArray(arrayObject, factory.identifierNode(handler.name));
+                const arrayObject = [];
+                arrayObject.push(factory.identifierNode(handler.name));
                 const callExpressionNode = factory.callExpressionNode(factory.identifierNode("decompiler_exception_handled_by") as any, arrayObject as any);
                 utils.insertNodeToBody(factory.expressionStatementNode(callExpressionNode as any) as any, blockStatementNode);
             }            if (this.exceptionHandleBlocks.has(statement.block)) {
@@ -78,13 +79,13 @@ export class SimpleAnalysis {
             statement.decompile(methodHandler, pandaLexical, blockStatementNode);
             const instruction = statement.block.getTerminator();
             if (instruction.kind === "jumpDirect") {
-                const arrayObject = codeGenerator.arrayObject();
-                codeGenerator.addToArray(arrayObject, factory.identifierNode("label_" + instruction.destinationPC));
+                const arrayObject = [];
+                arrayObject.push(factory.identifierNode("label_" + instruction.destinationPC));
                 const callExpressionNode = factory.callExpressionNode(factory.identifierNode("decompiler_goto") as any, arrayObject as any);
                 utils.insertNodeToBody(factory.expressionStatementNode(callExpressionNode as any) as any, blockStatementNode);
             } else if (instruction.kind === "jumpEqual" || instruction.kind === "jumpNotEqual") {
-                const arrayObject = codeGenerator.arrayObject();
-                codeGenerator.addToArray(arrayObject, factory.identifierNode("label_" + instruction.destinationPC));
+                const arrayObject = [];
+                arrayObject.push(factory.identifierNode("label_" + instruction.destinationPC));
                 const callExpressionNode = factory.callExpressionNode(factory.identifierNode("decompiler_goto") as any, arrayObject as any);
                 const ifTestObject = instruction.kind === "jumpNotEqual"
                     ? factory.identifierNode("acc") as any

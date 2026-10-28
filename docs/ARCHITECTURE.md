@@ -43,7 +43,6 @@ The main thread always performs parsing, disassembly, lexical analysis, and AST 
 | `src/res/` | `resources.index` parsing (Restool & RestoolV2 formats) into queryable resource items |
 | `src/disasm/` | Disassembly: generated opcode table, unified instruction model, CFG, lexical analysis |
 | `src/decompiler/` | Structure analysis (region reduction), statement tree, instruction handlers, dominator graph, reaching-definition value analysis, fallback analysis, try/finally restoration; `ExceptionTable.ts` classifies every try-table entry (user catch / ignored / empty-join / finally epilogue / protocol glue) and drives the CFG exception edges |
-| `src/codegen/` | `CodeGenerator` — thin wrapper around `src/ast/` |
 | `src/ast/` | Babel AST construction & text generation (`NodeFactory` / `NodeUtils` / `FormatCode`) |
 | `src/simplify/` | Optimizer pipeline |
 | `src/parallel/` *(moved to xpanda-cli)* | Per-class parallel simplify worker pool (worker_threads / os — Node-only, lives in `packages/xpanda-cli/src/parallel/`) |
@@ -55,7 +54,7 @@ The main thread always performs parsing, disassembly, lexical analysis, and AST 
 | `resources/isa.yaml` | ArkCompiler instruction set description (v24.0.0.0) |
 | `test/` | Integration tests, samples (`*.abc`, `*.hap`), snapshots (`test/expected/*.js`) |
 
-Dependency direction: `cli / PandaDecompiler → decompiler → disasm → file → codec`; `decompiler / codegen → ast`; `SimplifyExport → simplify`; `parallel → PandaDecompiler / file`; `mcp / hap → res`; `web → PandaDecompiler / hap`.
+Dependency direction: `cli / PandaDecompiler → decompiler → disasm → file → codec`; `decompiler → ast`; `SimplifyExport → simplify`; `parallel → PandaDecompiler / file`; `mcp / hap → res`; `web → PandaDecompiler / hap`.
 
 ## 3. File Format Layer — `src/file/`
 
@@ -205,9 +204,8 @@ Registers are heavily reused (`v6` is both the hole sentinel and a read buffer),
 - `ValueGraph.ts`: insertion-ordered directed graph with three edge kinds (`true` / `false` / `exception`); normal and exception edges between the same pair coexist. `edgeValueOrThrow` (conditional edges), `normalSuccessors` / `exceptionSuccessors` / `exceptionPredecessors`, `edgeKind`, DFS post-order.
 - `DominatorGraph.ts`: iterative dominator computation (Cooper-Harvey-Kennedy style) with a 100000-iteration safety timeout; `dominatesStrictly`; `LoopFinder` for natural loops.
 
-## 8. AST Construction & Code Generation — `src/ast/` + `src/codegen/`
+## 8. AST Construction — `src/ast/`
 
-- `codegen/CodeGenerator.ts`: thin wrapper exposing `NodeFactory` / `NodeUtils` (replaces the Java version's GraalVM JS bridge).
 - `ast/NodeFactory.ts`: Babel node constructors. `parse` uses `sourceType: "module"` with `allowUndeclaredExports`; `generate` runs jsesc-minimal + `FormatCode`. `identifierNode(name, type?)` attaches the type as a trailing block comment (type hints survive as comments). `tryStatementNode` names the catch parameter **`catchAcc`** so it never shadows the accumulator. Async / generator flags ride on `body.extra`.
 - `ast/NodeUtils.ts`: statement insertion (unwrapped into `SequenceExpression` where legal), sequence-expression helpers, async/generator marking, `setReturnTypeCall` (the `callIns` marker consumed by `CallResultSimplify`), `covert2SingleBlock` (popLexEnv folding at the `panda_jmp0_reserved_lex_begin` sentinel), `tryFixGoto`.
 - `ast/FormatCode.ts`: output-only line wrapping. Lines longer than **120 chars** are split at top-level (depth 0) `||` / `&&` / `??`, with the new line starting on the operator (ASI-safe). Lines containing a top-level ternary are never split; template strings, quotes, comments, and regex literals are tracked so their contents stay intact.
