@@ -216,6 +216,11 @@ export class CopyPropagation extends TempVariablePass {
                     // v14.destroy()` 是 finally 已经做过的清理,用 try 前的空值
                     // 折掉,避免和 finally 各销毁一次。
                     const catchEnv = env.copy();
+                    // try 之前建立的别名(`v0 = acc`)在 try 写过 `acc` 之后,异常
+                    // 路径上已经不成立:catch 里读 `v0` 必须保留 `v0`(amcl p16
+                    // acquire 的 `closeSync(v0)` 曾被折成 `closeSync(acc)`,把 fd
+                    // 变成 tryLock 函数)。
+                    catchEnv.invalidateIdentifierAliases(tryBodyWrites.names);
                     for (const name of this.identifierCopySources(stmt.handler.body)) {
                         if (tryBodyWrites.names.has(name)) catchEnv.invalidate(name);
                     }

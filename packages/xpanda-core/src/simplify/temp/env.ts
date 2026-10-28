@@ -69,6 +69,24 @@ export class EnvState {
         }
     }
 
+    /**
+     * 使「缓存值是标识符、且该标识符在 `names` 里」的别名失效。
+     *
+     * `X = Y` 的别名在 `Y` 被改写后就不再成立。catch 体沿用的是 try 之前的
+     * 环境(其余读取故意保留旧值,见 copy-propagation 的 TryStatement),但 try
+     * 体写过 Y 时,异常路径上的 Y 已经不是缓存里的那个值——amcl p16 `acquire`
+     * 的 `v0 = acc` 就是这样把 `closeSync(v0)` 折成了 `closeSync(acc)`(fd 变成
+     * tryLock 函数)。
+     */
+    invalidateIdentifierAliases(names: Set<string>): void {
+        if (names.size === 0) return;
+        const doomed: string[] = [];
+        for (const [name, entry] of this.map) {
+            if (entry.expr.type === "Identifier" && names.has(entry.expr.name)) doomed.push(name);
+        }
+        for (const name of doomed) this.invalidate(name);
+    }
+
     copy(): EnvState {
         const copy = new EnvState();
         for (const [name, entry] of this.map) copy.map.set(name, entry);

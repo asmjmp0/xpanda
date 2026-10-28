@@ -72,6 +72,21 @@ Class names accept `Lpkg/Name;`, `pkg/Name`, or a unique substring; method names
 accept `#*#q776`, `q776`, or a unique substring. `--decompile` prints the whole
 decompiled class for correlation with what the output actually shows.
 
+### Ground truth for finally vs catch
+
+`reference/es2abc` (24.0.0.0, macOS arm64) compiles the fixtures in
+`fixtures/finally-shapes/`; the script dumps normalized assembly and summarizes each
+function's try entries:
+
+```bash
+npx tsx .agents/skills/xpanda-structure-forensics/scripts/compile-shapes.ts
+# optional: --out <dir>   (defaults to <tmp>/xpanda-finally-shapes)
+```
+
+Read the dumped `.asm` for the exact handler. The classic hole-guard finally form is
+the same on 13.0.1.0 (e.g. amcl `mods/o17` `execute`), so the 24.0.0.0 dump is valid
+ground truth for this repo's 13.x samples too.
+
 ## 3. Find the stage that dropped it
 
 Cheapest first. Stop at the first stage that explains the loss.
@@ -146,6 +161,24 @@ Cheapest first. Stop at the first stage that explains the loss.
 | catch-tail | try/catch and try/finally share a start; the cleanup lands at the catch body's tail | `isHandlerWiring` + handler-tail layout |
 | loop-exhausted | cleanup inside the for-of `done` branch, body ends with `acc = save; throw acc` | `applyLoopExhaustedFinally` |
 | loop-tail | cleanup/guard folded into the `do { … } while` test, guard's non-throw edge is a back edge | `FinallyPlan.tailCleanupRange`, `applyTailCleanupFinally` (13.0.1.0 only) |
+
+### finally vs catch signatures (es2abc ground truth)
+
+| | finally | catch (with cleanup + rethrow) |
+| --- | --- | --- |
+| try entries | two for the same start: `start..bridge` (pure rethrow) + `start..cleanup` | one |
+| handler entry | `sta pending` | `sta e` |
+| cleanup copy | often wrapped in `if (<resumeFlag> == undefined)` | handler body directly |
+| epilogue | `ldhole; sta; noteq; if (pending != hole) throw pending; <resolve/return>` | `lda e; throw` |
+| normal path | one inlined copy of the same cleanup before the exit | none |
+
+A handler with the `ldhole`/`noteq` rethrow guard **is a finally**, even when the try
+body covers the whole method and the normal-path copy sits far from the handler
+(amcl `mods/o17` `execute`). Do not demote it to a catch just because
+`buildFinallyPlans` produced no plan - fix the plan detection instead. With multiple
+exits the normal-path cleanup copy is shared: the exits jump to one copy, and the
+copy may start in a tiny `vX = undefined` block before the real cleanup, so shape
+matching must walk forward across blocks and skip the `if (<resumeFlag>)` guard.
 
 Loops are the other half: a for-of with an early `continue`/`return` is lowered to
 `do { r = it.next(); if (r.done) { … } … } while (…)` or `while (true) { … if (r.done) break; }`;

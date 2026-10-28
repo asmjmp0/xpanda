@@ -117,7 +117,7 @@ JavaScript 源码(落盘 / stdout / 编程 API)
 
 **边语义**:三种边 —— `true` = 跳转方向,`false` = 顺序/fallthrough 方向,`exception` = try 表产生的“受保护块 → handler”异常边。`successors()` / 度数返回三种边的并集(同一对 `(a,b)` 可以同时是普通边与异常边,二者互不覆盖);结构极性判定用 `normalSuccessors()` / `edgeValueOrThrow`,绝不依赖 `successors()` 的顺序。
 
-**handler 分类**(`ExceptionTable.ts`,经 `PandaIRCFG.getExceptionTable()` 惰性构建):每个 try 表条目都按 handler 的指令形状归类 —— 用户 `catch`、忽略异常值的 catch、空 catch(empty join)、内联 finally 收尾、经典 hole 哨兵 finally、纯重抛跳板、for-in 取迭代器、for-of 关闭、async 拒绝派发、generator resume 臂、无保护范围。分类器同时决定 try 体的吸收边界(`protectedEndPC`),是 `RegionGraphBuilder` 的唯一事实来源。只有保留的条目会产生异常边;协议 handler 一条都没有,因此永远不会被归约成 `try`。
+**handler 分类**(`ExceptionTable.ts`,经 `PandaIRCFG.getExceptionTable()` 惰性构建):每个 try 表条目都按 handler 的指令形状归类 —— 用户 `catch`、忽略异常值的 catch、空 catch(empty join)、内联 finally 收尾、经典 hole 哨兵 finally、纯重抛跳板、for-in 取迭代器、for-of 关闭、async 拒绝派发、generator resume 臂、无保护范围。分类器同时决定 try 体的吸收边界(`protectedEndPC`),是 `RegionGraphBuilder` 的唯一事实来源。只有保留的条目会产生异常边;协议 handler 一条都没有,因此永远不会被归约成 `try`。零长度 handler 的 body 可能从下一个基本块开始(基本块在 try 范围起点切分),`handlerBodyHasVisibleWork` 会沿 handler 的前向体(只走 fallthrough / 条件边)确认真实工作,再把结果交给分类;`isCatchAndWrapHandler` 识别 `catch (e) { throw new Error(…) }`(寄存器恢复 `mov` + `newobjrange` + `throw`)。两条规则都经过 `handlerReadsTryValues` 闸门:handler 若可观察地读到保护范围内写过的寄存器,AST 优化器无法让编译器在「每条可能抛出的语句」处的寄存器预存保持活跃(liveness 没有异常边),还原出的 catch 会读到错误的值版本,这类 handler 保持不注册。
 
 ### 6.4 词法分析(`PandaLexical.ts`)
 
@@ -176,7 +176,7 @@ ArkTS 为语言特性合成异常 handler —— **for-in、for-of、async 函�
 
 ### 7.5 try/finally 还原(`TryFinally.ts`)
 
-ArkTS 13 把 `finally` 编译成状态机(hole 哨兵、cleanup 块、重抛守卫)。24+ 的内联形态归属到 Try 区域(`kind = "finallyEpilogue"`),先输出成 `try { … } catch (e) { cleanup; throw e }`,等优化器把两份 cleanup 变成完全相同的文本后,由尾部 pass `foldEagerCatchToFinally` 折回 `try/finally`。“try 体里写 hole”的经典形态仍走 `buildFinallyPlans`,按**结构特征**识别 —— 不按块大小:try 结束块写入 hole 哨兵并跳到 cleanup;handler 以 `sta` 开始且不立即 throw;稍后某个 hole 比较块带 throw 后继即为守卫。PC 顺序严格校验。角色(start / cleanup / guard / suppress)成为 `__xpanda_finally_marker__` 字符串,由 `MethodHandler` 插入;`applyFinallyPlans` 再按标记位置选布局:
+ArkTS 13 把 `finally` 编译成状态机(hole 哨兵、cleanup 块、重抛守卫)。24+ 的内联形态归属到 Try 区域(`kind = "finallyEpilogue"`),先输出成 `try { … } catch (e) { cleanup; throw e }`,等优化器把两份 cleanup 变成完全相同的文本后,由尾部 pass `foldEagerCatchToFinally` 折回 `try/finally`(结构化的条件 cleanup 会先展平外层块再逐语句比对;含声明或提前退出的 cleanup 保持 catch 形态)。“try 体里写 hole”的经典形态仍走 `buildFinallyPlans`,按**结构特征**识别 —— 不按块大小:try 结束块写入 hole 哨兵并跳到 cleanup;handler 以 `sta` 开始且不立即 throw;稍后某个 hole 比较块带 throw 后继即为守卫。PC 顺序严格校验。角色(start / cleanup / guard / suppress)成为 `__xpanda_finally_marker__` 字符串,由 `MethodHandler` 插入;`applyFinallyPlans` 再按标记位置选布局:
 
 | 布局 | 形态 | 计划开关 / 布局函数 |
 |---|---|---|
@@ -271,6 +271,7 @@ normalizeDeclarations
 ### 关键约束
 
 - 复制传播受大小与克隆预算限制,避免指数膨胀(`v2 = v1 + v1; v3 = v2 + v2; …`)。
+- catch 体沿用 try 之前的复制传播环境(让 `catch { if (v14) v14.destroy() }` 能折成 try 前的值),但 try 体写过某个标识符时,指向它的 try 前别名必须失效(`invalidateIdentifierAliases`):`v0 = acc` 在 catch 里必须保留 `v0`,因为 handler 运行时 `acc` 已经被改写(amcl `p16 acquire` 的 `closeSync(v0)` 曾被折成 `closeSync(acc)`,关掉的是 `tryLock` 函数而不是 fd)。
 - 死存储、序列清理与返回值折叠都经过活跃性与作用域检查。**捕获判定必须同时看 `binding.referencePaths` 与 `binding.constantViolations`** —— "只写不读"的闭包捕获对只读检查不可见。
 - 名字级活跃性分不清临时变量的新旧版本:`X = RHS` 且 RHS 只读一次 `X` 时,这次读取是**旧值的最后一次使用**;不可复制的右值只允许搬进调用接收者位置。
 - 非纯表达式(`call` / `new` / 函数 / 类)只在真正最后一次使用时搬移 —— 例外是 `definitelyWritesBeforeRead`:两个分支都在读取前覆盖该变量时,赋值可以下沉进 if test。

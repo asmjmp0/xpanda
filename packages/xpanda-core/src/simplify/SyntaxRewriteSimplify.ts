@@ -210,6 +210,55 @@ export class SyntaxRewriteSimplify implements ISimplify {
      * 折叠必须留到最后:只有优化器跑完,try 体里内联的 cleanup 与 handler 里的
      * 那份才会在文本上完全一致。标记只是来源确认,不会放宽结构校验。
      */
+    /**
+     * 展平 cleanup 顶层的 `{ … }` 块:编译器可能把 handler 的清理包在一个块里,
+     * 而正常路径的内联副本是块内的语句序列。搬进 finally 前展平(调用方已拒绝
+     * 块内声明,不会有作用域语义变化)。
+     */
+    private static flattenCleanupStatements(statements: TYPE.Statement[]): TYPE.Statement[] {
+        const result: TYPE.Statement[] = [];
+        for (const statement of statements) {
+            if (isBlockStatement(statement)) {
+                result.push(...SyntaxRewriteSimplify.flattenCleanupStatements(statement.body));
+            } else {
+                result.push(statement);
+            }
+        }
+        return result;
+    }
+
+    /**
+     * 可以原样搬进 `finally` 的 cleanup 语句:没有声明(变量/函数/类),
+     * 也没有 return/throw/break/continue/yield。`await` 允许(26 的 async finally)。
+     * 函数表达式/箭头函数体有自己的作用域与控制流,不再深入。
+     */
+    private static isMovableCleanupStatement(statement: TYPE.Statement): boolean {
+        let movable = true;
+        const visit = (node: any): void => {
+            if (!movable || !node || typeof node !== "object") return;
+            if (isVariableDeclaration(node) || isFunctionDeclaration(node) || isClassDeclaration(node)) {
+                movable = false;
+                return;
+            }
+            if (TYPE.isFunction(node)) return;
+            if (isReturnStatement(node) || isThrowStatement(node) || isBreakStatement(node)
+                || isContinueStatement(node) || isYieldExpression(node)) {
+                movable = false;
+                return;
+            }
+            for (const key of VISITOR_KEYS[node.type] ?? []) {
+                const value = node[key];
+                if (Array.isArray(value)) {
+                    for (const item of value) visit(item);
+                } else {
+                    visit(value);
+                }
+            }
+        };
+        visit(statement);
+        return movable;
+    }
+
     public static foldEagerCatchToFinally(node: Program): boolean {
         let changed = false;
         traverse(file(node), {
@@ -223,10 +272,13 @@ export class SyntaxRewriteSimplify implements ISimplify {
                 if (catchBody.length < 2) return;
                 const throwStatement = catchBody[catchBody.length - 1];
                 if (!isThrowStatement(throwStatement) || !isIdentifier(throwStatement.argument, { name: param.name })) return;
-                const cleanup = catchBody.slice(0, -1);
+                const cleanup = SyntaxRewriteSimplify.flattenCleanupStatements(catchBody.slice(0, -1));
                 if (cleanup.length === 0) return;
-                // 清理语句必须都是表达式语句(不改变控制流),否则不能搬进 finally
-                if (!cleanup.every((statement) => isExpressionStatementNode(statement))) return;
+                // 清理语句必须可以安全搬进 finally:允许 `if`/块等结构化语句
+                // (条件 cleanup `if (flag) { await close() }` 是常见形态),但不能
+                // 带声明或提前退出(return/throw/break/continue/yield),否则搬进
+                // finally 会改变作用域/控制流。
+                if (!cleanup.every((statement) => SyntaxRewriteSimplify.isMovableCleanupStatement(statement))) return;
                 const tryBody = path.node.block.body;
                 if (tryBody.length <= cleanup.length) return;
                 const exit = tryBody[tryBody.length - 1];

@@ -1,7 +1,8 @@
 import type { PandaIRCFG } from "../disasm/PandaIRCFG";
 import type { PandaIRBasicBlock } from "../disasm/PandaIRBasicBlock";
 import type { PandaMethodTryBlock } from "../file/method/PandaMethodTryBlock";
-import { buildFinallyPlans, comparesHoleWith } from "./TryFinally";
+import { buildFinallyPlans, comparesHoleWith, type FinallyPlan } from "./TryFinally";
+import { instructionAccess } from "./ValueAnalysis";
 
 /**
  * try 表分类:ArkTS 把语言特性(for-in / for-of / async / generator)以及 finally
@@ -358,6 +359,19 @@ export function handlerEffectiveEntry(block: PandaIRBasicBlock): { start: number
     };
 }
 
+/** 证明 catch 体在做真实工作的指令形状(见 `isCatchHandler`)。 */
+function isCatchBodyWork(instruction: any): boolean {
+    if (instruction.kind === "load") {
+        return instruction.loadType === "STRING" || instruction.loadType === "GLOBAL";
+    }
+    // tryldglobalbyname 是独立的 loadGlobal kind:`catch (e) { e instanceof Error
+    // … }` 的入口块里只有它和 instanceof/比较,不带 STRING/GLOBAL 载入。
+    if (instruction.kind === "loadGlobal") return true;
+    if (instruction.kind === "loadObjectBy" || instruction.kind === "storeObject") return true;
+    if (instruction.kind === "call") return true;
+    return instruction.opcode.name === "ldexternalmodulevar" || instruction.opcode.name === "newobjrange";
+}
+
 /**
  * 真正的 catch 处理器:有效入口 `sta vX`,并在 handler 入口基本块里做可见工作
  * (读字符串 / 模块变量 / 属性,或发起调用)。编译器生成的 for-of / await
@@ -366,17 +380,20 @@ export function handlerEffectiveEntry(block: PandaIRBasicBlock): { start: number
 export function isCatchHandler(block: PandaIRBasicBlock): boolean {
     const { start } = handlerEffectiveEntry(block);
     if (block.pandaInstructions[start]?.kind !== "store") return false;
-    return block.pandaInstructions.slice(start).some((instruction) => {
-        if (instruction.kind === "load") {
-            return instruction.loadType === "STRING" || instruction.loadType === "GLOBAL";
-        }
-        // tryldglobalbyname 是独立的 loadGlobal kind:`catch (e) { e instanceof Error
-        // … }` 的入口块里只有它和 instanceof/比较,不带 STRING/GLOBAL 载入。
-        if (instruction.kind === "loadGlobal") return true;
-        if (instruction.kind === "loadObjectBy" || instruction.kind === "storeObject") return true;
-        if (instruction.kind === "call") return true;
-        return instruction.opcode.name === "ldexternalmodulevar" || instruction.opcode.name === "newobjrange";
-    });
+    return block.pandaInstructions.slice(start).some(isCatchBodyWork);
+}
+
+/**
+ * Catch-and-wrap:寄存器恢复前缀之后构造一个新错误并抛出,入口保存的异常值没被
+ * 使用(`catch (e) { throw new Error(…) }`;amcl `e4/k9` 的 "RollbackFailed"、
+ * `k10/m10` 的 `doStart`)。这类 handler 不是 finally 落点,旧扫描因为 body 里
+ * 带 throw 把它判成 unknown,整个 catch 体随异常边一起丢失。
+ */
+export function isCatchAndWrapHandler(block: PandaIRBasicBlock): boolean {
+    const instructions = block.pandaInstructions;
+    if (instructions[0]?.kind !== "mov") return false;
+    return instructions.some((instruction) => instruction.opcode.name === "newobjrange")
+        && instructions.some((instruction) => instruction.kind === "throw");
 }
 
 /**
@@ -390,15 +407,209 @@ export function isIgnoringCatchHandler(block: PandaIRBasicBlock): boolean {
     const { start } = handlerEffectiveEntry(block);
     if (start <= 0 || start >= block.pandaInstructions.length) return false;
     if (block.pandaInstructions[start].kind === "store") return false;
-    return block.pandaInstructions.slice(start).some((instruction) => {
-        if (instruction.kind === "load") {
-            return instruction.loadType === "STRING" || instruction.loadType === "GLOBAL";
+    return block.pandaInstructions.slice(start).some(isCatchBodyWork);
+}
+
+/** handler 前向体(不重复进入保护范围、不走回边)的基本块;有界。 */
+function forwardBodyBlocks(
+    cfg: PandaIRCFG,
+    entry: PandaIRBasicBlock,
+    tryStart: number,
+    tryEnd: number,
+    budget = 64,
+): PandaIRBasicBlock[] {
+    const blocks: PandaIRBasicBlock[] = [];
+    const seen = new Set<PandaIRBasicBlock>();
+    const stack: PandaIRBasicBlock[] = [entry];
+    while (stack.length > 0 && blocks.length < budget) {
+        const block = stack.pop()!;
+        if (seen.has(block)) continue;
+        seen.add(block);
+        const pc = block.getStartPC();
+        if (pc >= tryStart && pc < tryEnd) continue;
+        blocks.push(block);
+        for (const successor of cfg.graph.normalSuccessors(block)) {
+            if (successor.getStartPC() <= pc) continue;
+            stack.push(successor);
         }
-        if (instruction.kind === "loadGlobal") return true;
-        if (instruction.kind === "loadObjectBy" || instruction.kind === "storeObject") return true;
-        if (instruction.kind === "call") return true;
-        return instruction.opcode.name === "ldexternalmodulevar" || instruction.opcode.name === "newobjrange";
-    });
+    }
+    return blocks;
+}
+
+/**
+ * 忽略异常值、但确实在做用户清理的 catch:入口有可见工作、不保存异常,每条路径
+ * 都离开保护范围,且 handler 体里还嵌着一个 finally plan。
+ *
+ * 编译器协议 handler(for-of close / async 派发 / 词法清理)不会在 handler 体里
+ * 再生成用户级 try/finally,所以「体内有嵌套 finally plan」是强判据。amcl
+ * `feature_system/s12` 的 `writeSandboxHint` / `writeExternalHint`:handler 入口
+ * 建提示文本、随后 open/write(内层 try/finally),但旧扫描的 6 块预算没走到
+ * `return`,内联 finally 的守卫 `throw` 又让 `!sawThrow` 失败,整段 catch 被判
+ * `unknown` 丢掉,内层 finally plan 只能报 `start marker not found`。
+ */
+export function isIgnoredExitingCatch(
+    cfg: PandaIRCFG,
+    entry: PandaIRBasicBlock,
+    tryStart: number,
+    tryEnd: number,
+    plans: FinallyPlan[],
+): boolean {
+    const first = entry.pandaInstructions[0];
+    if (!first || first.kind === "store" || first.kind === "throw") return false;
+    if (first.kind === "load" && first.loadType === "HOLE") return false;
+    if (first.kind === "jumpDirect" || first.opcode.name === "jmp") return false;
+    if (!entry.pandaInstructions.some(isCatchBodyWork)) return false;
+    if (isFinallyHandler(cfg, entry)) return false;
+    // 空的 `try { … } catch {}` 里 handler 就是正常续接(`try { mkdir } catch {}` 的
+    // handlerPC 与 jmp 目标相同),它会有普通前驱,体里的工作其实是 try 之后的代码;
+    // 真正的用户 catch 只能从异常边进入。
+    if (cfg.graph.normalPredecessors(entry).length > 0) return false;
+    if (!handlerExits(cfg, entry, tryStart, tryEnd)) return false;
+    const bodyPCs = new Set(forwardBodyBlocks(cfg, entry, tryStart, tryEnd).map((block) => block.getStartPC()));
+    if (bodyPCs.size === 0) return false;
+    return plans.some((plan) => bodyPCs.has(plan.startPC));
+}
+
+/**
+ * 零长度 handler 的入口块只有异常保存(`sta vX`):handler 体被切到了下一个
+ * 基本块 —— 因为 handler 体自己又开了一个 try 范围(amcl `e4/k9` 的 `commit`:
+ * 入口 `sta v7`,下一块是回滚体,里面还有
+ * `try { fsyncSync(fd) } finally { closeSync(fd) }`)。
+ *
+ * 只看入口块会判成「没有可见工作」→ `unknown` → 丢掉异常边;handler 体在正常
+ * 控制流里不可达,整段被剪掉,嵌套的 finally plan 随后只能报
+ * `start marker not found`。
+ *
+ * 沿 handler 的前向体找可见工作:只走 fallthrough / 条件分支,不走回边、不
+ * 重新进入保护范围、不穿过裸 `jmp`(空 catch 靠它跳到汇合点,穿过去会把汇合点
+ * 或循环体当成 catch 工作)。
+ */
+export function handlerBodyHasVisibleWork(
+    cfg: PandaIRCFG,
+    entry: PandaIRBasicBlock,
+    tryStart: number,
+    tryEnd: number,
+): boolean {
+    const instructions = entry.pandaInstructions;
+    if (instructions.length !== 1 || instructions[0].kind !== "store") return false;
+    const seen = new Set<PandaIRBasicBlock>();
+    const stack: PandaIRBasicBlock[] = [entry];
+    let budget = 10;
+    while (stack.length > 0 && budget-- > 0) {
+        const block = stack.pop()!;
+        if (seen.has(block)) continue;
+        seen.add(block);
+        if (block !== entry && block.pandaInstructions.some(isCatchBodyWork)) return true;
+        const pc = block.getStartPC();
+        if (block !== entry && block.getTerminator().kind === "jumpDirect") continue;
+        for (const successor of cfg.graph.normalSuccessors(block)) {
+            const successorPC = successor.getStartPC();
+            if (successorPC <= pc) continue;
+            if (successorPC >= tryStart && successorPC < tryEnd) continue;
+            stack.push(successor);
+        }
+    }
+    return false;
+}
+
+/**
+ * handler 体是否读到「保护范围内写过的寄存器」——异常路径依赖 try 里保存的值。
+ *
+ * 编译器在可能抛出的语句前把活跃寄存器存到 v14…v20 之类的位置(每个 await 点都
+ * 重存一遍),handler 再读回来。AST 优化器的 liveness 没有异常边,无法让这些预存
+ * 在「每条可能抛出的语句」处都保持活跃,预存会被当死存储删掉,handler 里的读于是
+ * 落到完全无关的版本上(amcl `commons/h1/w1` 的 `w91` 打出
+ * `i50(v16.directory)` 而 v16 从未赋值;`k10/w10/d11` 的 `copyFileAtomic_`
+ * 打出 `unlinkSync(v1)` 而 v1 是 `Math.floor(...)` 的结果)。
+ *
+ * 只把**可观察的读**(load / call 等)算进来:纯 `mov` 是寄存器倒换,死掉时由
+ * liveness 删除,不影响输出(amcl `e4/k9` 的 catch-and-wrap 入口只有 `mov`)。
+ * 这类 handler 不注册为 catch,保持旧行为(整段丢弃),而不是输出错值。
+ */
+export function handlerReadsTryValues(
+    cfg: PandaIRCFG,
+    entry: PandaIRBasicBlock,
+    tryStart: number,
+    tryEnd: number,
+): boolean {
+    const tryWrites = new Set<string>();
+    for (const block of cfg.pandaIRBasicBlocks) {
+        const pc = block.getStartPC();
+        if (pc < tryStart || pc >= tryEnd) continue;
+        for (const instruction of block.pandaInstructions) {
+            const { def } = instructionAccess(instruction);
+            if (def) tryWrites.add(def);
+        }
+    }
+    if (tryWrites.size === 0) return false;
+    const body: PandaIRBasicBlock[] = [];
+    const seen = new Set<PandaIRBasicBlock>();
+    const stack: PandaIRBasicBlock[] = [entry];
+    while (stack.length > 0 && body.length < 64) {
+        const block = stack.pop()!;
+        if (seen.has(block)) continue;
+        seen.add(block);
+        const pc = block.getStartPC();
+        if (pc >= tryStart && pc < tryEnd) continue;
+        body.push(block);
+        for (const successor of cfg.graph.normalSuccessors(block)) {
+            if (successor.getStartPC() <= pc) continue;
+            stack.push(successor);
+        }
+    }
+    const incoming = new Map<PandaIRBasicBlock, Set<string> | null>();
+    const outgoing = new Map<PandaIRBasicBlock, Set<string>>();
+    for (const block of body) {
+        incoming.set(block, null);
+        outgoing.set(block, new Set());
+    }
+    incoming.set(entry, new Set());
+    for (let round = 0; round < 32; round++) {
+        let changed = false;
+        for (const block of body) {
+            let current = incoming.get(block) ?? null;
+            if (block !== entry) {
+                let merged: Set<string> | null = null;
+                for (const predecessor of cfg.graph.normalPredecessors(block)) {
+                    if (!seen.has(predecessor)) continue;
+                    const out = outgoing.get(predecessor);
+                    if (!out) continue;
+                    merged = merged === null ? new Set(out) : new Set([...merged].filter((name) => out.has(name)));
+                }
+                if (merged === null) continue;
+                if (current === null || merged.size !== current.size || [...merged].some((name) => !current!.has(name))) {
+                    incoming.set(block, merged);
+                    changed = true;
+                }
+                current = merged;
+            }
+            if (current === null) continue;
+            const out = new Set(current);
+            for (const instruction of block.pandaInstructions) {
+                const { def } = instructionAccess(instruction);
+                if (def) out.add(def);
+            }
+            const previous = outgoing.get(block)!;
+            if (out.size !== previous.size) {
+                outgoing.set(block, out);
+                changed = true;
+            }
+        }
+        if (!changed) break;
+    }
+    for (const block of body) {
+        const defined = new Set(incoming.get(block) ?? []);
+        for (const instruction of block.pandaInstructions) {
+            const { def, uses } = instructionAccess(instruction);
+            if (instruction.kind !== "mov") {
+                for (const use of uses) {
+                    if (!defined.has(use) && tryWrites.has(use)) return true;
+                }
+            }
+            if (def) defined.add(def);
+        }
+    }
+    return false;
 }
 
 /** try 范围内是否有经典 finally 的 hole 哨兵(13.0.1.0 的收尾残留) */
@@ -533,7 +744,19 @@ export function classifyTryEntries(cfg: PandaIRCFG): ExceptionTable {
             // 可以共用同一个 try 范围,不能因为这些特征被整段丢掉
             // (amcl t11/a12 的 f1268 写文件失败、c1268 清单失败)。
             const usesException = catchUsesException(handlerEntryBlock);
-            const ignoredException = isIgnoredExceptionCatch(cfg, handlerEntryBlock);
+            // handler 读保护范围内写过的值时不注册(见 handlerReadsTryValues);
+            // 只有新的判定路径用它,已有 catch 的分类保持不变。
+            let riskyTryValues: boolean | null = null;
+            const readsTryValues = (): boolean => {
+                if (riskyTryValues === null) {
+                    riskyTryValues = handlerReadsTryValues(cfg, handlerEntryBlock, startPC, endPC);
+                }
+                return riskyTryValues;
+            };
+            const ignoredExitingCatch = isIgnoredExitingCatch(cfg, handlerEntryBlock, startPC, endPC, finallyPlans);
+            const ignoredException = isIgnoredExceptionCatch(cfg, handlerEntryBlock)
+                || (isCatchAndWrapHandler(handlerEntryBlock) && !readsTryValues())
+                || (ignoredExitingCatch && !readsTryValues());
             // 用户 catch 若每条路径都 return/throw,即使保护范围里有内层
             // finally 的 hole,接进图也不会把循环后续代码拆进 catch
             // (f1268 写 version.json 失败)。跳回循环头的 catch 是 continue
@@ -544,9 +767,14 @@ export function classifyTryEntries(cfg: PandaIRCFG): ExceptionTable {
             // 条目才允许用“忽略异常、入口带寄存器恢复”的判据,否则会把大量
             // finally 落点误判成 catch(amcl 上 try 数量翻倍)。
             const catchOfSharedStart = (finallyEndByStart.get(startPC) ?? 0) > endPC;
+            // 入口只有 `sta vX` 时 handler 体在下一个块里(体自己开了嵌套 try),
+            // 见 handlerBodyHasVisibleWork。
+            const bodyWork = handlerBodyHasVisibleWork(cfg, handlerEntryBlock, startPC, endPC)
+                && !readsTryValues();
             const catchHandler = isCatchHandler(handlerEntryBlock) || ignoredException || commitPC !== null
+                || bodyWork
                 || (catchOfSharedStart && isIgnoringCatchHandler(handlerEntryBlock) && !finallyHandler);
-            const exitingCatch = (usesException || ignoredException || commitPC !== null)
+            const exitingCatch = (usesException || ignoredException || commitPC !== null || bodyWork)
                 && handlerExits(cfg, handlerEntryBlock, startPC, endPC);
             // 用户 catch 可以和 finally 共用同一个 try 起点(源码 `try { … }
             // catch { … } finally { … }`):入口块里有可见工作(读 .message /

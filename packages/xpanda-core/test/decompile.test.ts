@@ -3258,6 +3258,187 @@ function verifyAmclReadJarMainClass(clazz: PandaClass, code: string): void {
 }
 
 /**
+ * 回归:amcl1.0.6.abc 的 `L&entry/src/main/ets/e4/k9&;` `commit` —— 回滚体整段丢失。
+ *
+ * 源码是 `try { …写 pending… } catch (e) { 回滚 }`,回滚体里还有
+ * `try { fsync } finally { close }`,外层再套一个 catch-and-wrap
+ * (`throw new Error("RollbackFailed…")`)。外层 handler 入口只有 `sta v7`(回滚体
+ * 自己又开了内层 try,CFG 在下一个块切分),旧分类只看 handler 入口块,判成 unknown
+ * 丢掉异常边:回滚体在正常流里不可达,内层 finally 计划随后报 start marker not found,
+ * `fsyncSync` / `closeSync` / "RollbackFailed" 全部消失。
+ *
+ * 分类现在沿 handler 的前向体识别可见工作;同时修复了「守卫两个后继都以 throw
+ * 结束」时 end 标记落进守卫 throw 分支、`throw pending` 被折叠成
+ * `throw g50.openSync` 的问题。
+ */
+function verifyAmclRollbackCatchRestored(clazz: PandaClass, code: string): void {
+    NodeFactory.parse(code);
+    if (code.includes("created by SimpleAnalysis") || code.includes("decompiler_")) {
+        throw new Error(`amcl k9: 仍在降级或残留伪语句\n${code.slice(0, 800)}`);
+    }
+    const start = code.indexOf("async commit(p0) {");
+    if (start < 0) throw new Error(`amcl k9: 未找到 commit\n${code.slice(0, 800)}`);
+    const body = code.slice(start, code.indexOf("\n  }", start));
+    for (const fragment of [
+        // 回滚体:写回 pending 后重抛
+        'local_0_8(v4 + "/pending.json", v6, local_0_9);',
+        // 内层 finally 必须真正还原
+        "try {\n            g50.fsyncSync(v4.fd);\n          } finally {\n            g50.closeSync(v4);\n          }",
+        // catch-and-wrap 的外层包装
+        'throw new Error("RollbackFailed:布局完成记录恢复失败，已保留全部载荷，请重启并恢复");',
+        "throw catchAcc;",
+    ]) {
+        if (!body.includes(fragment)) {
+            throw new Error(`amcl k9: 缺少 ${JSON.stringify(fragment)}\n${body}`);
+        }
+    }
+    for (const forbidden of ["throw g50.openSync", "hole", "try/finally not restored"]) {
+        if (body.includes(forbidden)) {
+            throw new Error(`amcl k9: 残留 ${JSON.stringify(forbidden)}\n${body}`);
+        }
+    }
+}
+
+/**
+ * 回归:amcl1.0.6.abc 的 `L&feature_system/src/main/ets/y12&1.0.0;` —— `saveImageUrl`
+ * 的收尾 catch 整段丢失(handler 读保护范围外的 fd,分类此前把整个 catch 判成
+ * `unknown`)。还原后:入参校验变成早退 throw,下载/相册流程包在 try 里,异常路径
+ * 删除临时文件后重抛。整类快照锁定。
+ */
+function verifyAmclSaveImageUrlCatch(clazz: PandaClass, code: string): void {
+    NodeFactory.parse(code);
+    if (code.includes("created by SimpleAnalysis") || code.includes("decompiler_")
+        || code.includes("xpanda_goto")) {
+        throw new Error(`amcl y12: 仍在降级或残留伪语句\n${code.slice(0, 800)}`);
+    }
+    for (const fragment of [
+        // 入参为空也从 catch 里恢复成显式 throw
+        'if (!p1) {\n      throw new Error("不支持的图片地址");\n    }',
+        // 恢复的收尾 catch:删临时文件后重抛
+        "} catch (catchAcc) {\n      g50.unlinkSync(v4);\n      throw catchAcc;\n    }",
+        "p995.copyInto_(v4, v0[v7]);",
+        'return "saved";',
+    ]) {
+        if (!code.includes(fragment)) {
+            throw new Error(`amcl y12: 缺少 ${JSON.stringify(fragment)}\n${code}`);
+        }
+    }
+    const expected = fs.readFileSync(path.join(__dirname, "expected", "amcl-feature-system-y12.js"), "utf-8");
+    if (code !== expected) {
+        throw new Error(`amcl y12: 输出与快照不一致\n${firstDifference(expected, code)}`);
+    }
+}
+
+/**
+ * 回归:amcl1.0.6.abc 的 `L&launch/src/main/ets/p16&1.0.0;` —— `acquire` 的收尾
+ * catch 里 closeSync 曾引用 `acc` 而不是 fd `v0`。
+ *
+ * try 之前有 `v0 = acc` 的别名,异常路径上 `acc` 已经被 `acc.tryLock` / `call`
+ * 改写过;catch 体沿用的是 try 之前的复制传播环境,别名 `v0 -> acc` 没有因为
+ * try 写过 `acc` 失效,`closeSync(v0)` 就被折成了 `closeSync(acc)`(关掉的是
+ * tryLock 函数,fd 泄漏)。修复:catch 环境里失效「值为标识符、且该标识符被 try
+ * 体写过」的别名。整类快照锁定。
+ */
+function verifyAmclJdkLeaseCatch(clazz: PandaClass, code: string): void {
+    NodeFactory.parse(code);
+    if (code.includes("created by SimpleAnalysis") || code.includes("decompiler_")) {
+        throw new Error(`amcl p16: 仍在降级或残留伪语句\n${code.slice(0, 800)}`);
+    }
+    const start = code.indexOf("static acquire(p0, p1, p2) {");
+    if (start < 0) throw new Error(`amcl p16: 未找到 acquire\n${code.slice(0, 800)}`);
+    const body = code.slice(start, code.indexOf("\n  }", start));
+    for (const fragment of [
+        "g50.closeSync(v0);",
+        "if (catchAcc.code === 13900034) {",
+        'throw new Error("无法锁定 JDK " + p1 + "：" + catchAcc.message);',
+        "return new j1481(v0);",
+    ]) {
+        if (!body.includes(fragment)) {
+            throw new Error(`amcl p16: 缺少 ${JSON.stringify(fragment)}\n${body}`);
+        }
+    }
+    if (body.includes("closeSync(acc)")) {
+        throw new Error(`amcl p16: closeSync 仍引用 acc(应为 fd v0)\n${body}`);
+    }
+    const expected = fs.readFileSync(path.join(__dirname, "expected", "amcl-launch-p16.js"), "utf-8");
+    if (code !== expected) {
+        throw new Error(`amcl p16: 输出与快照不一致\n${firstDifference(expected, code)}`);
+    }
+}
+
+/**
+ * 回归:amcl1.0.6.abc 的 `L&feature_system/src/main/ets/s12&1.0.0;` —— 写提示文件的
+ * 忽略异常 catch 整段丢失。
+ *
+ * 源码是 `try { statSync(hint) ; return } catch { 建说明文本; open; try { write }
+ * finally { close }; log; return }`。handler 忽略异常、入口直接建字符串,旧扫描的
+ * 6 块预算走不到 `return`,内联 finally 的守卫 `throw` 又让 `!sawThrow` 失败,
+ * 于是被判 `unknown`:catch 体不可达,写文件逻辑整段消失,内层 finally plan 只能报
+ * `start marker not found`。新判据:入口有可见工作、无普通前驱、每条路径离开保护
+ * 范围,且 handler 体里嵌着 finally plan。整类快照锁定。
+ */
+function verifyAmclHintFileCatch(clazz: PandaClass, code: string): void {
+    NodeFactory.parse(code);
+    if (code.includes("created by SimpleAnalysis") || code.includes("decompiler_")) {
+        throw new Error(`amcl s12: 仍在降级或残留伪语句\n${code.slice(0, 800)}`);
+    }
+    for (const fragment of [
+        // writeSandboxHint:fd 交给 finally 关闭
+        "g50.writeSync(acc.fd, v1);",
+        "g50.closeSync(acc);",
+        'y.info(local_0_1, "wrote sandbox hint file: "',
+        // writeExternalHint:外层 mkdir 的空 catch 不能被误当成用户 catch
+        "try {\n      g50.mkdirSync(v0, true);\n    } catch (catchAcc) {}",
+        "g50.writeSync(v3.fd, \"AMCL 游戏数据说明\\n\"",
+        "g50.closeSync(v3);",
+        'y.info(local_0_1, "wrote external hint file: "',
+    ]) {
+        if (!code.includes(fragment)) {
+            throw new Error(`amcl s12: 缺少 ${JSON.stringify(fragment)}\n${code}`);
+        }
+    }
+    const expected = fs.readFileSync(path.join(__dirname, "expected", "amcl-feature-system-s12.js"), "utf-8");
+    if (code !== expected) {
+        throw new Error(`amcl s12: 输出与快照不一致\n${firstDifference(expected, code)}`);
+    }
+}
+
+/**
+ * 回归:amcl1.0.6.abc 的 `L&launch/src/main/ets/n16&1.0.0;` —— `migrateHistory_` 的
+ * finally 曾被折进循环的 done 分支,`applyLoopExhaustedFinally` 因为「循环不在
+ * 起始标记所在的语句列表里」(起始标记在循环头 if 的 test 中)而放弃,只剩
+ * `if (hole == v9) { … } throw v9` 的哨兵残留。
+ *
+ * 修复:loop-exhausted 布局支持「循环是起始列表的祖先」这一形态——try 体就是
+ * 循环本身,守卫非抛出分支里 end 标记之后的续接语句抽出来放到 try/finally 之后。
+ * 整类快照锁定。
+ */
+function verifyAmclMigrateHistoryFinally(clazz: PandaClass, code: string): void {
+    NodeFactory.parse(code);
+    if (code.includes("created by SimpleAnalysis") || code.includes("decompiler_")) {
+        throw new Error(`amcl n16: 仍在降级或残留伪语句\n${code.slice(0, 800)}`);
+    }
+    const start = code.indexOf("async migrateHistory_()");
+    if (start < 0) throw new Error(`amcl n16: 未找到 migrateHistory_\n${code.slice(0, 800)}`);
+    const body = code.slice(start, code.indexOf("\n  }", start));
+    for (const fragment of [
+        "} finally {\n      this.deferHistoricalCandidates_ = false;\n    }",
+        "await this.drain_();\n    this.hooks_.changed();\n    return undefined;",
+    ]) {
+        if (!body.includes(fragment)) {
+            throw new Error(`amcl n16: 缺少 ${JSON.stringify(fragment)}\n${body}`);
+        }
+    }
+    if (body.includes("hole") || body.includes("try/finally not restored")) {
+        throw new Error(`amcl n16: 仍有哨兵/未还原残留\n${body}`);
+    }
+    const expected = fs.readFileSync(path.join(__dirname, "expected", "amcl-launch-n16.js"), "utf-8");
+    if (code !== expected) {
+        throw new Error(`amcl n16: 输出与快照不一致\n${firstDifference(expected, code)}`);
+    }
+}
+
+/**
  * 回归:amcl n4/o8 的 clearDisplayListeners 曾整方法降级 SimpleAnalysis。
  *
  * 循环体里 `if (enhancedDisplays) { try { off } catch {} }` 的空 catch 处理器
@@ -3266,6 +3447,10 @@ function verifyAmclReadJarMainClass(clazz: PandaClass, code: string): void {
  * helper,归约成 try { try { off } catch {}; i++ } catch { i++ }。
  * 另外 `if (增强显示)` 条件与 try/catch helper 相邻时,逻辑条件合并曾把没有
  * 语句的 helper 当成 `A && B` 的操作数,decompile 时抛 TypeError 降级。
+ *
+ * `drain` 的 finally(`this.draining = false`)编译在循环之后:try 体就是循环,
+ * cleanup/guard 紧跟在循环的父列表里。现在还原成
+ * `try { while (…) { … } } finally { this.draining = false }`;整类快照锁定。
  */
 function verifyAmclDisplayListenersLoop(clazz: PandaClass, code: string): void {
     NodeFactory.parse(code);
@@ -3294,6 +3479,26 @@ function verifyAmclDisplayListenersLoop(clazz: PandaClass, code: string): void {
         if (!body.includes(fragment)) {
             throw new Error(`amcl o8: 缺少 ${JSON.stringify(fragment)}\n${body}`);
         }
+    }
+    // drain:finally 在循环之后(顶层列表),try 体是循环本身
+    const drainStart = code.indexOf("  async drain() {");
+    if (drainStart < 0) throw new Error(`amcl o8: 未找到 drain\n${code.slice(0, 800)}`);
+    const drain = code.slice(drainStart, code.indexOf("\n  async execute(", drainStart));
+    for (const fragment of [
+        "this.draining = true;\n    try {",
+        "r273.desktopCompleteCommand(v18, v14, v15);",
+        "} finally {\n      this.draining = false;\n    }",
+    ]) {
+        if (!drain.includes(fragment)) {
+            throw new Error(`amcl o8: drain 缺少 ${JSON.stringify(fragment)}\n${drain}`);
+        }
+    }
+    if (drain.includes("hole") || drain.includes("try/finally not restored")) {
+        throw new Error(`amcl o8: drain 仍有哨兵/未还原残留\n${drain}`);
+    }
+    const expected = fs.readFileSync(path.join(__dirname, "expected", "amcl-n4-o8.js"), "utf-8");
+    if (code !== expected) {
+        throw new Error(`amcl o8: 输出与快照不一致\n${firstDifference(expected, code)}`);
     }
 }
 
@@ -4008,6 +4213,50 @@ function f(A, B, sec) {
  * 带实际工作的 catch 必须保留;try 体顶层有块级声明时只能去掉 try 外壳、
  * 保留 body 的块,否则 `let` 会泄漏到外层/与同名外层声明冲突。
  */
+/**
+ * 回归:24.0.0.0 的条件 cleanup 也要折回 try/finally。
+ *
+ * 编译器把 `try { … } finally { if (flag) await close(); release(); }` 的异常路径
+ * 输出成 `catch (e) { { if (flag) await close(); release(); } throw e }`(cleanup
+ * 外面还包了一个块)。`foldEagerCatchToFinally` 原来只接受全是表达式语句的 cleanup,
+ * 条件 cleanup 会留在 catch 形态。现在允许结构化语句(无声明/提前退出),并展平
+ * 外层块后逐语句比对。
+ */
+function verifyConditionalEagerCatchFold(): void {
+    const program = NodeFactory.parse(`
+async function f(p0) {
+  let v3 = reserve();
+  try {
+    await step();
+    if (p0) {
+      await settle();
+    }
+    v3();
+    return 1;
+  } catch (catchAcc) {
+    {
+      if (p0) {
+        await settle();
+      }
+      v3();
+    }
+    throw catchAcc;
+  }
+}
+`);
+    SimplifyExport.simplify(program);
+    const code = NodeFactory.generate(program);
+    NodeFactory.parse(code);
+    if (!code.includes("} finally {") || code.includes("catch (")) {
+        throw new Error(`条件 cleanup 的 eager catch 未折回 finally\n${code}`);
+    }
+    for (const fragment of ["if (p0) {", "await settle();", "v3();", "return 1;"]) {
+        if (!code.includes(fragment)) {
+            throw new Error(`条件 finally 折回后缺少 ${JSON.stringify(fragment)}\n${code}`);
+        }
+    }
+}
+
 function verifyRedundantRethrowCatchRemoval(): void {
     const nested = NodeFactory.parse(`
 function f(p0) {
@@ -4851,6 +5100,11 @@ const amclClassTests: BinaryClassTest[] = [
     { label: "amcl structured cycle guard (amcl1.0.6.abc)", matches: (n) => n === "L&entry/src/main/ets/r2/l3&;", run: verifyAmclStructuredCycleGuard },
     { label: "amcl break for...of close block (amcl1.0.6.abc)", matches: (n) => n === "L&feature_core/src/main/ets/t11/a12&1.0.0;", run: verifyAmclForOfCloseBlock },
     { label: "amcl readJarMainClass structure (amcl1.0.6.abc)", matches: (n) => n === "L&feature_core/src/main/ets/t11/d12&1.0.0;", run: verifyAmclReadJarMainClass },
+    { label: "amcl catch-body rollback restoration (amcl1.0.6.abc)", matches: (n) => n === "L&entry/src/main/ets/e4/k9&;", run: verifyAmclRollbackCatchRestored },
+    { label: "amcl saveImageUrl catch restoration (amcl1.0.6.abc)", matches: (n) => n === "L&feature_system/src/main/ets/y12&1.0.0;", run: verifyAmclSaveImageUrlCatch },
+    { label: "amcl JDK lease catch alias (amcl1.0.6.abc)", matches: (n) => n === "L&launch/src/main/ets/p16&1.0.0;", run: verifyAmclJdkLeaseCatch },
+    { label: "amcl hint-file catch restoration (amcl1.0.6.abc)", matches: (n) => n === "L&feature_system/src/main/ets/s12&1.0.0;", run: verifyAmclHintFileCatch },
+    { label: "amcl loop-exhausted finally (amcl1.0.6.abc)", matches: (n) => n === "L&launch/src/main/ets/n16&1.0.0;", run: verifyAmclMigrateHistoryFinally },
     { label: "amcl display listeners loop + empty catch (amcl1.0.6.abc)", matches: (n) => n === "L&entry/src/main/ets/n4/o8&;", run: verifyAmclDisplayListenersLoop },
     { label: "amcl launch labelled-loop goto (amcl1.0.6.abc)", matches: (n) => n === "L&launch/src/main/ets/r16&1.0.0;", run: verifyAmclLaunchGotoLoop },
     { label: "amcl shared try/catch join (amcl1.0.6.abc)", matches: (n) => n === "L&entry/src/main/ets/r5/l8&;", run: verifyAmclSharedTryCatchJoin },
@@ -5043,6 +5297,10 @@ async function main(): Promise<void> {
 
     console.log("[test] simplify switch transform completeness");
     verifySwitchTransformRequiresAllCases();
+    console.log("    ok");
+
+    console.log("[test] simplify conditional eager catch fold");
+    verifyConditionalEagerCatchFold();
     console.log("    ok");
 
     console.log("[test] simplify redundant rethrow catch");

@@ -126,7 +126,22 @@ function locateInlinedCleanupStart(
     cleanupBlock: PandaIRBasicBlock,
     guardBlock: PandaIRBasicBlock,
 ): { startPC: number; endPC: number } | null {
-    const shared = cleanupBlock.pandaInstructions.map(instructionShape);
+    let shared = cleanupBlock.pandaInstructions.map(instructionShape);
+    while (shared.length > 0 && shared[0].startsWith("mov ")) shared.shift();
+    // cleanup 起点可能只是 `vX = undefined` 之类的一两块(amcl mods/o17 `execute`
+    // 的 handler 落空块只有 `ldundefined; sta v0`),沿单一后继把 cleanup 体拼出来。
+    let cursor: PandaIRBasicBlock | null = cleanupBlock;
+    const shapedBlocks = new Set<PandaIRBasicBlock>([cleanupBlock]);
+    while (shared.length < 6 && cursor && cursor !== guardBlock) {
+        const successors = cfg.graph.normalSuccessors(cursor)
+            .filter((successor) => successor.getStartPC() > cursor!.getStartPC());
+        if (successors.length !== 1) break;
+        const next = successors[0];
+        if (next === guardBlock || shapedBlocks.has(next)) break;
+        shapedBlocks.add(next);
+        for (const instruction of next.pandaInstructions) shared.push(instructionShape(instruction));
+        cursor = next;
+    }
     while (shared.length > 0 && shared[0].startsWith("mov ")) shared.shift();
     if (shared.length < 6) return null;
     // 出口块:try 范围里、终止于 return、pc 最大的那个块
@@ -151,13 +166,20 @@ function locateInlinedCleanupStart(
         }
         let bestStart = -1;
         let bestLength = 0;
-        for (let index = 0; index < window.length; index++) {
-            let length = 0;
-            while (length < shared.length && index + length < window.length
-                && window[index + length].shape === shared[length]) length++;
-            if (length > bestLength) {
-                bestLength = length;
-                bestStart = index;
+        // 允许跳过 cleanup 开头的 resume 标记检查(`ldundefined; eq; jeqz …`),
+        // 从 cleanup 体本身开始匹配:正常路径的内联副本没有这段检查
+        // (demo `asyncFinallyConditional` / amcl mods/o17 `execute`)。
+        for (let offset = 0; offset < shared.length; offset++) {
+            const remaining = shared.length - offset;
+            if (remaining < 6) break;
+            for (let index = 0; index < window.length; index++) {
+                let length = 0;
+                while (length < remaining && index + length < window.length
+                    && window[index + length].shape === shared[offset + length]) length++;
+                if (length > bestLength) {
+                    bestLength = length;
+                    bestStart = index;
+                }
             }
         }
         if (bestStart >= 0 && bestLength >= 6) {
@@ -365,9 +387,29 @@ export function buildFinallyPlans(cfg: PandaIRCFG): FinallyPlan[] {
         const guardSuccessors = cfg.graph.normalSuccessors(guardBlock);
         if (guardSuccessors.length !== 2) continue;
         if (guardBlock.getTerminator().kind !== "jumpEqual" && guardBlock.getTerminator().kind !== "jumpNotEqual") continue;
-        const throwBranch = guardSuccessors.find((successor) => successor.getTerminator().kind === "throw");
-        const afterBranch = guardSuccessors.find((successor) => successor !== throwBranch);
+        let throwBranch = guardSuccessors.find((successor) => successor.getTerminator().kind === "throw");
+        let afterBranch = guardSuccessors.find((successor) => successor !== throwBranch);
         if (!throwBranch || !afterBranch) continue;
+        // 守卫的两个后继可能都以 throw 结束:try 位于 catch 体里时,一个是守卫
+        // 自己的重抛(`if (pending != hole) throw pending`),另一个是外层 catch 的
+        // 重抛(正常继续)。必须把后者当作 afterBranch,否则 end 标记落进守卫的
+        // throw 分支,throw 残留在布局之后,`throw pending` 还会被折叠成寄存器里
+        // 的上一份值(amcl e4/k9 的 `throw g50.openSync`)。按抛出的寄存器区分:
+        // 守卫重抛的是 handler 保存的哨兵/pending 值。
+        if (afterBranch.getTerminator().kind === "throw" && savedRegister) {
+            const throwsSaved = (block: PandaIRBasicBlock): boolean => {
+                const instructions = block.pandaInstructions;
+                if (instructions[instructions.length - 1]?.kind !== "throw") return false;
+                return instructions.some((instruction) => instruction.kind === "load"
+                    && instruction.loadType === "OBJECT"
+                    && (instruction as any).loadParam?.toString() === savedRegister);
+            };
+            const sentinelThrows = guardSuccessors.filter(throwsSaved);
+            if (sentinelThrows.length === 1) {
+                throwBranch = sentinelThrows[0];
+                afterBranch = guardSuccessors.find((successor) => successor !== sentinelThrows[0])!;
+            }
+        }
         // 守卫的非抛出分支通常是往后的续接;cleanup/guard 落在循环体尾部时它是
         // 循环回边(do-while 的 test),pc 比守卫小 —— 只对「第一个 hole 块」认这个
         // 形态(寄存器匹配出来的另一个守卫带出回边,说明那是别的 finally 的守卫)。
@@ -1297,6 +1339,8 @@ function applyPlans(
                 );
                 cleanupList.splice(ownerIndex, guardEnd - ownerIndex, tryNode, ...guardContinuation);
                 applied = true;
+            } else if (applyLoopFollowedByCleanup(astNode, startList, cleanupPos, guardPos, plan)) {
+                applied = true;
             } else if (applyLoopExhaustedFinally(astNode, startList, tryStart, cleanupPos, guardPos, plan)) {
                 applied = true;
             } else {
@@ -1560,6 +1604,69 @@ function isHandlerWiring(statement: any): boolean {
  * 要求 done 分支就是紧贴循环体的那个 if(中间没有别的循环/switch),循环是 try 体
  * 末尾唯一的结构语句,循环之后只剩寄存器恢复 + 哨兵 throw。
  */
+/**
+ * 循环之后的顶层 finally:try 体是循环本身,cleanup/guard 紧跟在循环后面,和循环
+ * 在同一个语句列表里(不是循环的 done 分支)。
+ *
+ * 源码 `try { while (…) { … } } finally { cleanup }` 的正常完成路径被编译成
+ * 「循环结束 → cleanup → 哨兵守卫 → 续接」,cleanup/guard 直接排在循环之后;起始
+ * 标记在循环头的 if test 里,所以 `startList` 是循环体、循环是它的父节点。
+ * amcl n4/o8 `#~@0>#drain` 是样本(cleanup 本身还带一个条件:
+ * `if (v5 != undefined) this.draining = false`)。
+ */
+function applyLoopFollowedByCleanup(
+    astNode: any,
+    startList: TYPE.Statement[],
+    cleanupPos: MarkerPosition,
+    guardPos: MarkerPosition,
+    plan: FinallyPlan,
+): boolean {
+    if (guardPos.list !== cleanupPos.list) return false;
+    const parentList = cleanupPos.list;
+    const startOwner = findStatementListOwner(astNode, startList);
+    const loop = startOwner?.statement;
+    if (!loop || !isLoopStatement(loop)) return false;
+    const loopIndex = parentList.indexOf(loop);
+    if (loopIndex < 0) return false;
+    const cleanup = cleanupPos.index;
+    // cleanup 必须紧跟循环,guard 在它之后
+    if (cleanup !== loopIndex + 1) return false;
+    const guard = guardPos.index;
+    if (guard <= cleanup) return false;
+    let guardStatement: TYPE.IfStatement | null = null;
+    let guardIndex = -1;
+    for (let i = guard + 1; i < parentList.length; i++) {
+        if (TYPE.isIfStatement(parentList[i])) {
+            guardStatement = parentList[i] as TYPE.IfStatement;
+            guardIndex = i;
+            break;
+        }
+    }
+    // 守卫必须是列表最后一条;续接(正常完成)在它的非抛出分支里
+    if (!guardStatement || guardIndex !== parentList.length - 1) return false;
+    let continuation: TYPE.Statement[] = [];
+    if (!plan.endIsMethodTail) {
+        if (!plan.restoreContinuation) return false;
+        const endMarkerValue = plan.endMarker && TYPE.isExpressionStatement(plan.endMarker)
+            && TYPE.isStringLiteral(plan.endMarker.expression) ? plan.endMarker.expression.value
+            : (plan.endExpr && TYPE.isStringLiteral(plan.endExpr) ? plan.endExpr.value : null);
+        const extracted = extractGuardContinuation(guardStatement, endMarkerValue);
+        if (!extracted.fromEndMarker || extracted.statements.length === 0) return false;
+        if (extracted.statements.some((statement) => TYPE.isVariableDeclaration(statement)
+            || TYPE.isFunctionDeclaration(statement) || TYPE.isClassDeclaration(statement))) return false;
+        continuation = extracted.statements;
+    }
+    const finallyStatements = parentList.slice(cleanup + 1, guard);
+    if (finallyStatements.length === 0) return false;
+    const tryNode = TYPE.tryStatement(
+        TYPE.blockStatement([loop]),
+        null,
+        bodyBlock(finallyStatements),
+    );
+    parentList.splice(loopIndex, guardIndex + 1 - loopIndex, tryNode, ...continuation);
+    return true;
+}
+
 function applyLoopExhaustedFinally(
     astNode: any,
     startList: TYPE.Statement[],
@@ -1568,9 +1675,6 @@ function applyLoopExhaustedFinally(
     guardPos: MarkerPosition,
     plan: FinallyPlan,
 ): boolean {
-    // guard 的正常分支必须是方法的隐式收尾(落空等价于 `return undefined`),
-    // 否则 done 路径原本的返回值会被丢掉
-    if (!plan.endIsMethodTail) return false;
     const cleanupList = cleanupPos.list;
     if (guardPos.list !== cleanupList) return false;
     const cleanup = cleanupPos.index;
@@ -1586,7 +1690,53 @@ function applyLoopExhaustedFinally(
     const loop = owner.chain[owner.chain.length - 2];
     if (!isLoopStatement(loop)) return false;
     const loopIndex = startList.indexOf(loop);
+    // guard 的正常分支必须是方法的隐式收尾(落空等价于 `return undefined`),
+    // 否则 done 路径原本的返回值会被丢掉;非收尾的计划可以把非抛出分支里的
+    // 续接语句抽出来放到 try/finally 之后(见下面的 continuation)。
+    if (!plan.endIsMethodTail && !plan.restoreContinuation) return false;
+    const finallyStatements = cleanupList.slice(cleanupPos.inExpression ? cleanup : cleanup + 1, guard);
+    if (finallyStatements.length === 0) return false;
+
+    // 守卫语句(guard 标记之后第一条 IfStatement)与它的非抛出续接。正常完成
+    // 分支在 end 标记之后:amcl n16 `migrateHistory_` 的
+    // `if (pending != hole) throw pending else { await drain(); changed(); return }`,
+    // 续接语句在循环结束后、try/finally 之后执行。
+    let guardStatement: TYPE.IfStatement | null = null;
+    for (let i = guard + 1; i < cleanupList.length; i++) {
+        if (TYPE.isIfStatement(cleanupList[i])) { guardStatement = cleanupList[i] as TYPE.IfStatement; break; }
+    }
+    const endMarkerValue = plan.endMarker && TYPE.isExpressionStatement(plan.endMarker)
+        && TYPE.isStringLiteral(plan.endMarker.expression) ? plan.endMarker.expression.value
+        : (plan.endExpr && TYPE.isStringLiteral(plan.endExpr) ? plan.endExpr.value : null);
+    let continuation: TYPE.Statement[] = [];
+    if (!plan.endIsMethodTail) {
+        if (!guardStatement || !plan.restoreContinuation) return false;
+        const extracted = extractGuardContinuation(guardStatement, endMarkerValue);
+        if (!extracted.fromEndMarker || extracted.statements.length === 0) return false;
+        if (extracted.statements.some((statement) => TYPE.isVariableDeclaration(statement)
+            || TYPE.isFunctionDeclaration(statement) || TYPE.isClassDeclaration(statement))) return false;
+        continuation = extracted.statements;
+    }
+
+    if (loopIndex < 0) {
+        // 起始标记在循环体内部(循环头 `if` 的 test 里):try 体就是循环本身,
+        // 外层列表持有这个循环。amcl n16 `migrateHistory_` 是这种形态。
+        const parentList = findStatementList(astNode, loop);
+        if (!parentList) return false;
+        const parentIndex = parentList.indexOf(loop);
+        if (parentIndex < 0) return false;
+        cleanupList.splice(cleanup, cleanupList.length - cleanup);
+        cleanupList.push(TYPE.breakStatement());
+        const tryNode = TYPE.tryStatement(
+            TYPE.blockStatement([loop]),
+            null,
+            bodyBlock(finallyStatements),
+        );
+        parentList.splice(parentIndex, 1, tryNode, ...continuation);
+        return true;
+    }
     if (loopIndex < tryStart) return false;
+    if (!plan.endIsMethodTail) return false;
     // 循环之后:寄存器恢复 + 唯一的哨兵 throw
     const tail = startList.slice(loopIndex + 1);
     const throws = tail.filter((statement) => TYPE.isThrowStatement(statement));
@@ -1597,8 +1747,6 @@ function applyLoopExhaustedFinally(
     // 哨兵 throw 只能抛一个寄存器(`acc = v37; throw acc;`)
     const thrown = (throws[0] as TYPE.ThrowStatement).argument;
     if (!thrown || !TYPE.isIdentifier(thrown)) return false;
-    const finallyStatements = cleanupList.slice(cleanupPos.inExpression ? cleanup : cleanup + 1, guard);
-    if (finallyStatements.length === 0) return false;
     // done 分支尾部整段都是 cleanup/guard 脚手架
     cleanupList.splice(cleanup, cleanupList.length - cleanup);
     cleanupList.push(TYPE.breakStatement());
