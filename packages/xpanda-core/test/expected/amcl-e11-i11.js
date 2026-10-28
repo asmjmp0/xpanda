@@ -42,16 +42,21 @@ export function n1195(p0, p1) {
   }
 }
 export function o1195(p0, p1) {
-  let v0 /*g50*/ = g50.lstatSync(p0);
-  let v1 /*g50*/ = g50.lstatSync(p0 + "/" + l1195);
-  return !!v0.isDirectory()
-    && !v0.isSymbolicLink()
-    && !!v1.isFile()
-    && !v1.isSymbolicLink()
-    && JSON.parse(g50.readTextSync(p0 + "/" + l1195)).id === p1;
+  let v0 /*g50*/, v1 /*g50*/;
+  try {
+    v0 = g50.lstatSync(p0);
+    v1 = g50.lstatSync(p0 + "/" + l1195);
+    return !!v0.isDirectory()
+      && !v0.isSymbolicLink()
+      && !!v1.isFile()
+      && !v1.isSymbolicLink()
+      && JSON.parse(g50.readTextSync(p0 + "/" + l1195)).id === p1;
+  } catch (catchAcc) {
+    return false;
+  }
 }
 export function u996(p0, p1) {
-  let v2, v8 /*l786*/, v10 /*g50*/, v11;
+  let v2, v8 /*l786*/, v10 /*g50*/, v11, acc;
   let v0 = [];
   try {
     v2 = v0;
@@ -60,33 +65,39 @@ export function u996(p0, p1) {
     }
     for (v8 of g50.listFileSync(p0 + "/mc-install-work")) {
       v2 = v0;
-      if (v8.endsWith(".json") && l786(v8) === v8) {
-        if (g50.lstatSync(p0 + "/mc-install-work" + "/" + v8).isFile() && !g50.lstatSync(p0 + "/mc-install-work" + "/" + v8).isSymbolicLink()) {
-          v10 = JSON.parse(g50.readTextSync(p0 + "/mc-install-work" + "/" + v8));
-          v11 = v10 === null
-            || v10.schemaVersion !== 1
-            || v10.complete !== false
-            || v10.mcDir !== p1
-            || v8 !== v10.id + ".json";
-          if (!v11) {
-            v8 = l786(v10.id);
-            v11 = v8 !== v10.id;
-          }
-          if (!v11) {
-            v8 = l786(v10.gameVersion);
-            v11 = v8 !== v10.gameVersion;
-          }
-          if (!v11) {
-            v8 = l786(v10.versionName);
-            v11 = v8 !== v10.versionName;
-          }
-          if (!v11) {
-            v8 = typeof v10.loaderVersion;
-            v11 = typeof v10.loaderVersion !== "string";
-          }
-          if (!v11 && (v8 = ["", "fabric", "forge", "neoforge", "quilt", "optifine"], v8.indexOf.call(v8, v10.loaderType) >= 0)) {
-            v0.push(v10);
-          }
+      if (v8.endsWith(".json")) {
+        acc = l786(v8);
+        v10 = acc;
+        if (v10 === v8) {
+          try {
+            if (g50.lstatSync(p0 + "/mc-install-work" + "/" + v8).isFile() && !g50.lstatSync(p0 + "/mc-install-work" + "/" + v8).isSymbolicLink()) {
+              v10 = JSON.parse(g50.readTextSync(p0 + "/mc-install-work" + "/" + v8));
+              v11 = v10 === null
+                || v10.schemaVersion !== 1
+                || v10.complete !== false
+                || v10.mcDir !== p1
+                || v8 !== v10.id + ".json";
+              if (!v11) {
+                v8 = l786(v10.id);
+                v11 = v8 !== v10.id;
+              }
+              if (!v11) {
+                v8 = l786(v10.gameVersion);
+                v11 = v8 !== v10.gameVersion;
+              }
+              if (!v11) {
+                v8 = l786(v10.versionName);
+                v11 = v8 !== v10.versionName;
+              }
+              if (!v11) {
+                v8 = typeof v10.loaderVersion;
+                v11 = typeof v10.loaderVersion !== "string";
+              }
+              if (!v11 && (v8 = ["", "fabric", "forge", "neoforge", "quilt", "optifine"], v8.indexOf.call(v8, v10.loaderType) >= 0)) {
+                v0.push(v10);
+              }
+            }
+          } catch (catchAcc) {}
         }
       }
     }

@@ -137,7 +137,11 @@ export class o759 {
     }
   }
   static hasVersions(p0) {
-    return g50.listFileSync(p0 + "/versions").length > 0;
+    try {
+      return g50.listFileSync(p0 + "/versions").length > 0;
+    } catch (catchAcc) {
+      return false;
+    }
   }
   static async migrate(p0, p1) {
     let v0, v3, v5, v6, v7, v13, v14, v15, v16, v17, v18, v19;
@@ -228,13 +232,17 @@ export class o759 {
       g50.statSync(v0 + "/请开启“显示隐藏文件”查看游戏数据.txt");
       return;
     } catch (catchAcc) {
-      v3 = g50.openSync(v0 + "/请开启“显示隐藏文件”查看游戏数据.txt", g50.OpenMode.CREATE | g50.OpenMode.WRITE_ONLY | g50.OpenMode.TRUNC);
       try {
-        g50.writeSync(v3.fd, "AMCL 游戏数据说明\n" + "====================\n\n" + "你的 Minecraft 游戏数据（版本 versions / 存档 saves / 模组 mods / 资源 assets 等）\n" + "都保存在本文件夹下的  .minecraft  文件夹里。\n\n" + "由于 .minecraft 以点(.)开头，文件管理器默认会把它当作\"隐藏文件夹\"而不显示。\n" + "这是 Linux/鸿蒙文件系统的命名约定，不是出了问题。\n\n" + "查看 / 管理这些文件的方法：\n" + "  打开文件管理器右上角菜单 → 开启\"显示隐藏文件 / 显示隐藏项\"\n" + "  即可看到本目录下的 .minecraft 文件夹及其中内容。\n\n" + "提示：本文件夹在公共下载目录里，卸载 AMCL 也不会被删除。\n" + "此说明文件由 AMCL 自动生成，可以删除。\n");
-      } finally {
-        g50.closeSync(v3);
+        v3 = g50.openSync(v0 + "/请开启“显示隐藏文件”查看游戏数据.txt", g50.OpenMode.CREATE | g50.OpenMode.WRITE_ONLY | g50.OpenMode.TRUNC);
+        try {
+          g50.writeSync(v3.fd, "AMCL 游戏数据说明\n" + "====================\n\n" + "你的 Minecraft 游戏数据（版本 versions / 存档 saves / 模组 mods / 资源 assets 等）\n" + "都保存在本文件夹下的  .minecraft  文件夹里。\n\n" + "由于 .minecraft 以点(.)开头，文件管理器默认会把它当作\"隐藏文件夹\"而不显示。\n" + "这是 Linux/鸿蒙文件系统的命名约定，不是出了问题。\n\n" + "查看 / 管理这些文件的方法：\n" + "  打开文件管理器右上角菜单 → 开启\"显示隐藏文件 / 显示隐藏项\"\n" + "  即可看到本目录下的 .minecraft 文件夹及其中内容。\n\n" + "提示：本文件夹在公共下载目录里，卸载 AMCL 也不会被删除。\n" + "此说明文件由 AMCL 自动生成，可以删除。\n");
+        } finally {
+          g50.closeSync(v3);
+        }
+        y.info(local_0_1, "wrote external hint file: " + (v0 + "/请开启“显示隐藏文件”查看游戏数据.txt") + "");
+      } catch (catchAcc) {
+        y.warn(local_0_1, "writeExternalHint failed", catchAcc);
       }
-      y.info(local_0_1, "wrote external hint file: " + (v0 + "/请开启“显示隐藏文件”查看游戏数据.txt") + "");
       return;
     }
   }
@@ -245,13 +253,17 @@ export class o759 {
       return;
     } catch (catchAcc) {
       v1 = "AMCL 游戏数据说明（应用内 / 沙箱）\n" + "================================\n\n" + "这是 AMCL 的\"沙箱内\"存储目录。你的 Minecraft 游戏数据\n" + "（版本 versions / 存档 saves / 模组 mods / 资源 assets 等）保存在本目录下的\n" + ".minecraft 文件夹里。\n\n" + "由于 .minecraft 以点(.)开头，文件管理器默认会把它当作\"隐藏文件夹\"而不显示。\n" + "这是 Linux/鸿蒙文件系统的命名约定，不是出了问题。\n\n" + "查看 / 管理这些文件的方法：\n" + "  打开文件管理器右上角菜单 → 开启\"显示隐藏文件 / 显示隐藏项\"\n" + "  即可看到本目录下的 .minecraft 文件夹及其中内容。\n\n" + "注意：沙箱目录会随 AMCL 卸载一并删除（不保留）。\n" + "若想让游戏数据卸载不丢，请到 AMCL 设置 → \"游戏数据位置\" 切换到 \"外部\"\n" + "（数据会存到 下载目录 里的 AMCL 文件夹，卸载不丢）。\n\n" + "此说明文件由 AMCL 自动生成，可以删除。\n";
-      acc = g50.openSync(p0.filesDir + "/请开启“显示隐藏文件”查看游戏数据.txt", g50.OpenMode.CREATE | g50.OpenMode.WRITE_ONLY | g50.OpenMode.TRUNC);
       try {
-        g50.writeSync(acc.fd, v1);
-      } finally {
-        g50.closeSync(acc);
+        acc = g50.openSync(p0.filesDir + "/请开启“显示隐藏文件”查看游戏数据.txt", g50.OpenMode.CREATE | g50.OpenMode.WRITE_ONLY | g50.OpenMode.TRUNC);
+        try {
+          g50.writeSync(acc.fd, v1);
+        } finally {
+          g50.closeSync(acc);
+        }
+        y.info(local_0_1, "wrote sandbox hint file: " + (p0.filesDir + "/请开启“显示隐藏文件”查看游戏数据.txt") + "");
+      } catch (catchAcc) {
+        y.warn(local_0_1, "writeSandboxHint failed", catchAcc);
       }
-      y.info(local_0_1, "wrote sandbox hint file: " + (p0.filesDir + "/请开启“显示隐藏文件”查看游戏数据.txt") + "");
       return;
     }
   }

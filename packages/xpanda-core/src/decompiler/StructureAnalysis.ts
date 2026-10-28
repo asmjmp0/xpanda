@@ -808,8 +808,21 @@ export class StructureAnalysis {
             // runJarVerification 与 finally 尾块,finally 也因此找不到“紧跟 try”
             // 的布局)。汇合点不展开,只把终止的那条收进 if,汇合点留在后继上,
             // reduceTryRegion 的 case 3 随后就能让 try/catch 正常汇合。
-            const destJoin = this.isTryCatchJoin(region, destRegion);
-            const nextJoin = this.isTryCatchJoin(region, nextRegion);
+            // A branch target at/after the try's protected end that the try's
+            // own handler also flows into is the shared continuation, not an
+            // else branch: inlining it would copy the continuation into the
+            // try body and emit it again after the if (amcl n4/o8 start: the
+            // attach block landed inside the try).
+            const handlerRegions = this.regionGraph.normalPredecessors(region)
+                .filter((candidate) => candidate.tryRegion !== null
+                    && this.regionGraph.normalSuccessors(candidate)[0] === region)
+                .flatMap((candidate) => this.regionGraph.exceptionSuccessors(candidate));
+            const pastTryEnd = (target: Region): boolean => region.tryBodyEndPC !== null
+                && target.block !== null && target.block.getStartPC() >= region.tryBodyEndPC
+                && handlerRegions.some((handler) => handler === target
+                    || this.regionGraph.normalSuccessors(handler).includes(target));
+            const destJoin = this.isTryCatchJoin(region, destRegion) || pastTryEnd(destRegion);
+            const nextJoin = this.isTryCatchJoin(region, nextRegion) || pastTryEnd(nextRegion);
             if (destJoin !== nextJoin) {
                 // destRegion 是跳转目标,nextRegion 是落空分支
                 const inlined = destJoin ? nextRegion : destRegion;

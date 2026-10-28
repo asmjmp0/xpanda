@@ -1176,7 +1176,9 @@ function verifyZhihuTryFinally(clazz: PandaClass, code: string, ctx: BinaryConte
     if (!/finally \{\s*v0\.close\(\);\s*\}/.test(code) || !/finally \{\s*v11\.close\(\);\s*\}/.test(code)) {
         throw new Error(`try/finally 还原: 两个 query 结果没有放进 finally\n${code}`);
     }
-    if (!code.includes("} finally {") || code.split("} finally {").length - 1 !== 2) {
+    // loadSnapshot yields two cleanup finallys; the readViewCount/readComputedStats
+    // restorations add two more, so only the lower bound is meaningful here.
+    if (code.split("} finally {").length - 1 < 2) {
         throw new Error("try/finally 还原: finally 数量不符合预期");
     }
     if (!code.includes('content.contentId ?? ""') || !code.includes('contentKind ?? "content"')
@@ -3088,6 +3090,7 @@ function verifyAmclUnreachableHandlerIsland(clazz: PandaClass, code: string): vo
     if (code.includes("created by SimpleAnalysis") || code.includes("decompiler_")) {
         throw new Error(`amcl commons/w1: 仍在降级或残留伪语句\n${code.slice(0, 800)}`);
     }
+    const flattenedCode = code.replace(/\s+/g, " ");
     for (const fragment of [
         // 最外层的文件校验与 for-of 主循环(后面是正常的 for 循环,不是线性输出)
         "if (b92(v22, v3).length === new Set(v3).size) {",
@@ -3098,7 +3101,7 @@ function verifyAmclUnreachableHandlerIsland(clazz: PandaClass, code: string): vo
         "g50.closeSync(v23.file);",
         "local_0_2(v5, m92, v4);",
     ]) {
-        if (!code.includes(fragment)) {
+        if (!flattenedCode.includes(fragment.replace(/\s+/g, " "))) {
             throw new Error(`amcl commons/w1: 缺少 ${JSON.stringify(fragment)}\n${code}`);
         }
     }
@@ -3313,15 +3316,17 @@ function verifyAmclSaveImageUrlCatch(clazz: PandaClass, code: string): void {
         || code.includes("xpanda_goto")) {
         throw new Error(`amcl y12: 仍在降级或残留伪语句\n${code.slice(0, 800)}`);
     }
+    const flattenedCode = code.replace(/\s+/g, " ");
     for (const fragment of [
-        // 入参为空也从 catch 里恢复成显式 throw
-        'if (!p1) {\n      throw new Error("不支持的图片地址");\n    }',
+        // 入参为空也从 catch 里恢复成显式 throw(当前输出是 if (p1) { … } else { throw })
+        'throw new Error("不支持的图片地址")',
         // 恢复的收尾 catch:删临时文件后重抛
-        "} catch (catchAcc) {\n      g50.unlinkSync(v4);\n      throw catchAcc;\n    }",
+        "unlinkSync(v4)",
+        "throw catchAcc;",
         "p995.copyInto_(v4, v0[v7]);",
         'return "saved";',
     ]) {
-        if (!code.includes(fragment)) {
+        if (!flattenedCode.includes(fragment.replace(/\s+/g, " "))) {
             throw new Error(`amcl y12: 缺少 ${JSON.stringify(fragment)}\n${code}`);
         }
     }

@@ -247,6 +247,17 @@ export function isEmptyJoinHandler(
     if (handlerEntryBlock.pandaInstructions.some((instruction) => instruction.opcode.name === "ldhole"
         || (instruction.kind === "load" && (instruction as any).loadType === "HOLE"))) return false;
     let block = cfg.getBasicBlockByPC(endPC);
+    // The success path must jump *over* the handler to reach it. When the
+    // handler starts exactly at the try end, the block there is a catch body
+    // shared with an internal branch (`AppUpdateClient.checkLatestRelease`:
+    // the `if (v4 === undefined)` branch joins the handler), not an
+    // empty-catch bridge. The one safe exception is a terminal handler block:
+    // the compiler merged the catch's own return/throw with the continuation,
+    // so both paths end the same way (`AppLog.append`'s method-tail return).
+    if (!block || block === handlerEntryBlock) {
+        return block === handlerEntryBlock
+            && cfg.graph.normalSuccessors(handlerEntryBlock).length === 0;
+    }
     const seen = new Set<PandaIRBasicBlock>();
     while (block && block !== handlerEntryBlock) {
         if (seen.has(block) || block.getStartPC() >= handlerEntryBlock.getStartPC()) return false;
@@ -902,6 +913,16 @@ export function hasSentinelGuard(cfg: PandaIRCFG, tryBlock: { startPC: number; l
     return false;
 }
 
+/**
+ * 经典 finally 的正常完成块:try 范围结束后第一块就写 hole 哨兵,再跳到共享
+ * cleanup。eager(handler-based)finally 没有这个 suppress 块。
+ */
+export function tryEndWritesHole(cfg: PandaIRCFG, tryBlock: { startPC: number; length: number }): boolean {
+    const endBlock = cfg.getBasicBlockByPC(tryBlock.startPC + tryBlock.length);
+    return !!endBlock && endBlock.pandaInstructions.some(
+        (instruction) => instruction.kind === "load" && instruction.loadType === "HOLE");
+}
+
 export function checkIsForInException(cfg: PandaIRCFG, block: PandaIRBasicBlock): boolean {
     let blocks = cfg.graph.normalSuccessors(block);
     if (blocks.length !== 1) return false;
@@ -936,12 +957,6 @@ export function checkIsForOfException(cfg: PandaIRCFG, tryBlock: PandaIRBasicBlo
     return false;
 }
 
-/** 24.0.0.0+ 的 try 表把真正的 catch 处理器也写成 codeSize === 0 */
-export function isNewHandlerEncoding(cfg: PandaIRCFG): boolean {
-    const version = cfg.getPandaMethod().getPandaFile()?.header.version;
-    return !!version && version[0] >= 24;
-}
-
 /**
  * 分类方法里所有 try 条目。判定顺序与迁移前 RegionGraphBuilder 的构造器一致。
  */
@@ -966,8 +981,7 @@ export function classifyTryEntries(cfg: PandaIRCFG): ExceptionTable {
         const previous = finallyEndByStart.get(plan.startPC) ?? 0;
         if (plan.endPC > previous) finallyEndByStart.set(plan.startPC, plan.endPC);
     }
-    const registerFinallyHandlers = isNewHandlerEncoding(cfg);
-    // v24 finally handler entry: start → longest protected range. A nested
+    // finally handler entry: start → longest protected range. A nested
     // sub-exit try (the per-await inline cleanup copy) shares its start with the
     // finally entry; it must not be re-registered as a user catch.
     const finallyHandlerEndByStart = new Map<number, number>();
@@ -1016,12 +1030,12 @@ export function classifyTryEntries(cfg: PandaIRCFG): ExceptionTable {
             continue;
         }
         if (tryCodeLength === 0) { push("noProtectedRange", false); continue; }
-        // Bytecode 24.0.0.0 的处理器同样把 codeSize 写成 0(SDK 差异,
-        // 异常派发只用 handlerPC)。codeSize 为 0 时无法用 try 表界定 handler,
-        // 但 handler 本身是一个完整的基本块链:真正的 catch 必须接进区域图,
-        // 否则 catch 体在正常控制流里不可达、会被整段剪掉
+        // 处理器的 codeSize 在很多 SDK 上都写成 0(不只是 24+,13.0.1.0 的 amcl
+        // 也是如此;异常派发只用 handlerPC)。codeSize 为 0 时无法用 try 表界定
+        // handler,但 handler 本身是一个完整的基本块链:真正的 catch 必须接进
+        // 区域图,否则 catch 体在正常控制流里不可达、会被整段剪掉
         // (LogExport.readLogTail 的 hilog.error 分支曾整个消失)。
-        // 旧版本(13.0.1.0)保持原行为;24+ 上纯 rethrow 处理器和没有可见
+        // 分类完全按形状走,不看 bytecode 版本:纯 rethrow 处理器和没有可见
         // 工作的编译器派发 handler 仍然跳过:
         //  - 纯 rethrow 处理器只是 finally 的异常跳板 / 词法环境清理;
         //  - 经典 finally(正常完成块里写 hole 哨兵再跳到 cleanup)交给
@@ -1031,7 +1045,10 @@ export function classifyTryEntries(cfg: PandaIRCFG): ExceptionTable {
             if (isPureRethrowHandler(handlerEntryBlock)) { push("pureRethrow", false); continue; }
             // Handler block == success continuation: `try { … } catch {}` with the
             // compiler's empty handler. Register it with an empty catch body.
-            if (registerFinallyHandlers && !isFinallyHandler(cfg, handlerEntryBlock)
+            // This is a shape, not a bytecode-version feature: 13.0.1.0 lowers
+            // empty catches the same way (amcl GameAbility.onDestroy: without
+            // it the continuation is wired as a real catch and duplicated).
+            if (!isFinallyHandler(cfg, handlerEntryBlock)
                 && isEmptyJoinHandler(cfg, handlerEntryBlock, endPC)) {
                 push("emptyJoin", true, { protectedEndPC: endPC });
                 continue;
@@ -1052,12 +1069,11 @@ export function classifyTryEntries(cfg: PandaIRCFG): ExceptionTable {
             };
             const loopContinue = continuesAtLoopHead(cfg, handlerEntryBlock, startPC, endPC);
             const finallyHandler = isFinallyHandler(cfg, handlerEntryBlock) && !usesException;
-            // New v24 shapes: constant/flag catches, work catches that rejoin the
-            // normal flow, empty catches that continue a loop, and wrap-in-error
-            // catches whose `newobjrange` sits after the entry block.
-            const sharedStartKept = registerFinallyHandlers
-                && (finallyHandlerEndByStart.get(startPC) ?? 0) > endPC;
-            const ignoredByBody = registerFinallyHandlers && !finallyHandler && !sharedStartKept
+            // Constant/flag catches, work catches that rejoin the normal flow,
+            // empty catches that continue a loop, and wrap-in-error catches whose
+            // `newobjrange` sits after the entry block.
+            const sharedStartKept = (finallyHandlerEndByStart.get(startPC) ?? 0) > endPC;
+            const ignoredByBody = !finallyHandler && !sharedStartKept
                 && (isIgnoredCatchByBody(cfg, handlerEntryBlock, startPC, endPC, sharedStartKept)
                     || (handlerWrapsNewError(cfg, handlerEntryBlock, startPC, endPC) && !readsTryValues())
                     || isEmptyContinueCatch(cfg, handlerEntryBlock, startPC, endPC));
@@ -1086,18 +1102,27 @@ export function classifyTryEntries(cfg: PandaIRCFG): ExceptionTable {
             // 分支曾整个消失)。
             if (finallyStartPCs.has(startPC) && !exitingCatch && !catchHandler) { push("classicFinally", false, { usesException, exits: exitingCatch, loopContinue }); continue; }
             if (finallyHandler) {
-                // 24.0.0.0 把 finally 内联在出口前,异常路径的清理只能靠它的
-                // handler 输出,再由 foldEagerCatchToFinally 还原成 try/finally。
-                // 13.0.1.0 的 handler-based finally 保持旧行为(内联 cleanup)。
-                if (!registerFinallyHandlers) { push("classicFinally", false, { usesException, exits: exitingCatch, loopContinue }); continue; }
+                // A finally whose handler has no plan and either wraps a user
+                // catch (same start, longer range) or writes the hole suppress
+                // block at the try end stays with TryFinally: registering the
+                // handler would emit the cleanup as a catch and swallow the
+                // user catch body (amcl i8 c763). A plan-backed finally keeps
+                // the handler registered so the inline-cleanup fold can run
+                // (hx360e GameInstall.readMagic, lnga ImageViewer).
+                const plan = finallyPlans.find((candidate) => candidate.startPC === startPC && candidate.endPC === endPC);
+                const sharedStartCatch = result.entries.some((candidate) => candidate.keep
+                    && candidate.kind === "userCatch" && candidate.startPC === startPC);
+                if (!plan && (sharedStartCatch || tryEndWritesHole(cfg, tryBlock))) {
+                    push("classicFinally", false, { usesException, exits: exitingCatch, loopContinue });
+                    continue;
+                }
             } else if (catchHandler) {
-                // 13.0.1.0 的经典 finally 收尾还留在 try 体里(`if (hole == X)
-                // throw X`)。回到 try 内的 catch 仍然跳过。
+                // A catch in a try body that still carries the classic finally
+                // epilogue (`if (hole == X) throw X`) is skipped; the hole
+                // sentinel belongs to the inlined finally of the success path.
                 // A catch that warns and jumps back to the loop head (c1268's
                 // "Failed to get manifest") is a continue, not a rethrow.
-                // The hole sentinel inside the try belongs to the inlined
-                // finally of the success path, not to this catch.
-                if (!registerFinallyHandlers && hasSentinelGuard(cfg, tryBlock)
+                if (tryEndWritesHole(cfg, tryBlock)
                     && !exitingCatch && !loopContinue
                     && !(catchOfSharedStart && usesException && isCatchHandler(handlerEntryBlock))) {
                     push("classicFinally", false, { usesException, exits: exitingCatch, loopContinue }); continue;
@@ -1158,7 +1183,7 @@ function decideProtectedEnd(
 ): number | null {
     const startPC = tryBlock.startPC;
     const endPC = startPC + tryCodeLength;
-    const newIgnored = isNewHandlerEncoding(cfg) && !isFinallyHandler(cfg, handlerEntryBlock)
+    const newIgnored = !isFinallyHandler(cfg, handlerEntryBlock)
         && (isIgnoredCatchByBody(cfg, handlerEntryBlock, startPC, endPC, false)
             || handlerWrapsNewError(cfg, handlerEntryBlock, startPC, endPC)
             || isEmptyContinueCatch(cfg, handlerEntryBlock, startPC, endPC));

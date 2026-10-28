@@ -72,24 +72,28 @@ export class AppUpdateClient {
     return;
   }
   async requestStatic(p0) {
+    let v0;
     let v2 /*http*/ = http.createHttp();
-    let v0 = await v2.request(p0, {
-      "method": http.RequestMethod.GET,
-      "header": {
-        "Accept": "application/json",
-        "User-Agent": "zhihu-plus-plus-hmos"
-      },
-      "expectDataType": http.HttpDataType.STRING,
-      "connectTimeout": local_0_3,
-      "readTimeout": local_0_4,
-      "usingCache": true
-    });
-    Number(v0.responseCode);
-    if (v0 !== 200 || typeof v0.result !== "string") {
-      throw new Error("静态源响应码 " + v0.responseCode + "");
+    try {
+      v0 = await v2.request(p0, {
+        "method": http.RequestMethod.GET,
+        "header": {
+          "Accept": "application/json",
+          "User-Agent": "zhihu-plus-plus-hmos"
+        },
+        "expectDataType": http.HttpDataType.STRING,
+        "connectTimeout": local_0_3,
+        "readTimeout": local_0_4,
+        "usingCache": true
+      });
+      Number(v0.responseCode);
+      if (v0 !== 200 || typeof v0.result !== "string") {
+        throw new Error("静态源响应码 " + v0.responseCode + "");
+      }
+      return v0.result;
+    } finally {
+      v2.destroy();
     }
-    v2.destroy();
-    return v0.result;
   }
   fetchStatic(p0, p1) {
     let acc;
@@ -176,27 +180,37 @@ export class AppUpdateClient {
     if (AppUpdateClient.releasesJson.length > 0 && (acc = Date.now(), !(AppUpdateClient.releasesJson.length > 0) - AppUpdateClient.releasesFetchedAt < local_0_0)) {
       return AppUpdateClient.releasesJson;
     }
-    v0 = await this.fetchStatic("releases.json", function (p0) {
-      return Array.isArray(JSON.parse(p0));
+    acc = this.fetchStatic("releases.json", function (p0) {
+      try {
+        return Array.isArray(JSON.parse(p0));
+      } catch (catchAcc) {
+        return false;
+      }
     });
+    v0 = await acc;
     AppUpdateClient.releasesJson = v0;
     AppUpdateClient.releasesFetchedAt = Date.now();
     return v0;
   }
   async requestAtomFallback() {
-    let v0 = await this.requestHandle.request(GITHUB_RELEASES_ATOM, {
-      "method": http.RequestMethod.GET,
-      "header": {
-        "Accept": "application/atom+xml",
-        "User-Agent": "zhihu-plus-plus-hmos"
-      },
-      "expectDataType": http.HttpDataType.STRING,
-      "connectTimeout": local_0_3,
-      "readTimeout": local_0_4,
-      "usingCache": false
-    });
-    Number(v0.responseCode);
-    return v0 !== 200 || typeof v0.result !== "string" ? undefined : decodeLatestReleaseAtom(v0.result);
+    let v0;
+    try {
+      v0 = await this.requestHandle.request(GITHUB_RELEASES_ATOM, {
+        "method": http.RequestMethod.GET,
+        "header": {
+          "Accept": "application/atom+xml",
+          "User-Agent": "zhihu-plus-plus-hmos"
+        },
+        "expectDataType": http.HttpDataType.STRING,
+        "connectTimeout": local_0_3,
+        "readTimeout": local_0_4,
+        "usingCache": false
+      });
+      Number(v0.responseCode);
+      return v0 !== 200 || typeof v0.result !== "string" ? undefined : decodeLatestReleaseAtom(v0.result);
+    } catch (catchAcc) {
+      return undefined;
+    }
   }
   async fetchReleaseDetail(p0) {
     let v8;
@@ -235,8 +249,10 @@ export class AppUpdateClient {
     if (decodeLatestRelease(p0) !== undefined) {
       AppUpdateClient.bundledLatestJson = p0;
     }
-    if (Array.isArray(JSON.parse(p1))) {
-      AppUpdateClient.bundledReleasesJson = p1;
-    }
+    try {
+      if (Array.isArray(JSON.parse(p1))) {
+        AppUpdateClient.bundledReleasesJson = p1;
+      }
+    } catch (catchAcc) {}
   }
 }

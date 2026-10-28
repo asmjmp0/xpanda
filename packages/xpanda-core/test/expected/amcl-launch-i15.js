@@ -125,7 +125,11 @@ export class n1484 {
       v2 = this.deferredDownloadCleanup_;
       this.deferredDownloadCleanup_ = [];
       for (v5 of v2) {
-        i50(v5);
+        try {
+          i50(v5);
+        } catch (catchAcc) {
+          this.deferredDownloadCleanup_.push(v5);
+        }
       }
     }
     return v0.length === 0;
@@ -305,7 +309,9 @@ export class n1484 {
           } catch (catchAcc) {}
           if (!(await this.downloadJdkArchive(v9 + "/archive.zip", "JDK " + this.version_))) {
             if (await this.waitForNativeOwners_()) {
-              i50(v9);
+              try {
+                i50(v9);
+              } catch (catchAcc) {}
             } else {
               this.deferredDownloadCleanup_.push(v9);
               this.alog().warn(local_0_1, "原生下载仍在结束，暂时保留独占目录：" + v9, null, z31);
@@ -323,7 +329,9 @@ export class n1484 {
           }
           if (!(await this.completeJdkInstall(v9 + "/archive.zip", this.targetDir_, v8, "JDK " + this.version_))) {
             if (await this.waitForNativeOwners_()) {
-              i50(v9);
+              try {
+                i50(v9);
+              } catch (catchAcc) {}
             } else {
               this.deferredDownloadCleanup_.push(v9);
               this.alog().warn(local_0_1, "原生下载仍在结束，暂时保留独占目录：" + v9, null, z31);
@@ -343,7 +351,9 @@ export class n1484 {
             this.reportDownload("verifying", 100, 0, "JDK " + this.version_ + " 安装完成 ✅");
             this.report(true, "JDK " + this.version_ + " 安装完成 ✅");
             if (await this.waitForNativeOwners_()) {
-              i50(v9);
+              try {
+                i50(v9);
+              } catch (catchAcc) {}
             } else {
               this.deferredDownloadCleanup_.push(v9);
               this.alog().warn(local_0_1, "原生下载仍在结束，暂时保留独占目录：" + v9, null, z31);
@@ -361,7 +371,9 @@ export class n1484 {
           }
           this.report(false, "❌ " + ("JDK " + this.version_) + " 安装验证失败");
           if (await this.waitForNativeOwners_()) {
-            i50(v9);
+            try {
+              i50(v9);
+            } catch (catchAcc) {}
           } else {
             this.deferredDownloadCleanup_.push(v9);
             this.alog().warn(local_0_1, "原生下载仍在结束，暂时保留独占目录：" + v9, null, z31);
@@ -381,7 +393,9 @@ export class n1484 {
           this.reportDownload("verifying", 100, 0, "JDK " + this.version_ + " 安装完成 ✅");
           this.report(true, "JDK " + this.version_ + " 安装完成 ✅");
           if (await this.waitForNativeOwners_()) {
-            i50(v9);
+            try {
+              i50(v9);
+            } catch (catchAcc) {}
           } else {
             this.deferredDownloadCleanup_.push(v9);
             this.alog().warn(local_0_1, "原生下载仍在结束，暂时保留独占目录：" + v9, null, z31);
@@ -396,7 +410,9 @@ export class n1484 {
         }
         this.report(false, "❌ " + ("JDK " + this.version_) + " 安装验证失败");
         if (await this.waitForNativeOwners_()) {
-          i50(v9);
+          try {
+            i50(v9);
+          } catch (catchAcc) {}
         } else {
           this.deferredDownloadCleanup_.push(v9);
           this.alog().warn(local_0_1, "原生下载仍在结束，暂时保留独占目录：" + v9, null, z31);
@@ -418,7 +434,9 @@ export class n1484 {
       } catch (catchAcc) {}
       if (!(await this.downloadJdkArchive(v9 + "/archive.zip", "JDK " + this.version_))) {
         if (await this.waitForNativeOwners_()) {
-          i50(v9);
+          try {
+            i50(v9);
+          } catch (catchAcc) {}
         } else {
           this.deferredDownloadCleanup_.push(v9);
           this.alog().warn(local_0_1, "原生下载仍在结束，暂时保留独占目录：" + v9, null, z31);
@@ -436,7 +454,9 @@ export class n1484 {
       }
       if (!(await this.completeJdkInstall(v9 + "/archive.zip", this.targetDir_, v8, "JDK " + this.version_))) {
         if (await this.waitForNativeOwners_()) {
-          i50(v9);
+          try {
+            i50(v9);
+          } catch (catchAcc) {}
         } else {
           this.deferredDownloadCleanup_.push(v9);
           this.alog().warn(local_0_1, "原生下载仍在结束，暂时保留独占目录：" + v9, null, z31);
@@ -456,7 +476,9 @@ export class n1484 {
         this.reportDownload("verifying", 100, 0, "JDK " + this.version_ + " 安装完成 ✅");
         this.report(true, "JDK " + this.version_ + " 安装完成 ✅");
         if (await this.waitForNativeOwners_()) {
-          i50(v9);
+          try {
+            i50(v9);
+          } catch (catchAcc) {}
         } else {
           this.deferredDownloadCleanup_.push(v9);
           this.alog().warn(local_0_1, "原生下载仍在结束，暂时保留独占目录：" + v9, null, z31);
@@ -474,7 +496,9 @@ export class n1484 {
       }
       this.report(false, "❌ " + ("JDK " + this.version_) + " 安装验证失败");
       if (await this.waitForNativeOwners_()) {
-        i50(v9);
+        try {
+          i50(v9);
+        } catch (catchAcc) {}
       } else {
         this.deferredDownloadCleanup_.push(v9);
         this.alog().warn(local_0_1, "原生下载仍在结束，暂时保留独占目录：" + v9, null, z31);
@@ -493,7 +517,9 @@ export class n1484 {
       v25.alog().error(local_0_1, "Download failed", catchAcc, z31);
       v25.reportDownload("downloading", 0, 0, "下载失败: " + catchAcc.message);
       if (await v25.waitForNativeOwners_()) {
-        i50(v24);
+        try {
+          i50(v24);
+        } catch (catchAcc) {}
       } else {
         v25.deferredDownloadCleanup_.push(v24);
         v25.alog().warn(local_0_1, "原生下载仍在结束，暂时保留独占目录：" + v24, null, z31);
@@ -1146,8 +1172,13 @@ export class n1484 {
           throw catchAcc;
         }
       } catch (catchAcc) {
-        local_1_3.alog().warn(local_0_1, "目录下载来源失败：" + local_2_2_2.sourceId, catchAcc, z31);
+        v3 = local_1_3.alog().warn;
+        v8 = local_0_1;
+        v9 = "目录下载来源失败：" + local_2_2_2.sourceId;
+        v10 = z31;
+        v3.call(local_1_3.alog(), local_0_1, "目录下载来源失败：" + local_2_2_2.sourceId, catchAcc, z31);
         v29 = await local_1_3.waitForNativeOwners_();
+        v0 = v29;
         if (!v29) {
           local_1_3.report(false, "JDK 下载资源仍在结束，已保留下载现场，请稍后重试");
           local_1_3.giteeTaskIds_ = [];
@@ -1196,21 +1227,28 @@ export class n1484 {
           v25 = v10;
           return v28;
         }
-        p0 = v28;
-        p0 = v28;
-        p0 = v28;
-        p0 = v28;
-        g50.unlinkSync(v28);
-        p0 = v28;
-        v0 = v29;
-        v9 = v30;
-        v8 = v31;
-        v3 = v32;
-        v10 = v33;
-        v19 = v34;
+        try {
+          p0 = v28;
+          p0 = v28;
+          p0 = v28;
+          p0 = v28;
+          g50.unlinkSync(v28);
+          p0 = v28;
+          v0 = v29;
+          v9 = v30;
+          v8 = v31;
+          v3 = v32;
+          v10 = v33;
+          v19 = v34;
+        } catch (catchAcc) {}
         v28 = p0;
-        v22 = v30;
-        v25 = v33;
+        v30 = v9;
+        v31 = v8;
+        v32 = v3;
+        v33 = v10;
+        v34 = v19;
+        v22 = v9;
+        v25 = v10;
         g50.unlinkSync(p0 + ".download-meta");
       } finally {
         v28 = hole;
@@ -1329,7 +1367,9 @@ export class n1484 {
       } catch (catchAcc) {}
       return false;
     }
+    v7 = local_1_4.version_;
     v5 = d1482(local_1_1, local_1_4.version_);
+    v6 = v5.length;
     if (v5.length > 0) {
       local_1_4.alog().error(local_0_1, "JDK staging content invalid: " + v5, null, z31);
       local_1_4.report(false, "❌ " + local_1_3 + " 内容校验失败：" + v5);
@@ -1357,19 +1397,32 @@ export class n1484 {
         "build": local_1_4.config_.build
       };
       v6 = g50.openSync(local_1_1 + "/.amcl-runtime-receipt.json", g50.OpenMode.CREATE | g50.OpenMode.WRITE_ONLY | g50.OpenMode.TRUNC);
+      v7 = undefined;
       try {
+        v12 = v6.fd;
         g50.writeSync(v6.fd, JSON.stringify(acc));
         g50.fsyncSync(v6.fd);
       } finally {
         g50.closeSync(v6);
       }
     }
-    v12 = g50.OpenMode.CREATE | g50.OpenMode.WRITE_ONLY | g50.OpenMode.TRUNC;
-    v9 = g50.openSync(local_1_1 + "/.amcl_release_tag", g50.OpenMode.CREATE | g50.OpenMode.WRITE_ONLY | g50.OpenMode.TRUNC);
     try {
-      g50.writeSync(v9.fd, local_1_4.config_.tag);
-    } finally {
-      g50.closeSync(v9);
+      v6 = p1;
+      v7 = p0;
+      v12 = g50.OpenMode.CREATE | g50.OpenMode.WRITE_ONLY | g50.OpenMode.TRUNC;
+      v9 = g50.openSync(local_1_1 + "/.amcl_release_tag", g50.OpenMode.CREATE | g50.OpenMode.WRITE_ONLY | g50.OpenMode.TRUNC);
+      try {
+        g50.writeSync(v9.fd, local_1_4.config_.tag);
+      } finally {
+        v6 = p1;
+        v7 = p0;
+        g50.closeSync(v9);
+      }
+    } catch (catchAcc) {
+      v12 = z31;
+      local_1_4.alog().warn(local_0_1, "JDK " + local_1_4.version_ + " stamp write failed (non-fatal)", catchAcc, z31);
+      p0 = v7;
+      p1 = v6;
     }
     v5 = p1 + ".backup-" + Date.now() + "-" + Math.floor(Math.random() * 1000000);
     v6 = false;

@@ -127,24 +127,32 @@ export class ContentFilterRuntimeStore {
     return v0;
   }
   async readViewCount(p0, p1) {
+    let v6;
     let v2 = await p0.query(new relationalStore.RdbPredicates(local_0_0).equalTo("content_key", p1), ["view_count"]);
-    let v6 = v2.goToFirstRow() ? v2.getLong(v2.getColumnIndex("view_count")) : 0;
-    v2.close();
-    return v6;
+    try {
+      v6 = v2.goToFirstRow() ? v2.getLong(v2.getColumnIndex("view_count")) : 0;
+      return v6;
+    } finally {
+      v2.close();
+    }
   }
   async readComputedStats(p0) {
-    let v10;
-    let v3 = await p0.querySql("SELECT COALESCE(SUM(view_count), 0) AS kept_count FROM content_filter_views");
-    let v8 = v3.goToFirstRow() ? v3.getLong(v3.getColumnIndex("kept_count")) : 0;
-    let v0 = await this.history.queryRecent();
-    v8 += v0.length;
-    v10 = {
-      "totalSeen": v8,
-      "totalFiltered": v0.length,
-      "filterRate": v8 > 0 ? v0.length / v8 : 0,
-      "lastFilteredAt": v0.length !== 0 ? v0[0].blockedAt : 0
-    };
-    v3.close();
-    return v10;
+    let v8, v10;
+    let v0 = await p0.querySql("SELECT COALESCE(SUM(view_count), 0) AS kept_count FROM content_filter_views");
+    let v3 = v0;
+    try {
+      v8 = v0.goToFirstRow() ? v0.getLong(v0.getColumnIndex("kept_count")) : 0;
+      v0 = await this.history.queryRecent();
+      v8 += v0.length;
+      v10 = {
+        "totalSeen": v8,
+        "totalFiltered": v0.length,
+        "filterRate": v8 > 0 ? v0.length / v8 : 0,
+        "lastFilteredAt": v0.length !== 0 ? v0[0].blockedAt : 0
+      };
+      return v10;
+    } finally {
+      v3.close();
+    }
   }
 }

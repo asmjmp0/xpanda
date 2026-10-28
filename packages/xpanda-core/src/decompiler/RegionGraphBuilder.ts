@@ -158,13 +158,19 @@ export class RegionGraphBuilder {
         // 不接进图,避免留下不可达的 landing pad 把整个方法逼到降级路径。
         const entryRegion = this.btor.get(this.entryBlock)!;
         const pending = new Map(this.exceptionHandlers);
+        // A block whose region has already been wrapped by an inner try: an
+        // outer try's handler that lands on this block must enter through the
+        // wrapper, or the wrapper is left with no predecessor and pruned while
+        // the body keeps a tryBodyEndPC without try semantics (amcl l10
+        // loadJournal_: the outer catch's handler is the inner empty-catch try).
+        const regionEntry = new Map<PandaIRBasicBlock, Region>();
         let progress = true;
         while (pending.size > 0 && progress) {
             progress = false;
             for (const [handleEntry, entry] of Array.from(pending)) {
                 const tryEntry = entry.tryEntryBlock!;
                 const tryEntryRegion = this.btor.get(tryEntry);
-                const handleEntryRegion = this.btor.get(handleEntry);
+                const handleEntryRegion = regionEntry.get(handleEntry) ?? this.btor.get(handleEntry);
                 if (!tryEntryRegion || !handleEntryRegion || tryEntryRegion === entryRegion) {
                     // 区域已被裁掉,或者是入口区域本身(没有前驱可以改接给 try 区域)
                     pending.delete(handleEntry);
@@ -187,10 +193,18 @@ export class RegionGraphBuilder {
                 const tryRegion = this.createTryRegion(
                     tryEntryRegion, handlerRegion, endPC ?? null,
                     entry.kind === "finallyEpilogue" ? "finallyEpilogue" : "catch");
+                regionEntry.set(tryEntry, tryRegion);
                 for (const predecessor of this.regionGraph.normalPredecessors(tryEntryRegion).slice()) {
                     const value = this.regionGraph.edgeValueOrThrow(predecessor, tryEntryRegion);
                     this.regionGraph.removeEdge(predecessor, tryEntryRegion);
                     this.regionGraph.putEdgeValue(predecessor, tryRegion, value);
+                }
+                // Exception edges into this block (an outer try whose handler is
+                // this block) must enter the wrapper too: the handler starts the
+                // inner try, not its body (amcl l10 loadJournal_).
+                for (const predecessor of this.regionGraph.exceptionPredecessors(tryEntryRegion).slice()) {
+                    this.regionGraph.removeEdge(predecessor, tryEntryRegion);
+                    this.regionGraph.putExceptionEdge(predecessor, tryRegion);
                 }
                 this.regionGraph.putEdgeValue(tryRegion, tryEntryRegion, false);
                 this.regionGraph.putExceptionEdge(tryRegion, handlerRegion);

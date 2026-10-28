@@ -95,9 +95,45 @@ export class q1164 {
   }
   async start(p0) {
     let local_1_0 = this;
-    if (local_1_0.win !== undefined && local_1_0.generation > 0 && local_1_0.win.getWindowProperties().id === p0.getWindowProperties().id) {
-      await local_1_0.publish();
-      return undefined;
+    if (local_1_0.win !== undefined && local_1_0.generation > 0) {
+      try {
+        if (local_1_0.win.getWindowProperties().id === p0.getWindowProperties().id) {
+          await local_1_0.publish();
+          return undefined;
+        }
+        local_1_0.stop();
+        local_1_0.win = p0;
+        local_1_0.enhancedDisplays = deviceInfo.sdkApiVersion >= 26;
+        local_1_0.baseLimits = p0.getWindowLimits();
+        local_1_0.limits = local_1_0.copyBaseLimits();
+        local_1_0.decorated = true;
+        local_1_0.resizable = true;
+        local_1_0.generation = r273.desktopAttach(function () {
+          local_1_0.drain();
+        });
+        if (local_1_0.generation <= 0) {
+          local_1_0.win = undefined;
+          throw new Error("Desktop system bridge unavailable");
+        }
+        try {
+          p0.on("windowRectChange", local_1_0.rectListener);
+          p0.on("windowStatusChange", local_1_0.statusListener);
+          p0.on("displayIdChange", local_1_0.displayListener);
+          p0.on("windowWillClose", local_1_0.closeListener);
+          if (local_1_0.enhancedDisplays) {
+            display.on("add", local_1_0.displayListener);
+            display.on("remove", local_1_0.displayListener);
+            display.on("change", local_1_0.displayListener);
+          }
+          await local_1_0.publish();
+          return undefined;
+        } catch (catchAcc) {
+          local_1_0.stop();
+          throw catchAcc;
+        }
+      } catch (catchAcc) {
+        local_1_0.stop();
+      }
     }
     local_1_0.stop();
     local_1_0.win = p0;
@@ -131,62 +167,7 @@ export class q1164 {
     }
   }
   stop() {
-    if (this.win === undefined) {
-      if (!this.enhancedDisplays) {
-        this.clearDisplayListeners();
-        if (this.generation > 0) {
-          r273.desktopDetach(this.generation);
-        }
-        this.generation = 0;
-        this.win = undefined;
-        return;
-      }
-      try {
-        try {
-          display.off("add", this.displayListener);
-        } catch (catchAcc) {}
-        try {
-          try {
-            display.off("remove", this.displayListener);
-          } catch (catchAcc) {}
-          try {
-            display.off("change", this.displayListener);
-          } catch (catchAcc) {}
-          this.clearDisplayListeners();
-          if (this.generation > 0) {
-            r273.desktopDetach(this.generation);
-          }
-          this.generation = 0;
-          this.win = undefined;
-          return;
-        } catch (catchAcc) {
-          try {
-            display.off("change", this.displayListener);
-          } catch (catchAcc) {}
-          this.clearDisplayListeners();
-          if (this.generation > 0) {
-            r273.desktopDetach(this.generation);
-          }
-          this.generation = 0;
-          this.win = undefined;
-          return;
-        }
-      } catch (catchAcc) {
-        try {
-          display.off("remove", this.displayListener);
-        } catch (catchAcc) {}
-        try {
-          display.off("change", this.displayListener);
-        } catch (catchAcc) {}
-        this.clearDisplayListeners();
-        if (this.generation > 0) {
-          r273.desktopDetach(this.generation);
-        }
-        this.generation = 0;
-        this.win = undefined;
-        return;
-      }
-    } else {
+    if (this.win !== undefined) {
       try {
         this.win.off("windowRectChange", this.rectListener);
       } catch (catchAcc) {}
@@ -194,183 +175,29 @@ export class q1164 {
         this.win.off("windowStatusChange", this.statusListener);
       } catch (catchAcc) {}
       try {
-        try {
-          this.win.off("displayIdChange", this.displayListener);
-        } catch (catchAcc) {}
-        try {
-          try {
-            this.win.off("windowWillClose", this.closeListener);
-          } catch (catchAcc) {}
-          if (!this.enhancedDisplays) {
-            this.clearDisplayListeners();
-            if (this.generation > 0) {
-              r273.desktopDetach(this.generation);
-            }
-            this.generation = 0;
-            this.win = undefined;
-            return;
-          }
-          try {
-            try {
-              display.off("add", this.displayListener);
-            } catch (catchAcc) {}
-            try {
-              try {
-                display.off("remove", this.displayListener);
-              } catch (catchAcc) {}
-              try {
-                display.off("change", this.displayListener);
-              } catch (catchAcc) {}
-              this.clearDisplayListeners();
-              if (this.generation > 0) {
-                r273.desktopDetach(this.generation);
-              }
-              this.generation = 0;
-              this.win = undefined;
-              return;
-            } catch (catchAcc) {
-              try {
-                display.off("change", this.displayListener);
-              } catch (catchAcc) {}
-              this.clearDisplayListeners();
-              if (this.generation > 0) {
-                r273.desktopDetach(this.generation);
-              }
-              this.generation = 0;
-              this.win = undefined;
-              return;
-            }
-          } catch (catchAcc) {
-            try {
-              display.off("remove", this.displayListener);
-            } catch (catchAcc) {}
-            try {
-              display.off("change", this.displayListener);
-            } catch (catchAcc) {}
-            this.clearDisplayListeners();
-            if (this.generation > 0) {
-              r273.desktopDetach(this.generation);
-            }
-            this.generation = 0;
-            this.win = undefined;
-            return;
-          }
-        } catch (catchAcc) {
-          if (!this.enhancedDisplays) {
-            this.clearDisplayListeners();
-            if (this.generation > 0) {
-              r273.desktopDetach(this.generation);
-            }
-            this.generation = 0;
-            this.win = undefined;
-            return;
-          }
-          try {
-            try {
-              display.off("add", this.displayListener);
-            } catch (catchAcc) {}
-            try {
-              try {
-                display.off("remove", this.displayListener);
-              } catch (catchAcc) {}
-              try {
-                display.off("change", this.displayListener);
-              } catch (catchAcc) {}
-              this.clearDisplayListeners();
-              if (this.generation > 0) {
-                r273.desktopDetach(this.generation);
-              }
-              this.generation = 0;
-              this.win = undefined;
-              return;
-            } catch (catchAcc) {
-              try {
-                display.off("change", this.displayListener);
-              } catch (catchAcc) {}
-              this.clearDisplayListeners();
-              if (this.generation > 0) {
-                r273.desktopDetach(this.generation);
-              }
-              this.generation = 0;
-              this.win = undefined;
-              return;
-            }
-          } catch (catchAcc) {
-            try {
-              display.off("remove", this.displayListener);
-            } catch (catchAcc) {}
-            try {
-              display.off("change", this.displayListener);
-            } catch (catchAcc) {}
-            this.clearDisplayListeners();
-            if (this.generation > 0) {
-              r273.desktopDetach(this.generation);
-            }
-            this.generation = 0;
-            this.win = undefined;
-            return;
-          }
-        }
-      } catch (catchAcc) {
-        try {
-          this.win.off("windowWillClose", this.closeListener);
-        } catch (catchAcc) {}
-        if (!this.enhancedDisplays) {
-          this.clearDisplayListeners();
-          if (this.generation > 0) {
-            r273.desktopDetach(this.generation);
-          }
-          this.generation = 0;
-          this.win = undefined;
-          return;
-        }
-        try {
-          try {
-            display.off("add", this.displayListener);
-          } catch (catchAcc) {}
-          try {
-            try {
-              display.off("remove", this.displayListener);
-            } catch (catchAcc) {}
-            try {
-              display.off("change", this.displayListener);
-            } catch (catchAcc) {}
-            this.clearDisplayListeners();
-            if (this.generation > 0) {
-              r273.desktopDetach(this.generation);
-            }
-            this.generation = 0;
-            this.win = undefined;
-            return;
-          } catch (catchAcc) {
-            try {
-              display.off("change", this.displayListener);
-            } catch (catchAcc) {}
-            this.clearDisplayListeners();
-            if (this.generation > 0) {
-              r273.desktopDetach(this.generation);
-            }
-            this.generation = 0;
-            this.win = undefined;
-            return;
-          }
-        } catch (catchAcc) {
-          try {
-            display.off("remove", this.displayListener);
-          } catch (catchAcc) {}
-          try {
-            display.off("change", this.displayListener);
-          } catch (catchAcc) {}
-          this.clearDisplayListeners();
-          if (this.generation > 0) {
-            r273.desktopDetach(this.generation);
-          }
-          this.generation = 0;
-          this.win = undefined;
-          return;
-        }
-      }
+        this.win.off("displayIdChange", this.displayListener);
+      } catch (catchAcc) {}
+      try {
+        this.win.off("windowWillClose", this.closeListener);
+      } catch (catchAcc) {}
     }
+    if (this.enhancedDisplays) {
+      try {
+        display.off("add", this.displayListener);
+      } catch (catchAcc) {}
+      try {
+        display.off("remove", this.displayListener);
+      } catch (catchAcc) {}
+      try {
+        display.off("change", this.displayListener);
+      } catch (catchAcc) {}
+    }
+    this.clearDisplayListeners();
+    if (this.generation > 0) {
+      r273.desktopDetach(this.generation);
+    }
+    this.generation = 0;
+    this.win = undefined;
   }
   clearDisplayListeners() {
     let v0;

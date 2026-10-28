@@ -6845,9 +6845,7 @@ class ContentDetailPage extends ViewPU {
       if (this.pageActive) {
         AppStorage.setOrCreate("answerDoubleTapAction", v0);
       }
-    } catch (catchAcc) {
-      return undefined;
-    }
+    } catch (catchAcc) {}
     return undefined;
   }
   saveAnswerDoubleTapAction(p0) {
@@ -6872,6 +6870,7 @@ class ContentDetailPage extends ViewPU {
     try {
       v6 = this.answerNavigator === null || this.answerNavigator === undefined ? undefined : this.answerNavigator.move(p0);
       v0 = await v6;
+      v6 = v0;
       this.navigatorRevision = this.navigatorRevision + 1;
       if (!this.pageActive) {
         this.navigatorBusy = false;
@@ -6904,8 +6903,8 @@ class ContentDetailPage extends ViewPU {
       this.voteController = undefined;
       this.favoriteDialogShown = false;
       this.contentFavorited = false;
-      this.activeContentId = v0;
-      acc = this.controller === null || this.controller === undefined ? undefined : this.controller.load(ContentDetailKind.ANSWER, v0);
+      this.activeContentId = v6;
+      acc = this.controller === null || this.controller === undefined ? undefined : this.controller.load(ContentDetailKind.ANSWER, v6);
       await acc;
     } finally {
       this.navigatorBusy = false;

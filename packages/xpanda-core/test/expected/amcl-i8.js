@@ -506,7 +506,7 @@ local_0_6 = function (p0, p1, p2) {
   return;
 };
 export async function z762(p0, p1, p2, p3, p4, p5) {
-  let v0, v4, v14, v15, v16, v17, v18, v20, v21, v22, v23, v30, v31, v32, v74, v75, v76, v77, v78, v79, v89, acc;
+  let v0, v4, v5, v14, v15, v16, v17, v18, v19, v20, v21, v22, v23, v30, v31, v32, v33, v34, v35, v36, v37, v38, v40, v41, v42, v43, v44, v45, v46, v47, v48, v49, v50, v51, v52, v74, v75, v76, v77, v78, v79, v89, acc;
   local_0_5(p2);
   local_0_0(p3);
   if (p5 !== undefined) {
@@ -519,12 +519,14 @@ export async function z762(p0, p1, p2, p3, p4, p5) {
     throw new Error("临时归档目标已存在，拒绝覆盖");
   }
   v4 = await g50.open(p1, g50.OpenMode.CREATE | g50.OpenMode.WRITE_ONLY | g50.OpenMode.NOFOLLOW);
+  v5 = undefined;
   try {
     v14 = [];
     v15 = 24;
     v16 = 0;
     v17 = p2[Symbol.iterator]();
     v18 = v17.next;
+    v19 = false;
     v20 = 0;
     v21 = 0;
     v22 = 0;
@@ -537,6 +539,7 @@ export async function z762(p0, p1, p2, p3, p4, p5) {
           v22 = p2[v15].size;
           v23 = v14[v15].crc;
           v17 = q763(v21, p2[v15].size, v14[v15].crc, v14[v15].offset, p2[v15].directory);
+          v19 = v4.fd;
           await local_0_8(v4.fd, v17, p3);
           v16 += v17.length;
           l763(v16);
@@ -553,55 +556,98 @@ export async function z762(p0, p1, p2, p3, p4, p5) {
       v23 = v23.value;
       local_0_0(p3);
       v30 = await local_0_7(p0, v23, p3);
+      v34 = v23.directory;
       v31 = o763(h13(k763(v23.archivePath, v23.directory)), v23.size);
       await local_0_8(v4.fd, v31, p3);
       v31 = v20 + v31.length;
       acc = !v23.directory;
       if (acc) {
         v32 = await local_0_3(v30);
-        v0 = await g50.stat(v32.fd);
-        v74 = v0;
-        acc = !v0.isFile();
-        if (acc || v0.size !== v23.size) {
-          throw new Error("导出快照大小变化");
-        }
-        v75 = cryptoFramework.createMd("SHA256");
-        v76 = v16;
-        for (v77 = v16; v77 < v23.size; p4(v22, v21)) {
-          local_0_0(p3);
-          v78 = new ArrayBuffer(Math.min(h763, v23.size - v77));
-          v79 = await g50.read(v32.fd, v78, {
-            "length": v78.byteLength
-          });
-          if (v79 <= v16 || v79 > v78.byteLength) {
-            throw new Error("导出快照读取不完整");
+        v33 = undefined;
+        try {
+          v0 = await g50.stat(v32.fd);
+          v74 = v0;
+          acc = !v0.isFile();
+          if (acc || (v34 = p0, v35 = p2, v36 = p3, v37 = p4, v38 = v4, v40 = v5, v41 = v14, v42 = v31, v43 = v21, v44 = v22, v45 = v19, v0.size !== v23.size)) {
+            throw new Error("导出快照大小变化");
           }
-          v78 = new Uint8Array(v78, v16, v79);
-          v76 = n763(v76, v78);
-          await v75.update({
-            "data": v78
-          });
-          await local_0_8(v4.fd, v78, p3);
-          v77 += v79;
-          v31 += v79;
-          v21 += v79;
-          l763(v31);
+          v75 = cryptoFramework.createMd("SHA256");
+          v76 = v16;
+          for (v77 = v16; v77 < v23.size; p4(v22, v21)) {
+            local_0_0(p3);
+            v78 = new ArrayBuffer(Math.min(h763, v23.size - v77));
+            v79 = await g50.read(v32.fd, v78, {
+              "length": v78.byteLength
+            });
+            if (v79 <= v16 || (acc = !(v79 > v78.byteLength), v34 = p0, v35 = p2, v36 = p3, v37 = p4, v38 = v4, v40 = v5, v41 = v14, v42 = v31, v43 = v21, v44 = v22, v45 = v19, v79 > v78.byteLength)) {
+              throw new Error("导出快照读取不完整");
+            }
+            v78 = new Uint8Array(v78, v16, v79);
+            v76 = n763(v76, v78);
+            await v75.update({
+              "data": v78
+            });
+            await local_0_8(v4.fd, v78, p3);
+            v77 += v79;
+            v31 += v79;
+            v21 += v79;
+            l763(v31);
+          }
+          v23 = local_0_2((await v75.digest()).data) !== v23.sha256
+            || local_0_1(v74) !== local_0_1(await g50.stat(v32.fd));
+          if (v23) {
+            throw new Error("导出快照在打包期间发生变化");
+          }
+          v34 = p0;
+          v35 = p2;
+          v36 = p3;
+          v37 = p4;
+          v38 = v4;
+          v40 = v5;
+          v41 = v14;
+          v42 = v31;
+          v43 = v21;
+          v44 = v22;
+          v45 = v19;
+          v46 = v18;
+          v47 = v17;
+          v48 = v20;
+          v49 = v76;
+          v50 = v77;
+          v51 = v32;
+          v52 = undefined;
+          if (local_0_1(v74) !== local_0_1(await g50.stat(v30))) {
+            throw new Error("导出快照在打包期间发生变化");
+          }
+          v30 = v77;
+          v23 = v76;
+          v89 = v20;
+          v20 = v21;
+          v21 = v22;
+          v22 = v89;
+        } catch (catchAcc) {
+          p0 = v34;
+          p2 = v35;
+          p3 = v36;
+          p4 = v37;
+          v4 = v38;
+          v5 = v40;
+          v14 = v41;
+          v31 = v42;
+          v20 = v43;
+          v21 = v44;
+          v19 = v45;
+          v18 = v46;
+          v17 = v47;
+          v22 = v48;
+          v23 = v49;
+          v30 = v50;
+          v32 = v51;
+          v33 = v52;
         }
-        v23 = local_0_2((await v75.digest()).data) !== v23.sha256
-          || local_0_1(v74) !== local_0_1(await g50.stat(v32.fd));
-        if (v23) {
-          throw new Error("导出快照在打包期间发生变化");
+        if (v33 == undefined) {
+          await g50.close(v32);
         }
-        if (local_0_1(v74) !== local_0_1(await g50.stat(v30))) {
-          throw new Error("导出快照在打包期间发生变化");
-        }
-        v30 = v77;
-        v23 = v76;
-        v89 = v20;
-        v20 = v21;
-        v21 = v22;
-        v22 = v89;
-        await g50.close(v32);
       } else {
         v23 = v16;
         v30 = v16;
@@ -623,6 +669,8 @@ export async function z762(p0, p1, p2, p3, p4, p5) {
       v20 = v31 + v15;
     }
   } finally {
-    await g50.close(v4);
+    if (v5 == undefined) {
+      await g50.close(v4);
+    }
   }
 }

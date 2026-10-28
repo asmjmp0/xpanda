@@ -1153,33 +1153,33 @@ export class VideoPlayer extends ViewPU {
     v5 = p0.match(new RegExp("^\\[(API|PLAYER)\\]\\s*(.+)"));
     if (v5) {
       try {
-        if (v5[1] !== "API") {
+        if (v5[1] === "API") {
+          if (v5[2] === "NO_PLAYABLE_STREAM") {
+            return "[API] " + v4.resourceManager.getStringSync({
+              "id": 16777654,
+              "type": 10003,
+              "params": [],
+              "bundleName": "com.talon.yourpipe",
+              "moduleName": "entry"
+            }.id);
+          }
+          if (v5[2] === "NO_SUPPORTED_STREAM") {
+            return "[API] " + v4.resourceManager.getStringSync({
+              "id": 16777655,
+              "type": 10003,
+              "params": [],
+              "bundleName": "com.talon.yourpipe",
+              "moduleName": "entry"
+            }.id);
+          }
           return p0;
         }
-        if (v5[2] === "NO_PLAYABLE_STREAM") {
-          return "[API] " + v4.resourceManager.getStringSync({
-            "id": 16777654,
-            "type": 10003,
-            "params": [],
-            "bundleName": "com.talon.yourpipe",
-            "moduleName": "entry"
-          }.id);
-        }
-        if (v5[2] === "NO_SUPPORTED_STREAM") {
-          return "[API] " + v4.resourceManager.getStringSync({
-            "id": 16777655,
-            "type": 10003,
-            "params": [],
-            "bundleName": "com.talon.yourpipe",
-            "moduleName": "entry"
-          }.id);
-        }
-        return p0;
       } catch (catchAcc) {
         Logger.warn(local_0_1 /*TAG*/, "getErrorDisplay localization failed: " + catchAcc + "");
-        return p0;
       }
-    } else if (p0 === "NO_PLAYABLE_STREAM") {
+      return p0;
+    }
+    if (p0 === "NO_PLAYABLE_STREAM") {
       return "[API] " + v4.resourceManager.getStringSync({
         "id": 16777654,
         "type": 10003,
@@ -1187,7 +1187,8 @@ export class VideoPlayer extends ViewPU {
         "bundleName": "com.talon.yourpipe",
         "moduleName": "entry"
       }.id);
-    } else if (p0 === "NO_SUPPORTED_STREAM") {
+    }
+    if (p0 === "NO_SUPPORTED_STREAM") {
       return "[API] " + v4.resourceManager.getStringSync({
         "id": 16777655,
         "type": 10003,
@@ -1195,9 +1196,8 @@ export class VideoPlayer extends ViewPU {
         "bundleName": "com.talon.yourpipe",
         "moduleName": "entry"
       }.id);
-    } else {
-      return p0;
     }
+    return p0;
   }
   onSourceChange() {
     this.resetTransientUi("source-change");
@@ -2124,25 +2124,17 @@ export class VideoPlayer extends ViewPU {
         this.calculateSurfaceSizeByArea(v7, v6);
         return;
       }
-      if (this.curSource.width && this.curSource.height) {
-        v5 = AppStorage.get("deviceWidth") || 0;
-        v4 = AppStorage.get("deviceHeight") || 0;
-        if (v5 > 0 && v4 > 0) {
-          this.calculateSurfaceSizeByArea(v5, this.isFullLandscapeScreen ? v4 : v5 / (this.curSource.width / this.curSource.height));
-        }
-      }
-      return;
     } catch (catchAcc) {
       Logger.warn(local_0_1 /*TAG*/, "Failed to get component info via componentUtils");
-      if (this.curSource.width && this.curSource.height) {
-        v5 = AppStorage.get("deviceWidth") || 0;
-        v4 = AppStorage.get("deviceHeight") || 0;
-        if (v5 > 0 && v4 > 0) {
-          this.calculateSurfaceSizeByArea(v5, this.isFullLandscapeScreen ? v4 : v5 / (this.curSource.width / this.curSource.height));
-        }
-      }
-      return;
     }
+    if (this.curSource.width && this.curSource.height) {
+      v5 = AppStorage.get("deviceWidth") || 0;
+      v4 = AppStorage.get("deviceHeight") || 0;
+      if (v5 > 0 && v4 > 0) {
+        this.calculateSurfaceSizeByArea(v5, this.isFullLandscapeScreen ? v4 : v5 / (this.curSource.width / this.curSource.height));
+      }
+    }
+    return;
   }
   onIndexChange() {
     this.controller.setCurIndex(this.curIndex);

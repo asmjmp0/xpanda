@@ -5,7 +5,11 @@
 */
 let local_0_1;
 let local_0_0 = function (p0) {
-  return decodeURIComponent(p0.replace(new RegExp("\\+", "g"), " "));
+  try {
+    return decodeURIComponent(p0.replace(new RegExp("\\+", "g"), " "));
+  } catch (catchAcc) {
+    return undefined;
+  }
 };
 export function parseAbsoluteUrl(p0) {
   let v4, v5, v6, v7, v8, v9;

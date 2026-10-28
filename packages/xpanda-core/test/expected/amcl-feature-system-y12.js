@@ -14,24 +14,27 @@ export class p995 {
   constructor() {}
   static async saveImageUrl(p0, p1) {
     let v0 /*g50*/, v3 /*hilog*/, v4, v5, v7 /*g50*/, v15 /*p995*/, v16 /*a1*/;
-    if (!p1) {
-      throw new Error("不支持的图片地址");
-    }
-    if (!p1.startsWith("http://") && !p1.startsWith("https://")) {
-      throw new Error("不支持的图片地址");
-    }
-    v3 = p995.extFromUrl_(p1);
-    v4 = p0.cacheDir + "/amcl_save_" + Date.now() + "." + v3;
-    v5 = {
-      "name": "album-save-" + Date.now(),
-      "files": [{
-        "localPath": v4,
-        "urls": [p1],
-        "allowedRoot": p0.cacheDir
-      }]
-    };
-    try {
-      if ((await d398.instance().createAndWait(v5)).success) {
+    if (p1) {
+      if (!p1.startsWith("http://") && !p1.startsWith("https://")) {
+        throw new Error("不支持的图片地址");
+      }
+      v3 = p995.extFromUrl_(p1);
+      v4 = p0.cacheDir + "/amcl_save_" + Date.now() + "." + v3;
+      v5 = {
+        "name": "album-save-" + Date.now(),
+        "files": [{
+          "localPath": v4,
+          "urls": [p1],
+          "allowedRoot": p0.cacheDir
+        }]
+      };
+      try {
+        if (!(await d398.instance().createAndWait(v5)).success) {
+          try {
+            g50.unlinkSync(v4);
+          } catch (catchAcc) {}
+          throw new Error("图片下载失败");
+        }
         v15 = photoAccessHelper.getPhotoAccessHelper(p0);
         v16 = {
           "title": "AMCL_" + Date.now(),
@@ -53,16 +56,14 @@ export class p995 {
           g50.unlinkSync(v4);
         } catch (catchAcc) {}
         return "saved";
-      }
-      try {
-        g50.unlinkSync(v4);
-        throw new Error("图片下载失败");
       } catch (catchAcc) {
-        throw new Error("图片下载失败");
+        try {
+          g50.unlinkSync(v4);
+        } catch (catchAcc) {}
+        throw catchAcc;
       }
-    } catch (catchAcc) {
-      g50.unlinkSync(v4);
-      throw catchAcc;
+    } else {
+      throw new Error("不支持的图片地址");
     }
   }
   static copyInto_(p0, p1) {
