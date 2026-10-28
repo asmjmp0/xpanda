@@ -72,7 +72,8 @@ export class SimpleAnalysis {
                 arrayObject.push(factory.identifierNode(handler.name));
                 const callExpressionNode = factory.callExpressionNode(factory.identifierNode("decompiler_exception_handled_by") as any, arrayObject as any);
                 utils.insertNodeToBody(factory.expressionStatementNode(callExpressionNode as any) as any, blockStatementNode);
-            }            if (this.exceptionHandleBlocks.has(statement.block)) {
+            }
+            if (this.exceptionHandleBlocks.has(statement.block)) {
                 const assignment = factory.assignmentExpressionNode("=", factory.identifierNode("acc") as any, factory.identifierNode("decompiler_exception_detail") as any);
                 utils.insertNodeToBody(factory.expressionStatementNode(assignment as any) as any, blockStatementNode);
             }

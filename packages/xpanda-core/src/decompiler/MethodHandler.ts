@@ -93,29 +93,25 @@ export class PandaDecompilerMethodHandler {
             }
         }
         let stopped = false;
+        const recordInstructionPC = (instructionPC: number, before: Set<object> | null): void => {
+            if (!body || !before) return;
+            for (const statement of body as any[]) {
+                if (statement && typeof statement === "object" && !before.has(statement)) {
+                    this.statementInstructionPC.set(statement, instructionPC);
+                }
+            }
+        };
         for (const instruction of block.pandaInstructions) {
             const handle = HANDLES[instruction.kind];
             if (!handle || instruction.kind === "unknown") {
                 throw new PandaDecompileException(instruction.opcode.name + " not handled!");
             }
             const instructionBefore = body ? new Set<object>(body as object[]) : null;
-            if (handle(instruction, block, this, pandaLexical, node)) {
-                if (instructionBefore) {
-                    for (const statement of body as any[]) {
-                        if (statement && typeof statement === "object" && !instructionBefore.has(statement)) {
-                            this.statementInstructionPC.set(statement, instruction.pc);
-                        }
-                    }
-                }
+            const stop = handle(instruction, block, this, pandaLexical, node);
+            recordInstructionPC(instruction.pc, instructionBefore);
+            if (stop) {
                 stopped = true;
                 break;
-            }
-            if (instructionBefore) {
-                for (const statement of body as any[]) {
-                    if (statement && typeof statement === "object" && !instructionBefore.has(statement)) {
-                        this.statementInstructionPC.set(statement, instruction.pc);
-                    }
-                }
             }
         }
         if (body && before) {

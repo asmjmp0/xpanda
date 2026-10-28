@@ -80,6 +80,29 @@ function conditionalStatementOf(type: "CONTINUE" | "BREAK" | "GOTO", to: Region)
     }
 }
 
+/**
+ * Direct children of a node in the statement graph emitted by `Region.decompile()`.
+ * `includeLogical` controls whether a logical expression's operands are
+ * traversed (reference counting only needs statement-level references).
+ */
+function decompileChildren(node: IPandaDecompileAble, includeLogical = true): IPandaDecompileAble[] {
+    if (node instanceof Region) return node.getStatements();
+    if (node instanceof IfPandaStatement) {
+        return [(node as any).consequent, (node as any).alternate].filter(Boolean) as IPandaDecompileAble[];
+    }
+    if (node instanceof WhileStatement) {
+        return [...((node as any).headStms ?? []), ...((node as any).bodyStms ?? [])] as IPandaDecompileAble[];
+    }
+    if (node instanceof DoWhileStatement) return ((node as any).bodyStms ?? []) as IPandaDecompileAble[];
+    if (node instanceof TryCatchPandaStatement) {
+        return [(node as any).tryBody, (node as any).catchBody].filter(Boolean) as IPandaDecompileAble[];
+    }
+    if (includeLogical && node instanceof LogicalExpressionStatement) {
+        return [(node as any).first, (node as any).second].filter(Boolean) as IPandaDecompileAble[];
+    }
+    return [];
+}
+
 export class StructureAnalysis {
     readonly regionGraph: ValueGraph<Region>;
     private entryRegion: Region;
@@ -112,7 +135,10 @@ export class StructureAnalysis {
                         // tail, and reduction then copies that tail into the catch.
                         if (region.isExceptionLandingPad()) continue;
                         const successor = getOnlyOneSuccessor(this.regionGraph, region);
-                        if (!successor) break;
+                        if (!successor || successor === region) break;
+                        // 入口块本身是一条跳转时,删掉它必须同步移动 entryRegion,
+                        // 否则后续 depthFirstPostOrder 从一个已删除节点出发,图看起来是空的。
+                        if (region === this.entryRegion) this.entryRegion = successor;
                         replacePredecessors(this.regionGraph, successor, region);
                         this.regionGraph.removeNode(region);
                         result = true;
@@ -185,23 +211,16 @@ export class StructureAnalysis {
                     if (canMergeLogicalCondition(nextRegion) && this.regionGraph.inDegree(nextRegion) === 1) {
                         const nextPair = this.getDestNextPair(nextRegion);
                         if (!nextPair) continue;
-                        const nextDestRegion = nextPair[0];
-                        const nextNextRegion = nextPair[1];
-                        if (nextNextRegion === destRegion) {
-                            // || 合并
+                        const [nextDestRegion, nextNextRegion] = nextPair;
+                        // `||`: both fall through to the same target; `&&`: the jump
+                        // target of the first test is the second test.
+                        const isOr = nextNextRegion === destRegion;
+                        const isAnd = nextDestRegion === destRegion;
+                        if (isOr || isAnd) {
                             const region = this.fixConditionalSequenceContainNewLex(region0);
-                            const statement = new OrLogicalExpressionStatement(region, nextRegion);
-                            replaceSuccessor(this.regionGraph, region, nextRegion);
-                            region.clearStatements();
-                            region.addStatement(statement);
-                            region.logicalRegion = true;
-                            this.regionGraph.removeNode(nextRegion);
-                            result = true;
-                            break;
-                        } else if (nextDestRegion === destRegion) {
-                            // && 合并
-                            const region = this.fixConditionalSequenceContainNewLex(region0);
-                            const statement = new AndLogicalExpressionStatement(region, nextRegion);
+                            const statement = isOr
+                                ? new OrLogicalExpressionStatement(region, nextRegion)
+                                : new AndLogicalExpressionStatement(region, nextRegion);
                             replaceSuccessor(this.regionGraph, region, nextRegion);
                             region.clearStatements();
                             region.addStatement(statement);
@@ -239,7 +258,6 @@ export class StructureAnalysis {
             }
             if (statement instanceof IfPandaStatement) {
                 total += statementSize((statement as any).consequent) + statementSize((statement as any).alternate);
-                total += statementSize((statement as any).tryCatchPandaStatement);
             } else if (statement instanceof WhileStatement) {
                 total += listSize((statement as any).headStms) + listSize((statement as any).bodyStms);
             } else if (statement instanceof DoWhileStatement) {
@@ -289,24 +307,7 @@ export class StructureAnalysis {
      * 复杂度是唯一节点数(与 estimateStructuredStatements 一致)。
      */
     private findStructuredCycle(root: Region): string | null {
-        const childrenOf = (node: IPandaDecompileAble): IPandaDecompileAble[] => {
-            if (node instanceof Region) return node.getStatements();
-            if (node instanceof IfPandaStatement) {
-                return [(node as any).consequent, (node as any).alternate, (node as any).tryCatchPandaStatement]
-                    .filter(Boolean) as IPandaDecompileAble[];
-            }
-            if (node instanceof WhileStatement) {
-                return [...((node as any).headStms ?? []), ...((node as any).bodyStms ?? [])] as IPandaDecompileAble[];
-            }
-            if (node instanceof DoWhileStatement) return ((node as any).bodyStms ?? []) as IPandaDecompileAble[];
-            if (node instanceof TryCatchPandaStatement) {
-                return [(node as any).tryBody, (node as any).catchBody].filter(Boolean) as IPandaDecompileAble[];
-            }
-            if (node instanceof LogicalExpressionStatement) {
-                return [(node as any).first, (node as any).second] as IPandaDecompileAble[];
-            }
-            return [];
-        };
+        const childrenOf = (node: IPandaDecompileAble): IPandaDecompileAble[] => decompileChildren(node);
         const label = (node: IPandaDecompileAble): string => {
             const block = (node as any).block;
             const where = block && typeof block.getStartPC === "function" ? "@" + block.getStartPC() : "";
@@ -455,22 +456,7 @@ export class StructureAnalysis {
     }
 
     private emittedChildren(node: IPandaDecompileAble): IPandaDecompileAble[] {
-        if (node instanceof Region) return node.getStatements();
-        if (node instanceof IfPandaStatement) {
-            return [
-                (node as any).consequent,
-                (node as any).alternate,
-                (node as any).tryCatchPandaStatement,
-            ].filter(Boolean);
-        }
-        if (node instanceof WhileStatement) {
-            return [...((node as any).headStms ?? []), ...((node as any).bodyStms ?? [])];
-        }
-        if (node instanceof DoWhileStatement) return [...((node as any).bodyStms ?? [])];
-        if (node instanceof TryCatchPandaStatement) {
-            return [(node as any).tryBody, (node as any).catchBody].filter(Boolean);
-        }
-        return [];
+        return decompileChildren(node, false);
     }
 
     /** 自底向上处理:先收掉分支深处的重复尾,外层 if 才能看到变成单分支的分支末尾。 */
@@ -481,7 +467,6 @@ export class StructureAnalysis {
             return this.pruneTailInList(node.getStatements(), refCount, visited);
         }
         if (node instanceof IfPandaStatement) {
-            if ((node as any).tryCatchPandaStatement) return false;
             let changed = false;
             const consequent = (node as any).consequent;
             const alternate = (node as any).alternate;
@@ -522,7 +507,6 @@ export class StructureAnalysis {
     private pruneSharedTailOfIf(list: IPandaDecompileAble[], index: number, refCount: Map<object, number>): boolean {
         const statement = list[index];
         if (!(statement instanceof IfPandaStatement)) return false;
-        if ((statement as any).tryCatchPandaStatement) return false;
         const consequent = (statement as any).consequent;
         const alternate = (statement as any).alternate;
         if (!(consequent instanceof Region) || !(alternate instanceof Region)) return false;
@@ -533,7 +517,6 @@ export class StructureAnalysis {
         if (tail.length === 0) return false;
         const last = tail[tail.length - 1];
         if (last instanceof IfPandaStatement) {
-            if ((last as any).tryCatchPandaStatement) return false;
             if ((last as any).alternate !== alternate) return false;
             if ((refCount.get(last) ?? 0) !== 1) return false;
             // 只有“失败分支一定离开当前结构”时才能把 else 提到 if 之后:
@@ -563,7 +546,6 @@ export class StructureAnalysis {
             return this.branchAlwaysExits(statements[statements.length - 1]);
         }
         if (node instanceof IfPandaStatement) {
-            if ((node as any).tryCatchPandaStatement) return false;
             return this.branchAlwaysExits((node as any).consequent)
                 && this.branchAlwaysExits((node as any).alternate);
         }
@@ -695,25 +677,11 @@ export class StructureAnalysis {
     /** reference 子树里是否引用了 target(用于阻止会产生语句图环的合并) */
     private statementsReferenceRegion(nextRegion: Region, target: Region): boolean {
         const seen = new Set<object>();
-        const visit = (node: any): boolean => {
+        const visit = (node: IPandaDecompileAble | null): boolean => {
             if (!node || seen.has(node)) return false;
             seen.add(node);
-            if (node instanceof Region) {
-                return node === target || node.getStatements().some(visit);
-            }
-            if (node instanceof IfPandaStatement) {
-                return visit((node as any).consequent) || visit((node as any).alternate)
-                    || visit((node as any).tryCatchPandaStatement);
-            }
-            if (node instanceof WhileStatement) {
-                return [ ...((node as any).headStms ?? []), ...((node as any).bodyStms ?? [])].some(visit);
-            }
-            if (node instanceof DoWhileStatement) return ((node as any).bodyStms ?? []).some(visit);
-            if (node instanceof LogicalExpressionStatement) return visit((node as any).first) || visit((node as any).second);
-            if (node instanceof TryCatchPandaStatement) {
-                return visit((node as any).tryBody) || visit((node as any).catchBody);
-            }
-            return false;
+            if (node === target) return true;
+            return decompileChildren(node).some(visit);
         };
         return nextRegion.getStatements().some(visit);
     }
@@ -769,29 +737,21 @@ export class StructureAnalysis {
         if (nextRegion === destSRegion) {
             region.addStatement(new IfPandaStatement(region, null, destRegion));
             this.regionGraph.removeEdge(region, destRegion);
-            if (this.regionGraph.inDegree(destRegion) === 0) {
-                this.regionGraph.removeNode(destRegion);
-            }
+            this.removeOrphan(destRegion);
             region.setType("Linear");
             return true;
         } else if (destRegion === nextSRegion) {
             region.addStatement(new IfPandaStatement(region, nextRegion, null));
             this.regionGraph.removeEdge(region, nextRegion);
-            if (this.regionGraph.inDegree(nextRegion) === 0) {
-                this.regionGraph.removeNode(nextRegion);
-            }
+            this.removeOrphan(nextRegion);
             region.setType("Linear");
             return true;
         } else if (destSRegion === nextSRegion && destSRegion !== null) {
             region.addStatement(new IfPandaStatement(region, nextRegion, destRegion));
             this.regionGraph.removeEdge(region, nextRegion);
-            if (this.regionGraph.inDegree(nextRegion) === 0) {
-                this.regionGraph.removeNode(nextRegion);
-            }
+            this.removeOrphan(nextRegion);
             this.regionGraph.removeEdge(region, destRegion);
-            if (this.regionGraph.inDegree(destRegion) === 0) {
-                this.regionGraph.removeNode(destRegion);
-            }
+            this.removeOrphan(destRegion);
             this.regionGraph.putEdgeValue(region, destSRegion, false);
             region.setType("Linear");
             return true;
@@ -832,21 +792,15 @@ export class StructureAnalysis {
                     region.addStatement(new IfPandaStatement(region, null, destRegion));
                 }
                 this.regionGraph.removeEdge(region, inlined);
-                if (this.regionGraph.inDegree(inlined) === 0) {
-                    this.regionGraph.removeNode(inlined);
-                }
+                this.removeOrphan(inlined);
                 region.setType("Linear");
                 return true;
             }
             region.addStatement(new IfPandaStatement(region, nextRegion, destRegion));
             this.regionGraph.removeEdge(region, nextRegion);
-            if (this.regionGraph.inDegree(nextRegion) === 0) {
-                this.regionGraph.removeNode(nextRegion);
-            }
+            this.removeOrphan(nextRegion);
             this.regionGraph.removeEdge(region, destRegion);
-            if (this.regionGraph.inDegree(destRegion) === 0) {
-                this.regionGraph.removeNode(destRegion);
-            }
+            this.removeOrphan(destRegion);
             region.setType("Tail");
             return true;
         }
@@ -882,9 +836,9 @@ export class StructureAnalysis {
             // 两条分支汇合:try/catch 之后从汇合点继续
             this.emitTryStatement(region, body, handler, info);
             this.regionGraph.removeEdge(region, body);
-            if (this.regionGraph.inDegree(body) === 0) this.regionGraph.removeNode(body);
+            this.removeOrphan(body);
             this.regionGraph.removeEdge(region, handler);
-            if (this.regionGraph.inDegree(handler) === 0) this.regionGraph.removeNode(handler);
+            this.removeOrphan(handler);
             this.regionGraph.putEdgeValue(region, bodySRegion, false);
             region.setType("Linear");
             return true;
@@ -892,9 +846,9 @@ export class StructureAnalysis {
         if (bodyDead && handlerDead) {
             this.emitTryStatement(region, body, handler, info);
             this.regionGraph.removeEdge(region, body);
-            if (this.regionGraph.inDegree(body) === 0) this.regionGraph.removeNode(body);
+            this.removeOrphan(body);
             this.regionGraph.removeEdge(region, handler);
-            if (this.regionGraph.inDegree(handler) === 0) this.regionGraph.removeNode(handler);
+            this.removeOrphan(handler);
             region.setType("Tail");
             return true;
         }
@@ -1024,6 +978,11 @@ export class StructureAnalysis {
     private singlePredecessor(n: Region): Region | null {
         if (this.regionGraph.inDegree(n) !== 1) return null;
         return this.regionGraph.predecessors(n)[0];
+    }
+
+    /** Drop a region that no longer has any predecessor (normal or exception). */
+    private removeOrphan(region: Region): void {
+        if (this.regionGraph.inDegree(region) === 0) this.regionGraph.removeNode(region);
     }
 
     private getDestNextPair(region: Region): [Region, Region] | null {

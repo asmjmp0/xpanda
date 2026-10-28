@@ -4,6 +4,7 @@ import { PandaDecompileException } from "../PandaParseException";
 import { ValueGraph } from "./ValueGraph";
 import { Region, TryRegion } from "./Region";
 import type { TryEntry } from "./ExceptionTable";
+import { blockThrowsRegister } from "./IRPatterns";
 
 /**
  * Region 图构建器(移植自 Java jmp0.abc.decompiler.structure.RegionGraphBuilder)
@@ -111,7 +112,10 @@ export class RegionGraphBuilder {
                             const result = awaitResultRegister(region.block);
                             for (const region1 of this.regionGraph.successors(region).slice()) {
                                 if (!region1.block || !region1.block.getTerminator().isThrowIns()) continue;
-                                if (result !== null && !throwsRegister(region1.block, result)) continue;
+                                // Only the reject dispatch that rethrows the await result
+                                // may be removed; when the register is unknown, deleting a
+                                // throw successor can swallow a user throw.
+                                if (result === null || !blockThrowsRegister(region1.block, result)) continue;
                                 this.regionGraph.removeNode(region1);
                                 region.setType("Linear");
                             }
@@ -385,23 +389,10 @@ export class RegionGraphBuilder {
         return true;
     }
 
-    /**
-     * 真正的 catch 处理器:入口 `sta vX`,并在 handler 入口基本块里做可见工作
-     * (读字符串 / 模块变量 / 属性,或发起调用)。编译器生成的 for-of / await
-     * resume 派发 handler 只做寄存器恢复和条件跳转,不具备这些特征,不能接进区域图。
-     */
+    /** 入口区域。 */
     getEntryRegion(): Region {
         return this.btor.get(this.entryBlock)!;
     }
-}
-
-/** 该基本块是否先 `lda vX` 再 `throw`(X 为 handler 保存的异常) */
-function throwsRegister(block: PandaIRBasicBlock, register: string): boolean {
-    const instructions = block.pandaInstructions;
-    if (instructions[instructions.length - 1].kind !== "throw") return false;
-    return instructions.some((instruction) => instruction.kind === "load"
-        && instruction.loadType === "OBJECT"
-        && (instruction as any).loadParam?.toString() === register);
 }
 
 /**

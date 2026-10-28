@@ -60,7 +60,6 @@ export class Region implements IPandaDecompileAble {
         this._statements = [];
         this.name = block ? block.name : "";
         if (block) this._statements.push(new LinearPandaStatement(block));
-        if (block) this.name = block.name;
         if (this.type === "Condition" && block) {
             const jump = block.getTerminator();
             if (jump.kind === "jumpNotEqual") {

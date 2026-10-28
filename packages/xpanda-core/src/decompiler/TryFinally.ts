@@ -3,6 +3,7 @@ import generate from "@babel/generator";
 import type { PandaIRCFG } from "../disasm/PandaIRCFG";
 import type { PandaIRBasicBlock } from "../disasm/PandaIRBasicBlock";
 import { ValueAnalysis } from "./ValueAnalysis";
+import { blockLoadsHole, blockThrowsRegister, isHoleLoadInstruction } from "./IRPatterns";
 
 /**
  * ArkTS 13(字节码 13.0.1.0)的 try/finally 还原。
@@ -233,10 +234,6 @@ function locateInlinedCleanupCopies(
     return copies;
 }
 
-function isHoleLoad(block: PandaIRBasicBlock): boolean {
-    return block.pandaInstructions.some((instruction) => instruction.kind === "load" && instruction.loadType === "HOLE");
-}
-
 /**
  * 共享哨兵块:try 结束块只恢复寄存器、哨兵写在后面被用户 catch 完成路径复用的块里。
  *
@@ -263,7 +260,7 @@ function findSharedSentinelBlock(
     while (current && !visited.has(current)) {
         visited.add(current);
         if (current.pandaInstructions.length === 0) return null;
-        if (isHoleLoad(current)) {
+        if (blockLoadsHole(current)) {
             const successors = cfg.graph.normalSuccessors(current);
             return successors.length === 1 && successors[0] === cleanupBlock ? current : null;
         }
@@ -305,10 +302,10 @@ function guardComparesSavedValue(
     return false;
 }
 
-/** 块内是否 `X == hole` / `X != hole` 比较(X 为 handler 保存的异常) *//** 块内是否 `X == hole` / `X != hole` 比较(X 为 handler 保存的异常) */
+/** 块内是否 `X == hole` / `X != hole` 比较(X 为 handler 保存的异常) */
 export function comparesHoleWith(block: PandaIRBasicBlock, register: string): boolean {
     const instructions = block.pandaInstructions;
-    const holeIndex = instructions.findIndex((instruction) => instruction.kind === "load" && instruction.loadType === "HOLE");
+    const holeIndex = instructions.findIndex(isHoleLoadInstruction);
     if (holeIndex < 0) return false;
     const next = instructions[holeIndex + 1];
     const holder = next && next.kind === "store" ? (next as any).destObj?.toString() : null;
@@ -363,7 +360,7 @@ export function buildFinallyPlans(cfg: PandaIRCFG): FinallyPlan[] {
         if (!cleanupBlock) continue;
         // 正常完成路径:结束块自己写 hole 并跳到 cleanup(经典布局),或者哨兵写在
         // 结束块之后的共享汇合块里(24+ 的 `try { … } catch { … } finally { … }`)。
-        const sharedSentinel = !eager && !isHoleLoad(endBlock);
+        const sharedSentinel = !eager && !blockLoadsHole(endBlock);
         let cleanupStartPC = cleanupBlock.getStartPC();
         if (eager) {
             // 没有 suppress 块:正常路径的 cleanup 已经内联在 return 之前
@@ -389,7 +386,7 @@ export function buildFinallyPlans(cfg: PandaIRCFG): FinallyPlan[] {
         let matchedByRegister = false;
         if (savedRegister) {
             for (let i = cleanupIndex + 1; i < blocks.length; i++) {
-                if (isHoleLoad(blocks[i]) && comparesHoleWith(blocks[i], savedRegister)) {
+                if (blockLoadsHole(blocks[i]) && comparesHoleWith(blocks[i], savedRegister)) {
                     guardBlock = blocks[i];
                     matchedByRegister = true;
                     break;
@@ -400,7 +397,7 @@ export function buildFinallyPlans(cfg: PandaIRCFG): FinallyPlan[] {
                 const savedInstruction = handlerBlock.pandaInstructions[0];
                 let analysis: ValueAnalysis | null = null;
                 for (let i = cleanupIndex + 1; i < blocks.length; i++) {
-                    if (!isHoleLoad(blocks[i])) continue;
+                    if (!blockLoadsHole(blocks[i])) continue;
                     analysis ??= new ValueAnalysis(cfg);
                     if (!guardComparesSavedValue(analysis, blocks[i], analysis.definitionOf(savedInstruction))) continue;
                     guardBlock = blocks[i];
@@ -411,7 +408,7 @@ export function buildFinallyPlans(cfg: PandaIRCFG): FinallyPlan[] {
         }
         let firstHoleBlock: PandaIRBasicBlock | null = null;
         for (let i = cleanupIndex + 1; i < blocks.length; i++) {
-            if (isHoleLoad(blocks[i])) { firstHoleBlock = blocks[i]; break; }
+            if (blockLoadsHole(blocks[i])) { firstHoleBlock = blocks[i]; break; }
         }
         matchedByRegister = matchedByRegister && guardBlock !== firstHoleBlock;
         if (!guardBlock) guardBlock = firstHoleBlock;
@@ -429,14 +426,7 @@ export function buildFinallyPlans(cfg: PandaIRCFG): FinallyPlan[] {
         // 的上一份值(amcl e4/k9 的 `throw g50.openSync`)。按抛出的寄存器区分:
         // 守卫重抛的是 handler 保存的哨兵/pending 值。
         if (afterBranch.getTerminator().kind === "throw" && savedRegister) {
-            const throwsSaved = (block: PandaIRBasicBlock): boolean => {
-                const instructions = block.pandaInstructions;
-                if (instructions[instructions.length - 1]?.kind !== "throw") return false;
-                return instructions.some((instruction) => instruction.kind === "load"
-                    && instruction.loadType === "OBJECT"
-                    && (instruction as any).loadParam?.toString() === savedRegister);
-            };
-            const sentinelThrows = guardSuccessors.filter(throwsSaved);
+            const sentinelThrows = guardSuccessors.filter((successor) => blockThrowsRegister(successor, savedRegister));
             if (sentinelThrows.length === 1) {
                 throwBranch = sentinelThrows[0];
                 afterBranch = guardSuccessors.find((successor) => successor !== sentinelThrows[0])!;
@@ -465,17 +455,22 @@ export function buildFinallyPlans(cfg: PandaIRCFG): FinallyPlan[] {
             && (guardBlock.getStartPC() < afterBranch.getStartPC() || loopLatch))) continue;
 
         const endIsMethodTail = isImplicitMethodTail(cfg, afterBranch);
+        // Fields shared by every layout. The restore strategy differs per branch,
+        // but the bytecode-side ranges are the same.
+        const planBase = {
+            id: plans.length,
+            startPC: tryBlock.startPC,
+            endPC: endBlock.getStartPC(),
+            cleanupStartPC,
+            guardStartPC: guardBlock.getStartPC(),
+            guardEndPC: afterBranch.getStartPC(),
+        };
         if (loopLatch && !directBackEdge) {
             // 守卫没被折进 do-while 的 test,而是留在循环体尾部的一组语句里:
             // `do { …; try { … } finally { … }; if (pending != hole) throw pending } while (!guard)`
             // 仍然按经典角色插标记,只是还原布局不同(amcl i15 `concatParts` 的内层 finally)。
             plans.push({
-                id: plans.length,
-                startPC: tryBlock.startPC,
-                endPC: endBlock.getStartPC(),
-                cleanupStartPC,
-                guardStartPC: guardBlock.getStartPC(),
-                guardEndPC: afterBranch.getStartPC(),
+                ...planBase,
                 endIsMethodTail: false,
                 restoreContinuation: false,
                 loopTailGuard: true,
@@ -484,12 +479,7 @@ export function buildFinallyPlans(cfg: PandaIRCFG): FinallyPlan[] {
         }
         if (loopLatch) {
             plans.push({
-                id: plans.length,
-                startPC: tryBlock.startPC,
-                endPC: endBlock.getStartPC(),
-                cleanupStartPC,
-                guardStartPC: guardBlock.getStartPC(),
-                guardEndPC: afterBranch.getStartPC(),
+                ...planBase,
                 endIsMethodTail,
                 restoreContinuation: true,
                 tailCleanupRange: { startPC: endBlock.getStartPC(), endPC: guardBlock.getStartPC() },
@@ -505,12 +495,7 @@ export function buildFinallyPlans(cfg: PandaIRCFG): FinallyPlan[] {
             // 由 applyMultiExitEagerCleanup 统一上提。
             const inlined = copies[copies.length - 1];
             plans.push({
-                id: plans.length,
-                startPC: tryBlock.startPC,
-                endPC: endBlock.getStartPC(),
-                cleanupStartPC,
-                guardStartPC: guardBlock.getStartPC(),
-                guardEndPC: afterBranch.getStartPC(),
+                ...planBase,
                 endIsMethodTail,
                 restoreContinuation: true,
                 eagerCleanup: true,
@@ -534,15 +519,10 @@ export function buildFinallyPlans(cfg: PandaIRCFG): FinallyPlan[] {
             if (!plans.some((other) => other.startPC > cleanupPC && other.guardStartPC < guardPC)) continue;
         }
         plans.push({
-            id: plans.length,
-            startPC: tryBlock.startPC,
-            endPC: endBlock.getStartPC(),
+            ...planBase,
             // 共享哨兵布局:结束块是用户 catch 的完成路径(寄存器恢复留在 catch 里),
             // finally 从哨兵所在的那个共享块开始;结束块不再按 suppress 丢弃。
-            cleanupStartPC,
             sharedSentinel,
-            guardStartPC: guardBlock.getStartPC(),
-            guardEndPC: afterBranch.getStartPC(),
             endIsMethodTail,
             // 正常继续在 `if (pending != hole) throw else { CONTINUATION }` 的
             // 非抛出分支里。13.0.1.0 的 amcl 与 24+ 都是这个布局;空 else 取出来
@@ -561,9 +541,6 @@ export function buildFinallyRoles(plans: FinallyPlan[]): Map<number, FinallyRole
         // 改动别的计划的角色,也不能插标记 —— 否则哨兵/守卫语句的去留会变。
         if (plan.eagerCleanup || plan.tailCleanupRange) continue;
         roles.set(plan.startPC, { plan, role: "start" });
-        // eager 形态只需要起点标记:cleanup/guard 那份副本不在 AST 里(不可达),
-        // 内联副本按指令 pc 定位。
-        if (plan.eagerCleanup) continue;
         if (!plan.sharedSentinel) roles.set(plan.endPC, { plan, role: "suppress" });
         roles.set(plan.cleanupStartPC, { plan, role: "cleanup" });
         roles.set(plan.guardStartPC, { plan, role: "guard" });
@@ -628,6 +605,19 @@ function findStatementList(node: any, target: any): TYPE.Statement[] | null {
     return null;
 }
 
+interface StatementPosition {
+    list: TYPE.Statement[];
+    index: number;
+}
+
+/** statement 所在的语句列表与下标(不在 AST 里时返回 null)。 */
+function locateStatementPosition(root: any, statement: TYPE.Statement): StatementPosition | null {
+    const list = findStatementList(root, statement);
+    if (!list) return null;
+    const index = list.indexOf(statement);
+    return index < 0 ? null : { list, index };
+}
+
 /** target 是否在 node 的子树里(含自身) */
 function containsNode(node: any, target: any): boolean {
     if (!node || typeof node !== "object") return false;
@@ -656,6 +646,18 @@ function containsNode(node: any, target: any): boolean {
 function bodyBlock(statements: TYPE.Statement[]): TYPE.BlockStatement {
     if (statements.length === 1 && TYPE.isBlockStatement(statements[0])) return statements[0];
     return TYPE.blockStatement(statements);
+}
+
+/** `try { tryStatements } finally { finallyStatements }` */
+function tryFinallyNode(
+    tryStatements: TYPE.Statement[],
+    finallyStatements: TYPE.Statement[],
+): TYPE.TryStatement {
+    return TYPE.tryStatement(
+        TYPE.blockStatement(tryStatements),
+        null,
+        bodyBlock(finallyStatements),
+    );
 }
 
 /** list 里直接包含 target 的语句下标(没有则 -1) */
@@ -736,7 +738,6 @@ interface GuardContinuation {
     /** 由 end 标记切出来的尾段:它明确位于 afterBranch 之后,不再做 hole 检查 */
     fromEndMarker: boolean;
 }
-
 function extractGuardContinuation(guard: TYPE.IfStatement, endMarker: string | null): GuardContinuation {
     // 守卫的 else 可能一直延伸到方法尾,里面还嵌着后面的 try/finally(n1195):
     // end 标记就在该分支里,标记之后才是真正的正常继续。整段 else 直接搬出来会把
@@ -762,6 +763,40 @@ function extractGuardContinuation(guard: TYPE.IfStatement, endMarker: string | n
     return { statements: [], fromEndMarker: false };
 }
 
+/** Block-scoped declarations cannot be moved to a different statement list. */
+function hasDeclaration(statements: TYPE.Statement[]): boolean {
+    return statements.some((statement) => TYPE.isVariableDeclaration(statement)
+        || TYPE.isFunctionDeclaration(statement) || TYPE.isClassDeclaration(statement));
+}
+
+/** First IfStatement at or after `from` in a statement list. */
+function findNextIfStatement(
+    statements: TYPE.Statement[],
+    from: number,
+): { statement: TYPE.IfStatement; index: number } | null {
+    for (let index = from; index < statements.length; index++) {
+        const statement = statements[index];
+        if (TYPE.isIfStatement(statement)) return { statement, index };
+    }
+    return null;
+}
+
+/**
+ * Non-throwing continuation of a loop-tail finally guard, taken from this
+ * plan's end marker. Both loop-tail layouts need the same validation.
+ */
+function extractLoopContinuation(
+    plan: FinallyPlan,
+    guardStatement: TYPE.IfStatement | null,
+): TYPE.Statement[] | null {
+    if (!guardStatement || !plan.restoreContinuation) return null;
+    const extracted = extractGuardContinuation(
+        guardStatement, markerValueOf(plan.endMarker, plan.endExpr) || null);
+    if (!extracted.fromEndMarker || extracted.statements.length === 0) return null;
+    if (hasDeclaration(extracted.statements)) return null;
+    return extracted.statements;
+}
+
 /**
  * afterBranch 是否是方法末尾的隐式返回(只有寄存器恢复 / `undefined` 载入 / 异步收尾 /
  * `return`)。这种“正常继续”没有源码语句,搬回 try/finally 之后只会多出一条
@@ -778,7 +813,8 @@ function isImplicitMethodTail(cfg: PandaIRCFG, block: PandaIRBasicBlock): boolea
             if (instruction.kind === "mov" || instruction.kind === "nop" || instruction.kind === "popLexEnv") continue;
             if (instruction.kind === "load" && (instruction.loadType === "UNDEFINED" || instruction.loadType === "HOLE")) continue;
             if (name === "asyncfunctionresolve" || name === "asyncfunctionreject") continue;
-            if (instruction.kind === "return") continue;
+            // 允许沿无条件的收尾跳转继续往前看;条件跳转在循环外单独拒绝。
+            if (instruction.isJump() || instruction.kind === "return") continue;
             return false;
         }
         const terminator = current.getTerminator();
@@ -988,11 +1024,7 @@ function applyEagerCleanupFinally(
     if (after.slice(returnIndex + 1).some((statement) => !isRegisterMove(statement) && !isFinallyMarker(statement))) {
         return false;
     }
-    const tryNode = TYPE.tryStatement(
-        TYPE.blockStatement(tryStatements),
-        null,
-        bodyBlock(finallyStatements),
-    );
+    const tryNode = tryFinallyNode(tryStatements, finallyStatements);
     startList.splice(tryStart, startList.length - tryStart, tryNode, ...after);
     return true;
 }
@@ -1113,11 +1145,7 @@ function applyMultiExitEagerCleanup(
     }
     const body = startList.slice(tryStart);
     if (body.length === 0) return false;
-    const tryNode = TYPE.tryStatement(
-        TYPE.blockStatement(body),
-        null,
-        bodyBlock([owners[0].statement]),
-    );
+    const tryNode = tryFinallyNode(body, [owners[0].statement]);
     startList.splice(tryStart, startList.length - tryStart, tryNode);
     return true;
 }
@@ -1135,7 +1163,8 @@ function applyTailCleanupFinally(
     context: FinallyContext | undefined,
     plan: FinallyPlan,
     startList: TYPE.Statement[],
-    startIndex: number,
+    /** 索引含在 try 体内(调用方已排除源码之外的纯寄存器搬移) */
+    firstTryIndex: number,
 ): boolean {
     const instructionPC = context?.statementInstructionPC;
     const range = plan.tailCleanupRange;
@@ -1143,7 +1172,7 @@ function applyTailCleanupFinally(
     const inRange = (pc: number | undefined): boolean =>
         typeof pc === "number" && pc >= range.startPC && pc < range.endPC;
     let cleanupIndex = -1;
-    for (let index = startIndex + 1; index < startList.length; index++) {
+    for (let index = firstTryIndex; index < startList.length; index++) {
         if (inRange(instructionPC.get(startList[index]))) { cleanupIndex = index; break; }
     }
     if (cleanupIndex < 0) return false;
@@ -1154,15 +1183,11 @@ function applyTailCleanupFinally(
         tailIndex++;
     }
     const finallyStatements = startList.slice(cleanupIndex, tailIndex);
-    const tryStatements = startList.slice(startIndex + 1, cleanupIndex);
+    const tryStatements = startList.slice(firstTryIndex, cleanupIndex);
     if (finallyStatements.length === 0 || tryStatements.length === 0) return false;
     const tail = startList.slice(tailIndex);
-    const tryNode = TYPE.tryStatement(
-        TYPE.blockStatement(tryStatements),
-        null,
-        bodyBlock(finallyStatements),
-    );
-    startList.splice(startIndex + 1, startList.length - startIndex - 1, tryNode, ...tail);
+    const tryNode = tryFinallyNode(tryStatements, finallyStatements);
+    startList.splice(firstTryIndex, startList.length - firstTryIndex, tryNode, ...tail);
     return true;
 }
 
@@ -1202,11 +1227,7 @@ function applyLoopTailGuardFinally(
     if (finallyStatements.length === 0) return false;
     if (!(cleanup > tryStart)) return false;
     const tryStatements = startList.slice(tryStart, cleanup);
-    const tryNode = TYPE.tryStatement(
-        TYPE.blockStatement(tryStatements),
-        null,
-        bodyBlock(finallyStatements),
-    );
+    const tryNode = tryFinallyNode(tryStatements, finallyStatements);
     // cleanup 语句(以及整段守卫脚手架)都属于 finally,替换 range 一直到循环体尾
     startList.splice(tryStart, startList.length - tryStart, tryNode);
     loop.test = TYPE.booleanLiteral(true);
@@ -1247,7 +1268,13 @@ function applyPlans(
                 break left;
             }
             if (plan.tailCleanupRange) {
-                applied = applyTailCleanupFinally(context, plan, startList, start.index);
+                // locateTryStartByPC 给出的起始语句可能只是 try 范围里的纯寄存器搬移
+                // (源码在 try 之外):留在 try 外不改变语义。其它语句必须留在 try 体内,
+                // 否则它抛异常时 finally 不会执行。
+                const firstTry = start.byPC
+                    ? (isRegisterMove(startList[start.index]) ? start.index + 1 : start.index)
+                    : tryStart;
+                applied = applyTailCleanupFinally(context, plan, startList, firstTry);
                 if (!applied) reason = "tail cleanup not located";
                 break left;
             }
@@ -1295,9 +1322,7 @@ function applyPlans(
                 while (guardEnd < cleanupList.length && !TYPE.isIfStatement(cleanupList[guardEnd])) guardEnd++;
                 if (guardEnd < cleanupList.length && TYPE.isIfStatement(cleanupList[guardEnd])) {
                     const guardStatement = cleanupList[guardEnd] as TYPE.IfStatement;
-                    const endMarkerValue = plan.endMarker && TYPE.isExpressionStatement(plan.endMarker)
-                        && TYPE.isStringLiteral(plan.endMarker.expression) ? plan.endMarker.expression.value
-                        : (plan.endExpr && TYPE.isStringLiteral(plan.endExpr) ? plan.endExpr.value : null);
+                    const endMarkerValue = markerValueOf(plan.endMarker, plan.endExpr) || null;
                     const extracted = extractGuardContinuation(guardStatement, endMarkerValue);
                     guardContinuation = extracted.statements;
                     continuationFromEndMarker = extracted.fromEndMarker;
@@ -1356,9 +1381,9 @@ function applyPlans(
                 // catch 记录失败之前跑)。
                 if (!(cleanup > tryStart)) { reason = "empty try body"; break left; }
                 if (finallyStatements.length === 0) { reason = "empty finally body"; break left; }
-                const parentList = findStatementList(astNode, tryOwner);
-                const parentIndex = parentList ? parentList.indexOf(tryOwner) : -1;
-                if (!parentList || parentIndex < 0) { reason = "no parent list"; break left; }
+                const parent = locateStatementPosition(astNode, tryOwner);
+                if (!parent) { reason = "no parent list"; break left; }
+                const { list: parentList, index: parentIndex } = parent;
                 // 守卫之后如果还有语句,它们是 try/finally 之后的正常继续
                 const afterGuard = startList.slice(guardEnd);
                 startList.length = cleanup;
@@ -1376,28 +1401,22 @@ function applyPlans(
                 if (tryOwner.finalizer) { reason = "handler already has a finalizer"; break left; }
                 if (finallyStatements.length === 0) { reason = "empty finally body"; break left; }
                 const continuation = cleanupList.slice(guardEnd);
-                if (continuation.some((statement) => TYPE.isVariableDeclaration(statement)
-                    || TYPE.isFunctionDeclaration(statement) || TYPE.isClassDeclaration(statement))) {
+                if (hasDeclaration(continuation)) {
                     reason = "guard continuation declares"; break left;
                 }
-                const parentList = findStatementList(astNode, tryOwner);
-                const parentIndex = parentList ? parentList.indexOf(tryOwner) : -1;
-                if (!parentList || parentIndex < 0) { reason = "no parent list"; break left; }
+                const parent = locateStatementPosition(astNode, tryOwner);
+                if (!parent) { reason = "no parent list"; break left; }
+                const { list: parentList, index: parentIndex } = parent;
                 cleanupList.splice(cleanup, cleanupList.length - cleanup);
                 tryOwner.finalizer = bodyBlock(finallyStatements);
                 parentList.splice(parentIndex + 1, 0, ...continuation);
                 applied = true;
             } else if (tryOwner && tryOwner.handler && tryOwner.handler.body.body === cleanupList) {
                 const tryStatements = startList.slice(tryStart);
-                const tryNode = TYPE.tryStatement(
-                    TYPE.blockStatement(tryStatements),
-                    null,
-                    bodyBlock(finallyStatements),
-                );
-                const parentList = findStatementList(astNode, tryOwner);
-                const parentIndex = parentList ? parentList.indexOf(tryOwner) : -1;
-                if (parentIndex < 0) { reason = "no parent list"; break left; }
-                parentList!.splice(parentIndex, 1, tryNode, ...guardContinuation);
+                const tryNode = tryFinallyNode(tryStatements, finallyStatements);
+                const parent = locateStatementPosition(astNode, tryOwner);
+                if (!parent) { reason = "no parent list"; break left; }
+                parent.list.splice(parent.index, 1, tryNode, ...guardContinuation);
                 applied = true;
             } else if (tryOwner && tryOwner.handler && bodyTailCopies
                 && (catchInsideFinally || catchEndPC === undefined)) {
@@ -1410,9 +1429,9 @@ function applyPlans(
                 if (bodyTailCopies.some((copy) => copy.body.map((statement) => generate(statement).code).join("\n") !== reference)) {
                     reason = "cleanup copies differ"; break left;
                 }
-                const parentList = findStatementList(astNode, tryOwner);
-                const parentIndex = parentList ? parentList.indexOf(tryOwner) : -1;
-                if (!parentList || parentIndex < 0) { reason = "no parent list"; break left; }
+                const parent = locateStatementPosition(astNode, tryOwner);
+                if (!parent) { reason = "no parent list"; break left; }
+                const { list: parentList, index: parentIndex } = parent;
                 const perList = new Map<TYPE.Statement[], FinallyTailCopy[]>();
                 for (const copy of bodyTailCopies) {
                     const group = perList.get(copy.list) ?? [];
@@ -1430,10 +1449,11 @@ function applyPlans(
                 // 用户 catch 在 try 范围内终止,finally 的 cleanup/guard 落在这条
                 // try/catch 后面(f1268 写文件:catch 打日志再抛,close 在范围外)。
                 // 只有 cleanup 标记紧跟这条 try 时才包一层 try/finally。
-                const parentList = findStatementList(astNode, tryOwner);
-                const parentIndex = parentList ? parentList.indexOf(tryOwner) : -1;
-                if (!parentList || parentList !== cleanupList || parentIndex < 0
-                    || cleanup !== parentIndex + 1 || finallyStart > guard) { reason = "cleanup not right after the try/catch"; break left; }
+                const parent = locateStatementPosition(astNode, tryOwner);
+                if (!parent || parent.list !== cleanupList
+                    || cleanup !== parent.index + 1 || finallyStart > guard) { reason = "cleanup not right after the try/catch"; break left; }
+                const parentList = parent.list;
+                const parentIndex = parent.index;
                 const finallyStatements = cleanupList.slice(finallyStart, guard);
                 if (finallyStatements.length === 0) { reason = "empty finally body"; break left; }
                 let continuation = guardContinuation;
@@ -1468,11 +1488,7 @@ function applyPlans(
                     parentList.splice(parentIndex, removeThrough - parentIndex, tryOwner, ...continuation);
                 } else {
                     // 源码本身就是嵌套 try/catch/finally,保留原有 finally 再包一层
-                    const wrapped = TYPE.tryStatement(
-                        TYPE.blockStatement([tryOwner]),
-                        null,
-                        bodyBlock(finallyStatements),
-                    );
+                    const wrapped = tryFinallyNode([tryOwner], finallyStatements);
                     parentList.splice(parentIndex, removeThrough - parentIndex, wrapped, ...continuation);
                 }
                 applied = true;
@@ -1480,11 +1496,7 @@ function applyPlans(
                 // 常规布局:try 体 = [tryStart, cleanup),守卫之后是 try/finally 之后的语句
                 if (!(cleanup > tryStart)) { reason = "empty try body"; break left; }
                 const tryStatements = startList.slice(tryStart, cleanup);
-                const tryNode = TYPE.tryStatement(
-                    TYPE.blockStatement(tryStatements),
-                    null,
-                    bodyBlock(finallyStatements),
-                );
+                const tryNode = tryFinallyNode(tryStatements, finallyStatements);
                 startList.splice(tryStart, guardEnd - tryStart, tryNode, ...guardContinuation);
                 applied = true;
             } else if (plan.startMarker && !start.byPC && !start.inExpression && start.index === 0) {
@@ -1495,11 +1507,7 @@ function applyPlans(
                 const ownerIndex = findStatementIndexContaining(cleanupList, plan.startMarker);
                 if (ownerIndex < 0 || cleanup <= ownerIndex) { reason = "nested start owner not found"; break left; }
                 const tryStatements = cleanupList.slice(ownerIndex, cleanup);
-                const tryNode = TYPE.tryStatement(
-                    TYPE.blockStatement(tryStatements),
-                    null,
-                    bodyBlock(finallyStatements),
-                );
+                const tryNode = tryFinallyNode(tryStatements, finallyStatements);
                 cleanupList.splice(ownerIndex, guardEnd - ownerIndex, tryNode, ...guardContinuation);
                 applied = true;
             } else if (applyLoopFollowedByCleanup(astNode, startList, cleanupPos, guardPos, plan)) {
@@ -1515,11 +1523,7 @@ function applyPlans(
                 if (!owner || !cleanupAnchor || !containsNode(owner, cleanupAnchor)) { reason = "cleanup not inside last statement"; break left; }
                 const tryStatements = startList.slice(tryStart);
                 cleanupList.splice(cleanup, guardEnd - cleanup);
-                const tryNode = TYPE.tryStatement(
-                    TYPE.blockStatement(tryStatements),
-                    null,
-                    bodyBlock(finallyStatements),
-                );
+                const tryNode = tryFinallyNode(tryStatements, finallyStatements);
                 startList.splice(tryStart, startList.length - tryStart, tryNode, ...guardContinuation);
                 applied = true;
             }
@@ -1607,11 +1611,17 @@ function markerValue(plan: FinallyPlan, role: FinallyRole): string {
     return MARKER_PREFIX + plan.id + "_" + role;
 }
 
-/** 计划的 cleanup 标记值(语句标记或 test 序列里的表达式标记) */
-function cleanupMarkerValueOf(plan: FinallyPlan): string {
-    if (plan.cleanupMarker && TYPE.isExpressionStatement(plan.cleanupMarker)
-        && TYPE.isStringLiteral(plan.cleanupMarker.expression)) return plan.cleanupMarker.expression.value;
-    if (plan.cleanupExpr && TYPE.isStringLiteral(plan.cleanupExpr)) return plan.cleanupExpr.value;
+/**
+ * Marker string carried by a plan role. A role lands either on a statement
+ * (block statement list) or on an expression (condition test sequence).
+ */
+function markerValueOf(
+    statement: TYPE.Statement | undefined,
+    expression: TYPE.Expression | undefined,
+): string {
+    if (statement && TYPE.isExpressionStatement(statement)
+        && TYPE.isStringLiteral(statement.expression)) return statement.expression.value;
+    if (expression && TYPE.isStringLiteral(expression)) return expression.value;
     return "";
 }
 
@@ -1638,12 +1648,9 @@ interface FinallyTailCopy {
  * (中间还有别的语句、在循环体里、cleanup 落在条件 test 序列里)就整体放弃。
  */
 function collectFinallyTailCopies(root: any, plan: FinallyPlan): FinallyTailCopy[] | null {
-    const cleanupValue = cleanupMarkerValueOf(plan);
+    const cleanupValue = markerValueOf(plan.cleanupMarker, plan.cleanupExpr);
     if (cleanupValue.length === 0) return null;
-    let guardValue = "";
-    if (plan.guardMarker && TYPE.isExpressionStatement(plan.guardMarker)
-        && TYPE.isStringLiteral(plan.guardMarker.expression)) guardValue = plan.guardMarker.expression.value;
-    else if (plan.guardExpr && TYPE.isStringLiteral(plan.guardExpr)) guardValue = plan.guardExpr.value;
+    const guardValue = markerValueOf(plan.guardMarker, plan.guardExpr);
     if (guardValue.length === 0) return null;
 
     const copies: FinallyTailCopy[] = [];
@@ -1796,37 +1803,19 @@ function applyLoopFollowedByCleanup(
     if (cleanup !== loopIndex + 1) return false;
     const guard = guardPos.index;
     if (guard <= cleanup) return false;
-    let guardStatement: TYPE.IfStatement | null = null;
-    let guardIndex = -1;
-    for (let i = guard + 1; i < parentList.length; i++) {
-        if (TYPE.isIfStatement(parentList[i])) {
-            guardStatement = parentList[i] as TYPE.IfStatement;
-            guardIndex = i;
-            break;
-        }
-    }
+    const guardIf = findNextIfStatement(parentList, guard + 1);
     // 守卫必须是列表最后一条;续接(正常完成)在它的非抛出分支里
-    if (!guardStatement || guardIndex !== parentList.length - 1) return false;
+    if (!guardIf || guardIf.index !== parentList.length - 1) return false;
     let continuation: TYPE.Statement[] = [];
     if (!plan.endIsMethodTail) {
-        if (!plan.restoreContinuation) return false;
-        const endMarkerValue = plan.endMarker && TYPE.isExpressionStatement(plan.endMarker)
-            && TYPE.isStringLiteral(plan.endMarker.expression) ? plan.endMarker.expression.value
-            : (plan.endExpr && TYPE.isStringLiteral(plan.endExpr) ? plan.endExpr.value : null);
-        const extracted = extractGuardContinuation(guardStatement, endMarkerValue);
-        if (!extracted.fromEndMarker || extracted.statements.length === 0) return false;
-        if (extracted.statements.some((statement) => TYPE.isVariableDeclaration(statement)
-            || TYPE.isFunctionDeclaration(statement) || TYPE.isClassDeclaration(statement))) return false;
-        continuation = extracted.statements;
+        const extracted = extractLoopContinuation(plan, guardIf.statement);
+        if (!extracted) return false;
+        continuation = extracted;
     }
     const finallyStatements = parentList.slice(cleanup + 1, guard);
     if (finallyStatements.length === 0) return false;
-    const tryNode = TYPE.tryStatement(
-        TYPE.blockStatement([loop]),
-        null,
-        bodyBlock(finallyStatements),
-    );
-    parentList.splice(loopIndex, guardIndex + 1 - loopIndex, tryNode, ...continuation);
+    const tryNode = tryFinallyNode([loop], finallyStatements);
+    parentList.splice(loopIndex, guardIf.index + 1 - loopIndex, tryNode, ...continuation);
     return true;
 }
 
@@ -1864,21 +1853,12 @@ function applyLoopExhaustedFinally(
     // 分支在 end 标记之后:amcl n16 `migrateHistory_` 的
     // `if (pending != hole) throw pending else { await drain(); changed(); return }`,
     // 续接语句在循环结束后、try/finally 之后执行。
-    let guardStatement: TYPE.IfStatement | null = null;
-    for (let i = guard + 1; i < cleanupList.length; i++) {
-        if (TYPE.isIfStatement(cleanupList[i])) { guardStatement = cleanupList[i] as TYPE.IfStatement; break; }
-    }
-    const endMarkerValue = plan.endMarker && TYPE.isExpressionStatement(plan.endMarker)
-        && TYPE.isStringLiteral(plan.endMarker.expression) ? plan.endMarker.expression.value
-        : (plan.endExpr && TYPE.isStringLiteral(plan.endExpr) ? plan.endExpr.value : null);
+    const guardIf = findNextIfStatement(cleanupList, guard + 1);
     let continuation: TYPE.Statement[] = [];
     if (!plan.endIsMethodTail) {
-        if (!guardStatement || !plan.restoreContinuation) return false;
-        const extracted = extractGuardContinuation(guardStatement, endMarkerValue);
-        if (!extracted.fromEndMarker || extracted.statements.length === 0) return false;
-        if (extracted.statements.some((statement) => TYPE.isVariableDeclaration(statement)
-            || TYPE.isFunctionDeclaration(statement) || TYPE.isClassDeclaration(statement))) return false;
-        continuation = extracted.statements;
+        const extracted = extractLoopContinuation(plan, guardIf?.statement ?? null);
+        if (!extracted) return false;
+        continuation = extracted;
     }
 
     if (loopIndex < 0) {
@@ -1890,11 +1870,7 @@ function applyLoopExhaustedFinally(
         if (parentIndex < 0) return false;
         cleanupList.splice(cleanup, cleanupList.length - cleanup);
         cleanupList.push(TYPE.breakStatement());
-        const tryNode = TYPE.tryStatement(
-            TYPE.blockStatement([loop]),
-            null,
-            bodyBlock(finallyStatements),
-        );
+        const tryNode = tryFinallyNode([loop], finallyStatements);
         parentList.splice(parentIndex, 1, tryNode, ...continuation);
         return true;
     }
@@ -1916,11 +1892,7 @@ function applyLoopExhaustedFinally(
     // 丢弃哨兵重抛及其前面的寄存器恢复
     startList.splice(loopIndex + 1, startList.length - loopIndex - 1);
     const tryStatements = startList.slice(tryStart);
-    const tryNode = TYPE.tryStatement(
-        TYPE.blockStatement(tryStatements),
-        null,
-        bodyBlock(finallyStatements),
-    );
+    const tryNode = tryFinallyNode(tryStatements, finallyStatements);
     startList.splice(tryStart, startList.length - tryStart, tryNode);
     return true;
 }
@@ -2039,8 +2011,7 @@ function hoistDuplicatedFinallyTails(
         for (const group of groups.values()) {
             if (group.length < 2) continue;
             const statements = group[0].list.slice(group[0].start, group[0].end + 1);
-            if (statements.some((statement) => TYPE.isVariableDeclaration(statement)
-                || TYPE.isFunctionDeclaration(statement) || TYPE.isClassDeclaration(statement))) continue;
+            if (hasDeclaration(statements)) continue;
             // 最浅的一处(离外层语句列表最近)保留,其余删掉后把这一份提到 if 之后
             group.sort((a, b) => a.chain.length - b.chain.length);
             const keeper = group[0];

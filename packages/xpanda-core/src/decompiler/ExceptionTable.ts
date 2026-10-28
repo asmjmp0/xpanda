@@ -3,6 +3,12 @@ import type { PandaIRBasicBlock } from "../disasm/PandaIRBasicBlock";
 import type { PandaMethodTryBlock } from "../file/method/PandaMethodTryBlock";
 import { buildFinallyPlans, comparesHoleWith, type FinallyPlan } from "./TryFinally";
 import { instructionAccess } from "./ValueAnalysis";
+import {
+    blockLoadsHole,
+    blockThrowsRegister,
+    isAsyncDispatchInstruction,
+    isHoleLoadInstruction,
+} from "./IRPatterns";
 
 /**
  * try 表分类:ArkTS 把语言特性(for-in / for-of / async / generator)以及 finally
@@ -108,7 +114,7 @@ export function isFinallyHandler(cfg: PandaIRCFG, block: PandaIRBasicBlock): boo
         visited.add(current);
         if (current !== block && comparesHoleWith(current, savedName)) {
             for (const successor of cfg.graph.normalSuccessors(current)) {
-                if (throwsRegister(successor, savedName)) return true;
+                if (blockThrowsRegister(successor, savedName)) return true;
             }
         }
         for (const successor of cfg.graph.normalSuccessors(current)) {
@@ -164,6 +170,45 @@ export function skippedCommitEnd(cfg: PandaIRCFG, entry: PandaIRBasicBlock, tryE
 }
 
 /**
+ * Handler entry that does not save the exception, load the finally sentinel,
+ * or consist of a bare jump. Shared by the "ignored exception" catch shapes.
+ */
+function startsLikeIgnoredCatch(entry: PandaIRBasicBlock): boolean {
+    const first = entry.pandaInstructions[0];
+    if (!first || first.kind === "store" || first.kind === "throw") return false;
+    if (isHoleLoadInstruction(first)) return false;
+    if (first.kind === "jumpDirect" || first.opcode.name === "jmp") return false;
+    return true;
+}
+
+/**
+ * Bounded breadth-first walk over normal edges. `visit` may return true to stop
+ * early; `follow` decides whether an edge is traversed. Returns true when the
+ * walk stopped early.
+ */
+function walkForward(
+    cfg: PandaIRCFG,
+    entry: PandaIRBasicBlock,
+    budget: number,
+    visit: (block: PandaIRBasicBlock) => boolean,
+    follow: (block: PandaIRBasicBlock, successor: PandaIRBasicBlock) => boolean = () => true,
+): boolean {
+    const seen = new Set<PandaIRBasicBlock>();
+    const queue: PandaIRBasicBlock[] = [entry];
+    let remaining = budget;
+    while (queue.length > 0 && remaining-- > 0) {
+        const block = queue.shift()!;
+        if (seen.has(block)) continue;
+        seen.add(block);
+        if (visit(block)) return true;
+        for (const successor of cfg.graph.normalSuccessors(block)) {
+            if (follow(block, successor)) queue.push(successor);
+        }
+    }
+    return false;
+}
+
+/**
  * 忽略异常值的 catch:handler 不以 `sta` 开头。
  * `ldnull; return`、单条 `mov`(保留默认值),或常量日志后 return。
  * 单条 `jmp` 默认不接:它常常跳过成功路径上的一条赋值再汇合,盲目接进图
@@ -172,10 +217,8 @@ export function skippedCommitEnd(cfg: PandaIRCFG, entry: PandaIRBasicBlock, tryE
  * 多条 `mov` 是 for-of close 的寄存器倒换,不能接进图。
  */
 export function isIgnoredExceptionCatch(cfg: PandaIRCFG, entry: PandaIRBasicBlock): boolean {
+    if (!startsLikeIgnoredCatch(entry)) return false;
     const first = entry.pandaInstructions[0];
-    if (!first || first.kind === "store" || first.kind === "throw") return false;
-    if (first.kind === "load" && first.loadType === "HOLE") return false;
-    if (first.kind === "jumpDirect" || first.opcode.name === "jmp") return false;
     if (first.kind === "mov") {
         if (entry.pandaInstructions.length === 1) return true;
         // Spill reloads, then `return ""` / `return null`. The exception
@@ -202,27 +245,20 @@ export function isIgnoredExceptionCatch(cfg: PandaIRCFG, entry: PandaIRBasicBloc
     let sawReturn = false;
     let sawThrow = false;
     const start = entry.getStartPC();
-    const seen = new Set<PandaIRBasicBlock>();
-    const queue: PandaIRBasicBlock[] = [entry];
-    let budget = 6;
-    while (queue.length > 0 && budget-- > 0) {
-        const block = queue.shift()!;
-        if (seen.has(block)) continue;
-        seen.add(block);
+    walkForward(cfg, entry, 6, (block) => {
         for (const instruction of block.pandaInstructions) {
             if (instruction.kind === "throw") sawThrow = true;
             if (instruction.kind === "return") sawReturn = true;
             if (instruction.kind === "load" && instruction.loadType === "STRING") sawString = true;
         }
-        for (const successor of cfg.graph.normalSuccessors(block)) {
-            // A handler that jumps back into the loop (an empty catch whose
-            // "continue" lands on the latch) is not a constant-log handler:
-            // following the back edge would walk the whole loop body and find
-            // its strings/returns (`o8.clearDisplayListeners`).
-            if (successor.getStartPC() <= start) continue;
-            queue.push(successor);
-        }
-    }
+        return false;
+    }, (_block, successor) => {
+        // A handler that jumps back into the loop (an empty catch whose
+        // "continue" lands on the latch) is not a constant-log handler:
+        // following the back edge would walk the whole loop body and find
+        // its strings/returns (`o8.clearDisplayListeners`).
+        return successor.getStartPC() > start;
+    });
     return sawString && sawReturn && !sawThrow;
 }
 
@@ -244,8 +280,7 @@ export function isEmptyJoinHandler(
     // A finally suppress block writes the hole sentinel and is then shared as a
     // normal-completion join; it is not an empty catch (`FollowListPanel.loadMore`
     // try/finally lost its plan and leaked `hole`).
-    if (handlerEntryBlock.pandaInstructions.some((instruction) => instruction.opcode.name === "ldhole"
-        || (instruction.kind === "load" && (instruction as any).loadType === "HOLE"))) return false;
+    if (blockLoadsHole(handlerEntryBlock)) return false;
     let block = cfg.getBasicBlockByPC(endPC);
     // The success path must jump *over* the handler to reach it. When the
     // handler starts exactly at the try end, the block there is a catch body
@@ -289,21 +324,8 @@ export function nestedInMuchLargerTry(cfg: PandaIRCFG, tryBlock: { startPC: numb
 
 /** Await resume dispatch: suspend/resume shows up after the entry block. */
 export function isAsyncResumeHandler(cfg: PandaIRCFG, entry: PandaIRBasicBlock): boolean {
-    const seen = new Set<PandaIRBasicBlock>();
-    const queue: PandaIRBasicBlock[] = [entry];
-    let budget = 6;
-    while (queue.length > 0 && budget-- > 0) {
-        const block = queue.shift()!;
-        if (seen.has(block)) continue;
-        seen.add(block);
-        for (const instruction of block.pandaInstructions) {
-            const name = instruction.opcode.name;
-            if (name === "asyncfunctionawaituncaught" || name === "suspendgenerator"
-                || name === "resumegenerator" || name === "asyncfunctionreject") return true;
-        }
-        for (const successor of cfg.graph.normalSuccessors(block)) queue.push(successor);
-    }
-    return false;
+    return walkForward(cfg, entry, 6, (block) =>
+        block.pandaInstructions.some((instruction) => isAsyncDispatchInstruction(instruction)));
 }
 
 /**
@@ -529,16 +551,17 @@ function scanHandlerBody(blocks: PandaIRBasicBlock[]): HandlerBodyFlags {
             if (isCatchBodyWork(instruction)) flags.work = true;
             if (instruction.kind === "call" || instruction.opcode.name === "newobjrange") flags.call = true;
             if (instruction.kind === "throw") flags.throws = true;
-            if (instruction.opcode.name === "ldhole"
-                || (instruction.kind === "load" && (instruction as any).loadType === "HOLE")) flags.hole = true;
-            const name = instruction.opcode.name;
-            if (name === "asyncfunctionawaituncaught" || name === "suspendgenerator"
-                || name === "resumegenerator" || name === "getresumemode"
-                || name === "asyncfunctionreject") flags.dispatch = true;
-            if (instruction.kind === "return" || name === "asyncfunctionresolve") flags.returns = true;
+            if (isHoleLoadInstruction(instruction)) flags.hole = true;
+            if (isAsyncDispatchInstruction(instruction, true)) flags.dispatch = true;
+            if (instruction.kind === "return" || instruction.opcode.name === "asyncfunctionresolve") flags.returns = true;
         }
     }
     return flags;
+}
+
+/** Handler reachable only through its exception edge (not shared with the success path). */
+function isExceptionOnlyHandler(cfg: PandaIRCFG, entry: PandaIRBasicBlock): boolean {
+    return cfg.graph.normalPredecessors(entry).length === 0;
 }
 
 /**
@@ -568,7 +591,7 @@ function isIgnoredCatchByBody(
     // A handler with a normal predecessor is shared with the success path: its
     // body is already emitted there, and registering a catch would duplicate
     // it (`AudioPlayer.togglePlay`'s shared `return undefined` block).
-    if (cfg.graph.normalPredecessors(entry).length > 0) return false;
+    if (!isExceptionOnlyHandler(cfg, entry)) return false;
     const { blocks, rejoin, joinTarget } = handlerForwardBody(cfg, entry, tryStart, tryEnd);
     if (blocks.length === 0) return false;
     const flags = scanHandlerBody(blocks);
@@ -602,7 +625,7 @@ function isEmptyContinueCatch(
     tryEnd: number,
 ): boolean {
     if (isFinallyHandler(cfg, entry)) return false;
-    if (cfg.graph.normalPredecessors(entry).length > 0) return false;
+    if (!isExceptionOnlyHandler(cfg, entry)) return false;
     const { blocks } = handlerForwardBody(cfg, entry, tryStart, tryEnd, 12);
     if (blocks.length === 0) return false;
     const flags = scanHandlerBody(blocks);
@@ -631,7 +654,7 @@ function handlerWrapsNewError(
     tryStart: number,
     tryEnd: number,
 ): boolean {
-    if (cfg.graph.normalPredecessors(entry).length > 0) return false;
+    if (!isExceptionOnlyHandler(cfg, entry)) return false;
     const { blocks } = handlerForwardBody(cfg, entry, tryStart, tryEnd, 12);
     let sawNew = false;
     for (const block of blocks) {
@@ -656,7 +679,7 @@ function ignoredCatchJoinTarget(
     tryEnd: number,
 ): PandaIRBasicBlock | null {
     if (isFinallyHandler(cfg, entry)) return null;
-    if (cfg.graph.normalPredecessors(entry).length > 0) return null;
+    if (!isExceptionOnlyHandler(cfg, entry)) return null;
     return handlerForwardBody(cfg, entry, tryStart, tryEnd).joinTarget;
 }
 
@@ -741,16 +764,13 @@ export function isIgnoredExitingCatch(
     tryEnd: number,
     plans: FinallyPlan[],
 ): boolean {
-    const first = entry.pandaInstructions[0];
-    if (!first || first.kind === "store" || first.kind === "throw") return false;
-    if (first.kind === "load" && first.loadType === "HOLE") return false;
-    if (first.kind === "jumpDirect" || first.opcode.name === "jmp") return false;
+    if (!startsLikeIgnoredCatch(entry)) return false;
     if (!entry.pandaInstructions.some(isCatchBodyWork)) return false;
     if (isFinallyHandler(cfg, entry)) return false;
     // 空的 `try { … } catch {}` 里 handler 就是正常续接(`try { mkdir } catch {}` 的
     // handlerPC 与 jmp 目标相同),它会有普通前驱,体里的工作其实是 try 之后的代码;
     // 真正的用户 catch 只能从异常边进入。
-    if (cfg.graph.normalPredecessors(entry).length > 0) return false;
+    if (!isExceptionOnlyHandler(cfg, entry)) return false;
     if (!handlerExits(cfg, entry, tryStart, tryEnd)) return false;
     const bodyPCs = new Set(forwardBodyBlocks(cfg, entry, tryStart, tryEnd).map((block) => block.getStartPC()));
     if (bodyPCs.size === 0) return false;
@@ -829,21 +849,8 @@ export function handlerReadsTryValues(
         }
     }
     if (tryWrites.size === 0) return false;
-    const body: PandaIRBasicBlock[] = [];
-    const seen = new Set<PandaIRBasicBlock>();
-    const stack: PandaIRBasicBlock[] = [entry];
-    while (stack.length > 0 && body.length < 64) {
-        const block = stack.pop()!;
-        if (seen.has(block)) continue;
-        seen.add(block);
-        const pc = block.getStartPC();
-        if (pc >= tryStart && pc < tryEnd) continue;
-        body.push(block);
-        for (const successor of cfg.graph.normalSuccessors(block)) {
-            if (successor.getStartPC() <= pc) continue;
-            stack.push(successor);
-        }
-    }
+    const body = forwardBodyBlocks(cfg, entry, tryStart, tryEnd);
+    const seen = new Set(body);
     const incoming = new Map<PandaIRBasicBlock, Set<string> | null>();
     const outgoing = new Map<PandaIRBasicBlock, Set<string>>();
     for (const block of body) {
@@ -906,7 +913,7 @@ export function hasSentinelGuard(cfg: PandaIRCFG, tryBlock: { startPC: number; l
     for (const block of cfg.pandaIRBasicBlocks) {
         const pc = block.getStartPC();
         if (pc < start || pc >= end) continue;
-        if (block.pandaInstructions.some((instruction) => instruction.kind === "load" && instruction.loadType === "HOLE")) {
+        if (blockLoadsHole(block)) {
             return true;
         }
     }
@@ -919,8 +926,7 @@ export function hasSentinelGuard(cfg: PandaIRCFG, tryBlock: { startPC: number; l
  */
 export function tryEndWritesHole(cfg: PandaIRCFG, tryBlock: { startPC: number; length: number }): boolean {
     const endBlock = cfg.getBasicBlockByPC(tryBlock.startPC + tryBlock.length);
-    return !!endBlock && endBlock.pandaInstructions.some(
-        (instruction) => instruction.kind === "load" && instruction.loadType === "HOLE");
+    return !!endBlock && blockLoadsHole(endBlock);
 }
 
 export function checkIsForInException(cfg: PandaIRCFG, block: PandaIRBasicBlock): boolean {
@@ -951,10 +957,20 @@ export function checkIsForOfException(cfg: PandaIRCFG, tryBlock: PandaIRBasicBlo
     const first = blocks[0];
     const second = blocks[1];
     if (first.getTerminator().kind !== "throw") return false;
-    for (const instruction of second.pandaInstructions) {
-        if (instruction.kind === "load" && instruction.loadType === "HOLE") return true;
+    return blockLoadsHole(second);
+}
+
+/**
+ * startPC -> longest protected range. A try entry that shares its start with a
+ * finally plan is shorter than the finally range (the catch ends inside it).
+ */
+function maxEndByStart(entries: Iterable<{ startPC: number; endPC: number }>): Map<number, number> {
+    const result = new Map<number, number>();
+    for (const entry of entries) {
+        const previous = result.get(entry.startPC) ?? 0;
+        if (entry.endPC > previous) result.set(entry.startPC, entry.endPC);
     }
-    return false;
+    return result;
 }
 
 /**
@@ -976,25 +992,20 @@ export function classifyTryEntries(cfg: PandaIRCFG): ExceptionTable {
     const finallyStartPCs = new Set(finallyPlans.map((plan) => plan.startPC));
     // startPC -> finally 计划里最长的保护范围:用户 catch 与 finally 共用起点时,
     // catch 条目的范围一定比 finally 短(catch 在 finally 里面结束)。
-    const finallyEndByStart = new Map<number, number>();
-    for (const plan of finallyPlans) {
-        const previous = finallyEndByStart.get(plan.startPC) ?? 0;
-        if (plan.endPC > previous) finallyEndByStart.set(plan.startPC, plan.endPC);
-    }
+    const finallyEndByStart = maxEndByStart(finallyPlans);
     // finally handler entry: start → longest protected range. A nested
     // sub-exit try (the per-await inline cleanup copy) shares its start with the
     // finally entry; it must not be re-registered as a user catch.
-    const finallyHandlerEndByStart = new Map<number, number>();
+    const finallyHandlerRanges: Array<{ startPC: number; endPC: number }> = [];
     for (const candidate of method.methodCode!.pandaMethodTryBlocks!) {
         const candidateCatch = candidate.pandaMethodCatchBlocks[0];
         if (!candidateCatch) continue;
         const candidateHandler = cfg.getBasicBlockByPC(candidateCatch.handlerPC);
         if (!candidateHandler) continue;
         if (!isFinallyHandler(cfg, candidateHandler) || catchUsesException(candidateHandler)) continue;
-        const candidateEnd = candidate.startPC + candidate.length;
-        const previousEnd = finallyHandlerEndByStart.get(candidate.startPC) ?? 0;
-        if (candidateEnd > previousEnd) finallyHandlerEndByStart.set(candidate.startPC, candidateEnd);
+        finallyHandlerRanges.push({ startPC: candidate.startPC, endPC: candidate.startPC + candidate.length });
     }
+    const finallyHandlerEndByStart = maxEndByStart(finallyHandlerRanges);
     for (const tryBlock of method.methodCode!.pandaMethodTryBlocks!) {
         const catchBlock = tryBlock.pandaMethodCatchBlocks[0];
         if (!catchBlock) continue;
@@ -1135,7 +1146,9 @@ export function classifyTryEntries(cfg: PandaIRCFG): ExceptionTable {
             const kind: HandlerKind = finallyHandler && !usesException && !ignoredException && commitPC === null
                 ? "finallyEpilogue"
                 : ignoredException && !usesException ? "ignoredCatch" : "userCatch";
-            const protectedEndPC = decideProtectedEnd(cfg, tryBlock, handlerEntryBlock, commitPC, tryCodeLength, catchOfSharedStart, bodyWork);
+            const protectedEndPC = decideProtectedEnd(
+                cfg, tryBlock, handlerEntryBlock, commitPC, tryCodeLength, catchOfSharedStart,
+                bodyWork, finallyHandler, loopContinue);
             push(kind, true, { usesException, exits: exitingCatch, loopContinue, protectedEndPC });
             continue;
         }
@@ -1144,7 +1157,10 @@ export function classifyTryEntries(cfg: PandaIRCFG): ExceptionTable {
         const ignoredException = isIgnoredExceptionCatch(cfg, handlerEntryBlock);
         const loopContinue = continuesAtLoopHead(cfg, handlerEntryBlock, startPC, endPC);
         const exits = handlerExits(cfg, handlerEntryBlock, startPC, endPC);
-        const protectedEndPC = decideProtectedEnd(cfg, tryBlock, handlerEntryBlock, commitPC, tryCodeLength, false);
+        const finallyHandler = isFinallyHandler(cfg, handlerEntryBlock);
+        const protectedEndPC = decideProtectedEnd(
+            cfg, tryBlock, handlerEntryBlock, commitPC, tryCodeLength, false,
+            false, finallyHandler, loopContinue);
         push(ignoredException ? "ignoredCatch" : "userCatch", true,
             { usesException, exits, loopContinue, protectedEndPC });
     }
@@ -1182,10 +1198,13 @@ function decideProtectedEnd(
     catchOfSharedStart: boolean,
     /** handler 体在后续块里有可见工作(入口只有 `sta`,体里开了嵌套 try) */
     bodyWork = false,
+    /** 调用方已经算过的 `isFinallyHandler`(避免对同一 handler 重复做有界扫描) */
+    finallyHandler = isFinallyHandler(cfg, handlerEntryBlock),
+    /** 调用方已经算过的 `continuesAtLoopHead` */
+    loopContinue = continuesAtLoopHead(cfg, handlerEntryBlock, tryBlock.startPC, tryBlock.startPC + tryCodeLength),
 ): number | null {
     const startPC = tryBlock.startPC;
     const endPC = startPC + tryCodeLength;
-    const finallyHandler = isFinallyHandler(cfg, handlerEntryBlock);
     const newIgnored = !finallyHandler
         && (isIgnoredCatchByBody(cfg, handlerEntryBlock, startPC, endPC, false)
             || handlerWrapsNewError(cfg, handlerEntryBlock, startPC, endPC)
@@ -1201,7 +1220,6 @@ function decideProtectedEnd(
         || (catchOfSharedStart && isIgnoringCatchHandler(handlerEntryBlock) && !finallyHandler)
         || commitPC !== null;
     const nestedWide = nestedInMuchLargerTry(cfg, tryBlock) && tryCodeLength > 64;
-    const loopContinue = continuesAtLoopHead(cfg, handlerEntryBlock, startPC, endPC);
     if (!userCatch || nestedWide || isAsyncResumeHandler(cfg, handlerEntryBlock)) return null;
     if (!((tryCodeLength <= 1024 && handlerExits(cfg, handlerEntryBlock, startPC, endPC)) || loopContinue)) return null;
     // The mov an empty catch jumps over belongs to the success path.
@@ -1210,15 +1228,6 @@ function decideProtectedEnd(
     const joinTarget = newIgnored ? ignoredCatchJoinTarget(cfg, handlerEntryBlock, startPC, endPC) : null;
     if (joinTarget && completionReachesJoin(cfg, endPC, joinTarget)) return joinTarget.getStartPC();
     return commitPC ?? endPC;
-}
-
-/** 该基本块是否先 `lda vX` 再 `throw`(X 为 handler 保存的异常) */
-function throwsRegister(block: PandaIRBasicBlock, register: string): boolean {
-    const instructions = block.pandaInstructions;
-    if (instructions[instructions.length - 1].kind !== "throw") return false;
-    return instructions.some((instruction) => instruction.kind === "load"
-        && instruction.loadType === "OBJECT"
-        && (instruction as any).loadParam?.toString() === register);
 }
 
 export function checkIsAsyncException(block: PandaIRBasicBlock): boolean {
