@@ -581,6 +581,15 @@ export class AssignmentFolds extends TempVariablePass {
         if (countReadsInNode(target, name) !== 1) return false;
         const liveAfter = ctx.liveAfter.get(second);
         if (!liveAfter || liveAfter.has(name)) return false;
+        // 消费位置就是 X 本身(`Y = X`):根节点没有 parent,walkNode 里按
+        // `parent && isReferenced` 找不到它;这里直接改写右值。
+        if (isIdentifier(target) && target.name === name) {
+            info.refs.delete(target);
+            b.right = a.right;
+            stmts.splice(i, 1);
+            this.changed = true;
+            return true;
+        }
 
         let id: TYPE.Identifier | null = null;
         walkNode(target, (node, parent) => {

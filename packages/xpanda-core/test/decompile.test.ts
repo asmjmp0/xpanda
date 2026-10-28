@@ -3307,8 +3307,9 @@ function verifyAmclRollbackCatchRestored(clazz: PandaClass, code: string): void 
 /**
  * 回归:amcl1.0.6.abc 的 `L&feature_system/src/main/ets/y12&1.0.0;` —— `saveImageUrl`
  * 的收尾 catch 整段丢失(handler 读保护范围外的 fd,分类此前把整个 catch 判成
- * `unknown`)。还原后:入参校验变成早退 throw,下载/相册流程包在 try 里,异常路径
- * 删除临时文件后重抛。整类快照锁定。
+ * `unknown`)。还原后:入参校验变成早退 throw,下载 try/catch 只覆盖
+ * `createAndWait`(保护范围结束即截断),相册流程包在 try/finally 里,两条
+ * `return` 前内联的 cleanup 副本上提成同一份 finally。整类快照锁定。
  */
 function verifyAmclSaveImageUrlCatch(clazz: PandaClass, code: string): void {
     NodeFactory.parse(code);
@@ -3320,15 +3321,24 @@ function verifyAmclSaveImageUrlCatch(clazz: PandaClass, code: string): void {
     for (const fragment of [
         // 入参为空也从 catch 里恢复成显式 throw(当前输出是 if (p1) { … } else { throw })
         'throw new Error("不支持的图片地址")',
-        // 恢复的收尾 catch:删临时文件后重抛
+        // 恢复的收尾 catch:删临时文件后重抛,且只包住下载 await
+        "try { v5 = await d398.instance().createAndWait(v5); } catch (catchAcc) {",
         "unlinkSync(v4)",
         "throw catchAcc;",
+        // 下载失败分支在 try 之外
+        "if (!v5.success) {",
         "p995.copyInto_(v4, v0[v7]);",
+        // 相册流程的 try/finally:两条 return 共享同一份 cleanup
+        "} finally {",
+        'return "cancelled";',
         'return "saved";',
     ]) {
         if (!flattenedCode.includes(fragment.replace(/\s+/g, " "))) {
             throw new Error(`amcl y12: 缺少 ${JSON.stringify(fragment)}\n${code}`);
         }
+    }
+    if (flattenedCode.includes('return "cancelled"; try { g50.unlinkSync(v4); }')) {
+        throw new Error(`amcl y12: cancelled 分支仍保留内联 cleanup 副本\n${code}`);
     }
     const expected = fs.readFileSync(path.join(__dirname, "expected", "amcl-feature-system-y12.js"), "utf-8");
     if (code !== expected) {

@@ -87,7 +87,7 @@ export class SabrOfflineDownloader {
     };
   }
   static async dumpDualTrack(p0, p1, p2, p3, p4, p5, p6) {
-    let v11, v12, v13, v15, v16, v17, v18, v19, v20, v21, v22, v23, v26, v28, acc;
+    let v11, v12, v13, v15, v16, v17, v18, v19, v20, v21, v22, v23, v28, acc;
     let local_2_2, local_2_6;
     let local_2_0 = 0;
     let local_2_4 = 0;
@@ -257,8 +257,7 @@ export class SabrOfflineDownloader {
           }
           if (v19) {
             v11 = 0;
-            v26 = local_2_1 /*videoSeq*/ > 0 ? p0.getSegmentEndMs(local_2_1 /*videoSeq*/) : 0;
-            v22 = Math.min(v26, local_2_5 /*audioSeq*/ > 0 ? p1.getSegmentEndMs(local_2_5 /*audioSeq*/) : 0);
+            v22 = Math.min(local_2_1 /*videoSeq*/ > 0 ? p0.getSegmentEndMs(local_2_1 /*videoSeq*/) : 0, local_2_5 /*audioSeq*/ > 0 ? p1.getSegmentEndMs(local_2_5 /*audioSeq*/) : 0);
             v22 > 0 && sabrSessionStore.setPlayHeadMs(p2.key, v22);
             v23 = SabrOfflineDownloader.overallPercent(local_2_1 /*videoSeq*/, local_2_5 /*audioSeq*/, p0.getEndSegment(), p1.getEndSegment(), local_2_0 /*videoBytes*/, local_2_4 /*audioBytes*/);
             if (p5 != null) {
@@ -439,8 +438,7 @@ export class SabrOfflineDownloader {
       }
       if (v19) {
         v11 = 0;
-        v26 = local_2_1 /*videoSeq*/ > 0 ? p0.getSegmentEndMs(local_2_1 /*videoSeq*/) : 0;
-        v22 = Math.min(v26, local_2_5 /*audioSeq*/ > 0 ? p1.getSegmentEndMs(local_2_5 /*audioSeq*/) : 0);
+        v22 = Math.min(local_2_1 /*videoSeq*/ > 0 ? p0.getSegmentEndMs(local_2_1 /*videoSeq*/) : 0, local_2_5 /*audioSeq*/ > 0 ? p1.getSegmentEndMs(local_2_5 /*audioSeq*/) : 0);
         v22 > 0 && sabrSessionStore.setPlayHeadMs(p2.key, v22);
         v23 = SabrOfflineDownloader.overallPercent(local_2_1 /*videoSeq*/, local_2_5 /*audioSeq*/, p0.getEndSegment(), p1.getEndSegment(), local_2_0 /*videoBytes*/, local_2_4 /*audioBytes*/);
         if (p5 != null) {

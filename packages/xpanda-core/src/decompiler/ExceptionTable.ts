@@ -1135,7 +1135,7 @@ export function classifyTryEntries(cfg: PandaIRCFG): ExceptionTable {
             const kind: HandlerKind = finallyHandler && !usesException && !ignoredException && commitPC === null
                 ? "finallyEpilogue"
                 : ignoredException && !usesException ? "ignoredCatch" : "userCatch";
-            const protectedEndPC = decideProtectedEnd(cfg, tryBlock, handlerEntryBlock, commitPC, tryCodeLength, catchOfSharedStart);
+            const protectedEndPC = decideProtectedEnd(cfg, tryBlock, handlerEntryBlock, commitPC, tryCodeLength, catchOfSharedStart, bodyWork);
             push(kind, true, { usesException, exits: exitingCatch, loopContinue, protectedEndPC });
             continue;
         }
@@ -1180,10 +1180,13 @@ function decideProtectedEnd(
     tryCodeLength: number,
     /** 该条目是"与 finally 共用起点"的用户 catch 范围 */
     catchOfSharedStart: boolean,
+    /** handler 体在后续块里有可见工作(入口只有 `sta`,体里开了嵌套 try) */
+    bodyWork = false,
 ): number | null {
     const startPC = tryBlock.startPC;
     const endPC = startPC + tryCodeLength;
-    const newIgnored = !isFinallyHandler(cfg, handlerEntryBlock)
+    const finallyHandler = isFinallyHandler(cfg, handlerEntryBlock);
+    const newIgnored = !finallyHandler
         && (isIgnoredCatchByBody(cfg, handlerEntryBlock, startPC, endPC, false)
             || handlerWrapsNewError(cfg, handlerEntryBlock, startPC, endPC)
             || isEmptyContinueCatch(cfg, handlerEntryBlock, startPC, endPC));
@@ -1191,7 +1194,11 @@ function decideProtectedEnd(
         || isIgnoredExceptionCatch(cfg, handlerEntryBlock)
         || isCatchHandler(handlerEntryBlock)
         || newIgnored
-        || (catchOfSharedStart && isIgnoringCatchHandler(handlerEntryBlock) && !isFinallyHandler(cfg, handlerEntryBlock))
+        // finally 落点不能按「handler 体有可见工作」裁剪:那会把 cleanup 当成 catch
+        // 体接进区域图,再和 TryFinally 的计划叠成 try/catch/finally
+        // (AppDatabase.close)。
+        || (bodyWork && !finallyHandler)
+        || (catchOfSharedStart && isIgnoringCatchHandler(handlerEntryBlock) && !finallyHandler)
         || commitPC !== null;
     const nestedWide = nestedInMuchLargerTry(cfg, tryBlock) && tryCodeLength > 64;
     const loopContinue = continuesAtLoopHead(cfg, handlerEntryBlock, startPC, endPC);

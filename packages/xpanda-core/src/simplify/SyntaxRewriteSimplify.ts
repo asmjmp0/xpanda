@@ -1030,8 +1030,20 @@ export class SyntaxRewriteSimplify implements ISimplify {
                 for (const name of names) {
                     if (collectIdentifierNames(consequent).has(name)) return;
                 }
-                // finally 能观察到提前赋值后的值
-                if (path.findParent((p) => p.isTryStatement() && p.node.finalizer != null)) return;
+                // finally 能观察到提前赋值后的值:只有 finally 真的读取这些临时变量
+                // 时才必须放弃(条件 test 左侧抛异常时,提上去的赋值已经执行过)。
+                // try/finally 内部的条件很常见(内联 finally 还原之后),一律拒绝会把
+                // `if (!v0 || (v7 = 0, v0.length === 0))` 留在 test 序列里。
+                let finallyObserves = false;
+                path.findParent((p) => {
+                    if (!p.isTryStatement() || p.node.finalizer == null) return false;
+                    const reads = collectIdentifierNames(p.node.finalizer);
+                    for (const name of names) {
+                        if (reads.has(name)) { finallyObserves = true; return true; }
+                    }
+                    return false;
+                });
+                if (finallyObserves) return;
                 path.insertBefore(prefix);
                 test.right = right.expressions[right.expressions.length - 1] as TYPE.Expression;
             },
@@ -1144,6 +1156,24 @@ export class SyntaxRewriteSimplify implements ISimplify {
             }
         }
         return changed;
+    }
+
+    /**
+     * 尾部补一轮数组字面量合并。
+     *
+     * 结构改写(内联 finally、把 return 移出 try)之后,`X = []; X[0] = <obj>`
+     * 才可能变成相邻语句;定点迭代结束时已经错过 SyntaxRewriteSimplify,
+     * 数组元素留到后面的 ObjectLiteralSimplify 才成型,外层字段就再也并不进对象
+     * 字面量(amcl y12 `saveImageUrl` 的 files 字段)。
+     */
+    public static foldArrayLiterals(node: TYPE.Program): void {
+        const instance = new SyntaxRewriteSimplify();
+        walkNode(node, (n) => {
+            if (n.type === "Program" || n.type === "BlockStatement") {
+                instance.foldArrayAssignments(n.body as TYPE.Statement[]);
+            }
+            return true;
+        });
     }
 
     private invertTestNode(node: TYPE.Expression): TYPE.Expression {

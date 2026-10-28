@@ -824,8 +824,7 @@ local_0_14 = function (p0) {
 };
 export function q301() {
   let v9, acc;
-  let v8 = [];
-  v8[0] = {
+  let v8 = [{
     "id": "joystick",
     "label": "",
     "type": o301.JOYSTICK,
@@ -842,21 +841,7 @@ export function q301() {
     "alignGroup": p301.NONE,
     "alignIndex": 0,
     "grabbedOnly": true
-  };
-  v8[1] = local_0_0("atk", o1360(m1360), 0.833, 0.36, p301.ACTION_RIGHT, 0, true);
-  v8[2] = local_0_0("place", o1360(n1360), 0.917, 0.36, p301.ACTION_RIGHT, 1, true);
-  v8[3] = local_0_0("jump", n421, 0.889, 0.64, p301.MOVE_RIGHT, 0, true);
-  v8[4] = local_0_0("sneak", o421, 0.8, 0.81, p301.MOVE_RIGHT, 1, true);
-  v8[5] = local_0_0("key_E", p421, 0.778, 0.017, p301.FUNC_TOP_RIGHT, 0, false);
-  v8[6] = local_0_0("key_ESC", q421, 0.846, 0.017, p301.FUNC_TOP_RIGHT, 1, false);
-  v8[7] = e1360("input", 0.778, 0.106, 2);
-  v8[8] = e1360("edit", 0.914, 0.017, 5);
-  v8[9] = e1360("visibility", 0.778, 0.195, 6);
-  v8[10] = local_0_0("key_Q", h1360, 0.846, 0.106, p301.FUNC_TOP_RIGHT, 3, true);
-  v8[11] = local_0_0("key_F", g1360, 0.914, 0.106, p301.FUNC_TOP_RIGHT, 4, true);
-  v8[12] = local_0_0("key_F3", k1360, 0.014, 0.017, p301.DEBUG_TOP_LEFT, 0, false);
-  v8[13] = local_0_0("key_F5", l1360, 0.082, 0.017, p301.DEBUG_TOP_LEFT, 1, false);
-  v8[14] = local_0_0("key_TAB", j1360, 0.15, 0.017, p301.DEBUG_TOP_LEFT, 2, false);
+  }, local_0_0("atk", o1360(m1360), 0.833, 0.36, p301.ACTION_RIGHT, 0, true), local_0_0("place", o1360(n1360), 0.917, 0.36, p301.ACTION_RIGHT, 1, true), local_0_0("jump", n421, 0.889, 0.64, p301.MOVE_RIGHT, 0, true), local_0_0("sneak", o421, 0.8, 0.81, p301.MOVE_RIGHT, 1, true), local_0_0("key_E", p421, 0.778, 0.017, p301.FUNC_TOP_RIGHT, 0, false), local_0_0("key_ESC", q421, 0.846, 0.017, p301.FUNC_TOP_RIGHT, 1, false), e1360("input", 0.778, 0.106, 2), e1360("edit", 0.914, 0.017, 5), e1360("visibility", 0.778, 0.195, 6), local_0_0("key_Q", h1360, 0.846, 0.106, p301.FUNC_TOP_RIGHT, 3, true), local_0_0("key_F", g1360, 0.914, 0.106, p301.FUNC_TOP_RIGHT, 4, true), local_0_0("key_F3", k1360, 0.014, 0.017, p301.DEBUG_TOP_LEFT, 0, false), local_0_0("key_F5", l1360, 0.082, 0.017, p301.DEBUG_TOP_LEFT, 1, false), local_0_0("key_TAB", j1360, 0.15, 0.017, p301.DEBUG_TOP_LEFT, 2, false)];
   for (v9 = 1; v9 <= 9; v9 += 1) {
     acc = {
       "id": "hb" + v9.toString(),

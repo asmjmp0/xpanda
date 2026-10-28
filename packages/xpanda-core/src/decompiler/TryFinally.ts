@@ -70,6 +70,11 @@ export interface FinallyPlan {
     inlinedCleanupStartPC?: number;
     inlinedCleanupEndPC?: number;
     /**
+     * 出口前所有内联 cleanup 副本的 pc 区间(多出口时每个 return 前各有一份)。
+     * 只有一份时与 `inlinedCleanupStartPC/EndPC` 相同。
+     */
+    inlinedCleanupCopies?: Array<{ startPC: number; endPC: number }>;
+    /**
      * cleanup 副本落在**循环体尾部**:cleanup/guard 被并进 do-while 的 test,
      * 守卫的非抛出分支是循环回边。副本语句按 pc 区间 `[startPC, endPC)` 定位
      * (共享那份在 handler 里,pc 更小)。
@@ -111,25 +116,18 @@ function instructionShape(instruction: any): string {
 }
 
 /**
- * 在 try 体的出口块里找「cleanup 副本」的第一条指令(编译器把 finally 内联到
- * return 之前的形态)。
+ * 共享 cleanup 块(handler 落点)的指令形状签名。
  *
- * 做法:把共享 cleanup 块(handler 落点)的指令形状序列当签名,在 try 范围里
- * 终止于 `return` 的那个块中按最长公共前缀匹配,要求匹配长度够长、且匹配之后
- * 只剩返回脚手架。找不到返回 null(计划放弃,不影响现有输出)。
+ * cleanup 起点可能只是 `vX = undefined` 之类的一两块(amcl mods/o17 `execute`
+ * 的 handler 落空块只有 `ldundefined; sta v0`),沿单一后继把 cleanup 体拼出来。
  */
-function locateInlinedCleanupStart(
+function sharedCleanupShape(
     cfg: PandaIRCFG,
-    blocks: PandaIRBasicBlock[],
-    startPC: number,
-    endPC: number,
     cleanupBlock: PandaIRBasicBlock,
     guardBlock: PandaIRBasicBlock,
-): { startPC: number; endPC: number } | null {
-    let shared = cleanupBlock.pandaInstructions.map(instructionShape);
+): string[] {
+    const shared = cleanupBlock.pandaInstructions.map(instructionShape);
     while (shared.length > 0 && shared[0].startsWith("mov ")) shared.shift();
-    // cleanup 起点可能只是 `vX = undefined` 之类的一两块(amcl mods/o17 `execute`
-    // 的 handler 落空块只有 `ldundefined; sta v0`),沿单一后继把 cleanup 体拼出来。
     let cursor: PandaIRBasicBlock | null = cleanupBlock;
     const shapedBlocks = new Set<PandaIRBasicBlock>([cleanupBlock]);
     while (shared.length < 6 && cursor && cursor !== guardBlock) {
@@ -143,18 +141,23 @@ function locateInlinedCleanupStart(
         cursor = next;
     }
     while (shared.length > 0 && shared[0].startsWith("mov ")) shared.shift();
+    return shared;
+}
+
+/**
+ * 在终止于 `return` 的出口块前找一份 cleanup 副本。从出口块往前收,
+ * 按指令形状做最长前缀匹配;匹配之后只允许剩 resume 派发的收尾 + 返回。
+ */
+function matchInlinedCleanupCopy(
+    cfg: PandaIRCFG,
+    exitBlock: PandaIRBasicBlock,
+    shared: string[],
+    startPC: number,
+    guardBlock: PandaIRBasicBlock,
+): { startPC: number; endPC: number } | null {
     if (shared.length < 6) return null;
-    // 出口块:try 范围里、终止于 return、pc 最大的那个块
-    let exitBlock: PandaIRBasicBlock | null = null;
-    for (const block of blocks) {
-        const pc = block.getStartPC();
-        if (pc < startPC || pc >= endPC) continue;
-        if (block.getTerminator().kind !== "return") continue;
-        if (!exitBlock || pc > exitBlock.getStartPC()) exitBlock = block;
-    }
-    if (!exitBlock) return null;
-    // 从出口块往前收,直到能匹配上 cleanup 形状(编译器可能把 cleanup 和 return
-    // 拆成了相邻的两个块,amcl l8 `jarInspect` 的 4240 只负责返回)。
+    // 编译器可能把 cleanup 和 return 拆成了相邻的两个块(amcl l8 `jarInspect`
+    // 的 4240 只负责返回),往前最多走 4 个单前驱块。
     const window: Array<{ pc: number; shape: string }> = [];
     let current: PandaIRBasicBlock | null = exitBlock;
     const visited = new Set<PandaIRBasicBlock>();
@@ -199,6 +202,35 @@ function locateInlinedCleanupStart(
         current = predecessors.length === 1 ? predecessors[0] : null;
     }
     return null;
+}
+
+/**
+ * try 体出口前内联的 cleanup 副本(编译器把 finally 内联到每个 return 之前)。
+ * 多出口时每个 `return` 前各有一份,全部返回;没有副本时返回空数组,
+ * 计划放弃、不影响现有输出。
+ */
+function locateInlinedCleanupCopies(
+    cfg: PandaIRCFG,
+    blocks: PandaIRBasicBlock[],
+    startPC: number,
+    endPC: number,
+    cleanupBlock: PandaIRBasicBlock,
+    guardBlock: PandaIRBasicBlock,
+): Array<{ startPC: number; endPC: number }> {
+    const shared = sharedCleanupShape(cfg, cleanupBlock, guardBlock);
+    if (shared.length < 6) return [];
+    const copies: Array<{ startPC: number; endPC: number }> = [];
+    for (const block of blocks) {
+        const pc = block.getStartPC();
+        if (pc < startPC || pc >= endPC) continue;
+        if (block.getTerminator().kind !== "return") continue;
+        const copy = matchInlinedCleanupCopy(cfg, block, shared, startPC, guardBlock);
+        if (!copy) continue;
+        if (copies.some((existing) => existing.startPC === copy.startPC)) continue;
+        copies.push(copy);
+    }
+    copies.sort((left, right) => left.startPC - right.startPC);
+    return copies;
 }
 
 function isHoleLoad(block: PandaIRBasicBlock): boolean {
@@ -466,9 +498,12 @@ export function buildFinallyPlans(cfg: PandaIRCFG): FinallyPlan[] {
         }
         if (eager) {
             // cleanup 副本必须能在 try 体的出口块里按指令形状找到,否则放弃
-            const inlined = locateInlinedCleanupStart(
+            const copies = locateInlinedCleanupCopies(
                 cfg, blocks, tryBlock.startPC, endBlock.getStartPC(), cleanupBlock, guardBlock);
-            if (!inlined) continue;
+            if (copies.length === 0) continue;
+            // 单出口走原来的「剪出同层副本」布局;多出口时每份副本分散在分支尾部,
+            // 由 applyMultiExitEagerCleanup 统一上提。
+            const inlined = copies[copies.length - 1];
             plans.push({
                 id: plans.length,
                 startPC: tryBlock.startPC,
@@ -481,6 +516,7 @@ export function buildFinallyPlans(cfg: PandaIRCFG): FinallyPlan[] {
                 eagerCleanup: true,
                 inlinedCleanupStartPC: inlined.startPC,
                 inlinedCleanupEndPC: inlined.endPC,
+                inlinedCleanupCopies: copies,
             });
             continue;
         }
@@ -921,7 +957,7 @@ function applyEagerCleanupFinally(
     context: FinallyContext | undefined,
     plan: FinallyPlan,
     startList: TYPE.Statement[],
-    startIndex: number,
+    tryStart: number,
 ): boolean {
     const instructionPC = context?.statementInstructionPC;
     const inlinedStart = plan.inlinedCleanupStartPC;
@@ -931,7 +967,7 @@ function applyEagerCleanupFinally(
     // 出口路径(return 的值从 cleanup 之后才装进 acc)。
     let cleanupIndex = -1;
     let afterCleanupIndex = -1;
-    for (let index = startIndex + 1; index < startList.length; index++) {
+    for (let index = tryStart; index < startList.length; index++) {
         const pc = instructionPC.get(startList[index]);
         if (typeof pc !== "number") continue;
         if (cleanupIndex < 0) {
@@ -943,7 +979,7 @@ function applyEagerCleanupFinally(
     if (cleanupIndex < 0) return false;
     if (afterCleanupIndex < 0) afterCleanupIndex = startList.length;
     const finallyStatements = startList.slice(cleanupIndex, afterCleanupIndex);
-    const tryStatements = startList.slice(startIndex + 1, cleanupIndex);
+    const tryStatements = startList.slice(tryStart, cleanupIndex);
     const after = startList.slice(afterCleanupIndex);
     if (finallyStatements.length === 0 || tryStatements.length === 0) return false;
     // 出口路径必须以 return 收尾(中间只允许寄存器搬运/标记)
@@ -957,7 +993,132 @@ function applyEagerCleanupFinally(
         null,
         bodyBlock(finallyStatements),
     );
-    startList.splice(startIndex + 1, startList.length - startIndex - 1, tryNode, ...after);
+    startList.splice(tryStart, startList.length - tryStart, tryNode, ...after);
+    return true;
+}
+
+interface CleanupCopyOwner {
+    list: TYPE.Statement[];
+    index: number;
+    statement: TYPE.Statement;
+}
+
+/**
+ * 语句列表里「try { CLEANUP } catch {}」形式的 cleanup 副本。
+ *
+ * 多出口 finally 的内联副本被编译器放在每条 return 之前,结构化分析会把副本
+ * 自己那个 `try { … } catch {}`(try 表里的 emptyJoin 条目)归约成 TryStatement,
+ * 它由区域归约创建、没有指令 pc;副本的第一条语句才是 cleanup 的首指令。
+ */
+function collectWrappedCleanupCopies(
+    list: TYPE.Statement[],
+    startIndex: number,
+    range: { startPC: number; endPC: number },
+    instructionPC: WeakMap<object, number>,
+    out: CleanupCopyOwner[],
+): void {
+    for (let index = startIndex; index < list.length; index++) {
+        const statement = list[index];
+        if (!statement || typeof statement !== "object" || !TYPE.isStatement(statement)) continue;
+        if (TYPE.isTryStatement(statement) && !statement.finalizer && statement.block.body.length > 0
+            && instructionPC.get(statement.block.body[0]) === range.startPC) {
+            out.push({ list, index, statement });
+            continue;
+        }
+        collectWrappedCleanupCopiesInNode(statement, range, instructionPC, out);
+    }
+}
+
+function collectWrappedCleanupCopiesInNode(
+    node: any,
+    range: { startPC: number; endPC: number },
+    instructionPC: WeakMap<object, number>,
+    out: CleanupCopyOwner[],
+): void {
+    if (!node || typeof node !== "object" || !node.type) return;
+    // 闭包是独立方法的代码,pc 与当前方法无关,不能拿来做归属判断
+    if (TYPE.isFunction(node) || TYPE.isClassDeclaration(node) || TYPE.isClassExpression(node)) return;
+    for (const key of (TYPE.VISITOR_KEYS as any)[node.type] ?? []) {
+        const value = (node as any)[key];
+        if (!Array.isArray(value)) {
+            collectWrappedCleanupCopiesInNode(value, range, instructionPC, out);
+            continue;
+        }
+        // 只把语句列表当候选;表达式参数列表里的语句型节点(箭头函数体)由上面的
+        // Function 判断挡掉。
+        if (value.length > 0 && !value.every((item: any) => item && typeof item === "object" && TYPE.isStatement(item))) {
+            continue;
+        }
+        collectWrappedCleanupCopies(value as TYPE.Statement[], 0, range, instructionPC, out);
+    }
+}
+
+/** 语句是否在所有路径上都离开当前结构(return / throw / break / continue)。 */
+function statementAlwaysLeaves(statement: any): boolean {
+    if (!statement || typeof statement !== "object" || !statement.type) return false;
+    if (TYPE.isReturnStatement(statement) || TYPE.isThrowStatement(statement)
+        || TYPE.isBreakStatement(statement) || TYPE.isContinueStatement(statement)) return true;
+    if (TYPE.isBlockStatement(statement)) {
+        return statement.body.length > 0 && statementAlwaysLeaves(statement.body[statement.body.length - 1]);
+    }
+    if (TYPE.isIfStatement(statement)) {
+        return !!statement.alternate && statementAlwaysLeaves(statement.consequent)
+            && statementAlwaysLeaves(statement.alternate);
+    }
+    return false;
+}
+
+/**
+ * 多出口的 eager finally:cleanup 副本被编译器内联到每个 `return` 之前,结构化
+ * 分析把它们留在各自分支的尾部(例如 `if (cancelled) { CLEANUP; return A } else
+ * { …; CLEANUP; return B }`),没有一份和 try 起点同层,单副本布局定位不到。
+ *
+ * 还原:把 try 体整段包进 `try { … } finally { CLEANUP }`,删除所有内联副本 ——
+ * 分支里的 return 会经由 finally 执行同一份 cleanup。约束:
+ *  - 每一份副本都必须定位到唯一一个 `try { CLEANUP } catch {}` 包装语句;
+ *  - 所有副本逐字相同(同一段源码,寄存器分配一致才会采用);
+ *  - try 体列表的末尾语句必须在所有路径上离开结构,否则后续语句会被罩进 try。
+ */
+function applyMultiExitEagerCleanup(
+    context: FinallyContext | undefined,
+    plan: FinallyPlan,
+    startList: TYPE.Statement[],
+    tryStart: number,
+): boolean {
+    const instructionPC = context?.statementInstructionPC;
+    const copies = plan.inlinedCleanupCopies;
+    if (!instructionPC || !copies || copies.length === 0) return false;
+    if (startList.length <= tryStart) return false;
+    if (!statementAlwaysLeaves(startList[startList.length - 1])) return false;
+    const owners: CleanupCopyOwner[] = [];
+    for (const range of copies) {
+        const found: CleanupCopyOwner[] = [];
+        collectWrappedCleanupCopies(startList, tryStart, range, instructionPC, found);
+        // 区域复制可能让同一段代码出现多份;只处理能唯一定位的情况
+        if (found.length !== 1) return false;
+        owners.push(found[0]);
+    }
+    const reference = generate(owners[0].statement).code;
+    if (owners.some((owner) => generate(owner.statement).code !== reference)) return false;
+    const perList = new Map<TYPE.Statement[], number[]>();
+    for (const owner of owners) {
+        const indices = perList.get(owner.list) ?? [];
+        if (indices.includes(owner.index)) return false;
+        indices.push(owner.index);
+        perList.set(owner.list, indices);
+    }
+    for (const [list, indices] of perList) {
+        indices.sort((left, right) => right - left);
+        for (const index of indices) list.splice(index, 1);
+    }
+    const body = startList.slice(tryStart);
+    if (body.length === 0) return false;
+    const tryNode = TYPE.tryStatement(
+        TYPE.blockStatement(body),
+        null,
+        bodyBlock([owners[0].statement]),
+    );
+    startList.splice(tryStart, startList.length - tryStart, tryNode);
     return true;
 }
 
@@ -1079,7 +1240,9 @@ function applyPlans(
             const startList = start.list;
             const tryStart = start.byPC ? start.index : (start.inExpression ? start.index : start.index + 1);
             if (plan.eagerCleanup) {
-                applied = applyEagerCleanupFinally(context, plan, startList, start.index);
+                applied = applyEagerCleanupFinally(context, plan, startList, tryStart)
+                    || ((plan.inlinedCleanupCopies?.length ?? 0) > 1
+                        && applyMultiExitEagerCleanup(context, plan, startList, tryStart));
                 if (!applied) reason = "eager cleanup not located";
                 break left;
             }

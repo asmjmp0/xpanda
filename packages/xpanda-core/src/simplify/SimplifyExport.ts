@@ -117,6 +117,12 @@ export class SimplifyExport {
         // 尾块消除。必须放在 simplifyTail 之后:守卫链→switch 需要分支体保留
         // 末尾的 return,提前删掉会让 switch 合成失去形态。
         new TailMergeSimplify().simplify(node);
+        // 结构改写之后才相邻的 `X = []; X[0] = …` 在这里补折一次,否则数组元素
+        // 要等到下面的 ObjectLiteralSimplify 才成型,外层对象字段已经无法合并。
+        SyntaxRewriteSimplify.foldArrayLiterals(node);
+        // 数组元素成型后,`v6 = [<obj>]; v5.files = v6` 才能把数组搬进字段赋值;
+        // 再一次 ObjectLiteralSimplify 才能把字段并进外层对象字面量。
+        TempVariableSimplify.foldNextReadAssignments(node);
         // 重复尾块消除之后,再把尾部才成型的三目字段值(`topInsetVp: v0` 前面的
         // `v0 = C ? A : B` 被 foldNextReadAssignments 折进属性赋值)合并进对象字面量。
         // 必须在 TailMergeSimplify 之后:否则共享尾块的两份副本会被合并得不一样,

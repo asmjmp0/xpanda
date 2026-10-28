@@ -56,7 +56,7 @@ export function o1195(p0, p1) {
   }
 }
 export function u996(p0, p1) {
-  let v2, v8 /*l786*/, v10 /*g50*/, v11, acc;
+  let v2, v8 /*l786*/, v10 /*g50*/, v11;
   let v0 = [];
   try {
     v2 = v0;
@@ -66,8 +66,7 @@ export function u996(p0, p1) {
     for (v8 of g50.listFileSync(p0 + "/mc-install-work")) {
       v2 = v0;
       if (v8.endsWith(".json")) {
-        acc = l786(v8);
-        v10 = acc;
+        v10 = l786(v8);
         if (v10 === v8) {
           try {
             if (g50.lstatSync(p0 + "/mc-install-work" + "/" + v8).isFile() && !g50.lstatSync(p0 + "/mc-install-work" + "/" + v8).isSymbolicLink()) {

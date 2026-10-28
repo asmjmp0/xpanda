@@ -73,8 +73,7 @@ export class ChannelInfoService {
   }
   extractDescription(p0) {
     let v8;
-    let v9 = this.asRecord(p0.metadata);
-    let v5 = this.asString(this.asRecord(v9?.channelMetadataRenderer)?.description);
+    let v5 = this.asString(this.asRecord(this.asRecord(p0.metadata)?.channelMetadataRenderer)?.description);
     if (v5) {
       return v5;
     }
@@ -82,7 +81,7 @@ export class ChannelInfoService {
     return (v8 ? this.readText(v8.description) : "") || "";
   }
   extractBannerUrl(p0) {
-    let v8, v9, v12, v16, v17, v18, acc;
+    let v8, v9, v12, v16, v17, acc;
     let v5 = this.asRecord(p0.header);
     if (!v5) {
       return "";
@@ -99,8 +98,7 @@ export class ChannelInfoService {
     }
     v12 = ["c4TabbedHeaderRenderer", "interactiveTabbedHeaderRenderer", "carouselHeaderRenderer"];
     for (v16 = 0; v16 < v12.length; v16 += 1) {
-      v18 = this.asRecord(v5[v12[v16]]);
-      v17 = this.pickLargestImageUrl(this.asArray(this.asRecord(v18?.banner)?.thumbnails));
+      v17 = this.pickLargestImageUrl(this.asArray(this.asRecord(this.asRecord(v5[v12[v16]])?.banner)?.thumbnails));
       if (v17) {
         return this.normalizeUrl(v17);
       }
@@ -109,8 +107,7 @@ export class ChannelInfoService {
   }
   extractChannelName(p0) {
     let v4;
-    let v8 = this.asRecord(p0.metadata);
-    let v9 = this.asString(this.asRecord(v8?.channelMetadataRenderer)?.title);
+    let v9 = this.asString(this.asRecord(this.asRecord(p0.metadata)?.channelMetadataRenderer)?.title);
     if (v9) {
       return v9;
     }
@@ -119,8 +116,7 @@ export class ChannelInfoService {
   }
   extractHandle(p0) {
     let v4, acc;
-    let v9 = this.asRecord(p0.metadata);
-    let v7 = this.handleFromVanityUrl(this.asString(this.asRecord(v9?.channelMetadataRenderer)?.vanityChannelUrl));
+    let v7 = this.handleFromVanityUrl(this.asString(this.asRecord(this.asRecord(p0.metadata)?.channelMetadataRenderer)?.vanityChannelUrl));
     if (v7) {
       return v7;
     }

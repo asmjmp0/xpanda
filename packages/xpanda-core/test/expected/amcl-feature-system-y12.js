@@ -29,12 +29,20 @@ export class p995 {
         }]
       };
       try {
-        if (!(await d398.instance().createAndWait(v5)).success) {
-          try {
-            g50.unlinkSync(v4);
-          } catch (catchAcc) {}
-          throw new Error("图片下载失败");
-        }
+        v5 = await d398.instance().createAndWait(v5);
+      } catch (catchAcc) {
+        try {
+          g50.unlinkSync(v4);
+        } catch (catchAcc) {}
+        throw catchAcc;
+      }
+      if (!v5.success) {
+        try {
+          g50.unlinkSync(v4);
+        } catch (catchAcc) {}
+        throw new Error("图片下载失败");
+      }
+      try {
         v15 = photoAccessHelper.getPhotoAccessHelper(p0);
         v16 = {
           "title": "AMCL_" + Date.now(),
@@ -45,22 +53,15 @@ export class p995 {
         v0 = await v15.showAssetsCreationDialog([fileUri.getUriFromPath(v4)], [v16]);
         v7 = 0;
         if (!v0 || v0.length === 0) {
-          try {
-            g50.unlinkSync(v4);
-          } catch (catchAcc) {}
           return "cancelled";
         }
         p995.copyInto_(v4, v0[v7]);
         hilog.info(v7, local_0_0, "saved image to album");
-        try {
-          g50.unlinkSync(v4);
-        } catch (catchAcc) {}
         return "saved";
-      } catch (catchAcc) {
+      } finally {
         try {
           g50.unlinkSync(v4);
         } catch (catchAcc) {}
-        throw catchAcc;
       }
     } else {
       throw new Error("不支持的图片地址");

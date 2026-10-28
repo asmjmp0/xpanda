@@ -352,8 +352,7 @@ export class q1164 {
       throw new Error("Window drawable area unavailable");
     }
     v11 = m1163(v6, v6.drawableRect);
-    v14 = [v6.id, v6.displayId, v11.x, v11.y, v6.drawableRect.width, v6.drawableRect.height, this.win.getWindowStatus()];
-    v14[7] = this.decorated ? 1 : v5;
+    v14 = [v6.id, v6.displayId, v11.x, v11.y, v6.drawableRect.width, v6.drawableRect.height, this.win.getWindowStatus(), this.decorated ? 1 : v5];
     if (this.resizable) {
       v5 = 1;
     }

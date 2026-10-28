@@ -2028,11 +2028,7 @@ class ContentDetailPage extends ViewPU {
     }
     this.followController = undefined;
     try {
-      v8 = [];
-      v8[0] = (this.controller === null || this.controller === undefined ? undefined : this.controller.load(this.kind, this.activeContentId))
-        ?? Promise.resolve();
-      v8[1] = (this.answersController === null || this.answersController === undefined ? undefined : this.answersController.refresh())
-        ?? Promise.resolve();
+      v8 = [(this.controller === null || this.controller === undefined ? undefined : this.controller.load(this.kind, this.activeContentId)) ?? Promise.resolve(), (this.answersController === null || this.answersController === undefined ? undefined : this.answersController.refresh()) ?? Promise.resolve()];
       await Promise.all(v8);
     } finally {
       this.refreshingAnswers = false;
@@ -3753,14 +3749,13 @@ class ContentDetailPage extends ViewPU {
         "moduleName": "entry"
       });
       SymbolGlyph.fontSize(16);
-      v2 = [];
-      v2[0] = local_1_1.answerOverscrollTriggered() ? local_1_1.resolvedThemeColor : {
+      v2 = [local_1_1.answerOverscrollTriggered() ? local_1_1.resolvedThemeColor : {
         "id": 50331664,
         "type": 10001,
         "params": [],
         "bundleName": "com.github.zhuoyi233.zhplus",
         "moduleName": "entry"
-      };
+      }];
       SymbolGlyph.fontColor(v2);
     }, SymbolGlyph);
     local_1_1.observeComponentCreation2(function (p0, p1) {
@@ -6172,14 +6167,13 @@ class ContentDetailPage extends ViewPU {
         "moduleName": "entry"
       });
       SymbolGlyph.fontSize(20);
-      v2 = [];
-      v2[0] = local_1_0.contentFavorited ? local_1_0.resolvedThemeColor : {
+      v2 = [local_1_0.contentFavorited ? local_1_0.resolvedThemeColor : {
         "id": 50331664,
         "type": 10001,
         "params": [],
         "bundleName": "com.github.zhuoyi233.zhplus",
         "moduleName": "entry"
-      };
+      }];
       SymbolGlyph.fontColor(v2);
     }, SymbolGlyph);
     Button.pop();
@@ -7330,8 +7324,7 @@ class ContentDetailPage extends ViewPU {
       let v2;
       SymbolGlyph.create(local_1_4);
       SymbolGlyph.fontSize(24);
-      v2 = [];
-      v2[0] = local_1_3 ? onThemeColor(local_1_5.resolvedThemeColor) : local_1_5.resolvedThemeColor;
+      v2 = [local_1_3 ? onThemeColor(local_1_5.resolvedThemeColor) : local_1_5.resolvedThemeColor];
       SymbolGlyph.fontColor(v2);
     }, SymbolGlyph);
     Stack.pop();
@@ -7410,14 +7403,13 @@ class ContentDetailPage extends ViewPU {
       let v2;
       SymbolGlyph.create(local_1_4);
       SymbolGlyph.fontSize(22);
-      v2 = [];
-      v2[0] = local_1_5 ? local_1_6.resolvedThemeColor : {
+      v2 = [local_1_5 ? local_1_6.resolvedThemeColor : {
         "id": 50331664,
         "type": 10001,
         "params": [],
         "bundleName": "com.github.zhuoyi233.zhplus",
         "moduleName": "entry"
-      };
+      }];
       SymbolGlyph.fontColor(v2);
     }, SymbolGlyph);
     local_1_6.observeComponentCreation2(function (p0, p1) {
@@ -8158,14 +8150,13 @@ class ContentDetailPage extends ViewPU {
         "moduleName": "entry"
       });
       SymbolGlyph.fontSize(20);
-      v2 = [];
-      v2[0] = local_1_0.following ? local_1_0.resolvedThemeColor : {
+      v2 = [local_1_0.following ? local_1_0.resolvedThemeColor : {
         "id": 50331664,
         "type": 10001,
         "params": [],
         "bundleName": "com.github.zhuoyi233.zhplus",
         "moduleName": "entry"
-      };
+      }];
       SymbolGlyph.fontColor(v2);
     }, SymbolGlyph);
     local_1_0.observeComponentCreation2(function (p0, p1) {
