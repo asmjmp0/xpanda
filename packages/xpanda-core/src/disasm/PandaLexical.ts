@@ -7,10 +7,15 @@ import { PandaMethod } from "../file/method/PandaMethod";
 import type { PandaClass } from "../file/clazz/PandaClass";
 
 /**
- * 词法环境实例:name 是变量前缀(如 `local_1` / `local_1_2`),占位变量名为 `name + "_" + index`
+ * 词法环境实例:name 是变量前缀(如 `local_1` / `local_1_2` / `sendable_0`),占位变量名为 `name + "_" + index`。
+ * kind 区分两条运行时独立的链:regular lexenv(newLexEnv/popLexEnv/ld·stlexvar)与
+ * sendable env(newsendableenv/ld·stsendablevar)。ldsendablevar/stsendablevar 的
+ * level 相对 sendable 链,不能和 regular 链混在一个栈里解析(否则 stlexvar 会落到
+ * sendable 环境上,两个类共用同一个槽名)。
  */
 interface LexEnvInfo {
     name: string;
+    kind: "lexical" | "sendable";
 }
 
 /**
@@ -64,12 +69,14 @@ export class PandaLexical {
      * 词法环境实例。名字是编译器预留的 `local_<depth>` / `sendable_<depth>`;
      * 同一层级的多个环境(例如连续定义的多个 class 各自的 self-reference 环境)
      * 追加序号 `_2` / `_3` 区分,否则同名的 `let local_1_0` 会在嵌套作用域里互相
-     * 遮蔽,引用被绑定到错误的环境(甚至让外层声明看起来“未使用”而被删掉)。
+     * 遮蔽,引用被绑定到错误的环境(甚至让外层声明看起来"未使用"而被删掉)。
+     * depth 是链内深度(regular lexenv 与 sendable env 各自计数)。
      */
-    private makeEnvName(instruction: PandaInstruction, depth: number, counters: Map<number, number>): string {
-        const count = counters.get(depth) ?? 0;
-        counters.set(depth, count + 1);
+    private makeEnvName(instruction: PandaInstruction, depth: number, counters: Map<string, number>): string {
         const kind = instruction.isSendAble ? "sendable" : "local";
+        const key = kind + "_" + depth;
+        const count = counters.get(key) ?? 0;
+        counters.set(key, count + 1);
         return kind + "_" + depth + (count === 0 ? "" : "_" + (count + 1));
     }
 
@@ -80,28 +87,42 @@ export class PandaLexical {
         stack: LexEnvInfo[],
         startLevel: number,
         desc: PandaLexicalDescription,
-        counters: Map<number, number>,
+        counters: Map<string, number>,
     ): void {
         if (instruction.kind === "newLexEnv") {
+            const kind: LexEnvInfo["kind"] = instruction.isSendAble ? "sendable" : "lexical";
+            // 链内深度:两条链各自从 0 开始,与应用侧看到的运行时 level 语义一致
+            const depth = stack.filter((env) => env.kind === kind).length;
             desc.recordLevel(instruction.pc, stack.length);
             let name = desc.getName(instruction.pc);
             if (name === undefined) {
-                name = this.makeEnvName(instruction, stack.length, counters);
+                name = this.makeEnvName(instruction, depth, counters);
                 desc.recordName(instruction.pc, name);
             }
-            stack.push({ name });
+            stack.push({ name, kind });
             return;
         }
         if (instruction.kind === "popLexEnv" && !ignorePop) {
+            // popLexEnv 只退 regular lexenv 链,不触碰 sendable env;
             // 不能低于方法入口层级(闭包方法入口时已经带着外层词法环境)
-            if (stack.length > startLevel) stack.pop();
+            const lexicalCount = stack.filter((env) => env.kind === "lexical").length;
+            if (lexicalCount > startLevel) {
+                let last = -1;
+                for (let i = stack.length - 1; i >= 0; i--) {
+                    if (stack[i].kind === "lexical") { last = i; break; }
+                }
+                if (last >= 0) stack.splice(last, 1);
+            }
             return;
         }
         if (instruction.kind === "storeLex" || instruction.kind === "loadLex") {
             desc.recordLevel(instruction.pc, stack.length);
             // `lexLevel` 是相对当前环境的层数:0 = 当前环境,1 = 外层……
-            const target = stack.length - instruction.lexLevel - 1;
-            const env = target >= 0 ? stack[target] : undefined;
+            // 只在同一条链上解析 sendable 与 regular 的 level 互不相干
+            const chain: LexEnvInfo["kind"] = instruction.isSendAble ? "sendable" : "lexical";
+            const entries = stack.filter((env) => env.kind === chain);
+            const target = entries.length - instruction.lexLevel - 1;
+            const env = target >= 0 ? entries[target] : undefined;
             if (env && desc.getName(instruction.pc) === undefined) {
                 desc.recordName(instruction.pc, env.name);
             }
@@ -114,7 +135,7 @@ export class PandaLexical {
         stack: LexEnvInfo[],
         startLevel: number,
         desc: PandaLexicalDescription,
-        counters: Map<number, number>,
+        counters: Map<string, number>,
     ): LexEnvInfo[] {
         const cur = stack.slice();
         const ignorePop = this.checkAsyncFunctionResolveContain(block);
@@ -131,7 +152,7 @@ export class PandaLexical {
         pc: number,
         startLevel: number,
         desc: PandaLexicalDescription,
-        counters: Map<number, number>,
+        counters: Map<string, number>,
     ): LexEnvInfo[] {
         const cur = stack.slice();
         const ignorePop = this.checkAsyncFunctionResolveContain(block);
@@ -158,7 +179,7 @@ export class PandaLexical {
         pandaIRCFG: PandaIRCFG,
         inheritedStack: LexEnvInfo[],
         desc: PandaLexicalDescription,
-        counters: Map<number, number>,
+        counters: Map<string, number>,
     ): Map<PandaIRBasicBlock, LexEnvInfo[]> {
         const stacks = new Map<PandaIRBasicBlock, LexEnvInfo[]>();
         const queue: PandaIRBasicBlock[] = [];
@@ -169,7 +190,7 @@ export class PandaLexical {
         };
         enqueue(pandaIRCFG.getEntryBlock(), inheritedStack);
 
-        const startLevel = inheritedStack.length;
+        const startLevel = inheritedStack.filter((env) => env.kind === "lexical").length;
         const tryBlocks = pandaIRCFG.getPandaMethod().methodCode?.pandaMethodTryBlocks ?? [];
         const seededHandlers = new Set<PandaIRBasicBlock>();
         let progress = true;
@@ -265,9 +286,9 @@ export class PandaLexical {
         }
 
         // 方法入口环境:闭包方法从定义处的词法环境开始
-        const startLevel = inheritedStack.length;
+        const startLevel = inheritedStack.filter((env) => env.kind === "lexical").length;
         // 同一层级的多个环境需要不同的变量名(见 makeEnvName)
-        const counters = new Map<number, number>();
+        const counters = new Map<string, number>();
         // 按 CFG(含 try 表的异常边)预计算每个基本块的入口环境栈:
         // 线性 pc 顺序在 popLexEnv 之后的分支上会算错。
         const blockStacks = this.computeEnvStacks(pandaIRCFG, inheritedStack, desc, counters);

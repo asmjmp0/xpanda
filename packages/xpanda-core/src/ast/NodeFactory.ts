@@ -6,7 +6,9 @@ import { formatLongLogicalChains } from './FormatCode';
 
 export class NodeFactory {
     public static parse(code:string):TYPE.Program{
-        return parser.parse(code,{sourceType:"module",allowUndeclaredExports:true}).program;
+        // 反编译输出里会带 `@Sendable`(送线程共享类)等类装饰器
+        return parser.parse(code,{sourceType:"module",allowUndeclaredExports:true,
+            plugins:[["decorators",{decoratorsBeforeExport:true}]]}).program;
     }
 
     public static generate(node:TYPE.Node):string{
@@ -105,6 +107,10 @@ export class NodeFactory {
 
     public static classExpressionNode(id: TYPE.Identifier | null | undefined, superClass: TYPE.Expression | null | undefined, body: TYPE.ClassBody, decorators?: Array<TYPE.Decorator> | null):TYPE.ClassExpression{
         return TYPE.classExpression(id,superClass,body,decorators);
+    }
+
+    public static decoratorNode(expression: TYPE.Expression):TYPE.Decorator{
+        return TYPE.decorator(expression);
     }
 
     public static spreadElementNode(argument: TYPE.Expression):TYPE.SpreadElement{

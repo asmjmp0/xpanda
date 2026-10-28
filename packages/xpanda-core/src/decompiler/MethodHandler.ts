@@ -430,18 +430,11 @@ const HANDLES: Record<string, Handle> = {
         const bodyArray = codeGenerator.arrayObject();
         if (ins.isSendClass) {
             for (const sv of ins.sendClassVariableDescriptions) {
-                const literal = sv.variableValue;
-                let valueObject: any = null;
-                switch (literal.tag) {
-                    case LiteralTag.DOUBLE:
-                    case LiteralTag.FLOAT:
-                    case LiteralTag.INTEGER:
-                        valueObject = factory.numberLiteralNode(literal.getValue());
-                        break;
-                    default:
-                        throw new PandaDecompileException(LiteralTag[literal.tag] + " not support!");
-                }
-                codeGenerator.addToArray(bodyArray, factory.classPropertyNode(factory.identifierNode(sv.variableName) as any, valueObject));
+                // sendable class 字面量尾部的嵌套 literal 是「字段名 + SharedFieldType 位掩码」
+                // (NUMBER=1/STRING=2/BOOLEAN=4/SENDABLE=8/BIG_INT=16/GENERIC=32/NULL=64/UNDEFINED=128),
+                // 掩码描述的是字段类型而不是初始值(真实赋值在构造器/static_initializer 里),
+                // 这里还原成无初始化的类字段,避免输出 `handler = 32;` 这类伪代码。
+                codeGenerator.addToArray(bodyArray, factory.classPropertyNode(factory.identifierNode(sv.variableName) as any, null));
             }
         }
         codeGenerator.addToArray(bodyArray, constructorMethodNode);
@@ -454,7 +447,10 @@ const HANDLES: Record<string, Handle> = {
             codeGenerator.addToArray(bodyArray, factory.classMethodNode(factory.identifierNode(desc.protoMethodName) as any, methodNode, "method", false, true));
         }
         const body = factory.classBodyNode(bodyArray as any);
-        const clazz = factory.classExpressionNode(classId as any, superClass as any, body);
+        // sendable 类带 `@Sendable` 装饰器(ArkTS 源码语义;由 definesendableclass 指令决定,
+        // 构造器里的 "use sendable" 只是编译器标记)
+        const decorators = ins.isSendClass ? [factory.decoratorNode(factory.identifierNode("Sendable"))] : null;
+        const clazz = factory.classExpressionNode(classId as any, superClass as any, body, decorators);
         assignAcc(mh, clazz, node);
         return false;
     },

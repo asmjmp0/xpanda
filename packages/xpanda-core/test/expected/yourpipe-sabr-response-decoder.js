@@ -18,7 +18,7 @@ import { YTCoreLogger } from "@normalized:N&&&youtube_core/src/main/ets/common/Y
 import { readProtoVarint } from "@normalized:N&&&youtube_core/src/main/ets/common/ProtoUtil&1.0.0";
 import { sabrReadFields } from "@normalized:N&&&youtube_core/src/main/ets/extractor/sabr/SabrProto&1.0.0";
 import { umpReadAll } from "@normalized:N&&&youtube_core/src/main/ets/extractor/sabr/UmpReader&1.0.0";
-let local_0_2, local_0_3, local_0_4, local_0_5, local_0_6, local_0_9, local_0_10, local_0_11, local_0_13, local_0_14, local_0_15;
+let local_0_4, local_0_11;
 let local_0_12 = function (p0, p1, p2) {
   let v14, v17;
   let v7 = [];
@@ -117,9 +117,9 @@ let local_0_7 = function (p0) {
   }
   return v4;
 };
-local_0_14 = function (p0) {
+let local_0_14 = function (p0) {
   let v11;
-  let v4 = new local_0_15 /*FormatByteRange*/();
+  let v4 = new FormatByteRange /*FormatByteRange*/();
   for (v11 of sabrReadFields(p0)) {
     if ((v11.number === 1 || v11.number === 3) && v11.wireType === WIRE_VARINT) {
       v4.start = v11.varint;
@@ -129,7 +129,7 @@ local_0_14 = function (p0) {
   }
   return v4;
 };
-local_0_9 = function (p0) {
+let local_0_9 = function (p0) {
   let v11, v14, v19;
   let v4 = new SabrFormatInitMeta();
   for (v11 of sabrReadFields(p0)) {
@@ -169,7 +169,7 @@ local_0_9 = function (p0) {
   }
   return v4;
 };
-local_0_2 = function (p0) {
+let local_0_2 = function (p0) {
   let v11;
   let v4 = new SabrNextRequestPolicy();
   for (v11 of sabrReadFields(p0)) {
@@ -197,7 +197,7 @@ local_0_2 = function (p0) {
   }
   return v4;
 };
-local_0_3 = function (p0) {
+let local_0_3 = function (p0) {
   let v11;
   let v4 = new SabrRedirectInfo();
   for (v11 of sabrReadFields(p0)) {
@@ -207,7 +207,7 @@ local_0_3 = function (p0) {
   }
   return v4;
 };
-local_0_5 = function (p0) {
+let local_0_5 = function (p0) {
   let v10, v11, v12, v17, v18, v19, v20, v21, acc;
   let v9 = sabrReadFields(p0)[Symbol.iterator]();
   do {
@@ -236,7 +236,7 @@ local_0_5 = function (p0) {
   }
   return acc;
 };
-local_0_10 = function (p0) {
+let local_0_10 = function (p0) {
   let v10, v11, v12;
   for (v10 of sabrReadFields(p0)) {
     v11 = v10;
@@ -244,9 +244,9 @@ local_0_10 = function (p0) {
   }
   return -1;
 };
-local_0_6 = function (p0) {
+let local_0_6 = function (p0) {
   let v11;
-  let v4 = new local_0_13 /*StreamProtectionResult*/();
+  let v4 = new StreamProtectionResult /*StreamProtectionResult*/();
   for (v11 of sabrReadFields(p0)) {
     if (v11.number === 1 && v11.wireType === WIRE_VARINT) {
       v4.status = v11.varint | 0;
@@ -321,18 +321,18 @@ class OpenMediaAssembly {
     this.header = p0;
   }
 }
-local_0_13 = class StreamProtectionResult {
+class StreamProtectionResult {
   constructor() {
     this.status = -1;
     this.maxRetries = -1;
   }
-};
-local_0_15 = class FormatByteRange {
+}
+class FormatByteRange {
   constructor() {
     this.start = -1;
     this.end = -1;
   }
-};
+}
 export class SabrPartProcessor {
   constructor(p0, p1) {
     this.decoded = new SabrDecodedResponse();

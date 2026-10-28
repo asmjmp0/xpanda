@@ -27,7 +27,7 @@ import { UIConfig } from "@normalized:N&&&entry/src/main/ets/common/AppState&";
 import deviceInfo from "@ohos:deviceInfo";
 import i18n from "@ohos:i18n";
 import { secondToTime } from "@normalized:N&&&mediaservice/Index&1.0.0";
-let local_0_0, local_0_1, local_0_4, local_0_5, local_0_6, local_0_7, local_0_8, local_0_9, local_0_10, local_0_11, local_0_12, local_0_13, local_0_14, local_0_15, local_0_16, local_0_17, local_0_18, local_0_19, local_0_20, local_0_21, local_0_22, local_0_23, local_0_24, local_0_25, local_0_26, local_0_27, local_0_28, local_0_29, local_0_30, local_0_31, local_0_32;
+let local_0_1, local_0_4, local_0_5, local_0_6, local_0_7, local_0_8, local_0_9, local_0_10, local_0_11, local_0_12, local_0_13, local_0_14, local_0_15, local_0_16, local_0_17, local_0_18, local_0_19, local_0_20, local_0_21, local_0_22, local_0_23, local_0_24, local_0_25, local_0_26, local_0_27, local_0_28, local_0_29, local_0_30, local_0_31, local_0_32;
 let local_0_2 = undefined;
 let local_0_3 = undefined;
 if (!("finalizeConstruction" in ViewPU.prototype)) {
@@ -128,7 +128,7 @@ export class VideoPlayer extends ViewPU {
     local_1_0.__isWaitingForDualBuffer = new ObservedPropertySimplePU(false, local_1_0, "isWaitingForDualBuffer");
     local_1_0.__currentTime = new ObservedPropertySimplePU(0, local_1_0, "currentTime");
     local_1_0.__durationTime = new ObservedPropertySimplePU(0, local_1_0, "durationTime");
-    local_1_0.keepScreenListener = new local_0_0 /*KeepScreenOnStateListener*/(local_1_0);
+    local_1_0.keepScreenListener = new KeepScreenOnStateListener /*KeepScreenOnStateListener*/(local_1_0);
     local_1_0.progressListener = function (p0, p1) {
       let acc;
       local_1_0.currentTime = p0;
@@ -4741,11 +4741,11 @@ export class VideoPlayer extends ViewPU {
     this.updateDirtyElements();
   }
 }
-local_0_0 = class KeepScreenOnStateListener {
+class KeepScreenOnStateListener {
   constructor(p0) {
     this.owner = p0;
   }
   onStateChange(p0, p1) {
     this.owner._onKeepScreenStateChanged(p1);
   }
-};
+}

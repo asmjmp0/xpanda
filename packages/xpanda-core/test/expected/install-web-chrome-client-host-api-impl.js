@@ -6,7 +6,7 @@
 import Log from "@package:pkg_modules/.ohpm/@ohos+flutter_ohos@zl5sgaygqsqrqqtvxitwwita9ctgsvucjvbitoqeitg=/pkg_modules/@ohos/flutter_ohos/src/main/ets/util/Log";
 import { WebChromeClientHostApi } from "@package:pkg_modules/.ohpm/webview_flutter_ohos@63rxyovf6soepjs+sja1e6+fkzygj1xf5z4crizkc8u=/pkg_modules/webview_flutter_ohos/src/main/ets/io.flutter.plugins/webview_flutter/GeneratedOhosWebView";
 import web_webview from "@ohos:web.webview";
-let local_0_0, local_0_2;
+let local_0_2;
 if (!("finalizeConstruction" in ViewPU.prototype)) {
   Reflect.set(ViewPU.prototype, "finalizeConstruction", function () {});
 }
@@ -41,7 +41,7 @@ export class WebChromeClientHostApiImpl extends WebChromeClientHostApi {
 export class WebChromeClientCreator {
   constructor() {}
   createWebChromeClient(p0) {
-    return new local_0_0(p0);
+    return new WebChromeClientImpl(p0);
   }
 }
 class NewWebView extends ViewPU {
@@ -100,7 +100,7 @@ class NewWebView extends ViewPU {
     this.updateDirtyElements();
   }
 }
-local_0_0 = class WebChromeClientImpl {
+class WebChromeClientImpl {
   constructor(p0) {
     this.returnValueForOnShowFileChooser = false;
     this.returnValueForOnConsoleMessage = false;
@@ -235,7 +235,7 @@ local_0_0 = class WebChromeClientImpl {
     }
     return false;
   }
-};
+}
 class newWindowWebViewClient {
   constructor() {}
   onReceivedHttpError(p0, p1, p2) {

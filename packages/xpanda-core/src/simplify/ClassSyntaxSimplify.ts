@@ -516,9 +516,12 @@ export class ClassSyntaxSimplify implements ISimplify {
 
     /**
      * 静态初始化函数体 → static 字段列表。每个语句都必须是 `this.NAME = 右值`;
-     * 右值不能引用 this(保守)、类接收者链上的名字(搬进类体后读到正在初始化的
-     * 类绑定,TDZ/undefined 语义会变)、arguments 与 new.target(函数体内的绑定,
-     * 字段初始化器里语义不同);与类体已有成员同名时保守放弃。
+     * 右值不能引用 this(保守)、arguments 与 new.target(函数体内的绑定,字段初始化器
+     * 里语义不同);与类体已有成员同名时保守放弃。
+     * 右值引用接收者链名(编译器把类值搬进 sendable/lexenv 槽后自引用槽名,如
+     * `this.INSTANCE = new sendable_0_0()`)时:链上所有名字在调用点都持有类值,
+     * 搬进类体后改名为类表达式自身的绑定——类表达式的名字绑定在类定义期间已初始化,
+     * `static x = new Name()` 与源码等价;类表达式没有合法绑定名时保守放弃。
      * 右值允许不纯:解析器已保证求值位置与原调用一致,副作用顺序不变。
      */
     private static buildStaticInitProperties(
@@ -547,9 +550,6 @@ export class ClassSyntaxSimplify implements ISimplify {
                 return true;
             });
             if (blocked) return null;
-            for (const ref of collectIdentifierNames(rhs)) {
-                if (receiverNames.has(ref)) return null;
-            }
             const exists = clazz.body.body.some((member) => {
                 if (!isClassProperty(member) && !isClassMethod(member)) return false;
                 const key = member.key;
@@ -563,7 +563,26 @@ export class ClassSyntaxSimplify implements ISimplify {
             prop.static = true;
             props.push(prop);
         }
-        return props.length > 0 ? props : null;
+        if (props.length === 0) return null;
+        // 自引用:接收者链名 → 类表达式绑定(必须在确认所有语句都能搬移后才改写,
+        // 提前改写而中途放弃会留下被改坏的右值)
+        let referencesReceiver = false;
+        for (const prop of props) {
+            for (const ref of collectIdentifierNames(prop.value as TYPE.Node)) {
+                if (receiverNames.has(ref)) { referencesReceiver = true; break; }
+            }
+            if (referencesReceiver) break;
+        }
+        if (referencesReceiver) {
+            const classId = clazz.id;
+            if (!classId || !isIdentifier(classId)) return null;
+            for (const prop of props) {
+                for (const ref of receiverNames) {
+                    replaceNameRefs(prop.value as TYPE.Node, ref, classId);
+                }
+            }
+        }
+        return props;
     }
 
     /**
@@ -598,7 +617,8 @@ export class ClassSyntaxSimplify implements ISimplify {
                 if (clazz.superClass && isIdentifier(clazz.superClass) && clazz.superClass.name === "hole") {
                     clazz.superClass = null;
                 }
-                list[i] = classDeclaration(clazz.id, clazz.superClass, clazz.body, clazz.decorators);
+                const decl = classDeclaration(clazz.id, clazz.superClass, clazz.body, clazz.decorators);
+                list[i] = decl;
                 changed = true;
             }
         };
@@ -681,6 +701,9 @@ export class ClassSyntaxSimplify implements ISimplify {
             if (decl) {
                 const index = program.body.indexOf(decl);
                 if (index < 0) continue; // 防御:同一绑定重复导出时只折第一次
+                // `export default @dec class {}` 不是合法装饰器位置(装饰器必须在 export 前),
+                // 带装饰器的类(如 @Sendable)保持 `export default Name;` 独立语句
+                if (isDecoratedClass(decl)) continue;
                 program.body[index] = exportDefaultDeclaration(decl);
                 program.body.splice(i, 1);
                 folded.add(name);
@@ -725,6 +748,9 @@ export class ClassSyntaxSimplify implements ISimplify {
             for (const decl of foldedDecls) {
                 const index = program.body.indexOf(decl);
                 if (index < 0) continue; // 防御:同一绑定重复导出时只折第一次
+                // `export @dec class {}` 不是合法装饰器位置(装饰器必须在 export 前),
+                // 带装饰器的类(如 @Sendable)保持 `export { Name };` 独立语句
+                if (isDecoratedClass(decl)) continue;
                 program.body[index] = exportNamedDeclaration(decl, [], null);
             }
             const currentIndex = program.body.indexOf(stmt);
@@ -1094,15 +1120,46 @@ function buildFold(
     return validateFold(program, fold) ? fold : null;
 }
 
-function countNameRefsOutside(node: TYPE.Node, name: string, exclude: Set<TYPE.Node>): number {
+/**
+ * 统计别名槽在「立即执行」位置(函数体之外)的引用数。
+ * 这些读取在模块初始化阶段求值时序敏感:类绑定在定义处才初始化,把定义之前的读取
+ * 改名会变成 TDZ 错误,必须放弃折叠。函数体(方法/闭包)是延迟执行——方法调用发生在
+ * 模块初始化完成之后,槽里必然是类值,可以安全改名为类绑定(见 renameAliasReferences)。
+ */
+function countImmediateRefsOutside(program: TYPE.Program, name: string, exclude: Set<TYPE.Node>): number {
     let count = 0;
-    walkNode(node, (n) => {
-        // 排除集合整体跳过(语句/declarator 一起排除,子孙不再进入)
-        if (exclude.has(n)) return false;
-        if (isIdentifier(n) && n.name === name) count++;
-        return true;
+    traverse(file(program), {
+        Identifier(path) {
+            if (path.node.name !== name) return;
+            if (!path.isReferencedIdentifier()) return;
+            if (path.scope.getFunctionParent()) return;
+            if (path.findParent((p) => exclude.has(p.node))) return;
+            count++;
+        },
     });
     return count;
+}
+
+/**
+ * 绑定感知地把别名槽的引用改名为类绑定。写入不会出现在 referencePaths 里
+ * (链上的 `别名 = acc` 随后整条删除),不会误改同名但属于其它绑定(其它方法
+ * 自己生成的同名 lexenv 槽)的引用。
+ * 按声明节点定位作用域(别名可能声明在 lexenv 块里,Program 作用域查不到)。
+ * 必须在删除别名 `let` 声明之前调用,否则绑定已不存在。
+ */
+function renameAliasReferences(
+    program: TYPE.Program, name: string, newName: string, declarators: TYPE.VariableDeclarator[],
+): void {
+    traverse(file(program), {
+        VariableDeclarator(path) {
+            if (!declarators.includes(path.node)) return;
+            const binding = path.scope.getBinding(name);
+            if (!binding) return;
+            for (const ref of binding.referencePaths) {
+                if (isIdentifier(ref.node)) ref.node.name = newName;
+            }
+        },
+    });
 }
 
 function validateFold(program: TYPE.Program, fold: ModuleClassFold): boolean {
@@ -1138,7 +1195,7 @@ function validateFold(program: TYPE.Program, fold: ModuleClassFold): boolean {
     for (const r of fold.retained) exclude.add(r.stmt);
     for (const d of fold.declarators) exclude.add(d);
     for (const alias of fold.aliases) {
-        if (countNameRefsOutside(program, alias, exclude) > 0) return false;
+        if (countImmediateRefsOutside(program, alias, exclude) > 0) return false;
     }
     return true;
 }
@@ -1226,6 +1283,13 @@ function applyFold(program: TYPE.Program, contexts: Map<TYPE.Node, StatementList
     const reservedIdName = classExpr.id && isIdentifier(classExpr.id) ? classExpr.id.name : null;
     classExpr.id = identifier(fold.target);
     const classDecl = classDeclaration(classExpr.id, classExpr.superClass, classExpr.body, classExpr.decorators);
+    // 别名槽在函数体(其它类的方法、闭包)里的读取必须在删除声明前改成类绑定:
+    // 绑定感知改名,不会误伤其它方法自己生成的同名 lexenv 槽。
+    if (fold.aliases.length > 0) {
+        const aliasDeclarators = fold.declarators.filter(
+            (d) => isIdentifier(d.id) && fold.aliases.includes(d.id.name));
+        for (const alias of fold.aliases) renameAliasReferences(program, alias, fold.target, aliasDeclarators);
+    }
     if (fold.programInsertBefore) {
         // 链中有保留语句:定义/别名链/目标赋值全部删除,类声明插到锚点之前
         // (类绑定在保留语句执行前初始化;先取锚点下标再删,防止锚点自身被删)
@@ -1563,11 +1627,19 @@ function purgeNamedExportSpecifiers(program: Program, name: string): void {
  * 不变),导出语句与槽位绑定一并删除。匿名导出槽 panda_jmp0_reserved_export_default
  * 是典型形态。引用不止这些时保持原样,返回 false。
  */
+/** 带装饰器的类(如 `@Sendable`)不能内联到导出里:装饰器必须位于 `export` 之前 */
+function isDecoratedClass(node: TYPE.Node | null | undefined): boolean {
+    return !!node && (isClassExpression(node) || isClassDeclaration(node))
+        && !!((node as TYPE.ClassExpression | TYPE.ClassDeclaration).decorators?.length);
+}
+
 function foldDefaultExportValue(program: Program, exportStmt: TYPE.ExportDefaultDeclaration, name: string): boolean {
     const exportIndex = program.body.indexOf(exportStmt);
     if (exportIndex < 0) return false;
     const def = findTopLevelDefinition(program, name, exportIndex);
     if (!def) return false;
+    // `export default @dec class {}` 不是合法装饰器位置:带装饰器的类保持独立导出语句
+    if (isDecoratedClass(def.value)) return false;
     const decl = findTopLevelDeclaration(program, name, def.index);
     const declSeparate = !!decl && decl.index !== def.index;
     const declRemovable = !declSeparate || isRemovableInit(decl!.declarator.init);

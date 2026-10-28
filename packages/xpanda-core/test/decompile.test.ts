@@ -3892,6 +3892,89 @@ function verifyInstallWebChromeClientClass(clazz: PandaClass, code: string): voi
 }
 
 /**
+ * 回归:sendable 类(install1.3.0.abc)——类记录名、静态初始化与 @Sendable 标记。
+ *
+ * flutter_ohos 的 SendableStandardMessageCodec 由 callruntime.definesendableclass 定义,
+ * 类记录名在指令的构造器方法名里。此前 defineClassWithBuffer 的类名/槽位解析把它
+ * 输出成词法环境槽 `sendable_0_0`,模块绑定与导出链随之断裂(`export default acc;`)。
+ * 同时静态初始化器的自引用(`this.INSTANCE = new sendable_0_0()`)必须改名为类绑定,
+ * 才能把 `(function () { ... }).call(slot)` 折成 static 字段。
+ */
+function verifyInstallSendableClass(clazz: PandaClass, code: string): void {
+    NodeFactory.parse(code);
+    if (code.includes("created by SimpleAnalysis") || code.includes("decompiler_")) {
+        throw new Error(`SendableStandardMessageCodec: 反编译降级或残留伪语句\n${code}`);
+    }
+    for (const fragment of [
+        "@Sendable\nclass SendableStandardMessageCodec {",
+        // 装饰器必须位于 export 之前:`export default @dec class` 不是合法位置,
+        // 带装饰器的类保持独立导出语句
+        "export default SendableStandardMessageCodec;",
+        "static INSTANCE = new SendableStandardMessageCodec();",
+        "static NULL = 0;",
+        "static FLOAT32_ARRAY = 14;",
+        "writeValue(p0, p1) {",
+        "readValueOfType(p0, p1) {",
+    ]) {
+        if (!code.includes(fragment)) {
+            throw new Error(`SendableStandardMessageCodec: 缺少 ${JSON.stringify(fragment)}\n${code}`);
+        }
+    }
+    for (const residue of ["sendable_", "export default acc", "}).call(", "export default @"]) {
+        if (code.includes(residue)) {
+            throw new Error(`SendableStandardMessageCodec: 仍是 sendable 槽名/未折叠形态(残留 ${JSON.stringify(residue)})\n${code}`);
+        }
+    }
+    const expected = fs.readFileSync(
+        path.join(__dirname, "expected", "install-sendable-standard-message-codec.js"), "utf-8");
+    if (code !== expected) {
+        throw new Error(`SendableStandardMessageCodec: 输出与快照不一致\n${firstDifference(expected, code)}`);
+    }
+}
+
+/**
+ * 回归:sendable 类与普通类共用模块作用域时的槽位归属(install1.3.0.abc)。
+ *
+ * BackgroundBasicMessageChannel 的 func_main_0 先 `newlexenv` 再 `newsendableenv`:
+ * IncomingReplyHandler 存 regular lexenv(stlexvar),IncomingSendableMessageHandler 存
+ * sendable env(stsendablevar)。PandaLexical 曾把两条链混成一个栈,两个类都解析到
+ * `sendable_1_0`,后一个类的定义覆盖了前一个,`new` 会构造错类。现在两条链独立解析,
+ * 两个类都应折叠回带正确名字的类声明。
+ * 另外 sendable class 字面量尾部的字段类型掩码(SharedFieldType.GENERIC = 32)
+ * 不能渲染成初始值(`handler = 32`)。
+ */
+function verifyInstallSendableClassBinding(clazz: PandaClass, code: string): void {
+    NodeFactory.parse(code);
+    if (code.includes("created by SimpleAnalysis") || code.includes("decompiler_")) {
+        throw new Error(`BackgroundBasicMessageChannel: 反编译降级或残留伪语句\n${code}`);
+    }
+    for (const fragment of [
+        "export default class BackgroundBasicMessageChannel {",
+        // 普通类的槽位与 sendable 类的槽位不能混为一谈
+        "new IncomingReplyHandler(p1, this.codec)",
+        "new IncomingSendableMessageHandler(p0, this.codec)",
+        "class IncomingReplyHandler {",
+        "@Sendable\nclass IncomingSendableMessageHandler {",
+        // 字段类型掩码不渲染成初始值,保留为无初始化的字段声明
+        "  handler;\n  codec;",
+    ]) {
+        if (!code.includes(fragment)) {
+            throw new Error(`BackgroundBasicMessageChannel: 缺少 ${JSON.stringify(fragment)}\n${code}`);
+        }
+    }
+    for (const residue of ["sendable_", "local_0_0", "handler = 32", "codec = 32", "sendable_1_0"]) {
+        if (code.includes(residue)) {
+            throw new Error(`BackgroundBasicMessageChannel: 槽位/字段渲染未还原(残留 ${JSON.stringify(residue)})\n${code}`);
+        }
+    }
+    const expected = fs.readFileSync(
+        path.join(__dirname, "expected", "install-background-basic-message-channel.js"), "utf-8");
+    if (code !== expected) {
+        throw new Error(`BackgroundBasicMessageChannel: 输出与快照不一致\n${firstDifference(expected, code)}`);
+    }
+}
+
+/**
  * 回归:if 条件尾部多条赋值序列还原成嵌套 if。
  * `if (A && B && (x = 1, y = 2, C))` 中序列只在 A/B 为真时求值,可安全搬进分支体;
  * 有 else 时外层条件为假也必须执行 else,因此不能用同一变换(否则 else 丢失)。
@@ -4793,6 +4876,18 @@ const installClassTests: BinaryClassTest[] = [
         matches: (n) => n === "Lpkg_modules/.ohpm/webview_flutter_ohos@63rxyovf6soepjs+sja1e6+fkzygj1xf5z4crizkc8u="
             + "/pkg_modules/webview_flutter_ohos/src/main/ets/io.flutter.plugins/webview_flutter/WebChromeClientHostApiImpl;",
         run: verifyInstallWebChromeClientClass,
+    },
+    {
+        label: "install sendable class name/static init marker (install1.3.0.abc)",
+        matches: (n) => n === "Lpkg_modules/.ohpm/@ohos+flutter_ohos@zl5sgaygqsqrqqtvxitwwita9ctgsvucjvbitoqeitg="
+            + "/pkg_modules/@ohos/flutter_ohos/src/main/ets/plugin/common/SendableStandardMessageCodec;",
+        run: verifyInstallSendableClass,
+    },
+    {
+        label: "install sendable class vs regular class slot (install1.3.0.abc)",
+        matches: (n) => n === "Lpkg_modules/.ohpm/@ohos+flutter_ohos@zl5sgaygqsqrqqtvxitwwita9ctgsvucjvbitoqeitg="
+            + "/pkg_modules/@ohos/flutter_ohos/src/main/ets/plugin/common/BackgroundBasicMessageChannel;",
+        run: verifyInstallSendableClassBinding,
     },
     {
         /**

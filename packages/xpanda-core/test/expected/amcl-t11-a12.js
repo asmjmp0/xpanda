@@ -19,7 +19,7 @@ import { p1205 } from "@normalized:N&&&feature_core/src/main/ets/t11/w11&1.0.0";
 import { q36 } from "@normalized:N&&&commons/Index&1.0.0";
 import { y } from "@normalized:N&&&commons/Index&1.0.0";
 import zlib from "@ohos:zlib";
-let local_0_0, local_0_1, local_0_2, local_0_3, local_0_4, local_0_5, local_0_6, local_0_7, local_0_8, local_0_10, local_0_11, local_0_12;
+let local_0_0, local_0_1, local_0_2, local_0_3, local_0_4, local_0_5, local_0_7, local_0_8, local_0_10, local_0_11, local_0_12;
 let local_0_9 = function (p0) {
   return p0.downloads
     && p0.downloads.artifact
@@ -677,7 +677,7 @@ local_0_3 = function (p0, p1) {
     if (!v2.isDirectory()) {
       throw new Error("解压目标不是普通目录");
     }
-    local_0_7(p0, p0, new local_0_6(), v1, 0);
+    local_0_7(p0, p0, new p1268(), v1, 0);
     return;
   }
   throw new Error("解压目标不是普通目录");
@@ -765,12 +765,12 @@ export class n1268 {
   }
 }
 local_0_1 = [17, 21, 25];
-local_0_6 = class p1268 {
+class p1268 {
   constructor() {
     this.entries = 0;
     this.bytes = 0;
   }
-};
+}
 local_0_4 = 16 * 1024 * 1024 * 1024;
 local_0_5 = 2 * 1024 * 1024 * 1024;
 export { a104 } from "@normalized:N&&&commons/Index&1.0.0";
