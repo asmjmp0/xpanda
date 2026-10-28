@@ -10,6 +10,9 @@ import {
     isForInStatement,
     isForOfStatement,
     isIdentifier,
+    isMemberExpression,
+    isNodesEquivalent,
+    isOptionalMemberExpression,
     isProgram as isProgramNode,
     isReturnStatement,
     isUpdateExpression,
@@ -106,6 +109,35 @@ export class TempVariableSimplify implements ISimplify {
             Function: (path) => pass.processScope(path),
         });
         return pass.state.changed;
+    }
+
+    /**
+     * 空 catch 的 try 体里,同一个成员读取被编译器写成两组赋值:
+     *
+     * ```
+     * try {
+     *   v5 = deviceInfo.sdkApiVersion;   // try 体内(异常路径需要)
+     *   …
+     *   v5 = deviceInfo.sdkApiVersion;   // 正常完成块(结果拷贝)
+     * } catch {}
+     * ```
+     *
+     * 前面一组在异常路径上必须保留(默认值已在 try 前/内),后面一组是正常完成
+     * 的拷贝;两者引用同一个值,保留第一次读取既符合源码的读取次数/顺序,也避免
+     * 重复触发 getter。只在空 catch 的平直语句段里做,遇到控制流/声明/调用即停止。
+     */
+    public static foldEmptyCatchDuplicateReads(node: Program): boolean {
+        let changed = false;
+        traverse(file(node), {
+            TryStatement(path) {
+                const tryNode = path.node;
+                if (!tryNode.handler || tryNode.handler.body.type !== "BlockStatement") return;
+                if (tryNode.handler.body.body.length !== 0) return;
+                if (tryNode.block.type !== "BlockStatement") return;
+                if (foldDuplicateMemberReads(tryNode.block.body)) changed = true;
+            },
+        });
+        return changed;
     }
 
     /**
@@ -233,6 +265,23 @@ export class TempVariableSimplify implements ISimplify {
         return pass.state.changed;
     }
 
+    /**
+     * 只折叠 hub 链 `X = F(X); C(X)`(X 在消费位置只读一次、之后已死),
+     * 把 F(X) 代进 C。流水线尾部的结构改写会生成新的 hub 链(空 catch 汇合后的
+     * 日志拼接 `v5 = "..."; v4 = v5 + ...; ...; f(v2)`),轮内折叠已经错过;
+     * 这里在最后补一轮,并清理失去引用的声明。
+     */
+    static foldHubChains(node: Program): boolean {
+        const pass = new TempVariableSimplify();
+        pass.state.changed = false;
+        pass.state.hubOnly = true;
+        traverse(file(node), {
+            Program: (path) => pass.processScope(path),
+            Function: (path) => pass.processScope(path),
+        });
+        return pass.state.changed;
+    }
+
     private processScope(path: NodePath<TYPE.Program> | NodePath<TYPE.Function>): void {
         const scope = path.scope;
         const body: TYPE.Statement[] | null = isProgramNode(path.node)
@@ -295,6 +344,12 @@ export class TempVariableSimplify implements ISimplify {
         if (this.state.nextReadOnly) {
             this.liveness.analyzeList(body, new Set(), ctx);
             this.assignments.foldTempLastUseIntoNextRead(body, ctx);
+            this.removeUnusedDeclarations(body, ctx);
+            return;
+        }
+        if (this.state.hubOnly) {
+            this.liveness.analyzeList(body, new Set(), ctx);
+            this.assignments.foldSelfUpdateIntoNextRead(body, ctx);
             this.removeUnusedDeclarations(body, ctx);
             return;
         }
@@ -540,4 +595,39 @@ function mergeDeclarationInitializersInList(list: TYPE.Statement[]): boolean {
         i += newStatements.length - 1; // for 的 i++ 跳过刚插入的语句
     }
     return changed;
+}
+
+/**
+ * 在平直的语句段里去掉重复的 `X = obj.prop`(X 为 temp,右侧是同一个成员读取)。
+ * 遇到非赋值语句/声明/非成员右值就清空记录,避免跨越控制流误删。
+ */
+function foldDuplicateMemberReads(statements: TYPE.Statement[]): boolean {
+    const seen = new Map<string, TYPE.Expression>();
+    const remove: number[] = [];
+    for (let i = 0; i < statements.length; i++) {
+        const stmt = statements[i];
+        if (stmt.type !== "ExpressionStatement") { seen.clear(); continue; }
+        const expr = stmt.expression;
+        if (!isAssignmentExpression(expr) || expr.operator !== "="
+            || !isIdentifier(expr.left) || !isTempName(expr.left.name)
+            || !(isMemberExpression(expr.right) || isOptionalMemberExpression(expr.right))) {
+            seen.clear();
+            continue;
+        }
+        const name = expr.left.name;
+        const previous = seen.get(name);
+        if (previous && isNodesEquivalent(previous, expr.right)) {
+            remove.push(i);
+            continue;
+        }
+        const written = collectIdentifierNames(expr.left);
+        for (const [key, value] of Array.from(seen.entries())) {
+            if (written.has(key) || Array.from(collectIdentifierNames(value)).some((dep) => written.has(dep))) {
+                seen.delete(key);
+            }
+        }
+        seen.set(name, expr.right);
+    }
+    for (let i = remove.length - 1; i >= 0; i--) statements.splice(remove[i], 1);
+    return remove.length > 0;
 }

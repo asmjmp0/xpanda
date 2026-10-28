@@ -27,6 +27,13 @@ import { removeRefs, tempReadWrites, tempReadWritesBeforeStore, tempReads, tempR
 export class LivenessAnalyzer extends TempVariablePass {
     /** Names a throwing write inside the current try must not kill. */
     private preserveAcrossThrow: Set<string> | null = null;
+    /**
+     * Inside the protected body of a try whose catch is empty: a property read
+     * may throw before the write lands, so the previous value is still what the
+     * (empty) catch path observes. Only enabled for empty catches; a catch with
+     * real code already contributes its own live-in.
+     */
+    private memberReadThrows = false;
 
     /** 不做任何修改的活跃性分析,结果写入 ctx.liveAfter。 */
     analyzeList(stmts: TYPE.Statement[], liveOut: Set<string>, ctx: FunctionContext, loop?: LoopLive): Set<string> {
@@ -228,7 +235,13 @@ export class LivenessAnalyzer extends TempVariablePass {
                 }
                 const saved = this.preserveAcrossThrow;
                 this.preserveAcrossThrow = preserve;
+                const savedMemberReadThrows = this.memberReadThrows;
+                // Only straight-line empty-catch try bodies need the defaults kept
+                // across property reads; inside loops the same rule keeps the
+                // compiler's register saves (`v8 = v10` / `v1 = v8`).
+                this.memberReadThrows = !loop && (!stmt.handler || this.isEmptyCatchBody(stmt.handler.body));
                 const blockIn = this.transferNested(stmt.block, after, ctx, nestedLoop, cleanup);
+                this.memberReadThrows = savedMemberReadThrows;
                 this.preserveAcrossThrow = saved;
                 const finalizerIn = stmt.finalizer
                     ? this.transferNested(stmt.finalizer, liveOut, ctx, loop, cleanup)
@@ -470,13 +483,39 @@ export class LivenessAnalyzer extends TempVariablePass {
         if (stmt.type === "ExpressionStatement") {
             const expr = stmt.expression;
             if (expr.type === "AssignmentExpression") {
-                return !isPureExpression(expr.right);
+                return !isPureExpression(expr.right) || this.memberReadMayThrow(expr.right);
             }
             return !isPureExpression(expr);
         }
         if (stmt.type === "VariableDeclaration") {
-            return stmt.declarations.some((declarator) => declarator.init != null && !isPureExpression(declarator.init));
+            return stmt.declarations.some((declarator) => declarator.init != null
+                && (!isPureExpression(declarator.init) || this.memberReadMayThrow(declarator.init)));
         }
         return false;
+    }
+
+    /**
+     * A property read can throw before the destination register is written
+     * (getter / uninitialized module object), so the catch still observes the
+     * previous value: `v3 = "?"; try { …; v3 = deviceInfo.osFullName } catch {}`.
+     * Only used inside a try whose catch is empty (see `memberReadThrows`).
+     */
+    private memberReadMayThrow(node: TYPE.Expression | null | undefined): boolean {
+        if (!this.memberReadThrows) return false;
+        return node?.type === "MemberExpression" || node?.type === "OptionalMemberExpression";
+    }
+
+    /**
+     * `catch (catchAcc) {}` at this stage is the `acc = catchAcc` statement
+     * inserted by TryCatchPandaStatement (simplify removes it later).
+     */
+    private isEmptyCatchBody(body: TYPE.Statement | null | undefined): boolean {
+        if (!body) return true;
+        if (body.type !== "BlockStatement") return false;
+        return body.body.every((stmt) => stmt.type === "EmptyStatement"
+            || (stmt.type === "ExpressionStatement"
+                && stmt.expression.type === "AssignmentExpression"
+                && stmt.expression.left.type === "Identifier" && stmt.expression.left.name === "acc"
+                && stmt.expression.right.type === "Identifier" && stmt.expression.right.name === "catchAcc"));
     }
 }

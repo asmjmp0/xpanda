@@ -22,6 +22,8 @@ export interface PassState {
     accumulatorOnly: boolean;
     /** true:只把 `X = E` 搬进下一条语句里对 X 的唯一一次读取 */
     nextReadOnly: boolean;
+    /** true: only fold `X = F(X); C(X)` hub chains (X dead after C) */
+    hubOnly: boolean;
     /** true:只折叠 `X = E; if (X/!X/E/!E) { X = B }` 短路链 */
     shortCircuitOnly: boolean;
     /** true:只做活跃性死存储消除 + 未用声明清理 */
@@ -124,6 +126,7 @@ export function createPassState(): PassState {
         returnsOnly: false,
         accumulatorOnly: false,
         nextReadOnly: false,
+        hubOnly: false,
         shortCircuitOnly: false,
         cleanupOnly: false,
     };

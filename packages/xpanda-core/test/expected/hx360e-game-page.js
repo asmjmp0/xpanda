@@ -1023,19 +1023,24 @@ class GamePage extends ViewPU {
         local_2_0.handlePhysicalAxis(p0);
       });
       Stack.onAreaChange(function (p0, p1) {
-        let v0, v2;
-        let v3 /*display*/ = display.getDefaultDisplaySync();
-        let v4 = v3.densityPixels;
-        let v5 /*hilog*/ = v3.width;
-        v3 = v3.height;
-        v0 = v4;
-        v2 = v3;
-        v3 = Math.round(p1.width * v4);
-        v4 = Math.round(p1.height * v4);
+        let v1, v2, v3 /*display*/, v4, v5 /*hilog*/;
+        let v0 = 1;
+        try {
+          v3 = display.getDefaultDisplaySync();
+          v4 = v3.densityPixels;
+          v5 = v3.width;
+          v3 = v3.height;
+          v0 = v4;
+          v2 = v3;
+          v1 = v5;
+        } catch (catchAcc) {}
+        v3 = Math.round(p1.width * v0);
+        v4 = Math.round(p1.height * v0);
         local_2_0.updateFitScale(v3, v4);
+        v1 = Math.round(v1);
         v2 = Math.round(v2);
         v0 = Math.round(v0 * 1000);
-        hilog.info(local_0_0, local_0_1, "stage %{public}d x %{public}d px; screen %{public}d x %{public}d density=%{public}d", v3, v4, Math.round(v5), v2, v0);
+        hilog.info(local_0_0, local_0_1, "stage %{public}d x %{public}d px; screen %{public}d x %{public}d density=%{public}d", v3, v4, v1, v2, v0);
       });
     }, Stack);
     local_2_0.observeComponentCreation2(function (p0, p1) {

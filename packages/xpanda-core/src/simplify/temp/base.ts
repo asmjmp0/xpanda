@@ -34,4 +34,8 @@ export abstract class TempVariablePass {
     protected get returnsOnly(): boolean {
         return this.state.returnsOnly;
     }
+
+    protected get hubOnly(): boolean {
+        return this.state.hubOnly;
+    }
 }

@@ -437,8 +437,7 @@ export function f1268(p0, p1, p2, p3, p4, p5, p6, p7) {
           y.error(local_0_0, v2, catchAcc, a32);
           throw catchAcc;
         }
-        v2 = "Copied forge jar: " + v2 + "";
-        y.info(local_0_0, v2, a32);
+        y.info(local_0_0, "Copied forge jar: " + v2 + "", a32);
       }
     }
     v0 = v0.versionInfo;

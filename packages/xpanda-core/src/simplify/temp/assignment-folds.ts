@@ -16,6 +16,7 @@ import {
     isReferenced,
     isReturnStatement,
     isStringLiteral,
+    isTryStatement,
     isUnaryExpression,
     isUpdateExpression,
     isVariableDeclaration,
@@ -382,8 +383,14 @@ export class AssignmentFolds extends TempVariablePass {
         if (!isTempName(name) || isDeclarationValue(a.right)) return false;
         // 累加器有专门的条件物化/方法装载折叠,这里不要抢先改写它的形态
         if (name === "acc") return false;
-        // 前一条语句还在写同一个变量时属于累加链(X = E; X = X + F),留给累加链折叠
-        if (i > 0 && collectAssignedNames(stmts[i - 1]).has(name)) return false;
+        // 前一条语句还在写同一个变量时属于累加链(X = E; X = X + F),留给累加链折叠。
+        // hubOnly(流水线最后一步)只处理紧跟 try 之后的字符串拼接链:前面每一步折叠后,
+        // 下一条语句的前驱仍然是同一个 TryStatement。
+        if (this.hubOnly) {
+            if (i === 0 || !isTryStatement(stmts[i - 1]) || !containsStringLiteral(a.right)) return false;
+        } else if (i > 0 && collectAssignedNames(stmts[i - 1]).has(name)) {
+            return false;
+        }
         const info = ctx.infos.get(name);
         if (!info || info.captured) return false;
         // 右值必须只读一次旧值,否则搬进消费位置后旧值会被读到多次
@@ -914,4 +921,16 @@ function loopHeadWritesOf(stmt: TYPE.Statement): Set<string> {
             break;
     }
     return writes;
+}
+
+
+/** 表达式里是否出现字符串字面量(只用于 hubOnly 的字符串拼接链)。 */
+function containsStringLiteral(node: TYPE.Node | null | undefined): boolean {
+    let found = false;
+    walkNode(node, (n) => {
+        if (isStringLiteral(n)) { found = true; return false; }
+        if (isFunctionLike(n) || isClassLike(n)) return false;
+        return true;
+    });
+    return found;
 }

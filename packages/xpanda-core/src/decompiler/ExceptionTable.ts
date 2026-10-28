@@ -565,18 +565,15 @@ function isIgnoredCatchByBody(
     // Work catch: may rejoin the normal flow, so a return is not required.
     if (flags.work) return !sharedStartKept && (flags.returns || rejoin);
     if (!flags.returns) {
-        // Empty catch whose handler is only a jump/move to a shared *terminal*
-        // continuation (`try { pause() } catch {}` next to another catch that
-        // owns the return block). A jump into the continuing method body is a
-        // compiler skip-block trampoline; registering it needs the try body to
-        // absorb the completion copies, which duplicates reads/defaults
-        // (`hx360e AppLog.init`).
+        // Bare `jmp` empty catch to a forward join (`try { … } catch {}` then
+        // more code). A `mov; jmp` handler restores the compiler's spills;
+        // registering it would pull those saves/restores into the catch as
+        // `v8 = v10` / `v8 = local_0_2` noise (`DraftMediaStore.inspectDir`,
+        // `MovingPhotoCache.pruneCache`). A backward target is a loop latch
+        // (continue) and stays out for the same reason (`GameInstall`).
         if (!rejoin || !joinTarget) return false;
-        const terminal = joinTarget.pandaInstructions.some((instruction) => instruction.kind === "return")
-            && !joinTarget.pandaInstructions.some((instruction) => instruction.kind === "call");
-        if (!terminal) return false;
         return blocks.every((block) => block.pandaInstructions.every((instruction) =>
-            instruction.kind === "jumpDirect" || instruction.kind === "mov" || instruction.kind === "nop"));
+            instruction.kind === "jumpDirect" || instruction.kind === "nop"));
     }
     return true;
 }

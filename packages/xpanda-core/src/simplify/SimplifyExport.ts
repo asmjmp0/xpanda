@@ -152,6 +152,10 @@ export class SimplifyExport {
         ConditionSimplify.foldMaterializedTestArtifacts(node);
         // 尾块消除/结构展开后,前面已经稳定的死存储可能重新变成死代码,补一轮清理。
         TempVariableSimplify.cleanupDeadStores(node);
+        // 空 catch 的 try 体里,正常完成块的 `X = obj.prop` 拷贝会与 try 体内的
+        // 同一次读取重复;保留第一次读取,避免重复触发 getter/改变读取顺序
+        // (`hx360e AppLog.init` 的 `deviceInfo.*` 读了两遍)。
+        TempVariableSimplify.foldEmptyCatchDuplicateReads(node);
         // 类静态字段初始化还原:`(function () { this.dir = ""; ... }).call(类)` 折成
         // 类的 static 字段。这条调用插在类定义与模块名赋值之间,不先折掉,
         // 下面的模块级类定义折叠会因为别名链中断而放弃。
@@ -178,6 +182,9 @@ export class SimplifyExport {
         // 块语句的父级也是块时直接展开(`finally { { … } }`、常量 if 折叠留下的块体),
         // 带块级声明的块只在"是父块唯一语句"时并,作用域范围不变。
         SyntaxRewriteSimplify.flattenNestedBlocks(node);
+        // 尾部结构/条件折叠会生成新的 hub 链(空 catch 汇合后的字符串拼接):
+        // `v5 = "..."; v4 = v5 + ...; ...; f(v2)` -> `f("..." + ... )`。
+        TempVariableSimplify.foldHubChains(node);
         // 类折叠和死存储清理会删掉模块级 `acc = ...`,声明要再扫一次。
         // 这次把 acc / vN 也算进去,并忽略已经被替换掉的 binding 路径。
         TempVariableSimplify.removeUnusedLexicalDeclarations(node, true);

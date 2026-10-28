@@ -16,6 +16,7 @@ export class AppLog {
   static started = false;
   constructor() {}
   static init(p0) {
+    let v2 /*AppLog*/, v3, v4, v5;
     if (AppLog.started) {
       return;
     }
@@ -25,11 +26,22 @@ export class AppLog {
     AppLog.prevFile = "" + AppLog.dir + "/app.prev.log";
     try {
       if (!fs.accessSync(AppLog.dir)) {
+        v3 = true;
         fs.mkdirSync(AppLog.dir, true);
       }
     } catch (catchAcc) {}
     AppLog.rotateIfNeeded();
-    AppLog.i("app", "=== HX360E start === api=" + deviceInfo.sdkApiVersion + " model=" + deviceInfo.productModel + " os=" + deviceInfo.osFullName + "" + (" display=" + deviceInfo.displayVersion + ""));
+    v2 = "?";
+    try {
+      v3 = "?";
+      v4 = "?";
+      v5 = 0;
+      v5 = deviceInfo.sdkApiVersion;
+      v4 = deviceInfo.productModel;
+      v3 = deviceInfo.osFullName;
+      v2 = deviceInfo.displayVersion;
+    } catch (catchAcc) {}
+    AppLog.i("app", "=== HX360E start === api=" + v5 + " model=" + v4 + " os=" + v3 + "" + (" display=" + v2 + ""));
     return;
   }
   static i(p0, p1) {
@@ -51,8 +63,7 @@ export class AppLog {
     } catch (catchAcc) {
       v0 = "" + p2 + "";
     }
-    v0 = "" + p1 + ": " + v0 + "";
-    AppLog.e(p0, v0);
+    AppLog.e(p0, "" + p1 + ": " + v0 + "");
   }
   static append(p0, p1, p2) {
     let v0 /*fs*/, v1 /*fs*/;

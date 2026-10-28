@@ -69,8 +69,9 @@ npx tsx packages/xpanda-cli/src/cli.ts decompile packages/xpanda-core/test/resou
 # decompile a HarmonyOS HAP app package (ZIP container, extracts all .abc + resources.index automatically)
 npx tsx packages/xpanda-cli/src/cli.ts decompile packages/xpanda-core/test/resources/zhihupp0.59.hap -o out --quiet
 
-# parallel per-class simplify for large files (worker_threads)
-npx tsx packages/xpanda-cli/src/cli.ts decompile packages/xpanda-core/test/resources/zhihupp0.59.hap -o out -j 4 --quiet
+# parallel per-class simplify for large files (worker_threads);
+# use -j 6 by default for large samples - serial decompilation is too slow
+npx tsx packages/xpanda-cli/src/cli.ts decompile packages/xpanda-core/test/resources/zhihupp0.59.hap -o out -j 6 --quiet
 
 # skip the optimizer to validate parsing/disassembly changes
 npx tsx packages/xpanda-cli/src/cli.ts decompile packages/xpanda-core/test/resources/zhihupp0.59.hap -o out --no-simplify --quiet
@@ -189,7 +190,7 @@ The most error-prone part of structured analysis is "should this condition be in
 
 Confirm output changes are intended before updating snapshots; never overwrite snapshots just to make tests pass.
 
-**Default verification scope for a change**: run `npm test` and decompile `packages/xpanda-core/test/resources/amcl1.0.6.abc` (serial or `-j`, refresh `test_out/` and eyeball the affected classes). Do not run full-sample comparisons for `yourpipe0.7.0.abc` / `zhihupp0.59.hap` or other `.abc` / `.hap` resources unless the user explicitly asks or `npm test` cannot cover the change.
+**Default verification scope for a change**: run `npm test` and decompile `packages/xpanda-core/test/resources/amcl1.0.6.abc` **with `-j 6`** (serial decompilation of large samples is too slow; refresh `test_out/` and eyeball the affected classes). The parallel result must stay byte-identical to serial (`packages/xpanda-cli/test/parallel-consistency.test.ts`); use serial only when debugging a determinism issue. Do not run full-sample comparisons for `yourpipe0.7.0.abc` / `zhihupp0.59.hap` or other `.abc` / `.hap` resources unless the user explicitly asks or `npm test` cannot cover the change.
 
 ## Pitfalls and Notes
 
