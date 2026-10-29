@@ -390,11 +390,12 @@ export class StructureAnalysis {
             this.doms = new DominatorGraph(this.regionGraph, this.entryRegion);
         }
         const root = this.regionGraph.nodes()[0];
-        // 只在按引用展开会超过规模上限时才做共享尾块消除:普通方法保持原有结构
-        // (AST 级 TailMergeSimplify 已经能处理常见形状),避免改变正常输出。
-        if (this.estimateStructuredStatements(root, MAX_STRUCTURED_STATEMENTS) > MAX_STRUCTURED_STATEMENTS) {
-            this.pruneRedundantTailBranches(root);
-        }
+        // 共享尾块消除:归约把汇合点保留为同一个 Region,`Region.decompile()` 按引用
+        // 展开,共享尾会在每条分支里各输出一份。普通方法同样要做——复制不仅放大 AST,
+        // 还会让 finally 标记、for-of done/close 续接出现多份副本,下游只能认出一个
+        // 位置(amcl n16 trackLaunch 的整个准入后缀被复制了 6 次,finally 只在其中
+        // 一份里还原,其余分支留下 `if (hole == v7) return; throw v7` 残渣)。
+        this.pruneRedundantTailBranches(root);
         const structuredStatements = this.estimateStructuredStatements(root, MAX_STRUCTURED_STATEMENTS);
         if (structuredStatements > MAX_STRUCTURED_STATEMENTS) {
             throw new PandaDecompileException(
@@ -428,13 +429,23 @@ export class StructureAnalysis {
      * 和从分支末尾落空的路径都仍然只执行一次,acc 的取值也相同,所以循环体、嵌套
      * 分支里都成立。只在区域归约完成之后、estimate/decompile 之前做,避免展开成
      * 天文数字的 AST;估计阶段不需要它也能算对,但已经来不及回收内存。
+     *
+     * 共享尾也可能藏在条件退出链的深处:`if (C) { if (D) throw; if (E) return; } else { NEXT }`
+     * (amcl n16 trackLaunch)。只要另一条分支一定离开当前结构,就沿唯一会落空的
+     * 那条分支继续找 NEXT。共享尾自身带循环时不递归:那通常是 for-of 的 done/close
+     * 续接,提前出分支会改变循环体形状,让 for-of 还原退化(amcl k10/v10)。
      */
     private pruneRedundantTailBranches(root: Region): void {
         const refCount = this.countEmittedReferences(root);
         for (let round = 0; round < MAX_TAIL_PRUNE_ROUNDS; round++) {
+            // 每轮树结构都可能变化(尾块被搬运),循环缓存只在单轮内有效
+            this.loopPresenceCache.clear();
             if (!this.pruneTailInNode(root, refCount, new Set<Region>())) break;
         }
     }
+
+    /** regionContainsLoop 的单轮缓存:共享尾可能被反复查询(z12 的巨型尾块)。 */
+    private readonly loopPresenceCache = new Map<object, boolean>();
 
     /**
      * 统计展开树里每个节点的直接引用次数。只按唯一节点向下走(共享 Region 的
@@ -512,26 +523,70 @@ export class StructureAnalysis {
         if (!(consequent instanceof Region) || !(alternate instanceof Region)) return false;
         if (consequent === alternate) return false;
         if (alternate.isTryRegion()) return false;
-        if ((refCount.get(statement) ?? 0) !== 1 || (refCount.get(consequent) ?? 0) !== 1) return false;
-        const tail = consequent.getStatements();
+        if ((refCount.get(statement) ?? 0) !== 1) return false;
+        if ((refCount.get(consequent) ?? 0) === 1
+            && this.detachSharedTail(consequent, alternate, refCount)) {
+            // 尾巴在 consequent 上:从 consequent 里摘掉,提到 if 之后
+            (statement as any).alternate = null;
+            list.splice(index + 1, 0, alternate);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * 从 holder 的语句列表末尾摘掉与 sharedTail 相同的尾块。
+     * 形态:内层 if 的 else 指向 sharedTail,或列表最后一项就是 sharedTail。
+     */
+    private detachSharedTail(holder: Region, sharedTail: Region, refCount: Map<object, number>): boolean {
+        const tail = holder.getStatements();
         if (tail.length === 0) return false;
         const last = tail[tail.length - 1];
-        if (last instanceof IfPandaStatement) {
-            if ((last as any).alternate !== alternate) return false;
-            if ((refCount.get(last) ?? 0) !== 1) return false;
+        if (last === sharedTail) {
+            tail.pop();
+            return true;
+        }
+        if (!(last instanceof IfPandaStatement)) return false;
+        if ((refCount.get(last) ?? 0) !== 1) return false;
+        const consequent = (last as any).consequent as IPandaDecompileAble | null;
+        const alternate = (last as any).alternate as IPandaDecompileAble | null;
+        if (alternate === sharedTail) {
             // 只有“失败分支一定离开当前结构”时才能把 else 提到 if 之后:
             // 否则原本从内层 then 落空会继续执行分支之后的代码,提上去之后就会
             // 多执行一次尾块(zhihu ContentDetailPages 的三元赋值就是这么被改坏的)。
-            if (!this.branchAlwaysExits((last as any).consequent)) return false;
+            if (!this.branchAlwaysExits(consequent)) return false;
             (last as any).alternate = null;
-        } else if (last === alternate) {
-            tail.pop();
-        } else {
-            return false;
+            return true;
         }
-        (statement as any).alternate = null;
-        list.splice(index + 1, 0, alternate);
-        return true;
+        // 递归只用于“条件退出链末尾的同一段 NEXT”。共享尾里带循环时不要提前:
+        // 尾块往往就是 for-of 的 done/close 续接,提到分支外会改变循环体形状,
+        // 让 for-of 还原退化(amcl k10/v10 downloadAssets 的寄存器 spilling)。
+        if (this.regionContainsLoop(sharedTail)) return false;
+        if (alternate instanceof Region && (refCount.get(alternate) ?? 0) === 1
+            && this.branchAlwaysExits(consequent)
+            && this.detachSharedTail(alternate, sharedTail, refCount)) return true;
+        if (consequent instanceof Region && (refCount.get(consequent) ?? 0) === 1
+            && this.branchAlwaysExits(alternate)
+            && this.detachSharedTail(consequent, sharedTail, refCount)) return true;
+        return false;
+    }
+
+    /** 区域子树里是否有循环(共享尾本身带循环时不做递归拆解,见上面的 for-of 约束)。 */
+    private regionContainsLoop(root: Region): boolean {
+        const visit = (node: IPandaDecompileAble): boolean => {
+            const cached = this.loopPresenceCache.get(node);
+            if (cached !== undefined) return cached;
+            if (node instanceof WhileStatement || node instanceof DoWhileStatement) {
+                this.loopPresenceCache.set(node, true);
+                return true;
+            }
+            // 先写 false 作为访问标记,防止环形语句图;计算完成后回填
+            this.loopPresenceCache.set(node, false);
+            const found = decompileChildren(node).some(visit);
+            this.loopPresenceCache.set(node, found);
+            return found;
+        };
+        return visit(root);
     }
 
     /**

@@ -471,17 +471,16 @@ export class q1164 {
         this.resizable = p0.a !== 0;
       } else {
         if (p0.kind !== 13) {
-          if (p0.kind !== 14) {
-            throw new Error("Unsupported desktop command");
-          }
-          if (pasteboard.getSystemPasteboard().hasDataType(pasteboard.MIMETYPE_TEXT_PLAIN)) {
-            v4 = p1.getUIContext().getHostContext();
-            if ((await abilityAccessCtrl.createAtManager().requestPermissionsFromUser(v4, ["ohos.permission.READ_PASTEBOARD"])).authResults[0] === abilityAccessCtrl.GrantStatus.PERMISSION_GRANTED) {
-              return undefined;
+          if (p0.kind === 14) {
+            if (pasteboard.getSystemPasteboard().hasDataType(pasteboard.MIMETYPE_TEXT_PLAIN)) {
+              v4 = p1.getUIContext().getHostContext();
+              if ((await abilityAccessCtrl.createAtManager().requestPermissionsFromUser(v4, ["ohos.permission.READ_PASTEBOARD"])).authResults[0] !== abilityAccessCtrl.GrantStatus.PERMISSION_GRANTED) {
+                throw new Error("Clipboard permission denied or missing from signing Profile");
+              }
             }
-            throw new Error("Clipboard permission denied or missing from signing Profile");
+            return undefined;
           }
-          return undefined;
+          throw new Error("Unsupported desktop command");
         }
         if (p0.a > 0 && p0.b > 0) {
           await p1.setAspectRatio(p0.a / p0.b);

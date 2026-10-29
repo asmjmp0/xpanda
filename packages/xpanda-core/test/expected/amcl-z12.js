@@ -94,47 +94,16 @@ export function a422(p0, p1, p2) {
     })) {
       return null;
     }
-    if (local_1_1 === undefined) {
-      v0 = r301(p0);
-      v0.controlGroups = v0.controlGroups.filter(function (p0) {
-        return p0.id !== local_1_0;
-      });
-      v0.controls = v0.controls.filter(function (p0) {
-        return p0.controlGroupId !== local_1_0 || local_1_1 !== undefined;
-      });
-      local_1_2 = function (p0) {
-        let v1, v3;
-        if (p0.controlGroupId === local_1_0) {
-          p0.controlGroupId = local_1_1;
-        }
-        if (p0.groupActions !== undefined) {
-          for (v3 of p0.groupActions) {
-            v3.targets = v3.targets.filter(function (p0) {
-              return p0 !== local_1_0;
-            });
-          }
-          p0.groupActions = p0.groupActions.filter(function (p0) {
-            return p0.targets.length > 0;
-          });
-        }
-        v1 = p0.children ?? [];
-        for (v3 of v1) {
-          local_1_2(v3);
-        }
-      };
-      for (v4 of v0.controls) {
-        local_1_2(v4);
+    if (local_1_1 !== undefined) {
+      v0 = local_1_1 === local_1_0;
+      if (local_1_1 !== local_1_0) {
+        v0 = !p0.controlGroups.some(function (p0) {
+          return p0.id === local_1_1;
+        });
       }
-      return a421(v0);
-    }
-    v0 = local_1_1 === local_1_0;
-    if (local_1_1 !== local_1_0) {
-      v0 = !p0.controlGroups.some(function (p0) {
-        return p0.id === local_1_1;
-      });
-    }
-    if (v0) {
-      return null;
+      if (v0) {
+        return null;
+      }
     }
     v0 = r301(p0);
     v0.controlGroups = v0.controlGroups.filter(function (p0) {
@@ -291,179 +260,10 @@ local_0_20 = function (p0) {
   let v1 /*r1367*/, v4, v5, acc;
   let local_1_0, local_1_2, local_1_3, local_1_4, local_1_5;
   let local_1_1 = p0.version === b422;
-  if (local_1_1) {
-    local_1_2 = new Set();
-    if (local_1_1) {
-      if (!l1357(p0, ["version", "profileId", "profileRevision", "name", "globalScale", "lookSensitivity", "invertY", "lookSmoothing", "lookAccel", "lookPolicies", "joystickDeadZone", "haptic", "touch", "globalOpacity", "targetDevice", "isPreset", "deviceModel", "hotbarAutoAdded", "snapEnabled", "snapGap", "snapStrength", "gamepad", "controls", "controlGroups", "defaultControlGroupId", "requiredCapabilities"])) {
-        return "groups.profile-fields";
-      }
-      v1 = q1357(p0.controlGroups, p0.defaultControlGroupId);
-      if (v1.length > 0) {
-        return v1;
-      }
-      for (v4 of p0.controlGroups) {
-        acc = local_1_2.add(v4.id);
-      }
-      if (!Array.isArray(p0.requiredCapabilities) || p0.requiredCapabilities.length > 2 || p0.requiredCapabilities.indexOf(v1357) < 0) {
-        return "groups.capabilities";
-      }
-      v1 = new Set();
-      for (v5 of p0.requiredCapabilities) {
-        if (v5 !== v1357 && v5 !== c422 || v1.has(v5)) {
-          return "groups.capability";
-        }
-        acc = v1.add(v5);
-      }
+  if (!local_1_1) {
+    if (p0.controlGroups !== undefined || p0.defaultControlGroupId !== undefined || p0.requiredCapabilities !== undefined) {
+      return "groups.version";
     }
-    local_1_0 = 0;
-    local_1_4 = 0;
-    local_1_3 = false;
-    local_1_5 = function (p0, p1, p2) {
-      let v3, v6, v10 /*r1367*/, v11 /*u1357*/, v13, acc;
-      if (!Array.isArray(p0) || p2 > 8) {
-        return "groups.children";
-      }
-      v3 = p0[Symbol.iterator]();
-      label_90: while (true) {
-        v6 = v3.next();
-        if (v6.done) {
-          return "";
-        }
-        v6 = v6.value;
-        acc = !v6;
-        if (acc || local_1_0 /*o1367*/ + 1 > 256) {
-          if (v3.return != undefined) {
-            v3.return();
-          }
-          return "groups.members";
-        }
-        acc = !local_1_1;
-        if (!acc) {
-          acc = !l1357(v6, ["id", "label", "type", "keyOrMouse", "keys", "modifiers", "trigger", "xPct", "yPct", "baseWidth", "baseHeight", "itemScale", "isCircle", "style", "alignGroup", "alignIndex", "grabbedOnly", "menuOnly", "hidden", "locked", "visibilityOverride", "hideOnInput", "dragLook", "swipeGroup", "hotbarUserPlaced", "systemAction", "children", "controlGroupId", "groupActions", "phaseBindings", "gesturePolicy"]);
-          if (acc) {
-            if (v3.return != undefined) {
-              v3.return();
-            }
-            return "groups.control-fields";
-          }
-          v11 = v6.controlGroupId ?? p1;
-          if (v6.systemAction === "visibility" || v6.systemAction === "edit") {
-            v10 = v11 !== undefined;
-          } else {
-            v10 = v11 === undefined;
-            if (v11 !== undefined) {
-              v10 = !local_1_2.has(v11);
-            }
-          }
-          if (v10) {
-            if (v3.return != undefined) {
-              v3.return();
-            }
-            return "groups.member";
-          }
-          if (p1 !== undefined && v11 !== p1) {
-            if (v3.return != undefined) {
-              v3.return();
-            }
-            return "groups.child-membership";
-          }
-          if (v6.gesturePolicy !== undefined && v6.gesturePolicy !== "amcl" && v6.gesturePolicy !== "fcl") {
-            if (v3.return != undefined) {
-              v3.return();
-            }
-            return "groups.policy";
-          }
-          if (v6.gesturePolicy !== undefined && v6.phaseBindings === undefined) {
-            if (v3.return != undefined) {
-              v3.return();
-            }
-            return "groups.policy-bindings";
-          }
-          v10 = r1357(v6.groupActions, local_1_2);
-          if (v10.length > 0) {
-            if (v3.return != undefined) {
-              v3.return();
-            }
-            return v10;
-          }
-          v10 = s1357(v6.phaseBindings);
-          if (v10.length > 0) {
-            if (v3.return != undefined) {
-              v3.return();
-            }
-            return v10;
-          }
-          if (v6.groupActions !== undefined || v6.phaseBindings !== undefined) {
-            if (v6.type !== o301.BUTTON || v6.systemAction !== undefined) {
-              if (v3.return != undefined) {
-                v3.return();
-              }
-              return "groups.action-kind";
-            }
-          }
-          if (v6.phaseBindings !== undefined) {
-            local_1_3 = true;
-            v10 = !Array.isArray(v6.keys) || v6.keys.length !== 0 || v6.keyOrMouse !== 0;
-            if (v10) {
-              if (v3.return != undefined) {
-                v3.return();
-              }
-              return "groups.phase-binding-conflict";
-            }
-            if (v6.trigger !== undefined && v6.trigger !== "press") {
-              if (v3.return != undefined) {
-                v3.return();
-              }
-              return "groups.phase-binding-conflict";
-            }
-          }
-          if (v6.gesturePolicy === "fcl") {
-            local_1_3 = true;
-          }
-          v11 = v6.groupActions ?? [];
-          for (v13 of v11) {
-            local_1_4 += v13.targets.length;
-          }
-          if (local_1_4 /*p1367*/ > u1357) {
-            if (v3.return != undefined) {
-              v3.return();
-            }
-            return "groups.operation-budget";
-          }
-        } else if (v6.controlGroupId !== undefined || v6.groupActions !== undefined || v6.phaseBindings !== undefined || v6.gesturePolicy !== undefined) {
-          if (v3.return != undefined) {
-            v3.return();
-          }
-          return "groups.version";
-        }
-        if (v6.children === undefined) {
-          continue;
-        }
-        v11 = v6.children;
-        v6 = v6.controlGroupId ?? p1;
-        v6 = local_1_5(v11, v6, p2 + 1);
-        acc = v6.length;
-        if (acc > 0) {
-          if (v3.return != undefined) {
-            v3.return();
-          }
-          return v6;
-        }
-      }
-    };
-    v1 = local_1_5(p0.controls, undefined, 0);
-    if (v1.length > 0) {
-      return v1;
-    }
-    if (local_1_3) {
-      acc = (p0.requiredCapabilities === null || p0.requiredCapabilities === undefined ? undefined : p0.requiredCapabilities.indexOf(c422)) === -1 ? "groups.phase-capability" : "";
-    } else {
-      acc = "";
-    }
-    return acc;
-  }
-  if (p0.controlGroups !== undefined || p0.defaultControlGroupId !== undefined || p0.requiredCapabilities !== undefined) {
-    return "groups.version";
   }
   local_1_2 = new Set();
   if (local_1_1) {

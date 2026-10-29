@@ -173,61 +173,10 @@ export class DefaultOnlineHistoryRepository {
   async loadPage(p0) {
     let v0, v2 /*OnlineHistoryRepositoryFailure*/, v3 /*decodeOnlineHistoryPage*/, v4 /*nextDelivered*/, v5 /*items*/, v6, v7 /*items*/;
     let local_1_0, local_1_1;
-    if (p0 === undefined) {
-      v3 = this.generation;
-      v4 = p0 === undefined ? 0 : onlineHistoryOffsetOf(p0);
-      v5 = p0 === undefined ? buildOnlineHistoryUrl(0) : p0;
-      v6 = canonicalOnlineHistoryCursorKey(v5);
-      if (p0 !== undefined && this.requestedCursors.has(v6)) {
-        throw new OnlineHistoryRepositoryFailure(OnlineHistoryRepositoryFailureKind.REPEATED_CURSOR);
+    if (p0 !== undefined) {
+      if (!isOnlineHistoryCursorUrl(p0)) {
+        throw new OnlineHistoryRepositoryFailure(OnlineHistoryRepositoryFailureKind.INVALID_CURSOR);
       }
-      v0 = await this.httpClient.execute({
-        "url": v5,
-        "accept": "application/json",
-        "useSession": true,
-        "signWithZse": true
-      });
-      if (v3 === this.generation) {
-        v3 = decodeOnlineHistoryPage(v0.body);
-        v5 = p0 === undefined ? new Set() : local_0_1(this.requestedCursors);
-        local_1_0 = p0 === undefined ? new Set() : local_0_1(this.deliveredIdentities);
-        v5.add(v6);
-        local_1_1 = [];
-        v3.items.forEach(function (p0) {
-          if (local_1_0.has(p0.contentKey)) {
-            return;
-          }
-          local_1_0.add(p0.contentKey);
-          local_1_1.push(p0);
-          return;
-        });
-        v2 = !v3.cursor.isEnd && local_1_1.length > 0 ? buildOnlineHistoryUrl(v4 + 10) : undefined;
-        v4 = v2 === undefined ? undefined : canonicalOnlineHistoryCursorKey(v2);
-        v7 = v2 === undefined && !v3.cursor.isEnd || v4 === v6;
-        if (!v7 && (v7 = v4 !== undefined, v4 !== undefined)) {
-          v7 = v5.has(v4);
-        }
-        this.requestedCursors = v5;
-        this.deliveredIdentities = local_1_0;
-        v4 = {
-          "items": local_1_1,
-          "cursor": {
-            "isEnd": v3.cursor.isEnd,
-            "isStart": v3.cursor.isStart,
-            "next": v2,
-            "page": v3.cursor.page,
-            "total": v3.cursor.total
-          }
-        };
-        if (v7) {
-          v4 = local_0_2(v4);
-        }
-        return v4;
-      }
-      throw new OnlineHistoryRepositoryFailure(OnlineHistoryRepositoryFailureKind.CANCELLED);
-    }
-    if (!isOnlineHistoryCursorUrl(p0)) {
-      throw new OnlineHistoryRepositoryFailure(OnlineHistoryRepositoryFailureKind.INVALID_CURSOR);
     }
     v3 = this.generation;
     v4 = p0 === undefined ? 0 : onlineHistoryOffsetOf(p0);

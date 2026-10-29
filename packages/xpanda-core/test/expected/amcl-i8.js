@@ -383,72 +383,36 @@ local_0_4 = async function (p0, p1, p2, p3, p4) {
   if (!v0.isFile()) {
     throw new Error("摘要输入不是普通文件");
   }
+  v4 = 0;
   l763(v0.size);
   if (p1.indexOf("://") < 0) {
     v0 = await f763(p0.fd, v0.size, p3, p2, p4);
-    if (v0 === undefined) {
-      v5 = p3 ? cryptoFramework.createMd("SHA1") : undefined;
-      v6 = p4 ? cryptoFramework.createMd("SHA256") : undefined;
-      for (v7 = 0; v7 < v3.size; v7 += v9) {
-        local_0_0(p2);
-        v8 = new ArrayBuffer(Math.min(h763, v3.size - v7));
-        v9 = await g50.read(p0.fd, v8, {
-          "length": v8.byteLength
-        });
-        if (v9 <= 0 || v9 > v8.byteLength) {
-          throw new Error("摘要输入被截断");
-        }
-        v8 = new Uint8Array(v8, 0, v9);
-        if (v5 !== undefined) {
-          await v5.update({
-            "data": v8
-          });
-        }
-        if (v6 !== undefined) {
-          await v6.update({
-            "data": v8
-          });
-        }
-      }
+    if (v0 !== undefined) {
       local_0_0(p2);
-      if (local_0_1(v3) !== local_0_1(await g50.stat(p0.fd))) {
-        throw new Error("摘要读取期间文件发生变化");
+      v4 = v0.size !== v3.size;
+      if (v0.size === v3.size) {
+        v4 = local_0_1(v3) !== local_0_1(await g50.stat(p0.fd));
       }
-      if (local_0_1(v3) === local_0_1(await g50.stat(p1))) {
-        v3 = {
-          "size": v7,
-          "sha1": v5 === undefined ? "" : local_0_2((await v5.digest()).data),
-          "sha256": v6 === undefined ? "" : local_0_2((await v6.digest()).data)
-        };
-        return v3;
+      if (!v4) {
+        if (local_0_1(v3) === local_0_1(await g50.stat(p1))) {
+          return v0;
+        }
       }
       throw new Error("摘要读取期间文件发生变化");
     }
-    local_0_0(p2);
-    v4 = v0.size !== v3.size;
-    if (v0.size === v3.size) {
-      v4 = local_0_1(v3) !== local_0_1(await g50.stat(p0.fd));
-    }
-    if (v4) {
-      throw new Error("摘要读取期间文件发生变化");
-    }
-    if (local_0_1(v3) === local_0_1(await g50.stat(p1))) {
-      return v0;
-    }
-    throw new Error("摘要读取期间文件发生变化");
   }
   v5 = p3 ? cryptoFramework.createMd("SHA1") : undefined;
   v6 = p4 ? cryptoFramework.createMd("SHA256") : undefined;
-  for (v7 = 0; v7 < v3.size; v7 += v9) {
+  for (v7 = v4; v7 < v3.size; v7 += v9) {
     local_0_0(p2);
     v8 = new ArrayBuffer(Math.min(h763, v3.size - v7));
     v9 = await g50.read(p0.fd, v8, {
       "length": v8.byteLength
     });
-    if (v9 <= 0 || v9 > v8.byteLength) {
+    if (v9 <= v4 || v9 > v8.byteLength) {
       throw new Error("摘要输入被截断");
     }
-    v8 = new Uint8Array(v8, 0, v9);
+    v8 = new Uint8Array(v8, v4, v9);
     if (v5 !== undefined) {
       await v5.update({
         "data": v8

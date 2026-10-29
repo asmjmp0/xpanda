@@ -102,7 +102,14 @@ export class p995 {
     v1 = p0.lastIndexOf(".");
     if (v1 >= 0) {
       v0 = p0.substring(v1 + 1).toLowerCase();
-      return v0 === "png" || v0 === "jpg" || v0 === "jpeg" || v0 === "webp" || v0 === "gif" ? v0 : "png";
+      switch (v0) {
+        case "png":
+        case "jpg":
+        case "jpeg":
+        case "webp":
+        case "gif":
+          return v0;
+      }
     }
     return "png";
   }

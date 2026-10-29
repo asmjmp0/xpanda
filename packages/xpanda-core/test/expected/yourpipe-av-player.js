@@ -2658,40 +2658,9 @@ export class VideoPlayer extends ViewPU {
         });
         return;
       }
-      local_1_0 = TranslationService.targetLanguage();
-      v4.translateAndApply(v5, local_1_1.vm.subtitleTracks, local_1_1.vm.currentSubtitleUrl, local_1_1.controller).then(function (p0) {
-        if (p0.ok) {
-          PreferencesStore.setString("cfg_subtitle_preferred_lang", "ai:" + local_1_0 /*target*/ + "");
-          if (p0.partial) {
-            local_1_1.getUIContext().getPromptAction().showToast({
-              "message": {
-                "id": 16777302,
-                "type": 10003,
-                "params": [],
-                "bundleName": "com.talon.yourpipe",
-                "moduleName": "entry"
-              },
-              "duration": 2500
-            });
-          }
-        } else if (!p0.cancelled) {
-          Logger.warn(local_0_1 /*TAG*/, "AI translate failed: " + (p0.error || "-") + "");
-          local_1_1.getUIContext().getPromptAction().showToast({
-            "message": {
-              "id": 16777296,
-              "type": 10003,
-              "params": [],
-              "bundleName": "com.talon.yourpipe",
-              "moduleName": "entry"
-            },
-            "duration": 2500
-          });
-        }
-      });
-      return;
     }
     local_1_0 = TranslationService.targetLanguage();
-    v4.translateAndApply(acc, local_1_1.vm.subtitleTracks, local_1_1.vm.currentSubtitleUrl, local_1_1.controller).then(function (p0) {
+    v4.translateAndApply(v5, local_1_1.vm.subtitleTracks, local_1_1.vm.currentSubtitleUrl, local_1_1.controller).then(function (p0) {
       if (p0.ok) {
         PreferencesStore.setString("cfg_subtitle_preferred_lang", "ai:" + local_1_0 /*target*/ + "");
         if (p0.partial) {

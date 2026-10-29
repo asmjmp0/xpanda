@@ -9,7 +9,9 @@ let local_0_5 = function (p0) {
 };
 let local_0_2 = function (p0) {
   if (p0 === null ? p0 !== null : typeof p0 === "object") {
-    return Array.isArray(p0) ? undefined : p0;
+    if (!Array.isArray(p0)) {
+      return p0;
+    }
   }
   return undefined;
 };

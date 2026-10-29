@@ -474,15 +474,12 @@ export class c1114 {
   }
   observeIntent_(p0, p1) {
     let v0 = this.launchIdentities_.get(p0);
-    if (v0 === undefined) {
-      this.observeBoundary_(p0, "intent:" + p1);
-      return;
-    }
-    if (!v0.startsWith("intent:")) {
-      return;
+    if (v0 !== undefined) {
+      if (!v0.startsWith("intent:")) {
+        return;
+      }
     }
     this.observeBoundary_(p0, "intent:" + p1);
-    return;
   }
   withdrawIntentBoundary_(p0) {
     let v1, v2;
@@ -603,7 +600,7 @@ export class c1114 {
     };
   }
   async trackLaunch(p0, p1) {
-    let v4, v5, v7;
+    let v4, v5;
     if (p1 === undefined) {
       p1 = "";
     }
@@ -616,251 +613,44 @@ export class c1114 {
       if (!new RegExp("^[a-zA-Z0-9-]{1,128}$").test(p1)) {
         throw new Error("启动意图token无效");
       }
-      v5 = this.admissionJobs_.get(p0);
-      if (v5 !== undefined) {
-        if (this.admissionTokens_.get(p0) === p1) {
-          return v5;
-        }
+    }
+    v5 = this.admissionJobs_.get(p0);
+    if (v5 !== undefined && this.admissionTokens_.get(p0) === p1) {
+      return v5;
+    }
+    if (this.admittedLaunches_.size > v4) {
+      if (!this.admittedLaunches_.has(p0)) {
+        throw new Error("已有另一启动准入意图，等待其派发或同身份撤回");
       }
-      if (this.admittedLaunches_.size > v4) {
-        if (!this.admittedLaunches_.has(p0)) {
-          throw new Error("已有另一启动准入意图，等待其派发或同身份撤回");
-        }
-        if (!this.admittedLaunches_.has(p0)) {
-          this.admittedLaunches_.add(p0);
-          this.admissionTokens_.set(p0, p1);
-          v5 = this.admitLaunch_(p0, p1);
-          this.admissionJobs_.set(p0, v5);
-          try {
-            await v5;
-            this.grantedLaunches_.add(p0);
-            if (this.admissionJobs_.get(p0) === v5) {
-              this.admissionJobs_.delete(p0);
-            }
-            if (hole == v7) {
-              return undefined;
-            }
-            throw v7;
-          } catch (catchAcc) {
-            if (!this.queue_.activeIds.includes(p0)) {
-              if ((await m1062(this.filesDir_ + "/logs/recovery/intents/" + p0 + ".json", 4096)).length === v4) {
-                this.admittedLaunches_.delete(p0);
-                this.admissionTokens_.delete(p0);
-                this.withdrawIntentBoundary_(p0);
-                this.grantedLaunches_.delete(p0);
-              }
-            }
-            throw catchAcc;
-          }
-        } else if (this.admissionTokens_.get(p0) !== p1) {
-          throw new Error("同活动已有不同启动准入token，原意图保留");
-        } else if (this.grantedLaunches_.has(p0)) {
-          return undefined;
-        } else {
-          this.admittedLaunches_.add(p0);
-          this.admissionTokens_.set(p0, p1);
-          v5 = this.admitLaunch_(p0, p1);
-          this.admissionJobs_.set(p0, v5);
-          try {
-            await v5;
-            this.grantedLaunches_.add(p0);
-            if (this.admissionJobs_.get(p0) === v5) {
-              this.admissionJobs_.delete(p0);
-            }
-            if (hole == v7) {
-              return undefined;
-            }
-            throw v7;
-          } catch (catchAcc) {
-            if (!this.queue_.activeIds.includes(p0)) {
-              if ((await m1062(this.filesDir_ + "/logs/recovery/intents/" + p0 + ".json", 4096)).length === v4) {
-                this.admittedLaunches_.delete(p0);
-                this.admissionTokens_.delete(p0);
-                this.withdrawIntentBoundary_(p0);
-                this.grantedLaunches_.delete(p0);
-              }
-            }
-            throw catchAcc;
-          }
-        }
-      } else if (!this.admittedLaunches_.has(p0)) {
-        this.admittedLaunches_.add(p0);
-        this.admissionTokens_.set(p0, p1);
-        v5 = this.admitLaunch_(p0, p1);
-        this.admissionJobs_.set(p0, v5);
-        try {
-          await v5;
-          this.grantedLaunches_.add(p0);
-          if (this.admissionJobs_.get(p0) === v5) {
-            this.admissionJobs_.delete(p0);
-          }
-          if (hole == v7) {
-            return undefined;
-          }
-          throw v7;
-        } catch (catchAcc) {
-          if (!this.queue_.activeIds.includes(p0)) {
-            if ((await m1062(this.filesDir_ + "/logs/recovery/intents/" + p0 + ".json", 4096)).length === v4) {
-              this.admittedLaunches_.delete(p0);
-              this.admissionTokens_.delete(p0);
-              this.withdrawIntentBoundary_(p0);
-              this.grantedLaunches_.delete(p0);
-            }
-          }
-          throw catchAcc;
-        }
-      } else if (this.admissionTokens_.get(p0) !== p1) {
+    }
+    if (this.admittedLaunches_.has(p0)) {
+      if (this.admissionTokens_.get(p0) !== p1) {
         throw new Error("同活动已有不同启动准入token，原意图保留");
-      } else if (this.grantedLaunches_.has(p0)) {
+      }
+      if (this.grantedLaunches_.has(p0)) {
         return undefined;
-      } else {
-        this.admittedLaunches_.add(p0);
-        this.admissionTokens_.set(p0, p1);
-        v5 = this.admitLaunch_(p0, p1);
-        this.admissionJobs_.set(p0, v5);
-        try {
-          await v5;
-          this.grantedLaunches_.add(p0);
-          if (this.admissionJobs_.get(p0) === v5) {
-            this.admissionJobs_.delete(p0);
-          }
-          if (hole == v7) {
-            return undefined;
-          }
-          throw v7;
-        } catch (catchAcc) {
-          if (!this.queue_.activeIds.includes(p0)) {
-            if ((await m1062(this.filesDir_ + "/logs/recovery/intents/" + p0 + ".json", 4096)).length === v4) {
-              this.admittedLaunches_.delete(p0);
-              this.admissionTokens_.delete(p0);
-              this.withdrawIntentBoundary_(p0);
-              this.grantedLaunches_.delete(p0);
-            }
-          }
-          throw catchAcc;
+      }
+    }
+    this.admittedLaunches_.add(p0);
+    this.admissionTokens_.set(p0, p1);
+    v5 = this.admitLaunch_(p0, p1);
+    this.admissionJobs_.set(p0, v5);
+    try {
+      await v5;
+      this.grantedLaunches_.add(p0);
+    } catch (catchAcc) {
+      if (!this.queue_.activeIds.includes(p0)) {
+        if ((await m1062(this.filesDir_ + "/logs/recovery/intents/" + p0 + ".json", 4096)).length === v4) {
+          this.admittedLaunches_.delete(p0);
+          this.admissionTokens_.delete(p0);
+          this.withdrawIntentBoundary_(p0);
+          this.grantedLaunches_.delete(p0);
         }
       }
-    } else {
-      v5 = this.admissionJobs_.get(p0);
-      if (v5 !== undefined) {
-        if (this.admissionTokens_.get(p0) === p1) {
-          return v5;
-        }
-      }
-      if (this.admittedLaunches_.size > v4) {
-        if (!this.admittedLaunches_.has(p0)) {
-          throw new Error("已有另一启动准入意图，等待其派发或同身份撤回");
-        }
-        if (!this.admittedLaunches_.has(p0)) {
-          this.admittedLaunches_.add(p0);
-          this.admissionTokens_.set(p0, p1);
-          v5 = this.admitLaunch_(p0, p1);
-          this.admissionJobs_.set(p0, v5);
-          try {
-            await v5;
-            this.grantedLaunches_.add(p0);
-            if (this.admissionJobs_.get(p0) === v5) {
-              this.admissionJobs_.delete(p0);
-            }
-            if (hole == v7) {
-              return undefined;
-            }
-            throw v7;
-          } catch (catchAcc) {
-            if (!this.queue_.activeIds.includes(p0)) {
-              if ((await m1062(this.filesDir_ + "/logs/recovery/intents/" + p0 + ".json", 4096)).length === v4) {
-                this.admittedLaunches_.delete(p0);
-                this.admissionTokens_.delete(p0);
-                this.withdrawIntentBoundary_(p0);
-                this.grantedLaunches_.delete(p0);
-              }
-            }
-            throw catchAcc;
-          }
-        } else if (this.admissionTokens_.get(p0) !== p1) {
-          throw new Error("同活动已有不同启动准入token，原意图保留");
-        } else if (this.grantedLaunches_.has(p0)) {
-          return undefined;
-        } else {
-          this.admittedLaunches_.add(p0);
-          this.admissionTokens_.set(p0, p1);
-          v5 = this.admitLaunch_(p0, p1);
-          this.admissionJobs_.set(p0, v5);
-          try {
-            await v5;
-            this.grantedLaunches_.add(p0);
-            if (this.admissionJobs_.get(p0) === v5) {
-              this.admissionJobs_.delete(p0);
-            }
-            if (hole == v7) {
-              return undefined;
-            }
-            throw v7;
-          } catch (catchAcc) {
-            if (!this.queue_.activeIds.includes(p0)) {
-              if ((await m1062(this.filesDir_ + "/logs/recovery/intents/" + p0 + ".json", 4096)).length === v4) {
-                this.admittedLaunches_.delete(p0);
-                this.admissionTokens_.delete(p0);
-                this.withdrawIntentBoundary_(p0);
-                this.grantedLaunches_.delete(p0);
-              }
-            }
-            throw catchAcc;
-          }
-        }
-      } else if (!this.admittedLaunches_.has(p0)) {
-        this.admittedLaunches_.add(p0);
-        this.admissionTokens_.set(p0, p1);
-        v5 = this.admitLaunch_(p0, p1);
-        this.admissionJobs_.set(p0, v5);
-        try {
-          await v5;
-          this.grantedLaunches_.add(p0);
-        } catch (catchAcc) {
-          if (!this.queue_.activeIds.includes(p0)) {
-            if ((await m1062(this.filesDir_ + "/logs/recovery/intents/" + p0 + ".json", 4096)).length === v4) {
-              this.admittedLaunches_.delete(p0);
-              this.admissionTokens_.delete(p0);
-              this.withdrawIntentBoundary_(p0);
-              this.grantedLaunches_.delete(p0);
-            }
-          }
-          throw catchAcc;
-        } finally {
-          if (this.admissionJobs_.get(p0) === v5) {
-            this.admissionJobs_.delete(p0);
-          }
-        }
-      } else if (this.admissionTokens_.get(p0) !== p1) {
-        throw new Error("同活动已有不同启动准入token，原意图保留");
-      } else if (this.grantedLaunches_.has(p0)) {
-        return undefined;
-      } else {
-        this.admittedLaunches_.add(p0);
-        this.admissionTokens_.set(p0, p1);
-        v5 = this.admitLaunch_(p0, p1);
-        this.admissionJobs_.set(p0, v5);
-        try {
-          await v5;
-          this.grantedLaunches_.add(p0);
-          if (this.admissionJobs_.get(p0) === v5) {
-            this.admissionJobs_.delete(p0);
-          }
-          if (hole == v7) {
-            return undefined;
-          }
-          throw v7;
-        } catch (catchAcc) {
-          if (!this.queue_.activeIds.includes(p0)) {
-            if ((await m1062(this.filesDir_ + "/logs/recovery/intents/" + p0 + ".json", 4096)).length === v4) {
-              this.admittedLaunches_.delete(p0);
-              this.admissionTokens_.delete(p0);
-              this.withdrawIntentBoundary_(p0);
-              this.grantedLaunches_.delete(p0);
-            }
-          }
-          throw catchAcc;
-        }
+      throw catchAcc;
+    } finally {
+      if (this.admissionJobs_.get(p0) === v5) {
+        this.admissionJobs_.delete(p0);
       }
     }
   }

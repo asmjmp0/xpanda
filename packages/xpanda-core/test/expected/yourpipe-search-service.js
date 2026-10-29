@@ -384,18 +384,12 @@ export class SearchService {
             local_0_1 /*items*/.push(new SearchChannelItem(local_0_0 /*idCounter*/, v13, v18, v16, "", v17, "", ThumbnailPlaceholder.pickColor(v13 || v18, local_0_0 /*idCounter*/), ""));
             local_0_0 += 1;
             return;
-          default:
-            if (p0.continuationItemRenderer) {
-              local_0_2 = getContinuationToken(p0.continuationItemRenderer) ?? local_0_2 /*nextPageToken*/;
-            }
-            return;
         }
-      } else {
-        if (p0.continuationItemRenderer) {
-          local_0_2 = getContinuationToken(p0.continuationItemRenderer) ?? local_0_2 /*nextPageToken*/;
-        }
-        return;
       }
+      if (p0.continuationItemRenderer) {
+        local_0_2 = getContinuationToken(p0.continuationItemRenderer) ?? local_0_2 /*nextPageToken*/;
+      }
+      return;
     });
     return {
       "items": local_0_1 /*items*/,
