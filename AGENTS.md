@@ -13,6 +13,7 @@ Repo-local agent skills live in `.agents/skills/<name>/SKILL.md`. **Load the mat
 | Skill | Use when |
 |---|---|
 | `.agents/skills/xpanda-structure-forensics/` | Decompiled output for a class is structurally wrong or missing — a vanished try/catch/finally, a continuation duplicated into a catch, a dropped catch body, a wrong loop shape, code only reachable from an exception path that is absent, or a "why is this not restored" report pointing at a line of output. |
+| `.agents/skills/xpanda-try-restore-survey/` | Auditing a whole `.abc`/`.hap` sample for how many try/catch/finally structures are restored vs lost ("how many finallys are not restored in this abc", release-quality check of a new sample, sample-wide vs isolated bug triage). Cross-checks the bytecode try table against the decompiled output; exit code 1 on findings. |
 
 Each skill directory may ship its own helper scripts (e.g. `scripts/abc-inspect.ts`, run with `npx tsx`); read the skill's `SKILL.md` first, since it documents how they are meant to be used. When adding a new skill, put it under `.agents/skills/<name>/` with the same `SKILL.md` layout and add a row to this table.
 
