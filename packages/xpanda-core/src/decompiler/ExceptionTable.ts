@@ -540,11 +540,14 @@ interface HandlerBodyFlags {
     hole: boolean;
     dispatch: boolean;
     returns: boolean;
+    /** handler 里做了真实算术(binaryOp)——纯赋值型 catch,不是 mov/jmp 溢写跳板 */
+    computes: boolean;
 }
 
 function scanHandlerBody(blocks: PandaIRBasicBlock[]): HandlerBodyFlags {
     const flags: HandlerBodyFlags = {
         work: false, call: false, throws: false, hole: false, dispatch: false, returns: false,
+        computes: false,
     };
     for (const block of blocks) {
         for (const instruction of block.pandaInstructions) {
@@ -554,6 +557,7 @@ function scanHandlerBody(blocks: PandaIRBasicBlock[]): HandlerBodyFlags {
             if (isHoleLoadInstruction(instruction)) flags.hole = true;
             if (isAsyncDispatchInstruction(instruction, true)) flags.dispatch = true;
             if (instruction.kind === "return" || instruction.opcode.name === "asyncfunctionresolve") flags.returns = true;
+            if (instruction.kind === "binaryOp") flags.computes = true;
         }
     }
     return flags;
@@ -597,7 +601,10 @@ function isIgnoredCatchByBody(
     const flags = scanHandlerBody(blocks);
     if (flags.throws || flags.hole || flags.dispatch) return false;
     // Work catch: may rejoin the normal flow, so a return is not required.
-    if (flags.work) return !sharedStartKept && (flags.returns || rejoin);
+    // 共用 finally 起点的 catch 只有在“以 return 退出”时才安全:落回正常流程的
+    // catch 依赖 finally 布局,布局失败会留下 hole 守卫(lnga doFetch 是 return null;
+    // amcl g10 checkAccount 是回落型,注册后 finally 布局失败、守卫泄漏)。
+    if (flags.work) return flags.returns || (!sharedStartKept && rejoin);
     if (!flags.returns) {
         // Bare `jmp` empty catch to a forward join (`try { … } catch {}` then
         // more code). A `mov; jmp` handler restores the compiler's spills;
@@ -606,6 +613,10 @@ function isIgnoredCatchByBody(
         // `MovingPhotoCache.pruneCache`). A backward target is a loop latch
         // (continue) and stays out for the same reason (`GameInstall`).
         if (!rejoin || !joinTarget) return false;
+        // 纯赋值型 catch:handler 里做真实算术后汇合正常流程
+        // (`catch { posX = Math.max(...); posY = ... }`,lnga 各面板的
+        // showProfileCard)。mov/jmp 跳板没有 binaryOp,仍留在旧行为。
+        if (flags.computes) return true;
         return blocks.every((block) => block.pandaInstructions.every((instruction) =>
             instruction.kind === "jumpDirect" || instruction.kind === "nop"));
     }
@@ -895,7 +906,11 @@ export function handlerReadsTryValues(
         const defined = new Set(incoming.get(block) ?? []);
         for (const instruction of block.pandaInstructions) {
             const { def, uses } = instructionAccess(instruction);
-            if (instruction.kind !== "mov") {
+            // async/generator 机器指令(asyncfunctionresolve/reject、resumegenerator、
+            // getresumemode 等)读的是 async 上下文/恢复模式寄存器,不是源级值;
+            // 恢复派发会把它们写进保护范围,不能据此判定 handler 读了 try 里的值
+            // (VideoSizeUtil.doFetch 的 `catch { return null }` 曾因此被判 unknown 丢掉)。
+            if (instruction.kind !== "mov" && instruction.kind !== "async" && instruction.kind !== "generator") {
                 for (const use of uses) {
                     if (!defined.has(use) && tryWrites.has(use)) return true;
                 }
@@ -1084,10 +1099,11 @@ export function classifyTryEntries(cfg: PandaIRCFG): ExceptionTable {
             // empty catches that continue a loop, and wrap-in-error catches whose
             // `newobjrange` sits after the entry block.
             const sharedStartKept = (finallyHandlerEndByStart.get(startPC) ?? 0) > endPC;
-            const ignoredByBody = !finallyHandler && !sharedStartKept
+            const ignoredByBody = !finallyHandler
                 && (isIgnoredCatchByBody(cfg, handlerEntryBlock, startPC, endPC, sharedStartKept)
-                    || (handlerWrapsNewError(cfg, handlerEntryBlock, startPC, endPC) && !readsTryValues())
-                    || isEmptyContinueCatch(cfg, handlerEntryBlock, startPC, endPC));
+                    || (!sharedStartKept
+                        && ((handlerWrapsNewError(cfg, handlerEntryBlock, startPC, endPC) && !readsTryValues())
+                            || isEmptyContinueCatch(cfg, handlerEntryBlock, startPC, endPC))));
             const ignoredExitingCatch = isIgnoredExitingCatch(cfg, handlerEntryBlock, startPC, endPC, finallyPlans);
             const ignoredException = isIgnoredExceptionCatch(cfg, handlerEntryBlock)
                 || (isCatchAndWrapHandler(handlerEntryBlock) && !readsTryValues())

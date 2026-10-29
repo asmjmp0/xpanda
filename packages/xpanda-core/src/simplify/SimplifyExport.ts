@@ -144,6 +144,10 @@ export class SimplifyExport {
         //   try { A; cleanup; return v } catch (e) { cleanup; throw e }
         // 与 `try { A; return v } finally { cleanup }` 等价,还原成源码结构。
         SyntaxRewriteSimplify.foldEagerCatchToFinally(node);
+        // 用户 catch 与 finally 共用起点时,finally handler 生成的内层 eager shell
+        // (`try { try{B} catch{C;throw} } catch{C;return 常量}`)是冗余的:用户 catch
+        // 已经先执行同一段清理(见 foldRedundantFinallyShell)。
+        SyntaxRewriteSimplify.foldRedundantFinallyShell(node);
         // 循环归约残留的、落在循环外的 continue/break
         SyntaxRewriteSimplify.removeOrphanJumps(node);
         // `hole` 哨兵守卫清理后才露出标准 close 形态(`if (false) {} else if (it.return

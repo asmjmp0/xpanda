@@ -4062,6 +4062,14 @@ function verifyLngaCatchShapes(ctx: { decompileContaining: (needle: string) => {
         throw new Error(`lnga SearchPanel.doSearch: 整体 try/catch 未还原\n${search}`);
     }
 
+    // 纯赋值型 catch:handler 只做算术后汇合正常流程(`showProfileCard` 的
+    // `catch { posX = …; posY = … }`)。旧扫描要求 call/load 或纯 jmp 跳板,
+    // 五个面板类里同一个方法被整段丢弃。
+    const panel = ctx.decompileContaining("BlacklistPanel").code;
+    if (!/showProfileCard\(p0, p1, p2\) \{[\s\S]*?\} catch \(catchAcc\) \{\s*v4 = p1 - 280 \/ 2;\s*v3 = p2 \+ 8;\s*\}\s*floatingLayerStore\.openProfileCard\(p0, v4, v3\);/.test(panel)) {
+        throw new Error(`lnga BlacklistPanel.showProfileCard: 纯赋值 catch 未还原\n${panel}`);
+    }
+
     const saved = ctx.decompileContaining("SavedThreadStore").code;
     if (!/catch \(catchAcc\) \{\s*local_0_1\.warn\("reload skip file: %\{public\}s", v5\[v6\]\);/.test(saved)) {
         throw new Error(`lnga SavedThreadStore.reload: 循环内嵌套 catch 未还原\n${saved}`);
@@ -4192,6 +4200,45 @@ function verifyLngaAsyncFinally(clazz: PandaClass, code: string): void {
         if (code !== snapshot) {
             throw new Error(`lnga ${className}: 输出与快照不一致\n${firstDifference(snapshot, code)}`);
         }
+    }
+}
+
+/**
+ * 回归:v24 用户 catch 与 finally 共用起点、catch 以 `return null` 退出
+ * (VideoSizeUtil.doFetch)。
+ *
+ * handler 入口是纯寄存器溢出恢复(`mov`)+ `ldnull`,出口是 asyncfunctionresolve;
+ * 旧分类把 async 机器指令读到的恢复模式寄存器当成“handler 读取 try 里的值”,
+ * 判成 unknown 整段丢掉:异常路径只剩 finally 跳板的
+ * `if (v4 == undefined) { 清理 } throw catchAcc`,源级 `return null` 消失,
+ * fetchVideoSize 的 in-flight 表项在 reject 时不清理、该 URL 永久失效。
+ *
+ * 修复点:async/generator 机器指令不算可观察读;共用 finally 起点的 work catch
+ * 只要以 return 退出就注册;结构尾部去掉冗余的 eager shell
+ * (`try { try{B} catch{C;throw} } catch{C;return null}` → `try{B} catch{C;return null}`)。
+ */
+function verifyLngaVideoSizeUtil(clazz: PandaClass, code: string): void {
+    if (!clazz.name.content.endsWith("/common/media/VideoSizeUtil;")) {
+        throw new Error(`lnga VideoSizeUtil: 类名不符 (${clazz.name.content})`);
+    }
+    NodeFactory.parse(code);
+    if (/\bhole\b/.test(code)) {
+        throw new Error(`lnga VideoSizeUtil: 仍残留 hole 哨兵\n${code}`);
+    }
+    if (code.includes("throw catchAcc")) {
+        throw new Error(`lnga VideoSizeUtil: 异常仍被 finally 跳板重抛(用户 catch 丢失)\n${code}`);
+    }
+    if (code.includes("if (v4 == undefined)")) {
+        throw new Error(`lnga VideoSizeUtil: finally 跳板的恢复保护残留\n${code}`);
+    }
+    // catch 必须执行清理并返回 null(源码 `catch { return null }`)
+    if (!/\} catch \(catchAcc\) \{\s*if \(local_1_0[\s\S]*?local_0_3\.done\(\);\s*return null;\s*\}\s*\};/.test(code)) {
+        throw new Error(`lnga VideoSizeUtil.doFetch: catch 未还原成清理 + return null\n${code}`);
+    }
+    const expectedPath = path.join(__dirname, "expected", "lnga-video-size-util.js");
+    const snapshot = fs.readFileSync(expectedPath, "utf-8");
+    if (code !== snapshot) {
+        throw new Error(`lnga VideoSizeUtil: 输出与快照不一致\n${firstDifference(snapshot, code)}`);
     }
 }
 
@@ -5263,6 +5310,7 @@ const lngaClassTests: BinaryClassTest[] = [
     { label: "lnga SOURCE_FILE + qr login short circuit (lnga1.2.6.abc)", matches: (n) => n === "Lcom.example.nga_oh/entry/ets/common/utils/NgaQrLoginUtils;", run: verifyLngaQrLoginUtils },
     { label: "lnga shared-start catch + finally (lnga1.2.6.abc)", matches: (n) => n === "Lcom.example.nga_oh/entry/ets/pages/SettingsPanel;", run: verifyLngaSettingsPanelException },
     { label: "lnga async try/catch/finally (lnga1.2.6.abc)", matches: (n) => n === "Lcom.example.nga_oh/entry/ets/common/dialogs/SaveThreadDialogs;" || n === "Lcom.example.nga_oh/entry/ets/pages/ProfilePanel;" || n === "Lcom.example.nga_oh/entry/ets/pages/LoginPage;" || n === "Lcom.example.nga_oh/entry/ets/pages/NotificationPanel;" || n === "Lcom.example.nga_oh/entry/ets/store/settings/domain/SocialListSettings;", run: verifyLngaAsyncFinally },
+    { label: "lnga shared-start catch return (lnga1.2.6.abc)", matches: (n) => n === "Lcom.example.nga_oh/entry/ets/common/media/VideoSizeUtil;", run: verifyLngaVideoSizeUtil },
     { label: "lnga v24 catch shapes (lnga1.2.6.abc)", matches: (n) => n === "Lcom.example.nga_oh/entry/ets/common/security/NgaRsaCipher;", run: (_clazz, _code, ctx) => verifyLngaCatchShapes(ctx) },
 ];
 

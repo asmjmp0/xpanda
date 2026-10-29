@@ -323,6 +323,72 @@ export class SyntaxRewriteSimplify implements ISimplify {
     }
 
     /**
+     * finally 的 eager shell:用户 catch 与 finally 共用起点时,finally handler
+     * 被生成成内层 `try { B } catch (e) { Cw; throw e }`,编译器又把同一段清理 C
+     * 内联在用户 catch 的出口前(24+ 的 eager 形态):
+     *
+     *   try { try { B } catch (e) { Cw; throw e } } catch (e2) { C; U }
+     *
+     * Cw 是 C 加上 await 恢复保护的 `if (flag == undefined) { … }` 包装。当核心
+     * 清理一致、U 是无副作用的常量 return 时,内层 shell 只重复了外层 catch 已经
+     * 执行的清理:异常直接落到用户 catch,`C; return <常量>` 与源码
+     * `try { B } catch (e2) { U } finally { C }` 的可见行为一致(C 恰好执行一次、
+     * U 无副作用且不依赖 C 的结果)。删掉内层 shell → `try { B } catch (e2) { C; U }`。
+     */
+    public static foldRedundantFinallyShell(node: Program): boolean {
+        let changed = false;
+        traverse(file(node), {
+            noScope: true,
+            TryStatement(path) {
+                const outer = path.node;
+                if (!outer.handler || outer.finalizer) return;
+                if (outer.block.body.length !== 1) return;
+                const inner = outer.block.body[0];
+                if (!TYPE.isTryStatement(inner) || !inner.handler || inner.finalizer) return;
+                // 内层 catch 必须是 `Cw; throw e`
+                const innerBody = inner.handler.body.body;
+                if (innerBody.length < 2) return;
+                const throwLast = innerBody[innerBody.length - 1];
+                const innerParam = inner.handler.param;
+                if (!TYPE.isThrowStatement(throwLast) || !isIdentifier(throwLast.argument)
+                    || !isIdentifier(innerParam) || throwLast.argument.name !== innerParam.name) return;
+                let cleanup = SyntaxRewriteSimplify.flattenCleanupStatements(innerBody.slice(0, -1));
+                if (cleanup.length === 0) return;
+                // 去掉 await 恢复保护的 `if (<flag> == undefined) { … }` 包装
+                if (cleanup.length === 1 && isIfStatement(cleanup[0])
+                    && !cleanup[0].alternate && isBlockStatement(cleanup[0].consequent)
+                    && SyntaxRewriteSimplify.isResumeFlagTest(cleanup[0].test)) {
+                    cleanup = cleanup[0].consequent.body;
+                }
+                if (!cleanup.every((statement) => SyntaxRewriteSimplify.isMovableCleanupStatement(statement))) return;
+                // 用户 catch 必须是 `C; U`,且 U 只有一个无副作用的常量 return
+                const outerBody = outer.handler.body.body;
+                if (outerBody.length <= cleanup.length) return;
+                for (let index = 0; index < cleanup.length; index++) {
+                    if (!isNodeEqual(outerBody[index], cleanup[index])) return;
+                }
+                const userCatch = outerBody.slice(cleanup.length);
+                if (userCatch.length !== 1 || !isReturnStatement(userCatch[0])) return;
+                const returned = userCatch[0].argument;
+                if (returned && !isIdentifier(returned) && !isNullLiteral(returned)
+                    && !isBooleanLiteral(returned) && !isNumericLiteral(returned)
+                    && !TYPE.isStringLiteral(returned)) return;
+                // 删除内层 shell:外层 try 体换成内层的 try 体
+                outer.block.body = inner.block.body;
+                delete (outer as any).extra?.xpandaTryKind;
+                changed = true;
+            },
+        });
+        return changed;
+    }
+
+    /** `X == undefined` / `X == null`(await 恢复保护的判定形态) */
+    private static isResumeFlagTest(test: TYPE.Expression): boolean {
+        if (!isBinaryExpression(test) || test.operator !== "==") return false;
+        return isIdentifier(test.left) && (TYPE.isNullLiteral(test.right) || (isIdentifier(test.right) && test.right.name === "undefined"));
+    }
+
+    /**
      * 拆掉纯 rethrow 的 catch:`try { B } catch (e) { throw e }` 与直接执行 B
      * 完全等价 —— 异常被原样抛出(同一个对象、同一条栈),控制流不变。编译器用它
      * 做 finally 的异常跳板、构造器的 `throw.ifsupernotcorrectcall` 检查、模块
