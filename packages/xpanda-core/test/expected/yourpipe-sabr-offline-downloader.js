@@ -494,12 +494,7 @@ export class SabrOfflineDownloader {
         p4();
         return false;
       }
-      if (catchAcc instanceof SabrProtocolException) {
-        acc = catchAcc.kind === "protection" || catchAcc.kind === "no_media" || catchAcc.kind === "segment_unavailable";
-      } else {
-        acc = catchAcc instanceof SabrProtocolException;
-      }
-      if (acc) {
+      if (catchAcc instanceof SabrProtocolException && (catchAcc.kind === "protection" || catchAcc.kind === "no_media" || catchAcc.kind === "segment_unavailable")) {
         Logger.warn(local_0_0 /*TAG*/, "tryWriteNext itag=" + p0.getItag() + " seq=" + p1 + ": " + v10 + "");
         return false;
       }

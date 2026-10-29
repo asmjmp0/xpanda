@@ -1429,8 +1429,7 @@ export class c1114 {
       v0 = await local_1_2.artifactsMatch_(v8, v7);
       v13 = v0;
       if (v10 === v7.inputKey && v7.policy === 3) {
-        acc = !v0;
-        if (acc) {
+        if (!v0) {
           local_1_1 = local_1_2.boundary_(local_1_0);
           v11 = local_1_1.nextLaunchAt;
           if (p2) {

@@ -254,10 +254,35 @@ export class TempVariableSimplify implements ISimplify {
      * 合成之后,轮内的复制传播来不及把 `acc = v20?.client; v6 = f(acc)` 合并;
      * simplifyTail 之后补一轮。
      */
-    static foldNextReadAssignments(node: Program): boolean {
+    static foldNextReadAssignments(node: Program, allowIfTest = false): boolean {
         const pass = new TempVariableSimplify();
         pass.state.changed = false;
         pass.state.nextReadOnly = true;
+        pass.state.nextReadIfTest = allowIfTest;
+        traverse(file(node), {
+            Program: (path) => pass.processScope(path),
+            Function: (path) => pass.processScope(path),
+        });
+        return pass.state.changed;
+    }
+
+    /**
+     * 尾部条件别名/布尔物化清理:
+     *
+     *   Y = X; if (X) ...        -> if (Y) ...
+     *   Y = X; if (!X) ...       -> if (!Y) ...
+     *   X = !Z; if (!X) ...      -> if (Z) ...
+     *   if (Z) { X = A } else { X = B } -> X = Z ? A : B
+     *
+     * 只处理 temp(acc / vN)别名。别名读取是变量读取,改写不改变求值顺序;
+     * if/else 两个分支都是对同一个 temp 的单条赋值时,三目求值顺序与 if 相同。
+     * `X = E; if (test(X))` 的搬移由后续 foldNextReadAssignments(node, true)
+     * 用活跃性判断 X 是否已死后再做。
+     */
+    static foldConditionAliases(node: Program): boolean {
+        const pass = new TempVariableSimplify();
+        pass.state.changed = false;
+        pass.state.conditionAliasOnly = true;
         traverse(file(node), {
             Program: (path) => pass.processScope(path),
             Function: (path) => pass.processScope(path),
@@ -280,6 +305,38 @@ export class TempVariableSimplify implements ISimplify {
             Function: (path) => pass.processScope(path),
         });
         return pass.state.changed;
+    }
+
+    /**
+     * 函数体内是否直接写入外层(闭包捕获)变量。
+     *
+     * 尾部的 `cleanupDeadStores` 对“闭包写外层变量”的活跃性没有建模,尾部的
+     * 条件别名/下一读取改写如果先改动了同一函数,后续清理可能把外层标志赋值
+     * 误判为死存储(amcl z12 的 `local_1_3 = true`)。这类函数跳过新增的
+     * conditionAlias/if-test 折叠,保持原有清理轨迹。
+     */
+    private hasCapturedAssignment(
+        path: NodePath<TYPE.Program> | NodePath<TYPE.Function>,
+        body: TYPE.Statement[],
+    ): boolean {
+        const scope = path.scope;
+        let found = false;
+        for (const stmt of body) {
+            if (found) break;
+            walkNode(stmt, (node) => {
+                if (found) return false;
+                if (isFunctionLike(node) || isClassLike(node)) return false;
+                if (isAssignmentExpression(node) && node.operator === "=" && isIdentifier(node.left)) {
+                    const binding = scope.getBinding(node.left.name);
+                    if (binding && binding.scope !== scope) {
+                        found = true;
+                        return false;
+                    }
+                }
+                return true;
+            });
+        }
+        return found;
     }
 
     private processScope(path: NodePath<TYPE.Program> | NodePath<TYPE.Function>): void {
@@ -327,6 +384,18 @@ export class TempVariableSimplify implements ISimplify {
             }
             return true;
         });
+        if (this.state.conditionAliasOnly) {
+            // 函数内写外层(闭包捕获)变量时跳过:尾部的死存储清理对捕获写入的
+            // 活跃性不建模,改写 if test 后可能把外层标志赋值误删(amcl z12 的
+            // `local_1_3 = true` 在 phaseBindings 分支里)。
+            if (this.hasCapturedAssignment(path, body)) return;
+            // 别名/三目改写只动 test;if/else 三目折叠需要用活跃性确认
+            // 三目赋值的 X 在紧随的 if test 之后已死。
+            this.liveness.analyzeList(body, new Set(), ctx);
+            this.assignments.foldConditionAliases(body, ctx);
+            this.removeUnusedDeclarations(body, ctx);
+            return;
+        }
         if (this.state.returnsOnly) {
             // 尾部三元合成后可能留下累加器链/临时变量别名(见 foldAccumulatorChains /
             // foldTempAliasAssignments),需要活跃性判断被搬移的旧值是否已死。
@@ -343,7 +412,8 @@ export class TempVariableSimplify implements ISimplify {
         }
         if (this.state.nextReadOnly) {
             this.liveness.analyzeList(body, new Set(), ctx);
-            this.assignments.foldTempLastUseIntoNextRead(body, ctx);
+            const allowIfTest = this.state.nextReadIfTest && !this.hasCapturedAssignment(path, body);
+            this.assignments.foldTempLastUseIntoNextRead(body, ctx, allowIfTest);
             this.removeUnusedDeclarations(body, ctx);
             return;
         }

@@ -130,16 +130,10 @@ export class VideoPlayer extends ViewPU {
     local_1_0.__durationTime = new ObservedPropertySimplePU(0, local_1_0, "durationTime");
     local_1_0.keepScreenListener = new KeepScreenOnStateListener /*KeepScreenOnStateListener*/(local_1_0);
     local_1_0.progressListener = function (p0, p1) {
-      let acc;
       local_1_0.currentTime = p0;
       local_1_0.durationTime = p1;
       if (!local_1_0.playbackStarted) {
-        if (p0 <= 0) {
-          acc = local_1_0.vm.isReady && local_1_0.vm.isPlaying && !local_1_0.vm.isBuffering;
-        } else {
-          acc = p0 > 0;
-        }
-        if (acc) {
+        if (p0 <= 0 ? local_1_0.vm.isReady && local_1_0.vm.isPlaying && !local_1_0.vm.isBuffering : p0 > 0) {
           local_1_0.playbackStarted = true;
         }
       }

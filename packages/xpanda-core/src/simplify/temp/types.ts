@@ -22,6 +22,10 @@ export interface PassState {
     accumulatorOnly: boolean;
     /** true:只把 `X = E` 搬进下一条语句里对 X 的唯一一次读取 */
     nextReadOnly: boolean;
+    /** true: `nextReadOnly` 轮允许把 `X = E` 搬进紧随 if 的 test(要求 X 之后已死) */
+    nextReadIfTest: boolean;
+    /** true:只折条件别名(`Y = X; if (X)`)与单赋值 if/else 三目 */
+    conditionAliasOnly: boolean;
     /** true: only fold `X = F(X); C(X)` hub chains (X dead after C) */
     hubOnly: boolean;
     /** true:只折叠 `X = E; if (X/!X/E/!E) { X = B }` 短路链 */
@@ -126,6 +130,8 @@ export function createPassState(): PassState {
         returnsOnly: false,
         accumulatorOnly: false,
         nextReadOnly: false,
+        nextReadIfTest: false,
+        conditionAliasOnly: false,
         hubOnly: false,
         shortCircuitOnly: false,
         cleanupOnly: false,

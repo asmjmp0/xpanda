@@ -567,8 +567,7 @@ export async function z762(p0, p1, p2, p3, p4, p5) {
         try {
           v0 = await g50.stat(v32.fd);
           v74 = v0;
-          acc = !v0.isFile();
-          if (acc || (v34 = p0, v35 = p2, v36 = p3, v37 = p4, v38 = v4, v40 = v5, v41 = v14, v42 = v31, v43 = v21, v44 = v22, v45 = v19, v0.size !== v23.size)) {
+          if (!v0.isFile() || (v34 = p0, v35 = p2, v36 = p3, v37 = p4, v38 = v4, v40 = v5, v41 = v14, v42 = v31, v43 = v21, v44 = v22, v45 = v19, v0.size !== v23.size)) {
             throw new Error("导出快照大小变化");
           }
           v75 = cryptoFramework.createMd("SHA256");

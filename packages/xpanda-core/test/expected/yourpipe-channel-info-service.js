@@ -276,8 +276,7 @@ export class ChannelInfoService {
     }
     for (v12 = 0; v12 < v6.length; v12 += 1) {
       v13 = this.asArray(this.asRecord(v6[v12])?.metadataParts);
-      acc = !!v13;
-      if (acc) {
+      if (!!v13) {
         for (v16 = 0; v16 < v13.length; v16 += 1) {
           v18 = this.asRecord(v13[v16]);
           v17 = this.asString(this.asRecord(v18?.text)?.content);

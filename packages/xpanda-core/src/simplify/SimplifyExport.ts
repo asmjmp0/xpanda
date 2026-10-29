@@ -123,6 +123,13 @@ export class SimplifyExport {
         // 数组元素成型后,`v6 = [<obj>]; v5.files = v6` 才能把数组搬进字段赋值;
         // 再一次 ObjectLiteralSimplify 才能把字段并进外层对象字面量。
         TempVariableSimplify.foldNextReadAssignments(node);
+        // 尾部条件别名/布尔物化:
+        //   `Y = X; if (X)` -> `if (Y)`, `X = !Z; if (!X)` -> `if (Z)`,
+        //   `if (Z) { X = A } else { X = B }` -> `X = Z ? A : B`。
+        // 这些形态常常是可选链/三目在流水线尾部成型后才出现的;随后允许 if test
+        // 的 next-read 折叠把 `X = E; if (test(X))` 合进 test(X 之后已死)。
+        TempVariableSimplify.foldConditionAliases(node);
+        TempVariableSimplify.foldNextReadAssignments(node, true);
         // 重复尾块消除之后,再把尾部才成型的三目字段值(`topInsetVp: v0` 前面的
         // `v0 = C ? A : B` 被 foldNextReadAssignments 折进属性赋值)合并进对象字面量。
         // 必须在 TailMergeSimplify 之后:否则共享尾块的两份副本会被合并得不一样,

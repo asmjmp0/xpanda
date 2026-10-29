@@ -222,9 +222,8 @@ export class e190 {
     this.applyVisibility_();
   }
   isEventExpanded(p0) {
-    let acc = this.expanded.has(p0);
-    let v0 = acc;
-    if (!acc) {
+    let v0 = this.expanded.has(p0);
+    if (!v0) {
       v0 = !this.collapsed && !this.individuallyCollapsed.has(p0);
     }
     return v0;

@@ -991,6 +991,42 @@ export class HighLevelGrammarSimplify implements ISimplify {
         return count;
     }
 
+    /**
+     * 同名空标签的副本数是否覆盖所有伪 goto 跳转。
+     *
+     * 结构分析对同一个 region 的多个副本各输出一个 `label_pc: ;`,每个副本里的
+     * 伪 goto break 跳到自己的标签;删除其中一个标签不会让其它副本的跳转失去目标。
+     * 只有“标签数 < 跳转数”才说明有多个跳转共用一个标签,删除后会有悬空跳转。
+     */
+    private labelsCoverPseudoGotos(stop: NodePath, name: string): boolean {
+        const fn = stop.getFunctionParent();
+        const rootNode: TYPE.Node | null = fn && fn.node.body
+            ? fn.node.body as TYPE.Node
+            : stop.findParent((parent) => parent.isProgram())?.node ?? null;
+        if (!rootNode) return false;
+        let labels = 0;
+        let jumps = 0;
+        walkNode(rootNode, (node) => {
+            if (isFunctionLikeNode(node) || isClassLikeNode(node)) return false;
+            if (isLabeledStatementNode(node) && node.label.name === name) {
+                labels++;
+                return true;
+            }
+            if (isBreakStatement(node) && this.pseudoGotoLabel(node as TYPE.BreakStatement) === name) {
+                jumps++;
+                return true;
+            }
+            if (isCallExpression(node) && isIdentifierNode(node.callee) && node.callee.name === "xpanda_goto"
+                && node.arguments.length === 1 && isIdentifierNode(node.arguments[0])
+                && node.arguments[0].name === name) {
+                jumps++;
+                return true;
+            }
+            return true;
+        });
+        return labels >= jumps;
+    }
+
     /** 语句是否是无条件的 `name = ...`。 */
     private isDirectAssignmentTo(stmt: TYPE.Node, name: string): boolean {
         return isExpressionStatementNode(stmt)
@@ -2145,6 +2181,70 @@ export class HighLevelGrammarSimplify implements ISimplify {
         }
     }
 
+    /**
+     * 带“已关闭”标志的 iterator close:
+     *
+     *   if (!flag) { flag = true; if (it.return != undefined) it.return(); }
+     *   if (!flag) { if (it.return != undefined) it.return(); }
+     *
+     * ArkTS 在同一个 for...of 的多个 break/return 出口之间用标志避免重复 close。
+     * 还原成 for...of 后由循环隐式 close,整块(连同 flag 写入)删除;只删内层
+     * close 会留下 `if (!flag) {}` 空壳并继续读 flag。
+     */
+    private isFlagGuardedIteratorClose(node: TYPE.Node, itName: string): boolean {
+        return this.flagGuardedIteratorCloseFlag(node, itName) !== null;
+    }
+
+    /** 带“已关闭”标志的 iterator close 返回标志名,否则 null。 */
+    private flagGuardedIteratorCloseFlag(node: TYPE.Node, itName: string): string | null {
+        if (!isIfStatementNode(node) || node.alternate) return null;
+        const test = node.test;
+        if (!TYPE.isUnaryExpression(test) || test.operator !== "!"
+            || !isIdentifierNode(test.argument)) return null;
+        const flag = test.argument.name;
+        const consequent = node.consequent;
+        const statements = isBlockStatementNode(consequent)
+            ? consequent.body
+            : [consequent as TYPE.Statement];
+        let index = 0;
+        const first = statements[index];
+        if (isExpressionStatementNode(first) && isAssignmentExpressionNode(first.expression)
+            && first.expression.operator === "=" && isIdentifierNode(first.expression.left)
+            && first.expression.left.name === flag
+            && TYPE.isBooleanLiteral(first.expression.right) && first.expression.right.value === true) {
+            index++;
+        }
+        if (index >= statements.length) return null;
+        const rest = statements.slice(index);
+        return rest.length === 1 && this.isSimpleIteratorClose(rest[0], itName) ? flag : null;
+    }
+
+    /**
+     * 删除带标志的 iterator close 前,确认标志的其余读取不会观察到被删掉的写入:
+     * 循环体内只允许出现在将被删除的 close 块/循环后的 close 块里;循环之后的
+     * 读取必须在新写入之后;循环之前/互斥分支的读取与本循环无关。
+     */
+    private flagCloseReadsAreCovered(
+        loop: NodePath<TYPE.Statement>,
+        flag: string,
+        closes: NodePath<TYPE.Statement>[],
+        extras: NodePath<TYPE.Statement>[],
+    ): boolean {
+        const binding = loop.scope.getBinding(flag);
+        if (!binding) return false;
+        for (const ref of binding.referencePaths) {
+            if (!ref.node) continue;
+            if (closes.some((close) => ref.findParent((parent) => parent.node === close.node))) continue;
+            if (extras.some((extra) => ref.findParent((parent) => parent.node === extra.node))) continue;
+            if (ref.getFunctionParent() !== loop.getFunctionParent()) return false;
+            if (ref.findParent((parent) => parent.node === loop.node)) return false;
+            if (!this.isStatementAfterLoop(ref, loop)) continue;
+            if (this.hasNewerValueBefore(ref, loop, flag, true)) continue;
+            return false;
+        }
+        return true;
+    }
+
     private isSimpleIteratorClose(node: TYPE.Node, iterName: string): boolean {
         // `if (false) {} else close` / `if (true) { close }` 都是 hole/finally
         // 清理后留下的哨兵外壳。
@@ -2292,7 +2392,9 @@ export class HighLevelGrammarSimplify implements ISimplify {
     /**
      * 共享续接标签在包含循环的 if 之后:
      *   if (C) { …; loop; close; … } label_x: ; CONT
+     *   if (C) { … } else { …; loop; close; … } label_x: ; CONT
      * 循环耗尽路径跳到 if 之后的 label;转换后 for-of 结束会自然落到同一位置。
+     * 循环也可能在 if 的 else 分支里(两种分支都从各自的块退出到 if 之后)。
      */
     private findFollowingContinuation(
         value: NodePath<TYPE.Statement>,
@@ -2301,7 +2403,8 @@ export class HighLevelGrammarSimplify implements ISimplify {
         if (!block || !block.isBlockStatement()) return null;
         const ifPath = block.parentPath;
         if (!ifPath || !ifPath.isIfStatement()) return null;
-        if ((ifPath.node as TYPE.IfStatement).consequent !== block.node) return null;
+        const ifNode = ifPath.node as TYPE.IfStatement;
+        if (ifNode.consequent !== block.node && ifNode.alternate !== block.node) return null;
         const labelPath = ifPath.getNextSibling();
         if (!labelPath.node || !isLabeledStatementNode(labelPath.node)
             || (labelPath.node as TYPE.LabeledStatement).body.type !== "EmptyStatement") return null;
@@ -2561,8 +2664,10 @@ export class HighLevelGrammarSimplify implements ISimplify {
                 if (alternate.labelName !== gotoLabel) return false;
             } else if (following) {
                 if (following.labelName !== gotoLabel) return false;
-                // 移除 if 之后的标签:不能再有其它跳转指向它。
-                if (this.countLabelJumps(value, gotoLabel, doneBreak) > 0) return false;
+                // 移除 if 之后的标签:不能再有其它跳转指向它。结构分析会为同一个
+                // region 的多个副本各生成一个同名 `label_x: ;`(region copy),
+                // 副本之间互不包含,各自跳自己的标签;只要标签数覆盖跳转数即可。
+                if (!this.labelsCoverPseudoGotos(value, gotoLabel)) return false;
             } else {
                 return false;
             }
@@ -2571,6 +2676,44 @@ export class HighLevelGrammarSimplify implements ISimplify {
             // 还有别的跳转,否则会漏掉真正指向这个标签的跳转。
             if (this.hasOtherJumpInside(value, gotoLabel, doneBreak)) return false;
             if ((alternate || following) && this.hasRealLabelReference(value, gotoLabel)) return false;
+        }
+        // 循环体内联的 iterator close(`if (it.return != undefined) it.return()`)
+        // 在转为 for...of 后由 for-of 隐式完成(break/return/throw 都会关闭迭代器)。
+        // 只对伪 goto 形态处理:目标 for-of 的耗尽路径跳到循环外标签,提前退出
+        // 分支里的 close 不删除就无法通过下面的“迭代器临时量不能读出循环”检查。
+        // 普通 break 形态(amcl c15 build)的 done 分支是真实续接代码,删除 close
+        // 会让转换误把 DONE 当成循环后续接代码的副本而丢掉整块。
+        const inlinedCloses: NodePath<TYPE.Statement>[] = [];
+        const closeFlags = new Set<string>();
+        if (gotoLabel) {
+            body.traverse({
+                Function: (p) => {
+                    if (p.getFunctionParent() !== value.getFunctionParent()) p.skip();
+                },
+                // 嵌套循环里的 close 属于内层循环(临时迭代器经常复用);done 分支
+                // 是循环之后的代码,里面的 close 也属于后续循环。两者都不能随外层
+                // for...of 一起删除。
+                Loop: (p) => p.skip(),
+                IfStatement: (p) => {
+                    if (p.node === doneStmt.node) {
+                        p.skip();
+                        return;
+                    }
+                    const flag = this.flagGuardedIteratorCloseFlag(p.node, iterName);
+                    if (flag) {
+                        closeFlags.add(flag);
+                        inlinedCloses.push(p as NodePath<TYPE.Statement>);
+                        p.skip();
+                        return;
+                    }
+                    if (!this.isSimpleIteratorClose(p.node, iterName)) return;
+                    inlinedCloses.push(p as NodePath<TYPE.Statement>);
+                    p.skip();
+                },
+            });
+            for (const flag of closeFlags) {
+                if (!this.flagCloseReadsAreCovered(value, flag, inlinedCloses, extras)) return false;
+            }
         }
         if (breakWithoutPrefix) {
             // 无前缀的 break 路径只有伪 goto break 形态能表达(续接代码就是标签
@@ -2605,6 +2748,7 @@ export class HighLevelGrammarSimplify implements ISimplify {
             // referencePaths 还是改写前的节点:按语句归属再认一次首条 next()。
             if (ref.getStatementParent()?.node === nextStatementNode) continue;
             if (extras.some((e) => ref.findParent((parent) => parent.node === e.node))) continue;
+            if (inlinedCloses.some((close) => ref.findParent((parent) => parent.node === close.node))) continue;
             // break 形态下 DONE 整块丢弃,里面的引用(通常是被复制进来的续接
             // 代码又复用了同一个迭代器临时量)不再影响本循环。
             if (!exitValue && ref.findParent((parent) => parent.node === doneStmt.node)) continue;
@@ -2647,6 +2791,11 @@ export class HighLevelGrammarSimplify implements ISimplify {
         }
 
         // 循环 test 在 continue 路径上必须为真,否则附加的出口判断会被跳过。
+        // 例外:done 分支是跳到循环外标签的伪 goto(搜索/提前退出形态)。此时
+        // do-while 的 test 只是源码里“尾部 if (!TEST) return E”的物化,源码
+        // continue 在字节码里跳回循环头(下一轮 next()),不会求值这个 test;
+        // 改成 for...of 后 continue 正好恢复成“取下一个元素”,必须跳过该检查。
+        // (site: SearchService.hasLiveBadge 的 `acc = !!renderer; if (!acc) continue`)
         let valid = true;
         const realBreaks: NodePath<TYPE.BreakStatement>[] = [];
         body.traverse({
@@ -2655,7 +2804,7 @@ export class HighLevelGrammarSimplify implements ISimplify {
                 const owner = p.findParent((parent) => parent.isWhileStatement() || parent.isDoWhileStatement()
                     || parent.isForStatement() || parent.isForInStatement() || parent.isForOfStatement());
                 if (!owner || owner.node !== value.node) return;
-                if (!this.continueHoldsLoopTest(
+                if (!gotoLabel && !this.continueHoldsLoopTest(
                     p as NodePath<TYPE.ContinueStatement>, testName, loopTest, testNegated)) {
                     valid = false;
                     p.stop();
@@ -2681,12 +2830,20 @@ export class HighLevelGrammarSimplify implements ISimplify {
         // 循环体内的真实 `break` 跳出后执行的是循环之后的尾巴(close + return E)。
         // for-of 的 break 会直接离开循环、跳过尾巴,所以把它换成同一个 return E。
         // 只接受尾巴就是单个 return/throw E 的形态(exitValue 已校验为纯表达式)。
+        // break 形态(exitValue 为空)只在伪 goto 搜索循环里允许保留真实 break:
+        // 这类循环的耗尽路径跳到循环外标签,break 与源码一样跳过 EXIT 前缀。
+        // 普通 break 形态(如 amcl l12 legacyPrimaryChecksum)的 DONE 是真实
+        // return/后续代码,不是续接代码的副本,放行会把它丢掉。
         if (realBreaks.length > 0) {
-            if (!exitValue || breakPath) return false;
-            const exitIsReturn = !exitPath || exitPath.isReturnStatement();
-            for (const brk of realBreaks) {
-                const value = TYPE.cloneNode(exitValue);
-                brk.replaceWith(exitIsReturn ? returnStatementBuilder(value) : throwStatementBuilder(value));
+            if (exitValue) {
+                if (breakPath) return false;
+                const exitIsReturn = !exitPath || exitPath.isReturnStatement();
+                for (const brk of realBreaks) {
+                    const value = TYPE.cloneNode(exitValue);
+                    brk.replaceWith(exitIsReturn ? returnStatementBuilder(value) : throwStatementBuilder(value));
+                }
+            } else if (!gotoLabel) {
+                return false;
             }
         }
 
@@ -2713,8 +2870,14 @@ export class HighLevelGrammarSimplify implements ISimplify {
         }
 
         const arr: TYPE.Statement[] = [];
+        const removedInlinedCloses = new Set<TYPE.Node>();
+        for (const close of inlinedCloses) {
+            removedInlinedCloses.add(close.node);
+            close.remove();
+        }
         for (let i = 2; i < bodyStatements.length; i++) {
             if (i === 2 && skipSelfValueAssignment) continue;
+            if (removedInlinedCloses.has(bodyStatements[i].node)) continue;
             arr.push(bodyStatements[i].node);
         }
         // 循环 test 的物化赋值 `testName = T` 直接变成出口判断的条件,避免输出里
@@ -2779,8 +2942,10 @@ export class HighLevelGrammarSimplify implements ISimplify {
         } else if (following) {
             following.labelPath.remove();
         }
-        if (exitValue) {
+        if (exitValue && !gotoLabel) {
             // DONE 里可能有块级声明,包一层块避免与外部同名声明冲突。
+            // 伪 goto 形态的 DONE 只是跳到循环外标签的标记,转换后 for-of 耗尽会
+            // 自然落到标签位置,不能把标记 break 插到循环后面。
             const hasDeclaration = doneStatements.some((stmt) =>
                 isVariableDeclarationNode(stmt) || stmt.type === "FunctionDeclaration" || stmt.type === "ClassDeclaration");
             value.insertAfter(hasDeclaration ? [blockStatementBuilder(doneStatements)] : doneStatements);

@@ -2274,6 +2274,69 @@ function verifyYourpipeSearchLoopRestorations(clazz: PandaClass, code: string): 
     }
 }
 
+/**
+ * 回归:SearchService.hasLiveBadge 的搜索循环 + 整类快照。
+ *
+ * `for (const badge of p0.badges)` 被 lower 成带伪 goto break 的 do-while:
+ * done 路径跳到 `label_652`(跳过 close + return true),`if (!renderer)` 是
+ * 跳回循环头的 source continue,尾部 test 是 `if (label.includes('直播')) return true`。
+ * 同时 found 分支里还有一个内联 iterator close。还原后必须是 for...of,且不能再有
+ * `label_652` / `//from goto` / `.value` 成员残留。这个类只有 529 行,用整类快照
+ * 固定三个出口的完整结构(YoutubeSabrSession 更大,用片段断言)。
+ */
+function verifyYourpipeSearchService(clazz: PandaClass, code: string): void {
+    NodeFactory.parse(code);
+    assertNoPseudoGoto(code);
+    for (const fragment of [
+        "for (v15 of p0.badges) {",
+        "if (!v15.metadataBadgeRenderer) {",
+        'if ((v15.metadataBadgeRenderer.label || "").indexOf("直播") >= 0) return true;',
+    ]) {
+        if (!code.includes(fragment)) {
+            throw new Error(`${clazz.name.content}: 缺少 ${JSON.stringify(fragment)}`);
+        }
+    }
+    if (code.includes("label_652") || code.includes(".value.metadataBadgeRenderer")) {
+        throw new Error(`${clazz.name.content}: 仍残留 label_652 / .value 成员\n${code}`);
+    }
+    const expectedPath = path.join(__dirname, "expected", "yourpipe-search-service.js");
+    const expected = fs.readFileSync(expectedPath, "utf-8");
+    if (code !== expected) {
+        throw new Error(`SearchService: 输出与快照不一致\n${firstDifference(expected, code)}`);
+    }
+}
+
+/**
+ * 回归:YoutubeSabrSession 的 policy 评估循环。
+ *
+ * fetchSegment / pumpOnceLocked 里的 for...of 被 lower 成带伪 goto break 的
+ * do-while(done 分支跳到循环外 label),同时每个 break 出口都带一个
+ * `if (!closed) { closed = true; it.return() }` 标志 close。改为 for...of 后
+ * close 由循环隐式完成,标志 close 整块删除;耗尽路径自然落到 label。
+ * 之前输出残留 `break; //from goto label_3142/label_4366`(耗尽路径错误地
+ * 跑 close + 后续代码)。这里锁定三个循环的还原结果。
+ */
+function verifyYourpipeYoutubeSabrSession(clazz: PandaClass, code: string): void {
+    NodeFactory.parse(code);
+    assertNoPseudoGoto(code);
+    const fragments = [
+        "for (v27 of this.policy.evaluate(v12, v22)) {",
+        "for (v16 of v3) {",
+        'if (v16.type === "sleep_backoff") {',
+        "local_2_1.scheduleBackoff(v18.ms);",
+    ];
+    for (const fragment of fragments) {
+        if (!code.includes(fragment)) {
+            throw new Error(`${clazz.name.content}: 缺少 ${JSON.stringify(fragment)}`);
+        }
+    }
+    // 同名 region copy 的两个 label 都必须消失;残留的空 if 说明只删了内层 close。
+    if (code.includes("label_3142") || code.includes("label_4366")
+        || code.includes("if (!v13) {}") || code.includes("if (!v24) {}")) {
+        throw new Error(`${clazz.name.content}: 仍残留 label / 空 close 壳\n${code}`);
+    }
+}
+
 function verifyYourpipeMpvPlayerView(clazz: PandaClass, code: string): void {
     NodeFactory.parse(code);
     if (code.includes("created by SimpleAnalysis") || code.includes("decompiler_")) {
@@ -5532,6 +5595,8 @@ const yourpipeClassTests: BinaryClassTest[] = [
     { label: "yourpipe HttpDownloader retry try/catch (yourpipe0.7.0.abc)", matches: (n) => n.includes("network/HttpDownloader"), run: verifyYourpipeHttpDownloaderRetryTryCatch },
     { label: "yourpipe ChannelInfoService shared tail merge (yourpipe0.7.0.abc)", matches: (n) => n.includes("features/user/ChannelInfoService"), run: verifyYourpipeChannelInfoService },
     { label: "yourpipe search loop restorations (yourpipe0.7.0.abc)", matches: (n) => /HlsManifestParser|WebClientVersionResolver|network\/CookieJar|sabr\/YoutubeSabrInfo/.test(n), run: verifyYourpipeSearchLoopRestorations },
+    { label: "yourpipe SearchService.hasLiveBadge snapshot (yourpipe0.7.0.abc)", matches: (n) => n.includes("features/home/SearchService"), run: verifyYourpipeSearchService },
+    { label: "yourpipe YoutubeSabrSession policy loops (yourpipe0.7.0.abc)", matches: (n) => n.includes("extractor/sabr/YoutubeSabrSession"), run: verifyYourpipeYoutubeSabrSession },
 ];
 
 const amclClassTests: BinaryClassTest[] = [
