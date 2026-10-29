@@ -687,6 +687,13 @@ export class ConditionFolds extends TempVariablePass {
             if (!alias && !isPureExpression(expression.right)) return null;
             if (collectAssignedNames(test).has(name)) return null;
         }
+        // 单次读取也可能读到 test 序列里刚写入的新版本:`acc = E; if ((acc = f(), v5 === acc))`
+        // 把这次读取换成 E 是语义错误(test 里的写发生在读取之前;lnga
+        // TopicListPanel.loadTopics 的 `acc = catchAcc; if (… (acc = getGeneration(), v5 === acc))`
+        // 曾把 catchAcc 当成 getGeneration() 的结果)。只允许读取是 test 中最先
+        // 求值的子表达式——那时它看到的仍是模式右值。
+        if (testIds.length === 1 && collectAssignedNames(test).has(name)
+            && !isFirstEvaluatedOccurrence(test, testIds[0])) return null;
         // 求值时序:把赋值右值搬进 test 会把它的求值推迟到 test 中 X 的位置。
         // 有副作用的右值只有位于 test 最先求值的位置时才安全(如 test 就是 X/!X);
         // 纯右值也要避免越过 test 里先求值的写入(如 `X = Y; if ((Y = 1, X))`)。

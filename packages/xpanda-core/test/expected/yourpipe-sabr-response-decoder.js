@@ -419,8 +419,7 @@ export class SabrPartProcessor {
   deliverSegment(p0) {
     let acc;
     if (p0.header.contentLength >= 0) {
-      p0.getLength();
-      if (p0.header.contentLength !== p0.header.contentLength) {
+      if (p0.getLength() !== p0.header.contentLength) {
         local_0_11 /*logger*/.warn("[SABR-DECODE] withhold incomplete segment itag=" + p0.header.itag + " " + ("seq=" + p0.header.sequenceNumber + " expected=" + p0.header.contentLength + " actual=" + p0.getLength() + ""));
         return;
       }

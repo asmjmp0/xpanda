@@ -478,7 +478,7 @@ export class SabrOfflineDownloader {
     }
   }
   static async tryWriteNext(p0, p1, p2, p3, p4) {
-    let v8, acc;
+    let v8, v10, acc;
     try {
       v8 = await p0.readSegment(false, p1);
       if (!v8) {
@@ -489,7 +489,7 @@ export class SabrOfflineDownloader {
       p3(v8.length, p1);
       return true;
     } catch (catchAcc) {
-      String(catchAcc);
+      v10 = String(catchAcc);
       if (catchAcc instanceof SabrProtocolException && catchAcc.kind === "beyond_end") {
         p4();
         return false;
@@ -500,10 +500,10 @@ export class SabrOfflineDownloader {
         acc = catchAcc instanceof SabrProtocolException;
       }
       if (acc) {
-        Logger.warn(local_0_0 /*TAG*/, "tryWriteNext itag=" + p0.getItag() + " seq=" + p1 + ": " + catchAcc + "");
+        Logger.warn(local_0_0 /*TAG*/, "tryWriteNext itag=" + p0.getItag() + " seq=" + p1 + ": " + v10 + "");
         return false;
       }
-      acc = catchAcc instanceof Error ? catchAcc : new Error(catchAcc);
+      acc = catchAcc instanceof Error ? catchAcc : new Error(v10);
       throw acc;
     }
   }

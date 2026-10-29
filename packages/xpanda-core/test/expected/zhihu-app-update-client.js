@@ -86,8 +86,7 @@ export class AppUpdateClient {
         "readTimeout": local_0_4,
         "usingCache": true
       });
-      Number(v0.responseCode);
-      if (v0 !== 200 || typeof v0.result !== "string") {
+      if (Number(v0.responseCode) !== 200 || typeof v0.result !== "string") {
         throw new Error("静态源响应码 " + v0.responseCode + "");
       }
       return v0.result;
@@ -163,9 +162,8 @@ export class AppUpdateClient {
     return acc;
   }
   async latestCatalog(p0) {
-    let v0, acc;
-    let v2 /*AppUpdateClient*/ = !p0 && AppUpdateClient.latestJson.length > 0;
-    if (v2 && (acc = Date.now(), !v2 - AppUpdateClient.latestFetchedAt < local_0_0)) {
+    let v0;
+    if (!p0 && AppUpdateClient.latestJson.length > 0 && Date.now() - AppUpdateClient.latestFetchedAt < local_0_0) {
       return AppUpdateClient.latestJson;
     }
     v0 = await this.fetchStatic("version.json", function (p0) {
@@ -177,7 +175,7 @@ export class AppUpdateClient {
   }
   async releasesCatalog() {
     let v0, acc;
-    if (AppUpdateClient.releasesJson.length > 0 && (acc = Date.now(), !(AppUpdateClient.releasesJson.length > 0) - AppUpdateClient.releasesFetchedAt < local_0_0)) {
+    if (AppUpdateClient.releasesJson.length > 0 && Date.now() - AppUpdateClient.releasesFetchedAt < local_0_0) {
       return AppUpdateClient.releasesJson;
     }
     acc = this.fetchStatic("releases.json", function (p0) {
@@ -206,8 +204,7 @@ export class AppUpdateClient {
         "readTimeout": local_0_4,
         "usingCache": false
       });
-      Number(v0.responseCode);
-      return v0 !== 200 || typeof v0.result !== "string" ? undefined : decodeLatestReleaseAtom(v0.result);
+      return Number(v0.responseCode) !== 200 || typeof v0.result !== "string" ? undefined : decodeLatestReleaseAtom(v0.result);
     } catch (catchAcc) {
       return undefined;
     }

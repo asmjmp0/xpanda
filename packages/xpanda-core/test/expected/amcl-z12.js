@@ -983,7 +983,7 @@ export function s421(p0, p1) {
   return v3;
 }
 local_0_18 = function (p0, p1, p2, p3) {
-  let v1, v2, v3, v4, v5, v6, v7, v8, v9, acc;
+  let v1, v2, v3, v4, v5, v6, v7, v8, v9;
   if (!p0) {
     return local_0_10(p2, p3, "not-object");
   }
@@ -1003,7 +1003,7 @@ local_0_18 = function (p0, p1, p2, p3) {
   if (p2.usedIds.has(p0.id)) {
     return local_0_10(p2, p3, "id-duplicate");
   }
-  if (typeof p0.label !== "string" || (acc = l50(p0.label), (typeof p0.label !== "string") > 256)) {
+  if (typeof p0.label !== "string" || l50(p0.label) > 256) {
     return local_0_10(p2, p3, "label");
   }
   if (!local_0_11(p0.type)) {

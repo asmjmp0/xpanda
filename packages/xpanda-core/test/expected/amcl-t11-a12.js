@@ -358,8 +358,7 @@ export function e771(p0) {
 export function f1268(p0, p1, p2, p3, p4, p5, p6, p7) {
   let v0 /*n1268*/, v1 /*n1268*/, v2 /*a1*/, v3 /*y*/, v4 /*a32*/, v5 /*a32*/, v6 /*a32*/, v7 /*g50*/, acc;
   y.info(local_0_0, "Installing legacy Forge: " + p2 + "", a32);
-  v0 = l786(p0);
-  if (v0 !== p0 || (acc = l786(p3), v0 !== p0 !== p3)) {
+  if (l786(p0) !== p0 || l786(p3) !== p3) {
     return new n1268(false, p3, "版本标识包含不安全路径字符");
   }
   v0 = local_0_8(p6);

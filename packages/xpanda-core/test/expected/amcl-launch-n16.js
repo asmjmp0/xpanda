@@ -579,7 +579,7 @@ export class c1114 {
     return (await this.inputSnapshot_(p0)).inputKey;
   }
   async inputSnapshot_(p0) {
-    let v0, v2;
+    let v0, v2, v8;
     if (p0.outcomeSource.startsWith("platform.")) {
       v2 = JSON.stringify({
         "state": p0.state,
@@ -592,16 +592,18 @@ export class c1114 {
       v2 = "";
     }
     v0 = await this.producerInputKey_(p0);
-    v0.producer = v0;
-    v0.platform = v2;
-    v0.platformInputKey = p0.platformInputKey ?? "";
+    v8 = {
+      "producer": v0,
+      "platform": v2,
+      "platformInputKey": p0.platformInputKey ?? ""
+    };
     return {
       "producerKey": v0,
-      "inputKey": await x1555(JSON.stringify(v0))
+      "inputKey": await x1555(JSON.stringify(v8))
     };
   }
   async trackLaunch(p0, p1) {
-    let v4, v5, v7, acc;
+    let v4, v5, v7;
     if (p1 === undefined) {
       p1 = "";
     }
@@ -616,8 +618,7 @@ export class c1114 {
       }
       v5 = this.admissionJobs_.get(p0);
       if (v5 !== undefined) {
-        this.admissionTokens_.get(p0);
-        if (!(v5 !== undefined) === p1) {
+        if (this.admissionTokens_.get(p0) === p1) {
           return v5;
         }
       }
@@ -633,7 +634,7 @@ export class c1114 {
           try {
             await v5;
             this.grantedLaunches_.add(p0);
-            if (acc = this.admissionJobs_.get(p0), undefined == undefined === v5) {
+            if (this.admissionJobs_.get(p0) === v5) {
               this.admissionJobs_.delete(p0);
             }
             if (hole == v7) {
@@ -663,7 +664,7 @@ export class c1114 {
           try {
             await v5;
             this.grantedLaunches_.add(p0);
-            if (acc = this.admissionJobs_.get(p0), undefined == undefined === v5) {
+            if (this.admissionJobs_.get(p0) === v5) {
               this.admissionJobs_.delete(p0);
             }
             if (hole == v7) {
@@ -690,7 +691,7 @@ export class c1114 {
         try {
           await v5;
           this.grantedLaunches_.add(p0);
-          if (acc = this.admissionJobs_.get(p0), undefined == undefined === v5) {
+          if (this.admissionJobs_.get(p0) === v5) {
             this.admissionJobs_.delete(p0);
           }
           if (hole == v7) {
@@ -720,7 +721,7 @@ export class c1114 {
         try {
           await v5;
           this.grantedLaunches_.add(p0);
-          if (acc = this.admissionJobs_.get(p0), undefined == undefined === v5) {
+          if (this.admissionJobs_.get(p0) === v5) {
             this.admissionJobs_.delete(p0);
           }
           if (hole == v7) {
@@ -742,8 +743,7 @@ export class c1114 {
     } else {
       v5 = this.admissionJobs_.get(p0);
       if (v5 !== undefined) {
-        this.admissionTokens_.get(p0);
-        if (!(v5 !== undefined) === p1) {
+        if (this.admissionTokens_.get(p0) === p1) {
           return v5;
         }
       }
@@ -759,7 +759,7 @@ export class c1114 {
           try {
             await v5;
             this.grantedLaunches_.add(p0);
-            if (acc = this.admissionJobs_.get(p0), undefined == undefined === v5) {
+            if (this.admissionJobs_.get(p0) === v5) {
               this.admissionJobs_.delete(p0);
             }
             if (hole == v7) {
@@ -789,7 +789,7 @@ export class c1114 {
           try {
             await v5;
             this.grantedLaunches_.add(p0);
-            if (acc = this.admissionJobs_.get(p0), undefined == undefined === v5) {
+            if (this.admissionJobs_.get(p0) === v5) {
               this.admissionJobs_.delete(p0);
             }
             if (hole == v7) {
@@ -827,7 +827,7 @@ export class c1114 {
           }
           throw catchAcc;
         } finally {
-          if (acc = this.admissionJobs_.get(p0), undefined == undefined === v5) {
+          if (this.admissionJobs_.get(p0) === v5) {
             this.admissionJobs_.delete(p0);
           }
         }
@@ -843,7 +843,7 @@ export class c1114 {
         try {
           await v5;
           this.grantedLaunches_.add(p0);
-          if (acc = this.admissionJobs_.get(p0), undefined == undefined === v5) {
+          if (this.admissionJobs_.get(p0) === v5) {
             this.admissionJobs_.delete(p0);
           }
           if (hole == v7) {

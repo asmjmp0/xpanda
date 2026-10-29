@@ -1565,8 +1565,7 @@ class ContentDetailPage extends ViewPU {
     setStatusBarHidden(false);
   }
   openSegmentSheet(p0, p1) {
-    let acc;
-    if (p0.marks[p1] === undefined || (acc = effectiveSegmentMeta(p0.marks[p1]), p0.marks[p1] === undefined === undefined)) {
+    if (p0.marks[p1] === undefined || effectiveSegmentMeta(p0.marks[p1]) === undefined) {
       return;
     }
     this.segmentSheetPid = p0.pid;

@@ -4062,6 +4062,14 @@ function verifyLngaCatchShapes(ctx: { decompileContaining: (needle: string) => {
         throw new Error(`lnga SearchPanel.doSearch: 整体 try/catch 未还原\n${search}`);
     }
 
+    // 跨块读取异常的用户 catch(入口 `sta` + 守卫判断,`e.message` 在后续块):
+    // loadTopics 曾整段丢弃(错误 UI + 异常逃逸 + loading 卡死);恢复时条件里
+    // 的 acc 版本曾被条件物化替换成 catchAcc(见 matchConditionPattern 的单读取守卫)。
+    const topics = ctx.decompileContaining("TopicListPanel").code;
+    if (!/\} catch \(catchAcc\) \{\s*if \(p0 === 1 && v5 === local_1_0\.mgr\.getGeneration\(\)\) \{\s*local_1_0\.hasError = true;\s*local_1_0\.errorMsg = catchAcc\.message \|\| "加载失败";/.test(topics)) {
+        throw new Error(`lnga TopicListPanel.loadTopics: 跨块读异常的 catch 未还原\n${topics}`);
+    }
+
     // 纯赋值型 catch:handler 只做算术后汇合正常流程(`showProfileCard` 的
     // `catch { posX = …; posY = … }`)。旧扫描要求 call/load 或纯 jmp 跳板,
     // 五个面板类里同一个方法被整段丢弃。

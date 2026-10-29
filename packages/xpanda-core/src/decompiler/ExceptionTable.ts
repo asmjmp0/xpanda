@@ -807,9 +807,16 @@ export function handlerBodyHasVisibleWork(
     entry: PandaIRBasicBlock,
     tryStart: number,
     tryEnd: number,
+    allowEntryGuard = false,
 ): boolean {
     const instructions = entry.pandaInstructions;
-    if (instructions.length !== 1 || instructions[0].kind !== "store") return false;
+    if (!allowEntryGuard) {
+        if (instructions.length !== 1 || instructions[0].kind !== "store") return false;
+    } else if (instructions[0]?.kind !== "store") {
+        // 入口先做守卫判断(`sta e; lda page; === 1; jnez`)时,只有后续块里
+        // 真正读取保存的异常才是用户 catch(见 handlerBodyUsesException)。
+        return false;
+    }
     const seen = new Set<PandaIRBasicBlock>();
     const stack: PandaIRBasicBlock[] = [entry];
     let budget = 10;
@@ -825,6 +832,34 @@ export function handlerBodyHasVisibleWork(
             if (successorPC <= pc) continue;
             if (successorPC >= tryStart && successorPC < tryEnd) continue;
             stack.push(successor);
+        }
+    }
+    return false;
+}
+
+/**
+ * `catchUsesException` 的跨块版本:handler 的 forward body 读取保存的异常。
+ */
+function handlerBodyUsesException(
+    cfg: PandaIRCFG,
+    entry: PandaIRBasicBlock,
+    tryStart: number,
+    tryEnd: number,
+): boolean {
+    const saved = handlerEffectiveEntry(entry).exceptionRegister;
+    if (!saved) return false;
+    const { blocks } = handlerForwardBody(cfg, entry, tryStart, tryEnd);
+    for (const bodyBlock of blocks) {
+        const instructions = bodyBlock.pandaInstructions;
+        for (let index = 0; index < instructions.length; index++) {
+            const instruction = instructions[index];
+            const moved = instruction.kind === "mov" && instruction.srcObj?.toString() === saved;
+            const loaded = instruction.kind === "load" && instruction.loadType === "OBJECT"
+                && (instruction as { loadParam?: { toString(): string } }).loadParam?.toString() === saved;
+            if (!moved && !loaded) continue;
+            const next = instructions[index + 1];
+            if (loaded && next && next.kind === "throw") continue;
+            return true;
         }
     }
     return false;
@@ -1115,7 +1150,16 @@ export function classifyTryEntries(cfg: PandaIRCFG): ExceptionTable {
             const catchOfSharedStart = (finallyEndByStart.get(startPC) ?? 0) > endPC;
             // 入口只有 `sta vX` 时 handler 体在下一个块里(体自己开了嵌套 try),
             // 见 handlerBodyHasVisibleWork。
-            const bodyWork = handlerBodyHasVisibleWork(cfg, handlerEntryBlock, startPC, endPC)
+            // 入口 `sta` + 守卫判断、异常在后续块被读取的真实用户 catch
+            // (lnga TopicListPanel.loadTopics 的 `e.message`);宽松形态必须
+            // 同时满足「跨块读取保存的异常」和「handler 以 return/throw 退出」,
+            // 否则会把 13.0.1.0 的循环清理 handler 当成 catch(zhihu
+            // ContentFilterRuntimeStore 的 for-of/finally 曾因此退化)。
+            const relaxedBodyWork = !finallyHandler
+                && handlerBodyHasVisibleWork(cfg, handlerEntryBlock, startPC, endPC, true)
+                && handlerBodyUsesException(cfg, handlerEntryBlock, startPC, endPC)
+                && handlerExits(cfg, handlerEntryBlock, startPC, endPC);
+            const bodyWork = (handlerBodyHasVisibleWork(cfg, handlerEntryBlock, startPC, endPC) || relaxedBodyWork)
                 && !readsTryValues();
             const catchHandler = isCatchHandler(handlerEntryBlock) || ignoredException || commitPC !== null
                 || bodyWork
