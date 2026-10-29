@@ -90,6 +90,17 @@ export interface FinallyPlan {
     loopTailGuard?: boolean;
 }
 
+export interface FinallyPlanOptions {
+    /**
+     * try 范围(`startPC:endPC`)集合:这些 try 的 handler 已经被
+     * `classifyTryEntries` 当作 `finallyEpilogue` 接进区域图,异常路径由
+     * `foldEagerCatchToFinally` 折回 try/finally。循环体尾部形态(cleanup/guard
+     * 被折进循环 test)只用于 handler 不在图里的经典 finally;对这类范围再生成
+     * 计划,会在已经能还原的 finally 外多套一层(hx360e LogExport)。
+     */
+    readonly skipLoopLatchRanges?: ReadonlySet<string>;
+}
+
 export interface FinallyRoleInfo {
     plan: FinallyPlan;
     role: FinallyRole;
@@ -325,7 +336,7 @@ export function comparesHoleWith(block: PandaIRBasicBlock, register: string): bo
 }
 
 /** 从 try 表提取 finally 计划;不是 finally 的 try 块返回 null */
-export function buildFinallyPlans(cfg: PandaIRCFG): FinallyPlan[] {
+export function buildFinallyPlans(cfg: PandaIRCFG, options: FinallyPlanOptions = {}): FinallyPlan[] {
     const method = cfg.getPandaMethod();
     if (!method.hasException()) return [];
     const plans: FinallyPlan[] = [];
@@ -435,10 +446,6 @@ export function buildFinallyPlans(cfg: PandaIRCFG): FinallyPlan[] {
         // 守卫的非抛出分支通常是往后的续接;cleanup/guard 落在循环体尾部时它是
         // 循环回边(do-while 的 test),pc 比守卫小 —— 只对「第一个 hole 块」认这个
         // 形态(寄存器匹配出来的另一个守卫带出回边,说明那是别的 finally 的守卫)。
-        // 24+ 的 finally handler 会接进区域图,由 foldEagerCatchToFinally 折回
-        // try/finally;那种版本上再认「循环体尾部」只会多套一层(hx360e LogExport)。
-        const version = cfg.getPandaMethod().getPandaFile()?.header.version;
-        const legacyHandlers = !version || version[0] < 24;
         const directBackEdge = afterBranch.getStartPC() <= tryBlock.startPC;
         // 守卫的非抛出分支也可能只是一条跳回循环头的 jmp(回边块自己单独成块):
         // 这时它的 pc 比守卫大,不能按 afterBranch 的起始 pc 判断。只认「整块只有
@@ -448,7 +455,9 @@ export function buildFinallyPlans(cfg: PandaIRCFG): FinallyPlan[] {
         const bareBackJump = afterTerminator.kind === "jumpDirect"
             && afterBranch.pandaInstructions.length === 1;
         const jumpBackEdge = bareBackJump && afterTerminator.destinationPC <= tryBlock.startPC;
-        const loopLatch = legacyHandlers && !matchedByRegister && (directBackEdge || jumpBackEdge);
+        const loopLatch = !matchedByRegister
+            && !options.skipLoopLatchRanges?.has(tryBlock.startPC + ":" + (tryBlock.startPC + tryBlock.length))
+            && (directBackEdge || jumpBackEdge);
         if (!(tryBlock.startPC < endBlock.getStartPC()
             && endBlock.getStartPC() <= cleanupBlock.getStartPC()
             && cleanupBlock.getStartPC() < guardBlock.getStartPC()

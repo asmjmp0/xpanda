@@ -169,7 +169,25 @@ export class PandaDecompilerMethodHandler {
             this.insertFunctionPreamble(inner, pandaLexical, block);
             // ArkTS 13 的 finally 落点不在区域图里:结构化成功后在 AST 上补 try/finally
             const savedRoles = this.finallyRoles;
-            const plans: FinallyPlan[] = buildFinallyPlans(pandaIRCFG);
+            // finallyEpilogue 的 handler 已经在区域图里(异常路径由 region 输出,
+            // 再由 foldEagerCatchToFinally 折回 try/finally)。同一个 try 的循环体
+            // 尾部形态不能再交给 TryFinally,否则会在已经能还原的 finally 外多套一层。
+            // 这里用分类结果判断,不依赖字节码版本:只有真正接进图的 finallyEpilogue
+            // 才跳过循环体尾部计划,经典 finally(handler 不在图里)仍然需要它。
+            const eagerFinallyRanges = new Set<string>();
+            try {
+                for (const entry of pandaIRCFG.getExceptionTable().entries) {
+                    if (entry.keep && entry.kind === "finallyEpilogue") {
+                        eagerFinallyRanges.add(entry.startPC + ":" + entry.endPC);
+                    }
+                }
+            } catch {
+                // 分类失败时保持原有降级行为:StructureAnalysis 会再次触发同一个
+                // 异常并落到 SimpleAnalysis;这里只是不生成跳过集合。
+            }
+            const plans: FinallyPlan[] = buildFinallyPlans(pandaIRCFG, {
+                skipLoopLatchRanges: eagerFinallyRanges,
+            });
             const structures: FinallyStructure[] = plans.map((plan) => ({
                 planId: plan.id,
                 tryStartPC: plan.startPC,
