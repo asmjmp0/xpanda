@@ -672,6 +672,7 @@ export class n1484 {
         return false;
       }
       while (v18 < local_1_4.config_.giteeParts.length) {
+        let local_2_0;
         local_2_0 = v18;
         if (!local_0_4(h1484 + "/" + local_1_4.config_.tag + "/" + v5[local_2_0])) {
           throw new Error("Unsafe Gitee JDK part URL");
@@ -707,7 +708,6 @@ export class n1484 {
           local_1_4.reportGiteeAggregate(local_1_2, local_1_0, local_1_1, local_1_3);
         });
         v11.push(acc);
-        let local_2_2_0 = local_2_0;
         v18 += 1;
       }
     }
@@ -985,9 +985,9 @@ export class n1484 {
         v37 = [];
         local_1_3.giteeTaskIds_ = [];
         {
-          let local_3_0, local_3_1, local_3_2, local_3_3;
           v46 = 0;
           while (true) {
+            let local_3_0, local_3_1, local_3_2, local_3_3;
             v39 = v0;
             v42 = v3;
             if (v46 >= v36.length) break;
@@ -1071,10 +1071,6 @@ export class n1484 {
               throw new Error("下载文件身份不符：" + local_2_2_2.sourceId + " 分卷 " + (local_3_1 + 1));
             }();
             v37.push(acc);
-            let local_3_2_0 = local_3_0;
-            let local_3_2_1 = local_3_1;
-            let local_3_2_2 = local_3_2;
-            let local_3_2_3 = local_3_3;
             v39 = v0;
             v42 = v3;
             v46 += 1;

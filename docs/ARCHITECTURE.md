@@ -246,6 +246,9 @@ normalizeDeclarations
   → SyntaxRewriteSimplify.removeUnreachableStatements
   → SyntaxRewriteSimplify.removeOrphanJumps
   → TempVariableSimplify.removeUnusedLexicalDeclarations
+  → TempVariableSimplify.mergeDeclarationInitializers
+  → LoopEnvSimplify
+  → ClassSyntaxSimplify.foldExportDeclarations
 ```
 
 Why the tail is ordered this way:
@@ -256,6 +259,7 @@ Why the tail is ordered this way:
 - `foldCompoundAssignments` runs late so `+=` rewrites cannot disturb liveness / copy propagation.
 - `simplifyTail` runs after *all* condition folding: guard ternaries (`x ? x.k : undefined` → `x?.k`), dead accumulator hub copies (`acc = E; v = acc`), the `while (true)` + `break` form of for-of (including normalization of hoisted `it.next` method loads), both the early-return and the `break` form of the do-while → for-of lowering, and consecutive `if (disc === v) { return … }` guard chains → `switch` (the else-if form is first expanded into guard clauses by `flattenElseAfterExit`; at least **3** case labels are required, so 2-label chains stay as `if`; the older if/else → switch path uses the same threshold except for the null/undefined pair restored to `??`) only materialize at that point. It finishes with `removeUnusedTempDeclarations` for leftover `vN` / `acc` declarations.
 - `foldNextReadAssignments` follows `simplifyTail` because the accumulator hubs it folds (`acc = v20?.client; v6 = asRecord(acc)`) are created by the optional-chain / `??` restoration that just ran; it substitutes the value into the single later read when the temp is dead afterwards and the move preserves evaluation order.
+- `LoopEnvSimplify` runs after `mergeDeclarationInitializers`, so the compiler's per-iteration lexenv rotation is visible as the merged `let local_3_2_i = local_3_i` shape. It removes the latch copy, renames the rotated names back to the base environment, and moves the base declaration into the loop scope (`for (let …)` init for bindings used by the loop head, the loop body top otherwise), which restores JavaScript's own per-iteration binding semantics for closures.
 - The final cleanup steps remove constant-condition branches, leftover try/finally & for-of close sentinels, unreachable statements, orphaned `continue`/`break`, and unused lexical block slots.
 
 ### Pass reference
@@ -273,6 +277,7 @@ Why the tail is ordered this way:
 | `SyntaxRewriteSimplify.ts` | Test simplification, if/else normalization, `.call` restoration, function-expression hoisting; plus the static tail helpers (`foldSequencedTestPrefixes`, `flattenElseAfterExit`, `normalizeConditionTests`, `hoistTestPrefixes`, `foldCompoundAssignments`, `foldConstantConditions`, `foldSentinelGuards`, `removeUnreachableStatements`, `removeOrphanJumps`). |
 | `ClassSyntaxSimplify.ts` | Restores getter/setter and prototype/static method syntax from `__defineGetter__`-style assignments, both bare (`v1.__defineGetter__(…)`) and copy-propagated (`acc.prototype.__defineGetter__(…)`); single-expression class restoration. |
 | `ObjectLiteralSimplify.ts` | Merges `createobjectwithbuffer` template objects with adjacent literal-field assignments (`obj = {k: null}; obj.k = E` → `{k: E}`); requires literal initial values, matching field order, and no closure capture. Inlines `obj = {…}; return obj` when safe. |
+| `LoopEnvSimplify.ts` | Restores per-iteration lexical-environment bindings: recognizes the compiler's latch copy (`ldlexvar` all slots → `poplexenv` → `newlexenv` → `stlexvar` all slots, emitted as `let local_3_2_i = local_3_i`), removes it, renames the rotated names back and moves the declaration into the loop scope, so closures capture each iteration's binding and loop-carried variables update the tested binding. |
 | `HighLevelGrammarSimplify.ts` | Main traversal: while → for / for-in / for-of, early-return / break do-while → for-of, if → ternary (bottom-up; return chains keep `else if`), if → switch (nullish synthesis), optional-chain restoration; `simplifyTail` (see above; includes consecutive if-return guard chains → `switch`). |
 | `NullishCoalescingSimplify.ts` | Restores switch-lowered `??` (`v = obj.k; switch (obj.k) { case null: case undefined: v = d }` → `v = obj.k ?? d`); only for pure member-expression discriminators. |
 | `CallResultSimplify.ts` | Removes `callIns`-marked call results that are immediately overwritten by the next `acc` write. |

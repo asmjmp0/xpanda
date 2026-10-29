@@ -426,8 +426,8 @@ export class SettingsPanel extends ViewPU {
     let local_0_0 = p2;
     v0 = new SelectRadioResult();
     {
-      let local_1_0;
       for (v2 = 0; v2 < p0.length; v2 += 1) {
+        let local_1_0;
         local_1_0 = p0[v2];
         if (local_1_0.value === p1) {
           v0.selectedIndex = v2;
@@ -438,7 +438,6 @@ export class SettingsPanel extends ViewPU {
             local_0_0(local_1_0.value);
           }
         });
-        let local_1_2_0 = local_1_0;
       }
     }
     return v0;

@@ -833,8 +833,8 @@ export class e190 {
         v3 += 1;
         v4 += this.rows[v5].event.lines.length;
         {
-          let local_1_0;
           while (v5 < v8) {
+            let local_1_0;
             local_1_0 = this.rows[v5].sourceLineNumber ?? 0;
             v9 = v6.lines.find(function (p0) {
               return p0.number === local_1_0;
@@ -847,7 +847,6 @@ export class e190 {
               v2.push(v5);
               v5 += 1;
             }
-            let local_1_2_0 = local_1_0;
           }
         }
         v5 = v8;

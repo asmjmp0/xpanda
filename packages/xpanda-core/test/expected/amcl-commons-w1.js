@@ -146,8 +146,8 @@ export async function w91(p0, p1, p2, p3) {
         throw new Error("请至少选择一份证据文件");
       } else {
         h50(v5.directory);
-        let local_1_2_0;
         for (v31 = 0; v31 < v6.length; v31 += 1) {
+          let local_1_2_0;
           acc = g50.open(v5.directory + "/.source-" + v31, g50.OpenMode.CREATE | g50.OpenMode.WRITE_ONLY | g50.OpenMode.TRUNC);
           v34 = await acc;
           try {
@@ -194,7 +194,6 @@ export async function w91(p0, p1, p2, p3) {
             "reason": j50(v6[v31].record.reason, n50.LOGSHARE, 1024)
           };
           v5.files.push(acc);
-          let local_1_4_0 = local_1_2_0;
         }
         if (p2.includePublicSummary && p3.length > 0) {
           v21 = j50(p3, n50.LOGSHARE, Number.MAX_SAFE_INTEGER);

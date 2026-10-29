@@ -3268,6 +3268,13 @@ function verifyAmclStructuredCycleGuard(clazz: PandaClass, code: string): void {
     if (code !== expected) {
         throw new Error(`amcl r2/l3: 输出与快照不一致\n${firstDifference(expected, code)}`);
     }
+    // 事件行循环的 per-iteration lexenv 声明必须留在循环体内(闭包捕获每轮值)。
+    if (!code.includes("while (v5 < v8) {\n            let local_1_0;")) {
+        throw new Error(`amcl r2/l3: 循环环境声明没有回到循环体\n${code}`);
+    }
+    if (code.includes("let local_1_2_0")) {
+        throw new Error(`amcl r2/l3: 仍残留 per-iteration env 复制\n${code}`);
+    }
 }
 
 /**
@@ -3363,6 +3370,14 @@ function verifyAmclReadJarMainClass(clazz: PandaClass, code: string): void {
     const expected = fs.readFileSync(path.join(__dirname, "expected", "amcl-t11-d12.js"), "utf-8");
     if (code !== expected) {
         throw new Error(`amcl d12: 输出与快照不一致\n${firstDifference(expected, code)}`);
+    }
+    // `ForgelikeProcessorRunner.run` 的 per-iteration lexenv:循环变量必须回到
+    // `for` 头(`let`),更新语句沿用同一个名字;闩锁处的环境复制必须消失。
+    if (!code.includes("for (let local_3_0 = 0; local_3_0 < local_2_1.length;) {")) {
+        throw new Error(`amcl d12: 循环变量的 let 声明没有回到 for 头\n${code}`);
+    }
+    if (!code.includes("local_3_0 += 1;") || code.includes("let local_3_2_0")) {
+        throw new Error(`amcl d12: per-iteration env 更新/复制形状不对\n${code}`);
     }
 }
 
@@ -3832,6 +3847,23 @@ function verifyAmclSharedCatchFinally(clazz: PandaClass, code: string): void {
     const tailAt = body.lastIndexOf("所选来源不可用");
     if (!(catchAt < finallyAt && finallyAt < tailAt)) {
         throw new Error(`amcl i15 downloadCatalogArchive: catch/finally/兜底顺序不对 (${catchAt}/${finallyAt}/${tailAt})`);
+    }
+    // 每轮迭代的 lexenv 必须留在循环体里(闭包捕获每轮绑定),闩锁处的环境复制
+    // (`let local_3_2_0 = local_3_0; ...`)必须消失——否则所有闭包都读到最后一轮的值。
+    if (!body.includes("while (true) {\n            let local_3_0, local_3_1, local_3_2, local_3_3;")) {
+        throw new Error(`amcl i15 downloadCatalogArchive: 循环环境的声明不在循环体内\n${body}`);
+    }
+    if (body.includes("let local_3_2_0")) {
+        throw new Error(`amcl i15 downloadCatalogArchive: 仍残留 per-iteration env 复制\n${body}`);
+    }
+    const giteeStart = code.indexOf("async downloadGiteeParallel(p0, p1, p2) {");
+    if (giteeStart < 0) throw new Error(`amcl i15: 未找到 downloadGiteeParallel\n${code}`);
+    const gitee = code.slice(giteeStart, code.indexOf("\n  async downloadJdkArchive(", giteeStart));
+    if (!gitee.includes("while (v18 < local_1_4.config_.giteeParts.length) {\n        let local_2_0;")) {
+        throw new Error(`amcl i15 downloadGiteeParallel: 循环变量声明没有回到循环体\n${gitee}`);
+    }
+    if (gitee.includes("let local_2_2_0")) {
+        throw new Error(`amcl i15 downloadGiteeParallel: 仍残留 per-iteration env 复制\n${gitee}`);
     }
     // concatParts:内层 finally(close(inp))必须还原,循环 test 不能还带着守卫
     const concatStart = code.indexOf("  concatParts(p0, p1) {");
@@ -5168,6 +5200,87 @@ class HoleBase extends hole {
  *   v0 = p0; while (v0) { v0 = false; continue; }
  * 被错误折叠成 `while (p0) { continue; }`(死循环)。
  */
+/**
+ * 回归:ArkTS 的 per-iteration lexenv 在循环闩锁处复制整个环境
+ * (`let local_0_2_0 = local_0_0;`)。复制出来的槽属于下一轮同一个源码作用域,
+ * 必须并回原环境并把声明移进循环作用域,否则闭包读到最后一轮的值、循环头的
+ * 自增也看不到(`for (let i...)` 的 test 读旧环境、update 写新环境会死循环)。
+ */
+function verifyPerIterationEnvironment(): void {
+    const bodyScoped = NodeFactory.parse(`
+function f(p0) {
+  let v0 = [];
+  {
+    let local_0_0;
+    for (v2 = 0; v2 < p0; v2 += 1) {
+      local_0_0 = v2;
+      v0.push(function () {
+        return local_0_0;
+      });
+      let local_0_2_0 = local_0_0;
+    }
+  }
+  return v0;
+}
+`);
+    SimplifyExport.simplify(bodyScoped);
+    const bodyCode = NodeFactory.generate(bodyScoped);
+    if (bodyCode.includes("local_0_2_0")) {
+        throw new Error(`per-iteration lexenv: 循环体作用域仍残留环境复制\n${bodyCode}`);
+    }
+    if (!bodyCode.includes("for (v2 = 0; v2 < p0; v2 += 1) {\n      let local_0_0;")) {
+        throw new Error(`per-iteration lexenv: 声明没有移进循环体\n${bodyCode}`);
+    }
+
+    const headScoped = NodeFactory.parse(`
+function g(p0) {
+  let v0 = [];
+  {
+    let local_0_0;
+    for (local_0_0 = 0; local_0_0 < p0; local_0_0 += 1) {
+      v0.push(function () {
+        return local_0_0;
+      });
+      let local_0_2_0 = local_0_0;
+    }
+  }
+  return v0;
+}
+`);
+    SimplifyExport.simplify(headScoped);
+    const headCode = NodeFactory.generate(headScoped);
+    if (headCode.includes("local_0_2_0")) {
+        throw new Error(`per-iteration lexenv: for 头作用域仍残留环境复制\n${headCode}`);
+    }
+    if (!headCode.includes("for (let local_0_0 = 0; local_0_0 < p0; local_0_0 += 1)")) {
+        throw new Error(`per-iteration lexenv: 循环变量的 let 声明没有回到 for 头\n${headCode}`);
+    }
+
+    const whileHead = NodeFactory.parse(`
+function h(p0, p1) {
+  let v0 = [];
+  let local_0_0 = 0;
+  while (local_0_0 < p1) {
+    v0.push(function () {
+      return local_0_0;
+    });
+    let local_0_2_0 = local_0_0;
+    local_0_2_0 += 1;
+  }
+  return v0;
+}
+`);
+    SimplifyExport.simplify(whileHead);
+    const whileCode = NodeFactory.generate(whileHead);
+    if (whileCode.includes("local_0_2_0")) {
+        throw new Error(`per-iteration lexenv: while 循环仍残留环境复制\n${whileCode}`);
+    }
+    if (!whileCode.includes("for (let local_0_0 = 0; local_0_0 < p1;)")
+        || !whileCode.includes("local_0_0 += 1;")) {
+        throw new Error(`per-iteration lexenv: 带循环头变量的 while 没有转成 for(let)\n${whileCode}`);
+    }
+}
+
 function verifyLoopLivenessAfterContinue(): void {
     const program = NodeFactory.parse(`
 function f(p0) {
@@ -5879,6 +5992,10 @@ async function main(): Promise<void> {
 
     console.log("[test] simplify hole sentinel cleanup");
     verifySentinelGuardCleanup();
+    console.log("    ok");
+
+    console.log("[test] simplify per-iteration lexenv");
+    verifyPerIterationEnvironment();
     console.log("    ok");
 
     console.log("[test] simplify loop liveness after continue");

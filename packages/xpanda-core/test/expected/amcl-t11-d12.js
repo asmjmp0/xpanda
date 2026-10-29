@@ -83,10 +83,9 @@ export class g771 {
       acc = i50(local_2_5 + "/forge-proc-tmp");
     } catch (catchAcc) {}
     {
-      let local_3_1, local_3_2, local_3_3;
-      let local_3_0 = 0;
       v13 = 0;
-      while (local_3_0 < local_2_1.length) {
+      for (let local_3_0 = 0; local_3_0 < local_2_1.length;) {
+        let local_3_1, local_3_2, local_3_3;
         v14 = local_2_1[local_3_0];
         try {
           v1 = await g771.resolveProcessor(local_2_1[local_3_0], v4, p3, local_2_5 + "/forge-proc-tmp", v5);
@@ -117,11 +116,7 @@ export class g771 {
               return new h1286(false, p8 + " 安装步骤 " + (local_3_0 + 1) + " 未产出预期文件: " + acc, v13);
             }
             v13 += 1;
-            let local_3_2_0 = local_3_0;
-            let local_3_2_1 = local_3_1;
-            let local_3_2_2 = local_3_2;
-            let local_3_2_3 = local_3_3;
-            local_3_2_0 += 1;
+            local_3_0 += 1;
           } catch (catchAcc) {
             return new h1286(false, p8 + " 安装步骤 " + (local_3_0 + 1) + " 执行异常: " + catchAcc.message, y.info);
           }

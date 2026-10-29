@@ -14,6 +14,7 @@ import { AccCallSimplify } from "./AccCallSimplify";
 import { TailMergeSimplify } from "./TailMergeSimplify";
 import { normalizeDeclarations } from "./NormalizeDeclarations";
 import { restoreGotoLoops } from "./GotoLoopRestore";
+import { LoopEnvSimplify } from "./LoopEnvSimplify";
 
 export class SimplifyExport {
     private static simplifyALL(node: TYPE.Program): boolean {
@@ -190,6 +191,12 @@ export class SimplifyExport {
         // 赋值语句是复制传播、模块类定义折叠(`local_1_0 = acc` 别名链)、静态初始化
         // 接收链回溯等 pass 的输入形态,提前合并会打断它们。
         TempVariableSimplify.mergeDeclarationInitializers(node);
+        // ArkTS 的 per-iteration lexenv 在循环闩锁处新建环境并复制全部槽位
+        // (`let local_3_2_0 = local_3_0; ...`)。这些槽属于同一个源码作用域的下一轮
+        // 绑定,不能当成新变量:循环体的闭包会读到最后一轮的值,循环头也看不到
+        // 旋转环境里的自增。把旋转声明删除、名字并回原环境,并把声明移进循环
+        // 作用域(`for` 头或循环体顶部),交给 JavaScript 自己的 per-iteration 绑定。
+        new LoopEnvSimplify().simplify(node);
         // 导出还原:模块级类折叠之后,顶层 `export { Name };` / `export default Name;`
         // 合并进对应绑定的顶层定义:类/函数声明输出 `export class/function Name {}`,
         // 函数表达式赋值改写成 `export function Name(){}`,枚举对象/常量赋值输出
