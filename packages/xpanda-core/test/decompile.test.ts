@@ -5318,12 +5318,66 @@ const hx360eClassTests: BinaryClassTest[] = [
     { label: "hx360e 24.0.0.0 named-route page class (hx360e1.0.2.abc)", matches: (n) => n === "L&entry/src/main/ets/pages/GamePage&;", run: verifyHx360eGamePageClass },
 ];
 
+/**
+ * 回归:逐抛出点寄存器保存的复活 + 值等价丢弃(reference/try-catch-restoration-lnga.md
+ * §4.6,lnga1.2.6.abc 的 MovingPhotoCache.downloadToFile)。
+ *
+ * 源码 `downloadToFile` 的 catch/finally 读 `file`/`tempPath`/`httpRequest`;编译器把
+ * 它们逐抛出点 `mov` 进保存槽位(v13..v17),liveness 没有异常边时把这些保存当死存储
+ * 删掉,catch 里只剩未赋值寄存器:`closeSync(v17)` 永不执行、`accessSync(v15)` 抛
+ * TypeError、`v16.destroy()` 直接 reject —— downloadToFile 在每次下载失败时泄漏
+ * http 句柄与 .part 文件,并且以 TypeError 而非 `false` 兑现 Promise。
+ *
+ * 修复后的三件套:
+ *   1. 值证明失败的槽位(file:v17 ← {v5, v0},源随 open 变化)由 liveness 在每条
+ *      可抛语句处复活,catch 读到正确的 file 快照(`v17 = undefined` / `v17 = v0`
+ *      与源码 `file` 的赋值点一一对应);
+ *   2. 值证明成立的槽位(tempPath:v15 ← v3、request:v16 ← v4,范围内不变)在 try
+ *      前物化一次,范围内的保存按值等价丢弃,catch 的读取被复制传播折回源值;
+ *   3. 内层 finally 跳板(`if (v7 == undefined) { 清理 } throw catchAcc`)随之被
+ *      foldRedundantFinallyShell 折掉,外层 catch 直接 `return false`。
+ */
+function verifyLngaMovingPhotoCache(clazz: PandaClass, code: string): void {
+    if (!clazz.name.content.endsWith("/common/media/MovingPhotoCache;")) {
+        throw new Error(`lnga MovingPhotoCache: 类名不符 (${clazz.name.content})`);
+    }
+    NodeFactory.parse(code);
+    const start = code.indexOf("local_0_7 = async function (p0, p1) {");
+    if (start < 0) throw new Error(`lnga MovingPhotoCache: 未找到 downloadToFile\n${code.slice(0, 400)}`);
+    const body = code.slice(start, code.indexOf("\n};", start));
+    // tempPath/request 的槽位被值等价证明折掉(v15→v3、v16→v4);
+    // file 的槽位 v17 保留(源随 open 变化,值证明失败)。
+    for (const leftover of ["v15", "v16"]) {
+        if (new RegExp("\\b" + leftover + "\\b").test(body)) {
+            throw new Error(`lnga downloadToFile: 未赋值保存槽位 ${leftover} 残留\n${body}`);
+        }
+    }
+    if (body.includes("throw catchAcc")) {
+        throw new Error(`lnga downloadToFile: 异常仍被 finally 跳板重抛(未折成 return false)\n${body}`);
+    }
+    // file 快照:赋值点与源码一致(未 open 时 undefined,open 后是 fd)
+    if (!body.includes("v17 = undefined;") || !body.includes("v17 = v0;")) {
+        throw new Error(`lnga downloadToFile: file 快照保存未复活\n${body}`);
+    }
+    // catch:file 快照守卫的 closeSync + tempPath 的 unlink + request 的 destroy,全部已赋值
+    if (!/if \(v17 !== undefined\) \{\s*try \{\s*fileIo\.closeSync\(v17\);/.test(body)) {
+        throw new Error(`lnga downloadToFile: catch 的 closeSync 未还原到 file 快照\n${body}`);
+    }
+    if (!/fileIo\.accessSync\("" \+ p1 \+ "\.part"\)/.test(body)) {
+        throw new Error(`lnga downloadToFile: catch 的 tempPath 值不等价\n${body}`);
+    }
+    if (!/v4\.destroy\(\);\s*return false;\s*\}/.test(body)) {
+        throw new Error(`lnga downloadToFile: catch 未还原成 destroy + return false\n${body}`);
+    }
+}
+
 const lngaClassTests: BinaryClassTest[] = [
     { label: "lnga SOURCE_FILE + qr login short circuit (lnga1.2.6.abc)", matches: (n) => n === "Lcom.example.nga_oh/entry/ets/common/utils/NgaQrLoginUtils;", run: verifyLngaQrLoginUtils },
     { label: "lnga shared-start catch + finally (lnga1.2.6.abc)", matches: (n) => n === "Lcom.example.nga_oh/entry/ets/pages/SettingsPanel;", run: verifyLngaSettingsPanelException },
     { label: "lnga async try/catch/finally (lnga1.2.6.abc)", matches: (n) => n === "Lcom.example.nga_oh/entry/ets/common/dialogs/SaveThreadDialogs;" || n === "Lcom.example.nga_oh/entry/ets/pages/ProfilePanel;" || n === "Lcom.example.nga_oh/entry/ets/pages/LoginPage;" || n === "Lcom.example.nga_oh/entry/ets/pages/NotificationPanel;" || n === "Lcom.example.nga_oh/entry/ets/store/settings/domain/SocialListSettings;" || n === "Lcom.example.nga_oh/entry/ets/pages/FollowListPanel;", run: verifyLngaAsyncFinally },
     { label: "lnga shared-start catch return (lnga1.2.6.abc)", matches: (n) => n === "Lcom.example.nga_oh/entry/ets/common/media/VideoSizeUtil;", run: verifyLngaVideoSizeUtil },
     { label: "lnga v24 catch shapes (lnga1.2.6.abc)", matches: (n) => n === "Lcom.example.nga_oh/entry/ets/common/security/NgaRsaCipher;", run: (_clazz, _code, ctx) => verifyLngaCatchShapes(ctx) },
+    { label: "lnga per-throw-point save revival + value-equivalent drop (lnga1.2.6.abc)", matches: (n) => n === "Lcom.example.nga_oh/entry/ets/common/media/MovingPhotoCache;", run: verifyLngaMovingPhotoCache },
 ];
 
 const installClassTests: BinaryClassTest[] = [

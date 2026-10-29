@@ -2,6 +2,7 @@ import { PandaParseException } from "../PandaParseException";
 import type { PandaIRBasicBlock } from "../disasm/PandaIRBasicBlock";
 import type { PandaLexical } from "../disasm/PandaLexical";
 import type { PandaDecompilerMethodHandler } from "./MethodHandler";
+import type { HandlerSavePlan } from "./ExceptionTable";
 import { LabelStatement, LinearPandaStatement, LogicalExpressionStatement } from "./statements";
 import type { IPandaDecompileAble } from "./statements";
 
@@ -31,6 +32,12 @@ export class TryRegion {
         readonly catchEndPC: number | null,
         /** 该 handler 的语义:真 catch,还是 24+ 内联 finally 的异常路径 */
         readonly kind: "catch" | "finallyEpilogue",
+        /**
+         * 逐抛出点保存槽位的值等价计划(仅 kind === "catch" 且 handler 有观察读时
+         * 非空,见 planHandlerSaves):resurrect 槽位由 liveness 在抛出点保持活跃,
+         * materialize 槽位在 try 前物化一次、范围内的保存按值等价丢弃。
+         */
+        readonly savesPlan: HandlerSavePlan | null = null,
     ) {}
 }
 

@@ -123,7 +123,7 @@ export class g771 {
             let local_3_2_3 = local_3_3;
             local_3_2_0 += 1;
           } catch (catchAcc) {
-            return new h1286(false, local_2_5 + " 安装步骤 " + (local_3_0 + 1) + " 执行异常: " + catchAcc.message, y.info);
+            return new h1286(false, p8 + " 安装步骤 " + (local_3_0 + 1) + " 执行异常: " + catchAcc.message, y.info);
           }
         } catch (catchAcc) {
           return new h1286(false, "processor 解析失败: " + catchAcc.message, local_3_0);

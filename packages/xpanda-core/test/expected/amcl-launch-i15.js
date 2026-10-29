@@ -272,7 +272,7 @@ export class n1484 {
     return "JDK Gitee 分卷文件名不安全";
   }
   async downloadAndInstall() {
-    let v4, v8 /*z31*/, v9, v11 /*j1481*/, v22, v23, v24, v25;
+    let v4, v8 /*z31*/, v9, v11 /*j1481*/, v22, v25;
     this.lastMessage_ = "";
     if (this.downloading_) {
       this.alog().warn(local_0_1, "downloadAndInstall rejected: already downloading (JDK " + this.version_ + ")", null, z31);
@@ -298,15 +298,18 @@ export class n1484 {
     v9 = this.context_.cacheDir + "/jdk-install-staging/" + v8;
     v8 = this.context_.filesDir + "/jdk" + "/.staging-" + v8;
     try {
+      v22 = null;
       if (!this.forceReinstall_) {
         if (!this.isInstalledFn_()) {
           v11 = j1481.writer(this.context_.filesDir, this.version_);
+          v22 = v11;
           this.report(false, "准备安全安装目录...");
           h50(v9);
           h50(this.context_.filesDir + "/jdk");
           try {
             i50(v8);
           } catch (catchAcc) {}
+          v22 = v11;
           if (!(await this.downloadJdkArchive(v9 + "/archive.zip", "JDK " + this.version_))) {
             if (await this.waitForNativeOwners_()) {
               try {
@@ -347,6 +350,7 @@ export class n1484 {
             this.downloading_ = false;
             return false;
           }
+          v22 = v11;
           if (this.isInstalledFn_()) {
             this.reportDownload("verifying", 100, 0, "JDK " + this.version_ + " 安装完成 ✅");
             this.report(true, "JDK " + this.version_ + " 安装完成 ✅");
@@ -389,6 +393,7 @@ export class n1484 {
           this.downloading_ = false;
           return false;
         }
+        v22 = null;
         if (this.isInstalledFn_()) {
           this.reportDownload("verifying", 100, 0, "JDK " + this.version_ + " 安装完成 ✅");
           this.report(true, "JDK " + this.version_ + " 安装完成 ✅");
@@ -426,12 +431,14 @@ export class n1484 {
         return false;
       }
       v11 = j1481.writer(this.context_.filesDir, this.version_);
+      v22 = v11;
       this.report(false, "准备安全安装目录...");
       h50(v9);
       h50(this.context_.filesDir + "/jdk");
       try {
         i50(v8);
       } catch (catchAcc) {}
+      v22 = v11;
       if (!(await this.downloadJdkArchive(v9 + "/archive.zip", "JDK " + this.version_))) {
         if (await this.waitForNativeOwners_()) {
           try {
@@ -472,6 +479,7 @@ export class n1484 {
         this.downloading_ = false;
         return false;
       }
+      v22 = v11;
       if (this.isInstalledFn_()) {
         this.reportDownload("verifying", 100, 0, "JDK " + this.version_ + " 安装完成 ✅");
         this.report(true, "JDK " + this.version_ + " 安装完成 ✅");
@@ -518,11 +526,11 @@ export class n1484 {
       v25.reportDownload("downloading", 0, 0, "下载失败: " + catchAcc.message);
       if (await v25.waitForNativeOwners_()) {
         try {
-          i50(v24);
+          i50(v9);
         } catch (catchAcc) {}
       } else {
-        v25.deferredDownloadCleanup_.push(v24);
-        v25.alog().warn(local_0_1, "原生下载仍在结束，暂时保留独占目录：" + v24, null, z31);
+        v25.deferredDownloadCleanup_.push(v9);
+        v25.alog().warn(local_0_1, "原生下载仍在结束，暂时保留独占目录：" + v9, null, z31);
       }
       if (v22 !== null) {
         v22.release();
@@ -530,7 +538,7 @@ export class n1484 {
       v25.currentDmTaskId_ = 0;
       v25.giteeTaskIds_ = [];
       try {
-        i50(v23);
+        i50(v8);
       } catch (catchAcc) {}
       v25.downloading_ = false;
       return false;
@@ -991,7 +999,6 @@ export class n1484 {
           while (true) {
             v39 = v0;
             v42 = v3;
-            v44 = undefined;
             if (v46 >= v36.length) break;
             local_3_3 = v36[v46];
             local_3_2 = local_2_2_2.transport === "single-file" ? p0 : p0 + ".p" + v46;
@@ -1079,7 +1086,6 @@ export class n1484 {
             let local_3_2_3 = local_3_3;
             v39 = v0;
             v42 = v3;
-            v44 = undefined;
             v46 += 1;
           }
           v28 = p0;
@@ -1091,6 +1097,7 @@ export class n1484 {
           v22 = v9;
           v25 = v10;
         }
+        v44 = v37;
         try {
           await Promise.all(v37);
           v0 = await local_1_3.waitForNativeOwners_();
@@ -1311,7 +1318,7 @@ export class n1484 {
     return this.config_.sizeBytes !== undefined && this.config_.sizeBytes > 0 ? this.config_.sizeBytes : this.config_.dataSizeMB * 1024 * 1024;
   }
   async completeJdkInstall(p0, p1, p2, p3) {
-    let v5 /*g50*/, v6 /*a1*/, v7 /*a1*/, v8 /*z31*/, v9 /*z31*/, v12 /*z31*/, v20, v21, v22, v23, acc;
+    let v5 /*g50*/, v6 /*a1*/, v7 /*a1*/, v8 /*z31*/, v9 /*z31*/, v12 /*z31*/, v20, v21, acc;
     let local_1_0, local_1_2;
     let local_1_4 = this;
     let local_1_1 = p2;
@@ -1434,11 +1441,13 @@ export class n1484 {
           g50.statSync(p1);
           v6 = true;
         } catch (catchAcc) {}
+        v20 = v8;
         v12 = v8;
         if (v6) {
           g50.renameSync(p1, v5);
           v7 = true;
         }
+        v21 = v7;
         g50.renameSync(local_1_1, p1);
       } finally {
         if (v12 !== null) {
@@ -1462,9 +1471,9 @@ export class n1484 {
       local_1_4.alog().error(local_0_1, "JDK staging publish failed", catchAcc, z31);
       if (v21) {
         try {
-          g50.renameSync(v22, v23);
+          g50.renameSync(v5, p1);
         } catch (catchAcc) {
-          local_1_4.alog().error(local_0_1, "JDK publish rollback failed; backup retained at " + v22, catchAcc, z31);
+          local_1_4.alog().error(local_0_1, "JDK publish rollback failed; backup retained at " + v5, catchAcc, z31);
           local_1_4.report(false, "❌ " + local_1_3 + " 安装发布失败：" + catchAcc.message);
           try {
             i50(local_1_1);

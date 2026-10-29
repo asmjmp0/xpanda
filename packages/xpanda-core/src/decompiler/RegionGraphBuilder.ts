@@ -4,6 +4,7 @@ import { PandaDecompileException } from "../PandaParseException";
 import { ValueGraph } from "./ValueGraph";
 import { Region, TryRegion } from "./Region";
 import type { TryEntry } from "./ExceptionTable";
+import { planHandlerSaves, type HandlerSavePlan } from "./ExceptionTable";
 import { blockThrowsRegister } from "./IRPatterns";
 
 /**
@@ -196,7 +197,14 @@ export class RegionGraphBuilder {
                 }
                 const tryRegion = this.createTryRegion(
                     tryEntryRegion, handlerRegion, endPC ?? null,
-                    entry.kind === "finallyEpilogue" ? "finallyEpilogue" : "catch");
+                    entry.kind === "finallyEpilogue" ? "finallyEpilogue" : "catch",
+                    // 空 catch(emptyJoin)的 handler 入口就是正常续接块:从这里前向走
+                    // 会把 try 之后的整段代码当成 handler 读,给无关寄存器复活保存。
+                    // 空 catch 体本身不读任何值,计划恒为空。finallyEpilogue 的保存
+                    // 由 TryFinally/foldEagerCatchToFinally 处理,同样不计算。
+                    entry.kind === "emptyJoin" || entry.kind === "finallyEpilogue"
+                        ? null
+                        : planHandlerSaves(this.pandaIRCFG, entry.startPC, entry.endPC, handleEntry));
                 regionEntry.set(tryEntry, tryRegion);
                 for (const predecessor of this.regionGraph.normalPredecessors(tryEntryRegion).slice()) {
                     const value = this.regionGraph.edgeValueOrThrow(predecessor, tryEntryRegion);
@@ -359,12 +367,16 @@ export class RegionGraphBuilder {
         handler: Region,
         catchEndPC: number | null,
         kind: "catch" | "finallyEpilogue",
+        savesPlan: HandlerSavePlan | null = null,
     ): Region {
         // 类型仍是 Condition:归约器里所有"条件区域"的图算法(循环/词法节点/尾块合并)
         // 必须与旧的 helper 完全一致;try 语义由 tryRegion 描述符单独分发。
         const region = new Region(null, "Condition");
         region.name = "try_" + body.getName() + "_" + handler.getName();
-        region.tryRegion = new TryRegion(catchEndPC, kind);
+        // 逐抛出点保存的值等价计划只对真 catch 有意义(finallyEpilogue handler 的
+        // 保存处理是 TryFinally/foldEagerCatchToFinally 的职责,这里不碰)。
+        if (kind !== "catch") savesPlan = null;
+        region.tryRegion = new TryRegion(catchEndPC, kind, savesPlan);
         this.regionGraph.addNode(region);
         return region;
     }

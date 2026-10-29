@@ -174,6 +174,7 @@ export class DefaultOnlineHistoryRepository {
     let v0, v2 /*OnlineHistoryRepositoryFailure*/, v3 /*decodeOnlineHistoryPage*/, v4 /*nextDelivered*/, v5 /*items*/, v6, v7 /*items*/;
     let local_1_0, local_1_1;
     if (p0 === undefined) {
+      v3 = this.generation;
       v4 = p0 === undefined ? 0 : onlineHistoryOffsetOf(p0);
       v5 = p0 === undefined ? buildOnlineHistoryUrl(0) : p0;
       v6 = canonicalOnlineHistoryCursorKey(v5);
@@ -186,7 +187,7 @@ export class DefaultOnlineHistoryRepository {
         "useSession": true,
         "signWithZse": true
       });
-      if (this.generation === this.generation) {
+      if (v3 === this.generation) {
         v3 = decodeOnlineHistoryPage(v0.body);
         v5 = p0 === undefined ? new Set() : local_0_1(this.requestedCursors);
         local_1_0 = p0 === undefined ? new Set() : local_0_1(this.deliveredIdentities);
@@ -228,6 +229,7 @@ export class DefaultOnlineHistoryRepository {
     if (!isOnlineHistoryCursorUrl(p0)) {
       throw new OnlineHistoryRepositoryFailure(OnlineHistoryRepositoryFailureKind.INVALID_CURSOR);
     }
+    v3 = this.generation;
     v4 = p0 === undefined ? 0 : onlineHistoryOffsetOf(p0);
     v5 = p0 === undefined ? buildOnlineHistoryUrl(0) : p0;
     v6 = canonicalOnlineHistoryCursorKey(v5);
@@ -240,7 +242,7 @@ export class DefaultOnlineHistoryRepository {
       "useSession": true,
       "signWithZse": true
     });
-    if (this.generation === this.generation) {
+    if (v3 === this.generation) {
       v3 = decodeOnlineHistoryPage(v0.body);
       v5 = p0 === undefined ? new Set() : local_0_1(this.requestedCursors);
       local_1_0 = p0 === undefined ? new Set() : local_0_1(this.deliveredIdentities);
@@ -281,6 +283,7 @@ export class DefaultOnlineHistoryRepository {
   }
   async clearAll() {
     let acc;
+    let v3 = this.generation;
     await this.httpClient.execute({
       "url": ONLINE_HISTORY_BATCH_DEL_URL,
       "method": ZhihuHttpMethod.POST,
@@ -289,7 +292,7 @@ export class DefaultOnlineHistoryRepository {
       "useSession": true,
       "signWithZse": true
     });
-    if (this.generation === this.generation) {
+    if (v3 === this.generation) {
       this.requestedCursors = new Set();
       this.deliveredIdentities = new Set();
       acc = this.onClear === null || this.onClear === undefined ? undefined : this.onClear();
@@ -299,6 +302,7 @@ export class DefaultOnlineHistoryRepository {
     throw new OnlineHistoryRepositoryFailure(OnlineHistoryRepositoryFailureKind.CANCELLED);
   }
   async deleteEntry(p0) {
+    let v3 = this.generation;
     let v6 = {
       "url": ONLINE_HISTORY_BATCH_DEL_URL,
       "method": ZhihuHttpMethod.POST,
@@ -308,7 +312,7 @@ export class DefaultOnlineHistoryRepository {
       "signWithZse": true
     };
     await this.httpClient.execute(v6);
-    if (this.generation === this.generation) {
+    if (v3 === this.generation) {
       return undefined;
     }
     throw new OnlineHistoryRepositoryFailure(OnlineHistoryRepositoryFailureKind.CANCELLED);

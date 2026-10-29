@@ -1,6 +1,6 @@
 {
   "name": "xpanda",
-  "version": "2.38.6",
+  "version": "2.39.0",
   "private": true,
   "description": "xpanda monorepo - pure TypeScript implementation of the HarmonyOS .abc (Panda bytecode) decompiler",
   "workspaces": [

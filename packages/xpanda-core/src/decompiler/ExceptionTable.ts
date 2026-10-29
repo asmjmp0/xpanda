@@ -2,7 +2,8 @@ import type { PandaIRCFG } from "../disasm/PandaIRCFG";
 import type { PandaIRBasicBlock } from "../disasm/PandaIRBasicBlock";
 import type { PandaMethodTryBlock } from "../file/method/PandaMethodTryBlock";
 import { buildFinallyPlans, comparesHoleWith, type FinallyPlan } from "./TryFinally";
-import { instructionAccess } from "./ValueAnalysis";
+import type { ValueDefinition } from "./ValueAnalysis";
+import { instructionAccess, ValueAnalysis } from "./ValueAnalysis";
 import {
     blockLoadsHole,
     blockThrowsRegister,
@@ -885,17 +886,25 @@ export function handlerReadsTryValues(
     tryStart: number,
     tryEnd: number,
 ): boolean {
-    const tryWrites = new Set<string>();
-    for (const block of cfg.pandaIRBasicBlocks) {
-        const pc = block.getStartPC();
-        if (pc < tryStart || pc >= tryEnd) continue;
-        for (const instruction of block.pandaInstructions) {
-            const { def } = instructionAccess(instruction);
-            if (def) tryWrites.add(def);
-        }
-    }
-    if (tryWrites.size === 0) return false;
-    const body = forwardBodyBlocks(cfg, entry, tryStart, tryEnd);
+    return handlerObservedReads(cfg, entry, tryStart, tryEnd,
+        forwardBodyBlocks(cfg, entry, tryStart, tryEnd)).size > 0;
+}
+
+/**
+ * handler 体里对「保护范围内写过的寄存器」的可观察读集合。
+ * `body` 是 handler 的前向体(分类用 forwardBodyBlocks 的宽松版本,
+ * 保存计划用 handlerOwnedBodyBlocks 的截断版本,见各自注释)。
+ */
+function handlerObservedReads(
+    cfg: PandaIRCFG,
+    entry: PandaIRBasicBlock,
+    tryStart: number,
+    tryEnd: number,
+    body: PandaIRBasicBlock[],
+): Set<string> {
+    const tryWrites = collectTryWrittenRegisters(cfg, tryStart, tryEnd);
+    if (tryWrites.size === 0) return new Set();
+    const observed = new Set<string>();
     const seen = new Set(body);
     const incoming = new Map<PandaIRBasicBlock, Set<string> | null>();
     const outgoing = new Map<PandaIRBasicBlock, Set<string>>();
@@ -947,13 +956,409 @@ export function handlerReadsTryValues(
             // (VideoSizeUtil.doFetch 的 `catch { return null }` 曾因此被判 unknown 丢掉)。
             if (instruction.kind !== "mov" && instruction.kind !== "async" && instruction.kind !== "generator") {
                 for (const use of uses) {
-                    if (!defined.has(use) && tryWrites.has(use)) return true;
+                    if (!defined.has(use) && tryWrites.has(use)) observed.add(use);
                 }
             }
             if (def) defined.add(def);
         }
     }
+    return observed;
+}
+
+/**
+ * handler 体里对「保护范围内写过的寄存器」的**可观察读**集合(mov/async 机器指令
+ * 不算,见 handlerReadsTryValues 的注释)。liveness 重构(try/catch 恢复审计
+ * reference/try-catch-restoration-lnga.md §4.6)用它决定哪些逐抛出点保存必须在
+ * AST 里保持活跃,哪些可以按值等价证明丢掉。
+ *
+ * 与分类用的 handlerReadsTryValues 不同,这里的前向体在「与正常控制流汇合」的
+ * 块处截断:落回正常流程的 catch(`catch { warn(...) }` 之后继续)不拥有汇合块
+ * 之后的读取 —— 否则整个方法尾部的读都会被算成 handler 观察读,给无关寄存器
+ * 强行复活保存(amcl n4/o8 的三元表达式因此裂成 if/else)。
+ *
+ * `defined` 跟踪与 handlerReadsTryValues 一致:handler 自己先写后读的临时量
+ * (finally handler 的 `v7 = v13; … accessSync(v9)` 槽位倒换)不算观察读。
+ */
+export function handlerObservedTryValueReads(
+    cfg: PandaIRCFG,
+    entry: PandaIRBasicBlock,
+    tryStart: number,
+    tryEnd: number,
+): Set<string> {
+    const body = handlerOwnedBodyBlocks(cfg, entry, tryStart, tryEnd);
+    if (body.length === 0) return new Set();
+    return handlerObservedReads(cfg, entry, tryStart, tryEnd, body);
+}
+
+/**
+ * handler「自有」前向体:forwardBodyBlocks 的结果再按前驱收 pruning——凡是有
+ * normal 前驱不在前向体里的块(与正常控制流的汇合点)及其下游都不属于 handler。
+ * 入口块永远保留。
+ *
+ * 前向体补长:内层 try 的 handler 是异常落点(普通边走不到),但它的保护范围
+ * 完全落在 handler 体里时它就是 handler 自己的内层 catch,必须补进体里,否则
+ * pruning 会把内层 catch 汇入的 join 块误判成「与正常流程的汇合点」
+ * (downloadToFile 用户 catch 里的 closeSync/accessSync 内层 try)。
+ */
+function handlerOwnedBodyBlocks(
+    cfg: PandaIRCFG,
+    entry: PandaIRBasicBlock,
+    tryStart: number,
+    tryEnd: number,
+): PandaIRBasicBlock[] {
+    const collected = new Set<PandaIRBasicBlock>();
+    const walkFrom = (start: PandaIRBasicBlock): void => {
+        const stack: PandaIRBasicBlock[] = [start];
+        while (stack.length > 0 && collected.size < 64) {
+            const block = stack.pop()!;
+            if (collected.has(block)) continue;
+            const pc = block.getStartPC();
+            if (pc >= tryStart && pc < tryEnd) continue;
+            collected.add(block);
+            for (const successor of cfg.graph.normalSuccessors(block)) {
+                if (successor.getStartPC() <= block.getStartPC()) continue;
+                stack.push(successor);
+            }
+        }
+    };
+    walkFrom(entry);
+    let grown = true;
+    while (grown && collected.size < 64) {
+        grown = false;
+        for (const tryEntry of cfg.getExceptionTable().entries) {
+            const handler = tryEntry.handlerEntryBlock;
+            if (!handler || collected.has(handler)) continue;
+            if (tryEntry.startPC >= tryStart && tryEntry.endPC <= tryEnd) continue; // 外层自己/嵌套在保护范围里的 try
+            let contained = true;
+            for (const block of cfg.pandaIRBasicBlocks) {
+                const pc = block.getStartPC();
+                if (pc >= tryEntry.startPC && pc < tryEntry.endPC && !collected.has(block)) {
+                    contained = false;
+                    break;
+                }
+            }
+            if (contained) {
+                walkFrom(handler);
+                grown = true;
+            }
+        }
+    }
+    const forward = [...collected];
+    const owned = new Set(forward);
+    let changed = true;
+    while (changed) {
+        changed = false;
+        for (const block of forward) {
+            if (!owned.has(block) || block === entry) continue;
+            for (const predecessor of cfg.graph.normalPredecessors(block)) {
+                if (!owned.has(predecessor)) {
+                    owned.delete(block);
+                    changed = true;
+                    break;
+                }
+            }
+        }
+    }
+    return forward.filter((block) => owned.has(block));
+}
+
+/** 保护范围 [tryStart, tryEnd) 内写过的寄存器名集合 */
+function collectTryWrittenRegisters(cfg: PandaIRCFG, tryStart: number, tryEnd: number): Set<string> {
+    const tryWrites = new Set<string>();
+    for (const block of cfg.pandaIRBasicBlocks) {
+        const pc = block.getStartPC();
+        if (pc < tryStart || pc >= tryEnd) continue;
+        for (const instruction of block.pandaInstructions) {
+            const { def } = instructionAccess(instruction);
+            if (def) tryWrites.add(def);
+        }
+    }
+    return tryWrites;
+}
+
+/**
+ * 逐抛出点寄存器保存的「值等价丢弃」计划(reference/try-catch-restoration-lnga.md §4.6)。
+ *
+ * 编译器在每个可能抛出的语句前把活跃寄存器 `mov` 进保存槽位,handler 再读回来;
+ * AST liveness 没有异常边,只有这些保存被显式保持活跃(revive)时 catch 才能读到
+ * 正确的值。对每个 handler 观察读的寄存器 R 做值证明:
+ *   - 保护范围内的每个定义都是 `mov R, S`(同一源寄存器),且 S 在范围内不被写
+ *     (范围不变量),且每个可能抛出的指令处 R 的到达定义非空 —— R 在 handler 处
+ *     的值恒等于 S 的值 → 保存是冗余的:不 revive,在 try 前物化一次 `R = S`。
+ *   - 证明失败 → R 进 resurrect 集合,liveness 在可抛语句处保持它的保存活跃。
+ *
+ * handler 观察读之外的内容(mov 倒换、常量槽位)一律不动,保持既有输出。
+ */
+export interface HandlerSavePlan {
+    /** liveness 必须在抛出点保持活跃的保存槽位(handler 观察读、值证明失败) */
+    resurrect: string[];
+    /** 值等价证明成立的槽位 → 源寄存器(在 try 前物化一次,范围内的保存全部冗余) */
+    materialize: Array<{ register: string; source: string }>;
+}
+
+/** 指令是否绝对不抛(保守白名单;属性访问/调用/分配一律按可抛处理) */
+function instructionCannotThrow(instruction: any): boolean {
+    switch (instruction.kind as string) {
+        case "nop":
+        case "doNothing":
+        case "assert":
+        case "jumpDirect":
+        case "jumpEqual":
+        case "jumpNotEqual":
+        case "jumpPlain":
+        case "mov":
+        case "load":
+        case "store":
+        case "return":
+        case "binaryOp":
+        case "unary":
+        case "loadGlobal":
+        case "loadModuleVar":
+        case "loadExternalModuleVar":
+        case "storeModuleVar":
+        case "newLexEnv":
+        case "storeLex":
+        case "loadLex":
+        case "popLexEnv":
+        // async 收尾(asyncfunctionresolve/reject)不抛;await 的派发单独按可抛处理
+        case "async":
+            return !(instruction.kind === "async" && String(instruction.asyncType ?? "").includes("await"));
+        default:
+            return false;
+    }
+}
+
+export function planHandlerSaves(
+    cfg: PandaIRCFG,
+    tryStart: number,
+    tryEnd: number,
+    handlerEntry: PandaIRBasicBlock,
+): HandlerSavePlan {
+    const plan: HandlerSavePlan = { resurrect: [], materialize: [] };
+    const observed = handlerObservedTryValueReads(cfg, handlerEntry, tryStart, tryEnd);
+    if (observed.size === 0) return plan;
+    // 到达定义只为「有观察读」的方法求解;大方法上这是唯一的额外开销
+    const analysis = new ValueAnalysis(cfg);
+    // 第一关:范围内每个定义都必须是 `mov R, S`(同一源),且 S 在范围内不变
+    const sourceOf = new Map<string, string>();
+    for (const register of observed) {
+        const defsInRange = analysis.definitionsOf(register)
+            .filter((definition) => definition.block.getStartPC() >= tryStart
+                && definition.block.getStartPC() < tryEnd);
+        if (defsInRange.length === 0) continue; // 范围内没有保存:既有 liveness 已能保住范围外的定义
+        let source: string | null = null;
+        let copyOnly = true;
+        for (const definition of defsInRange) {
+            const instruction = definition.instruction;
+            if (instruction.kind !== "mov" || !instruction.srcObj) { copyOnly = false; break; }
+            const defSource = instruction.srcObj.toString();
+            if (source === null) source = defSource;
+            else if (source !== defSource) { copyOnly = false; break; }
+        }
+        if (!copyOnly || source === null
+            // 源寄存器必须在范围内不变(范围内没有它的定义)
+            || analysis.definitionsOf(source).some((definition) => {
+                const pc = definition.block.getStartPC();
+                return pc >= tryStart && pc < tryEnd;
+            })) {
+            if (defsReadUnstableSources(analysis, defsInRange)) continue;
+            plan.resurrect.push(register);
+            continue;
+        }
+        if (defsReadUnstableSources(analysis, defsInRange)) continue;
+        sourceOf.set(register, source);
+    }
+    if (sourceOf.size === 0) return plan;
+    // 第二关:每个可能抛出的指令处,该寄存器的到达定义都必须非空且是范围内的同源
+    // 保存。异常落点(handler 入口)的到达定义为空(值未知),但其有效值 = 嵌套
+    // 范围内原抛出点的值 —— 而那些抛出点本身也会被本关检查,所以对「完全嵌套在本
+    // 保护范围内」的 landing pad 放行:它的入口状态由供给它的范围的状态决定。
+    const inRangeBlocks = cfg.pandaIRBasicBlocks.filter((block) => {
+        const pc = block.getStartPC();
+        return pc >= tryStart && pc < tryEnd;
+    });
+    // 完全嵌套的 try 条目按 handler 入口分组:landing pad 的入口状态 = 供给范围内
+    // 所有块的状态汇合(任何一条可抛指令都可能先一步把异常送进该 handler)。
+    const feederBlocksByLanding = new Map<PandaIRBasicBlock, PandaIRBasicBlock[]>();
+    for (const entry of cfg.getExceptionTable().entries) {
+        if (!entry.handlerEntryBlock) continue;
+        if (entry.startPC < tryStart || entry.endPC > tryEnd || entry.startPC >= entry.endPC) continue;
+        const landing = entry.handlerEntryBlock;
+        const previous = feederBlocksByLanding.get(landing) ?? [];
+        for (const block of inRangeBlocks) {
+            const pc = block.getStartPC();
+            if (pc >= entry.startPC && pc < entry.endPC) previous.push(block);
+        }
+        feederBlocksByLanding.set(landing, previous);
+    }
+    for (const [register, source] of sourceOf) {
+        if (!statesProveSingleValue(cfg, analysis, inRangeBlocks, feederBlocksByLanding,
+            register, source, tryStart, tryEnd)) {
+            plan.resurrect.push(register);
+            continue;
+        }
+        // 源寄存器必须真的有定义(从未写过的寄存器隐式为 undefined,物化反而会
+        // 打印未赋值读取;保持旧行为,不 revive)
+        if (analysis.definitionsOf(source).length === 0) continue;
+        // 源值来自属性读取时整个槽位放弃(物化和复活都不做):AST 层的复制传播会把
+        // `v4 = this.generation` 的定义表达式克隆进后续读取,跨 await 的旧值快照会和
+        // 实时读取混同(amcl launch/f15 refreshOnce:一旦在循环体里出现该槽位的读取,
+        // `if (v4 !== this.generation)` 就会被折成 `this.generation !== this.generation`)。
+        // 这类槽位保持既有(不恢复)行为。
+        if (sourceReadsUnstableValue(analysis, cfg, inRangeBlocks, source)) continue;
+        plan.materialize.push({ register, source });
+    }
+    return plan;
+}
+
+/** 保存定义(`mov R, S`)的源 S 在保存点是否来自属性读取 */
+function defsReadUnstableSources(analysis: ValueAnalysis, defsInRange: ValueDefinition[]): boolean {
+    for (const definition of defsInRange) {
+        const instruction = definition.instruction;
+        if (instruction.kind !== "mov" || !instruction.srcObj) continue;
+        const source = instruction.srcObj.toString();
+        const block = definition.block;
+        const reaching = analysis.definitionsAtRead(block, instruction, source);
+        for (const id of reaching) {
+            const reachingDefinition = analysis.definitionById(id);
+            if (!reachingDefinition) continue;
+            if (definitionReadsProperty(reachingDefinition)) return true;
+        }
+    }
     return false;
+}
+
+/**
+ * 定义的值是否直接来自属性读取:定义指令本身是属性装载,或是 acc 的 sta/store,
+ * 前一条产生 acc 值的指令是属性装载(`lda this; ldobjbyname generation; sta v4`)。
+ */
+function definitionReadsProperty(definition: ValueDefinition): boolean {
+    const isPropertyLoad = (instruction: any): boolean => {
+        switch (instruction?.kind as string) {
+            case "loadObjectBy":
+            case "loadSuper":
+            case "loadSuperObj":
+                return true;
+            default:
+                return false;
+        }
+    };
+    const instruction = definition.instruction;
+    if (isPropertyLoad(instruction)) return true;
+    if (instruction?.kind !== "store") return false;
+    const instructions = definition.block.pandaInstructions;
+    const index = instructions.indexOf(instruction);
+    for (let i = index - 1; i >= 0 && i >= index - 6; i--) {
+        const previous = instructions[i];
+        if (isPropertyLoad(previous)) return true;
+        if (previous.kind !== "mov" && previous.kind !== "store" && previous.kind !== "load") break;
+    }
+    return false;
+}
+
+/** 源寄存器在进入保护范围时是否来自属性读取(这类值在 AST 层可被复制传播重复求值) */
+function sourceReadsUnstableValue(
+    analysis: ValueAnalysis,
+    cfg: PandaIRCFG,
+    inRangeBlocks: PandaIRBasicBlock[],
+    source: string,
+): boolean {
+    const first = inRangeBlocks[0];
+    const firstInstruction = first?.pandaInstructions[0];
+    if (!first || !firstInstruction) return true;
+    const reaching = analysis.definitionsAtRead(first, firstInstruction, source);
+    for (const id of reaching) {
+        const definition = analysis.definitionById(id);
+        if (!definition) return true;
+        switch (definition.instruction.kind as string) {
+            case "loadObjectBy":
+            case "loadSuper":
+            case "loadSuperObj":
+                return true;
+            default:
+                break;
+        }
+    }
+    return false;
+}
+
+/**
+ * 值证明第二关:寄存器 `register` 在保护范围内每个可能抛出的指令处,值是否恒等于
+ * `source` 的值。普通路径用到达定义;异常落点的入口状态用布尔定点传播(入口的好
+ * 状态 = 所有供给块的出口状态都好)。
+ *
+ * 返回 false 时调用方把该寄存器放进 resurrect 集合(liveness 逐抛出点保持活跃)。
+ */
+function statesProveSingleValue(
+    cfg: PandaIRCFG,
+    analysis: ValueAnalysis,
+    inRangeBlocks: PandaIRBasicBlock[],
+    feederBlocksByLanding: Map<PandaIRBasicBlock, PandaIRBasicBlock[]>,
+    register: string,
+    source: string,
+    tryStart: number,
+    tryEnd: number,
+): boolean {
+    const isLanding = (block: PandaIRBasicBlock): boolean => cfg.graph.normalPredecessors(block).length === 0;
+    const firstDefIndex = (block: PandaIRBasicBlock): number => {
+        const instructions = block.pandaInstructions;
+        for (let index = 0; index < instructions.length; index++) {
+            const { def } = instructionAccess(instructions[index]);
+            if (def === register) return index;
+        }
+        return instructions.length;
+    };
+    // 普通块的入口状态:到达定义(ValueAnalysis;空集 = 路径上确实未定义,不放行)。
+    const normalEntryGood = (block: PandaIRBasicBlock): boolean => {
+        const first = block.pandaInstructions[0];
+        if (!first) return false;
+        const reaching = analysis.definitionsAtRead(block, first, register);
+        if (reaching.length === 0) return false;
+        return reaching.every((id) => {
+            const definition = analysis.definitionById(id);
+            if (!definition) return false;
+            if (definition.instruction.kind !== "mov" || !definition.instruction.srcObj) return false;
+            return definition.instruction.srcObj.toString() === source
+                && definition.block.getStartPC() >= tryStart
+                && definition.block.getStartPC() < tryEnd;
+        });
+    };
+    // 「第一个 R 定义之前的可抛指令」是否存在(它们读到的是块入口状态)
+    const hasPreDefThrow = (block: PandaIRBasicBlock): boolean => {
+        const limit = firstDefIndex(block);
+        const instructions = block.pandaInstructions;
+        for (let index = 0; index < limit; index++) {
+            if (!instructionCannotThrow(instructions[index])) return true;
+        }
+        return false;
+    };
+    // blockOK(B):B 内每条可抛指令处的值都恒等于 source。
+    //   = 没有「定义前可抛指令」(定义后的值 = 同源保存,第一关保证)
+    //     或入口状态良好(普通块:到达定义检查;landing:所有供给块都 blockOK ——
+    //     落点入口值 = 嵌套范围里原抛出点的值)。
+    const blockOK = new Map<PandaIRBasicBlock, boolean>();
+    for (const block of inRangeBlocks) {
+        blockOK.set(block, !hasPreDefThrow(block) || normalEntryGood(block));
+    }
+    for (let round = 0; round < 8; round++) {
+        let changed = false;
+        for (const block of inRangeBlocks) {
+            if (blockOK.get(block)) continue;
+            if (!isLanding(block)) continue;
+            const feeders = feederBlocksByLanding.get(block);
+            const entryGood = !!feeders && feeders.length > 0
+                && feeders.every((feeder) => blockOK.get(feeder) === true);
+            if (entryGood) {
+                blockOK.set(block, true);
+                changed = true;
+            }
+        }
+        if (!changed) break;
+    }
+    for (const block of inRangeBlocks) {
+        if (!blockOK.get(block)) return false;
+    }
+    return true;
 }
 
 /** try 范围内是否有经典 finally 的 hole 哨兵(13.0.1.0 的收尾残留) */

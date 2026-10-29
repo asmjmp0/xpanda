@@ -31,6 +31,7 @@ import {
     isCopyable,
     isDeclarationValue,
     isFunctionLike,
+    isNodeEqual,
     isPureExpression,
     isTempName,
     nodeSize,
@@ -552,10 +553,30 @@ export class CopyPropagation extends TempVariablePass {
             }
             case "BinaryExpression": {
                 const n = node as TYPE.BinaryExpression;
-                n.left = this.rewriteExpr(n.left as TYPE.Expression, env, list, index, ctx, allowImpure);
+                const leftBefore = n.left as TYPE.Expression;
+                const rightBefore = n.right as TYPE.Expression;
+                n.left = this.rewriteExpr(leftBefore, env, list, index, ctx, allowImpure);
                 // 右操作数在左侧之后求值:左侧有副作用时不能再把前一语句的调用搬进来
-                n.right = this.rewriteExpr(n.right as TYPE.Expression, env, list, index, ctx,
+                n.right = this.rewriteExpr(rightBefore, env, list, index, ctx,
                     allowImpure && isPureExpression(n.left as TYPE.Expression));
+                // 两侧被替换成同一个**属性读取**时还原一侧的读取:
+                //   v4 = this.generation; ... if (v4 !== this.generation) ...
+                // 缓存表达式(v4 → this.generation)和接收者别名(p2 → this)的替换会让
+                // 比较变成 `this.generation !== this.generation`(恒假),而 v4 是跨
+                // await 的旧值快照,两侧读到的本来就不是同一个值。常量/标识符两侧
+                // 相同是合法的常量折叠(`v21 = undefined; if (v21 == undefined)`),
+                // 不能还原。
+                if (isNodeEqual(n.left as TYPE.Node, n.right as TYPE.Node)) {
+                    if (isIdentifier(leftBefore) && (n.left as TYPE.Node) !== leftBefore
+                        && this.isMemberRead(n.left as TYPE.Expression)) {
+                        this.restoreSubstitutedRead(leftBefore, ctx);
+                        n.left = leftBefore;
+                    } else if (isIdentifier(rightBefore) && (n.right as TYPE.Node) !== rightBefore
+                        && this.isMemberRead(n.right as TYPE.Expression)) {
+                        this.restoreSubstitutedRead(rightBefore, ctx);
+                        n.right = rightBefore;
+                    }
+                }
                 return n;
             }
             case "ConditionalExpression": {
@@ -695,6 +716,15 @@ export class CopyPropagation extends TempVariablePass {
             }
         }
         return node;
+    }
+    /** 表达式是否就是一次属性读取(可复制但不稳定,跨 await 的两次读取不一定相同)。 */
+    private isMemberRead(expr: TYPE.Expression): boolean {
+        return expr.type === "MemberExpression" || expr.type === "OptionalMemberExpression";
+    }
+    /** 还原被替换掉的读取:把引用登记回 binding,声明清理时不会误删。 */
+    private restoreSubstitutedRead(id: TYPE.Identifier, ctx: FunctionContext): void {
+        ctx.infos.get(id.name)?.refs.add(id);
+        this.changed = true;
     }
     private resolveIdentifier(
         id: TYPE.Identifier,

@@ -28,6 +28,17 @@ export class LivenessAnalyzer extends TempVariablePass {
     /** Names a throwing write inside the current try must not kill. */
     private preserveAcrossThrow: Set<string> | null = null;
     /**
+     * Save slots whose per-throw-point copies must stay live at statements that can
+     * throw inside the current try (extra.xpandaHandlerSaves, planned by
+     * planHandlerSaves). Unlike preserveAcrossThrow this ADDS the names to live-in,
+     * which is what keeps every `v17 = v0` snapshot alive for the catch. Inherited
+     * through nested try bodies (an outer catch's snapshots must survive inside an
+     * inner try). Only consulted in cleanup mode, so the analysis-mode live sets
+     * (ctx.liveAfter / loopBodyIn, consumed by the condition folds) keep their
+     * historical trajectories.
+     */
+    private resurrectAtThrow: Set<string> | null = null;
+    /**
      * Inside the protected body of a try whose catch is empty: a property read
      * may throw before the write lands, so the previous value is still what the
      * (empty) catch path observes. Only enabled for empty catches; a catch with
@@ -115,6 +126,17 @@ export class LivenessAnalyzer extends TempVariablePass {
                 }
                 const result = new Set(reads);
                 for (const name of liveOut) if (!killed.has(name)) result.add(name);
+                // Revive the handler save slots at every statement that can throw:
+                // the value the catch reads is snapshotted right here, so the save
+                // in front of this statement is not a dead store even though the
+                // normal flow never reads it. Only in cleanup mode (see field docs)
+                // and only outside loops: a kept save at the top of a loop body
+                // breaks the while(true)+break → for/for-of restoration shapes
+                // (amcl i8 c763), and those throw points keep the status-quo
+                // behavior instead.
+                if (cleanup && !loop && this.resurrectAtThrow && this.statementCanThrow(stmt)) {
+                    for (const name of this.resurrectAtThrow) result.add(name);
+                }
                 return result;
             }
             case "IfStatement": {
@@ -233,6 +255,27 @@ export class LivenessAnalyzer extends TempVariablePass {
                     const written = this.straightLineWrites(stmt.handler.body);
                     for (const name of liveOut) if (!written.has(name)) preserve.add(name);
                 }
+                // planHandlerSaves 的值证明结果:证明失败的保存槽位在每条可抛语句处
+                // 复活(嵌套 try 体继承外层集合,外层 catch 的快照在内层体里同样
+                // 必须存活)。只影响 cleanup 模式;分析模式保持历史轨迹。
+                // 只复活 handler 真正「先读后写」的槽位:空 catch(`catch {}`)和入口
+                // 只写不读的 catch(`catch { v5 = 0 }`)没有任何观察者,复活它们只会
+                // 把 try 体里无关的赋值钉成死存储(amcl McGamePage aboutToAppear 的
+                // `v5 = getUIContext()` 链)。
+                // try 体里带循环时整体放弃复活:循环体顶的保存会破坏
+                // while(true)+break → for/for-of 的还原形态(amcl i8 c763),
+                // 这些抛出点维持既有行为。
+                const savedResurrect = this.resurrectAtThrow;
+                const planSaves = (stmt.extra as { xpandaHandlerSaves?: string[] } | null | undefined)
+                    ?.xpandaHandlerSaves;
+                if (planSaves && planSaves.length > 0 && !this.containsLoop(stmt.block)) {
+                    const observed = planSaves.filter((name) => handlerIn.has(name));
+                    if (observed.length > 0) {
+                        this.resurrectAtThrow = savedResurrect
+                            ? union(savedResurrect, new Set(observed))
+                            : new Set(observed);
+                    }
+                }
                 const saved = this.preserveAcrossThrow;
                 this.preserveAcrossThrow = preserve;
                 const savedMemberReadThrows = this.memberReadThrows;
@@ -243,6 +286,7 @@ export class LivenessAnalyzer extends TempVariablePass {
                 const blockIn = this.transferNested(stmt.block, after, ctx, nestedLoop, cleanup);
                 this.memberReadThrows = savedMemberReadThrows;
                 this.preserveAcrossThrow = saved;
+                this.resurrectAtThrow = savedResurrect;
                 const finalizerIn = stmt.finalizer
                     ? this.transferNested(stmt.finalizer, liveOut, ctx, loop, cleanup)
                     : liveOut;
@@ -385,6 +429,33 @@ export class LivenessAnalyzer extends TempVariablePass {
             return ctx.labelLive.get(label) ?? null;
         }
         return null;
+    }
+
+    /** try 体(不含嵌套函数体)里是否出现任何循环:有则放弃保存复活。 */
+    private containsLoop(stmt: TYPE.Statement): boolean {
+        switch (stmt.type) {
+            case "WhileStatement":
+            case "DoWhileStatement":
+            case "ForStatement":
+            case "ForInStatement":
+            case "ForOfStatement":
+                return true;
+            case "BlockStatement":
+                return stmt.body.some((child) => this.containsLoop(child));
+            case "LabeledStatement":
+                return this.containsLoop(stmt.body);
+            case "IfStatement":
+                return this.containsLoop(stmt.consequent)
+                    || (!!stmt.alternate && this.containsLoop(stmt.alternate));
+            case "TryStatement":
+                return this.containsLoop(stmt.block)
+                    || (!!stmt.handler && this.containsLoop(stmt.handler.body))
+                    || (!!stmt.finalizer && this.containsLoop(stmt.finalizer));
+            case "SwitchStatement":
+                return stmt.cases.some((c) => c.consequent.some((child) => this.containsLoop(child)));
+            default:
+                return false;
+        }
     }
 
     /**

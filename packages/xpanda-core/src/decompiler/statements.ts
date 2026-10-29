@@ -4,6 +4,7 @@ import { NodeFactory } from "../ast/NodeFactory";
 import { NodeUtils } from "../ast/NodeUtils";
 import type { PandaDecompilerMethodHandler } from "./MethodHandler";
 import type { Region } from "./Region";
+import type { HandlerSavePlan } from "./ExceptionTable";
 
 /**
  * 语句树(移植自 Java jmp0.abc.decompiler.structure.statement 包)
@@ -288,6 +289,13 @@ export class TryCatchPandaStatement implements IPandaDecompileAble {
          * 标记写在 AST 的 extra 上,让最终折叠能确认它来自 Try 区域。
          */
         private readonly kind: "catch" | "finallyEpilogue" = "catch",
+        /**
+         * 逐抛出点保存槽位的值等价计划(见 planHandlerSaves):
+         *   - materialize:在 try 前物化一次 `R = S`,范围内的保存全部冗余;
+         *   - resurrect:写入 tryNode.extra,AST liveness 在可抛语句处保持这些
+         *     槽位的保存活跃(handler 观察读、值证明失败的寄存器)。
+         */
+        private readonly savesPlan: HandlerSavePlan | null = null,
     ) {}
 
     decompile(methodHandler: PandaDecompilerMethodHandler, pandaLexical: PandaLexical, astNode: any): void {
@@ -306,9 +314,25 @@ export class TryCatchPandaStatement implements IPandaDecompileAble {
         );
         NodeUtils.insertNodeToBody(factory.expressionStatementNode(toAcc as any) as any, catchBodyNode);
         this.catchBody?.decompile(methodHandler, pandaLexical, catchBodyNode);
+        // 值等价证明成立的保存槽位在 try 前物化一次(`v15 = v3`):handler 读取的
+        // 值 = 源寄存器在 try 入口的值(范围内不变),范围内的逐抛出点保存随后由
+        // liveness 当死存储删掉。物化语句必须紧挨 try 之前,读取的正是 try 入口值。
+        if (this.savesPlan) {
+            for (const entry of this.savesPlan.materialize) {
+                const assign = factory.assignmentExpressionNode(
+                    "=",
+                    factory.identifierNode(entry.register) as any,
+                    factory.identifierNode(entry.source) as any,
+                );
+                NodeUtils.insertNodeToBody(factory.expressionStatementNode(assign as any) as any, astNode);
+            }
+        }
         const tryNode = factory.tryStatementNode(tryBodyNode, catchBodyNode);
         if (this.kind === "finallyEpilogue") {
             tryNode.extra = { ...(tryNode.extra ?? {}), xpandaTryKind: "finallyEpilogue" };
+        }
+        if (this.savesPlan && this.savesPlan.resurrect.length > 0) {
+            tryNode.extra = { ...(tryNode.extra ?? {}), xpandaHandlerSaves: this.savesPlan.resurrect };
         }
         if (this.tryBodyEndPC !== null) methodHandler.recordTryBodyEnd(tryNode, this.tryBodyEndPC);
         NodeUtils.insertNodeToBody(tryNode as any, astNode);

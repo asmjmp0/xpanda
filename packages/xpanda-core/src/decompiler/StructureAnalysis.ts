@@ -856,7 +856,7 @@ export class StructureAnalysis {
     }
 
     private emitTryStatement(region: Region, body: Region, handler: Region, info: TryRegion): void {
-        region.addStatement(new TryCatchPandaStatement(body, handler, info.catchEndPC, info.kind));
+        region.addStatement(new TryCatchPandaStatement(body, handler, info.catchEndPC, info.kind, info.savesPlan));
         region.tryRegion = null;
     }
 

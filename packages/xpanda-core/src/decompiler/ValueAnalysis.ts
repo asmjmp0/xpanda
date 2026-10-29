@@ -158,6 +158,16 @@ export class ValueAnalysis {
         return this.definitionByInstruction.get(instruction) ?? null;
     }
 
+    /** 按寄存器名取全部定义(调用方自行按 pc 过滤保护范围) */
+    definitionsOf(register: string): ValueDefinition[] {
+        return this.definitions.filter((definition) => definition.register === register);
+    }
+
+    /** 按 id 取定义 */
+    definitionById(id: number): ValueDefinition | null {
+        return this.definitions[id] ?? null;
+    }
+
     /** 某条指令读取 `register` 时,到达的定义集合(按块内顺序重放到该指令) */
     definitionsAtRead(block: PandaIRBasicBlock, instruction: any, register: string): number[] {
         const state = new Map<string, Set<number>>();

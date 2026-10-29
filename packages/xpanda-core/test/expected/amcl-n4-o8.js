@@ -247,8 +247,10 @@ export class q1164 {
     return v0;
   }
   async publishCurrent() {
-    let v5, v6, v9, v10 /*display*/, v11 /*y*/, v12 /*display*/, v13, v14, v16, v17, v20 /*z31*/, v21, v24, v25, v28;
+    let v3 /*r273*/, v4, v5, v6, v9, v10 /*display*/, v11 /*y*/, v12 /*display*/, v13, v14, v16, v17, v20 /*z31*/, v21, v24, v25, v28;
     let local_1_0;
+    v3 = this.win;
+    v4 = this.generation;
     v5 = 0;
     if (this.win === undefined || this.generation === 0) {
       return undefined;
@@ -336,7 +338,7 @@ export class q1164 {
       }
       v14 += 1;
     }
-    if (this.generation !== this.generation || this.win !== this.win) {
+    if (v4 !== this.generation || v3 !== this.win) {
       return undefined;
     }
     this.clearDisplayListeners();
