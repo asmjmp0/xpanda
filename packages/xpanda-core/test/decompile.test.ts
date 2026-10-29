@@ -4168,6 +4168,10 @@ function verifyLngaAsyncFinally(clazz: PandaClass, code: string): void {
         ["ProfilePanel", "startQrLoginScan", [`} catch (catchAcc) {\n      appStore.showToast("扫码已取消或失败");\n    } finally {\n      this.qrScanLoading = false;\n    }`]],
         ["LoginPage", "importEncryptedCredential", [`} catch (catchAcc) {\n      this.error = "解密失败，请检查密码或文件是否正确";\n    } finally {\n      this.importing = false;\n    }`]],
         ["NotificationPanel", "loadMorePrivateMessages", [`} catch (catchAcc) {\n      appStore.showToast("加载更多失败");\n    } finally {\n      if (this.scope.isAlive()) {\n        this.privateLoadingMore = false;\n      }\n    }`]],
+        // 共用 finally 起点的落回型 catch:异常路径上也走 finally,续接在 finally 之后
+        ["FollowListPanel", "unfollowUser", [
+            `} catch (catchAcc) {\n      if (this.scope.isAlive() && this.mode === FollowListTab.FOLLOWED) {\n        appStore.showToast("操作失败");\n      }\n    } finally {\n      this.removingUid = "";\n    }`,
+        ]],
         // 循环形态:try { do…while } finally,finally 在循环外只执行一次
         ["SocialListSettings", "runFavoritesSyncLoop", [
             "    try {\n      do {\n        this.favoritesSyncDirty = false;",
@@ -5309,7 +5313,7 @@ const hx360eClassTests: BinaryClassTest[] = [
 const lngaClassTests: BinaryClassTest[] = [
     { label: "lnga SOURCE_FILE + qr login short circuit (lnga1.2.6.abc)", matches: (n) => n === "Lcom.example.nga_oh/entry/ets/common/utils/NgaQrLoginUtils;", run: verifyLngaQrLoginUtils },
     { label: "lnga shared-start catch + finally (lnga1.2.6.abc)", matches: (n) => n === "Lcom.example.nga_oh/entry/ets/pages/SettingsPanel;", run: verifyLngaSettingsPanelException },
-    { label: "lnga async try/catch/finally (lnga1.2.6.abc)", matches: (n) => n === "Lcom.example.nga_oh/entry/ets/common/dialogs/SaveThreadDialogs;" || n === "Lcom.example.nga_oh/entry/ets/pages/ProfilePanel;" || n === "Lcom.example.nga_oh/entry/ets/pages/LoginPage;" || n === "Lcom.example.nga_oh/entry/ets/pages/NotificationPanel;" || n === "Lcom.example.nga_oh/entry/ets/store/settings/domain/SocialListSettings;", run: verifyLngaAsyncFinally },
+    { label: "lnga async try/catch/finally (lnga1.2.6.abc)", matches: (n) => n === "Lcom.example.nga_oh/entry/ets/common/dialogs/SaveThreadDialogs;" || n === "Lcom.example.nga_oh/entry/ets/pages/ProfilePanel;" || n === "Lcom.example.nga_oh/entry/ets/pages/LoginPage;" || n === "Lcom.example.nga_oh/entry/ets/pages/NotificationPanel;" || n === "Lcom.example.nga_oh/entry/ets/store/settings/domain/SocialListSettings;" || n === "Lcom.example.nga_oh/entry/ets/pages/FollowListPanel;", run: verifyLngaAsyncFinally },
     { label: "lnga shared-start catch return (lnga1.2.6.abc)", matches: (n) => n === "Lcom.example.nga_oh/entry/ets/common/media/VideoSizeUtil;", run: verifyLngaVideoSizeUtil },
     { label: "lnga v24 catch shapes (lnga1.2.6.abc)", matches: (n) => n === "Lcom.example.nga_oh/entry/ets/common/security/NgaRsaCipher;", run: (_clazz, _code, ctx) => verifyLngaCatchShapes(ctx) },
 ];

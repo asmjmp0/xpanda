@@ -1455,7 +1455,8 @@ function applyPlans(
                 parentList.splice(parentIndex + 1, 0, ...guardContinuation);
                 applied = true;
             } else if (tryOwner && tryOwner.handler && cleanupList !== startList
-                && plan.endIsMethodTail && !plan.eagerCleanup && !plan.tailCleanupRange && !plan.loopTailGuard
+                && (plan.endIsMethodTail || plan.restoreContinuation)
+                && !plan.eagerCleanup && !plan.tailCleanupRange && !plan.loopTailGuard
                 && startList === tryOwner.block.body
                 && applyHandlerWrappedCatchFinally(astNode, plan, tryOwner)) {
                 // v24 async 单层 `try { … } catch { … } finally { … }`:finally handler
@@ -1991,9 +1992,29 @@ function applyHandlerWrappedCatchFinally(
     if (duplicateCleanup.length !== finallyStatements.length) return false;
     const reference = finallyStatements.map((statement) => generate(statement).code).join("\n");
     if (duplicateCleanup.map((statement) => generate(statement).code).join("\n") !== reference) return false;
+    // 非方法尾:守卫的非抛出分支是 try/finally 之后的正常继续,搬回合并节点之后
+    // (24+ 的 `if (pending != hole) { throw } else { END; continuation }`,或
+    // `if (pending == hole) { continuation } throw pending`)。
+    let continuation: TYPE.Statement[] = [];
+    let removeThrough = guardIf;
+    if (!plan.endIsMethodTail) {
+        const guardStatement = mainList[guardIf];
+        const endMarkerValue = markerValueOf(plan.endMarker, plan.endExpr) || null;
+        const extracted = extractGuardContinuation(guardStatement as TYPE.IfStatement, endMarkerValue);
+        continuation = extracted.statements;
+        if (!extracted.fromEndMarker) {
+            const afterGuard = mainList[guardIf + 1];
+            if (TYPE.isThrowStatement(afterGuard) && !branchEndsWithThrow((guardStatement as TYPE.IfStatement).consequent)) {
+                continuation = branchStatements((guardStatement as TYPE.IfStatement).consequent).slice();
+                removeThrough = guardIf + 1;
+            }
+        }
+        // 续接里不能带块级声明(会被搬出守卫分支,作用域改变)
+        if (continuation.length === 0 || hasDeclaration(continuation)) return false;
+    }
     // 合并:内层 block(含 START 标记,stripMarkers 统一清掉)+ 外层 handler + finally
     const merged = TYPE.tryStatement(innerTry.block, outerTry.handler, bodyBlock(finallyStatements));
-    mainList.splice(outerIndex, guardIf - outerIndex + 1, merged);
+    mainList.splice(outerIndex, removeThrough - outerIndex + 1, merged, ...continuation);
     return true;
 }
 

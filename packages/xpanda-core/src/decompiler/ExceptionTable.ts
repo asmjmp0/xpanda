@@ -604,7 +604,7 @@ function isIgnoredCatchByBody(
     // 共用 finally 起点的 catch 只有在“以 return 退出”时才安全:落回正常流程的
     // catch 依赖 finally 布局,布局失败会留下 hole 守卫(lnga doFetch 是 return null;
     // amcl g10 checkAccount 是回落型,注册后 finally 布局失败、守卫泄漏)。
-    if (flags.work) return flags.returns || (!sharedStartKept && rejoin);
+    if (flags.work) return flags.returns || rejoin;
     if (!flags.returns) {
         // Bare `jmp` empty catch to a forward join (`try { … } catch {}` then
         // more code). A `mov; jmp` handler restores the compiler's spills;
