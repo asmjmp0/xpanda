@@ -1445,6 +1445,21 @@ function applyPlans(
                 tryOwner.finalizer = bodyBlock(finalizer);
                 parentList.splice(parentIndex + 1, 0, ...guardContinuation);
                 applied = true;
+            } else if (tryOwner && tryOwner.handler && cleanupList !== startList
+                && plan.endIsMethodTail && !plan.eagerCleanup && !plan.tailCleanupRange && !plan.loopTailGuard
+                && startList === tryOwner.block.body
+                && applyHandlerWrappedCatchFinally(astNode, plan, tryOwner)) {
+                // v24 async 单层 `try { … } catch { … } finally { … }`:finally handler
+                // 生成成嵌在用户 catch try 体里的内层 try/catch(cleanup/guard 标记在
+                // 它的 handler 里),而共享的 cleanup/guard 尾块又被区域归约复制到这条
+                // try/catch 之后的正常路径上,locateMarker 按值找到的是后一份,常规
+                // 布局全部失配(lnga startQrLoginScan / fetchThreadInfo /
+                // importEncryptedCredential / loadMorePrivateMessages)。
+                // 布局调用放在条件里(与 applyLoopFollowedByCleanup 相同):内部形状
+                // 门槛不满足时返回 false 让链继续,不能 break left 独占——否则会把
+                // 条件上重叠、但本可由后续布局正确还原的形状(知乎
+                // NotificationState.fetchPage)遮蔽掉。
+                applied = true;
             } else if (tryOwner && tryOwner.handler && cleanupList !== startList) {
                 // 用户 catch 在 try 范围内终止,finally 的 cleanup/guard 落在这条
                 // try/catch 后面(f1268 写文件:catch 打日志再抛,close 在范围外)。
@@ -1753,6 +1768,115 @@ function isRegisterMove(statement: any): boolean {
  */
 function isHandlerWiring(statement: any): boolean {
     return isFinallyMarker(statement) || isRegisterMove(statement);
+}
+
+/** 语句本身就是携带指定值的 finally 标记(`MARKER_PREFIX<id>_<role>`) */
+function isFinallyMarkerWithValue(statement: any, value: string): boolean {
+    return TYPE.isExpressionStatement(statement) && TYPE.isStringLiteral(statement.expression)
+        && statement.expression.value === value;
+}
+
+/** 子树里是否存在指定值的字符串字面量(找 else 分支里的 end 标记) */
+function containsStringLiteralValue(node: any, value: string): boolean {
+    if (!node || typeof node !== "object" || !node.type) return false;
+    if (TYPE.isStringLiteral(node) && node.value === value) return true;
+    for (const key of TYPE.VISITOR_KEYS[node.type] ?? []) {
+        const child = node[key];
+        if (Array.isArray(child)) {
+            for (const item of child) if (containsStringLiteralValue(item, value)) return true;
+        } else if (containsStringLiteralValue(child, value)) return true;
+    }
+    return false;
+}
+
+/**
+ * v24 async 单层 `try { … } catch { … } finally { … }` 的还原。
+ *
+ * 结构化输出形状(lnga ProfilePanel.startQrLoginScan、SaveThreadDialogs.fetchThreadInfo、
+ * LoginPage.importEncryptedCredential、NotificationPanel.loadMorePrivateMessages):
+ *
+ *   try {                                ← 用户 catch 的 try(外层)
+ *     try { START; <try 体> }            ← finally handler 生成成的内层 try/catch
+ *     catch { C_MARKER; <cleanup>; G_MARKER; <哨兵比较>; if (pending != hole) { throw } else { END; <方法尾> } }
+ *   } catch { <用户 catch> }
+ *   C_MARKER; <cleanup>; G_MARKER; <哨兵比较>; if (…) { throw } else { END; <方法尾> }
+ *
+ * 守卫脚手架把 pending 寄存器重写为 hole 哨兵;两份尾块是同一区域的展开副本。
+ * 还原:内层 block(try 体)+ 外层 handler(用户 catch)合并成 try/catch/finally,
+ * finally 体取内层 handler 中 cleanup..guard 两标记之间的语句,并删除 try/catch
+ * 之后从 cleanup 标记到含 end 标记的守卫语句的整段正常路径副本。哨兵写入随守卫
+ * 一起消失,`if (flag == undefined)` 的清理包装由 simplify 折成普通语句。
+ * 仅接受 endIsMethodTail(守卫 else 里只是隐式方法尾,丢弃)。
+ */
+function applyHandlerWrappedCatchFinally(
+    astNode: any,
+    plan: FinallyPlan,
+    innerTry: TYPE.TryStatement,
+): boolean {
+    if (!innerTry.handler || innerTry.finalizer) return false;
+    const cleanupValue = markerValue(plan, "cleanup");
+    const guardValue = markerValue(plan, "guard");
+    const endValue = markerValue(plan, "end");
+    const handlerBody = innerTry.handler.body.body;
+    // cleanup/guard 标记:语句标记,或被结构化进条件 test 的表达式标记(取包含它的整条语句)
+    let cleanupIdx = handlerBody.findIndex((statement) => isFinallyMarkerWithValue(statement, cleanupValue));
+    const cleanupIsRoot = cleanupIdx >= 0;
+    if (cleanupIdx < 0) {
+        cleanupIdx = handlerBody.findIndex((statement) => containsStringLiteralValue(statement, cleanupValue));
+    }
+    if (cleanupIdx < 0) return false;
+    let guardIdx = handlerBody.findIndex((statement) => isFinallyMarkerWithValue(statement, guardValue));
+    if (guardIdx < 0) {
+        guardIdx = handlerBody.findIndex((statement) => containsStringLiteralValue(statement, guardValue));
+    }
+    if (guardIdx <= cleanupIdx) return false;
+    // 表达式标记时包含它的整条语句都属于 finally 体(与常规布局的 finallyStart 语义一致)
+    const finallyStatements = handlerBody.slice(cleanupIsRoot ? cleanupIdx + 1 : cleanupIdx, guardIdx);
+    if (finallyStatements.length === 0 || finallyStatements.some((statement) => hasDeclaration([statement]))) return false;
+    // 内层 try 必须是外层用户 catch try 体的唯一语句
+    const innerPos = locateStatementPosition(astNode, innerTry);
+    if (!innerPos) return false;
+    const outerTry = findTryStatementForBlock(astNode, innerPos.list);
+    if (!outerTry || outerTry === innerTry || !outerTry.handler || outerTry.finalizer) return false;
+    if (outerTry.block.body.length !== 1 || outerTry.block.body[0] !== innerTry) return false;
+    const outerPos = locateStatementPosition(astNode, outerTry);
+    if (!outerPos) return false;
+    const mainList = outerPos.list;
+    const outerIndex = outerPos.index;
+    // 正常路径副本必须紧跟这条 try/catch,并以 cleanup 标记(语句或表达式)开头
+    const duplicateHead = mainList[outerIndex + 1];
+    if (!duplicateHead || !containsStringLiteralValue(duplicateHead, cleanupValue)) return false;
+    const duplicateRoot = isFinallyMarkerWithValue(duplicateHead, cleanupValue);
+    // 守卫标记:cleanup 副本之后携带 guard 标记的语句(与 finally 体等长的窗口内)
+    let guardDup = -1;
+    const windowEnd = Math.min(mainList.length, outerIndex + 2 + finallyStatements.length + 8);
+    for (let index = outerIndex + 2; index < windowEnd; index++) {
+        if (containsStringLiteralValue(mainList[index], guardValue)) { guardDup = index; break; }
+    }
+    if (guardDup < 0) return false;
+    // 守卫语句:guard 标记之后几条哨兵比较内的 if,子树里带 end 标记(else 方法尾)
+    let guardIf = -1;
+    for (let index = guardDup + 1; index < mainList.length && index <= guardDup + 8; index++) {
+        const statement = mainList[index];
+        if (containsStringLiteralValue(statement, cleanupValue) || containsStringLiteralValue(statement, guardValue)) {
+            return false;
+        }
+        if (TYPE.isIfStatement(statement)) {
+            if (!containsStringLiteralValue(statement, endValue)) return false;
+            guardIf = index;
+            break;
+        }
+    }
+    if (guardIf < 0) return false;
+    // 两份 cleanup 必须同型(同一区域的两次展开)
+    const duplicateCleanup = mainList.slice(duplicateRoot ? outerIndex + 2 : outerIndex + 1, guardDup);
+    if (duplicateCleanup.length !== finallyStatements.length) return false;
+    const reference = finallyStatements.map((statement) => generate(statement).code).join("\n");
+    if (duplicateCleanup.map((statement) => generate(statement).code).join("\n") !== reference) return false;
+    // 合并:内层 block(含 START 标记,stripMarkers 统一清掉)+ 外层 handler + finally
+    const merged = TYPE.tryStatement(innerTry.block, outerTry.handler, bodyBlock(finallyStatements));
+    mainList.splice(outerIndex, guardIf - outerIndex + 1, merged);
+    return true;
 }
 
 /**

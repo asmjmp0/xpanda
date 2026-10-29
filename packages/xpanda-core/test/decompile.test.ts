@@ -4135,6 +4135,52 @@ function verifyLngaSettingsPanelException(clazz: PandaClass, code: string): void
 }
 
 /**
+ * 回归:v24 async 单层 `try { … } catch { … } finally { … }` 的 finally 布局
+ * (lnga1.2.6.abc,24.0.0.0 新工具链)。
+ *
+ * finally handler 生成成嵌在用户 catch try 体里的内层 try/catch,共享的
+ * cleanup/guard 尾块又被区域归约复制到 try/catch 之后的正常路径上;cleanup
+ * 落在条件 test 序列里时标记是表达式标记。旧实现所有布局全部失配,输出留下
+ * `if (hole == v4) return; throw v4;` 守卫残渣(运行时 ReferenceError)+ 重复
+ * 的清理块 + eager shell(`catch { 清理; throw }`)。涉及四个类:
+ * SaveThreadDialogs.fetchThreadInfo / ProfilePanel.startQrLoginScan /
+ * LoginPage.importEncryptedCredential / NotificationPanel.loadMorePrivateMessages。
+ * 现在必须是源码结构 try/catch/finally,且无 hole 残留。
+ */
+function verifyLngaAsyncFinally(clazz: PandaClass, code: string): void {
+    NodeFactory.parse(code);
+    if (/\bhole\b/.test(code)) {
+        throw new Error(`lnga async finally (${clazz.name.content}): 仍残留 hole 哨兵\n${code}`);
+    }
+    if (code.includes("try/finally not restored")) {
+        throw new Error(`lnga async finally (${clazz.name.content}): try/finally 未还原\n${code}`);
+    }
+    const cases: Array<[string, string, string]> = [
+        ["SaveThreadDialogs", "fetchThreadInfo", `} catch (catchAcc) {\n      this.loadError = "无法加载该帖子";\n    } finally {\n      this.loading = false;\n      this.syncOutput();\n    }`],
+        ["ProfilePanel", "startQrLoginScan", `} catch (catchAcc) {\n      appStore.showToast("扫码已取消或失败");\n    } finally {\n      this.qrScanLoading = false;\n    }`],
+        ["LoginPage", "importEncryptedCredential", `} catch (catchAcc) {\n      this.error = "解密失败，请检查密码或文件是否正确";\n    } finally {\n      this.importing = false;\n    }`],
+        ["NotificationPanel", "loadMorePrivateMessages", `} catch (catchAcc) {\n      appStore.showToast("加载更多失败");\n    } finally {\n      if (this.scope.isAlive()) {\n        this.privateLoadingMore = false;\n      }\n    }`],
+    ];
+    for (const [className, methodName, fragment] of cases) {
+        if (!clazz.name.content.endsWith(`/${className};`)) continue;
+        const start = code.indexOf(`async ${methodName}(`);
+        if (start < 0) throw new Error(`lnga ${className}: 未找到 ${methodName}\n${code}`);
+        const body = code.slice(start, code.indexOf("\n  }\n", start));
+        if (!body.includes(fragment)) {
+            throw new Error(`lnga ${className}.${methodName}: try/catch/finally 未按源码结构还原\n${body}`);
+        }
+    }
+    // SaveThreadDialogs 是这批修复里最小的类(约 430 行),整类快照锁住形状与寄存器分配
+    if (clazz.name.content.endsWith("/SaveThreadDialogs;")) {
+        const expectedPath = path.join(__dirname, "expected", "lnga-save-thread-dialogs.js");
+        const snapshot = fs.readFileSync(expectedPath, "utf-8");
+        if (code !== snapshot) {
+            throw new Error(`lnga SaveThreadDialogs: 输出与快照不一致\n${firstDifference(snapshot, code)}`);
+        }
+    }
+}
+
+/**
  * 回归:类构造器记录名不带 '#' 前缀的工具链(install1.3.0.abc)的类命名与
  * 「类声明 + prototype 装载」残留还原(WebChromeClientHostApiImpl)。
  *
@@ -5201,6 +5247,7 @@ const hx360eClassTests: BinaryClassTest[] = [
 const lngaClassTests: BinaryClassTest[] = [
     { label: "lnga SOURCE_FILE + qr login short circuit (lnga1.2.6.abc)", matches: (n) => n === "Lcom.example.nga_oh/entry/ets/common/utils/NgaQrLoginUtils;", run: verifyLngaQrLoginUtils },
     { label: "lnga shared-start catch + finally (lnga1.2.6.abc)", matches: (n) => n === "Lcom.example.nga_oh/entry/ets/pages/SettingsPanel;", run: verifyLngaSettingsPanelException },
+    { label: "lnga async try/catch/finally (lnga1.2.6.abc)", matches: (n) => n === "Lcom.example.nga_oh/entry/ets/common/dialogs/SaveThreadDialogs;" || n === "Lcom.example.nga_oh/entry/ets/pages/ProfilePanel;" || n === "Lcom.example.nga_oh/entry/ets/pages/LoginPage;" || n === "Lcom.example.nga_oh/entry/ets/pages/NotificationPanel;", run: verifyLngaAsyncFinally },
     { label: "lnga v24 catch shapes (lnga1.2.6.abc)", matches: (n) => n === "Lcom.example.nga_oh/entry/ets/common/security/NgaRsaCipher;", run: (_clazz, _code, ctx) => verifyLngaCatchShapes(ctx) },
 ];
 
