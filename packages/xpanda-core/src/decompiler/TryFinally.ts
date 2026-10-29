@@ -1411,6 +1411,15 @@ function applyPlans(
                 tryOwner.finalizer = bodyBlock(finallyStatements);
                 parentList.splice(parentIndex + 1, 0, ...continuation);
                 applied = true;
+            } else if (tryOwner && tryOwner.handler && tryOwner.handler.body.body === cleanupList
+                && plan.endIsMethodTail
+                && applyLoopExitGuardFinally(astNode, plan, tryOwner, startList)) {
+                // `try { do { … } while (cond) } finally { … }`:归约把 do-while 变成
+                // `while (true) { <try 体>; if (!cond) { <cleanup 副本; 守卫; return> } }`,
+                // finally handler 又生成成同一 try 的 catch 副本。branch 3 只会把 try 体
+                // 包成 try/finally(守卫与清理副本留在退出分支、finally 每轮执行一次)。
+                // 放在 branch 3 之前(条件重叠),内部门槛不满足时返回 false 让链继续。
+                applied = true;
             } else if (tryOwner && tryOwner.handler && tryOwner.handler.body.body === cleanupList) {
                 const tryStatements = startList.slice(tryStart);
                 const tryNode = tryFinallyNode(tryStatements, finallyStatements);
@@ -1787,6 +1796,115 @@ function containsStringLiteralValue(node: any, value: string): boolean {
         } else if (containsStringLiteralValue(child, value)) return true;
     }
     return false;
+}
+
+/**
+ * `try { do { … } while (cond) } finally { … }`(lnga SocialListSettings.runFavoritesSyncLoop):
+ *
+ *   try {                                       ← finally handler 生成成的 try/catch
+ *     START; <循环体>;
+ *     if (!cond) { C_MARKER; <cleanup>; G_MARKER; <哨兵比较>; if (pending != hole) { throw } else { END; return } }
+ *   } catch { <异常保存>; C_MARKER; <cleanup>; G_MARKER; … }
+ *
+ * 外层是 `while (true)`(归约没有把 do-while 的尾部测试还原到 test 里)。
+ * 还原:退出分支里从 cleanup 标记到守卫 if 的整段副本换成 `break`(finally 反正
+ * 会执行),去掉 try-as-catch 包装,把循环还原成 do-while(`if (T) break` 尾部守卫
+ * ⇔ `while (!T)`),最后把循环整体包进 try/finally——finally 只在循环结束后执行
+ * 一次,与源码一致。continue 在 do-while 里会先求 test,与 while(true) 的语义不同,
+ * 循环体里有绑定到本循环的 continue 时放弃。
+ */
+function applyLoopExitGuardFinally(
+    astNode: any,
+    plan: FinallyPlan,
+    tryOwner: TYPE.TryStatement,
+    startList: TYPE.Statement[],
+): boolean {
+    if (!tryOwner.handler || tryOwner.finalizer) return false;
+    const cleanupValue = markerValue(plan, "cleanup");
+    const guardValue = markerValue(plan, "guard");
+    const endValue = markerValue(plan, "end");
+    // handler 副本:cleanup/guard 标记(语句或表达式)
+    const handlerBody = tryOwner.handler.body.body;
+    let cleanupIdx = handlerBody.findIndex((statement) => isFinallyMarkerWithValue(statement, cleanupValue));
+    const cleanupIsRoot = cleanupIdx >= 0;
+    if (cleanupIdx < 0) {
+        cleanupIdx = handlerBody.findIndex((statement) => containsStringLiteralValue(statement, cleanupValue));
+    }
+    if (cleanupIdx < 0) return false;
+    let guardIdx = handlerBody.findIndex((statement) => isFinallyMarkerWithValue(statement, guardValue));
+    if (guardIdx < 0) {
+        guardIdx = handlerBody.findIndex((statement) => containsStringLiteralValue(statement, guardValue));
+    }
+    if (guardIdx <= cleanupIdx) return false;
+    const finallyStatements = handlerBody.slice(cleanupIsRoot ? cleanupIdx + 1 : cleanupIdx, guardIdx);
+    if (finallyStatements.length === 0) return false;
+    // 循环必须是 try 的直接父语句,而且 try 是它的唯一语句
+    const innerPos = locateStatementPosition(astNode, tryOwner);
+    if (!innerPos) return false;
+    const loopOwner = findStatementListOwner(astNode, innerPos.list);
+    if (!loopOwner || !loopOwner.statement) return false;
+    const loopStatement = loopOwner.statement;
+    if (!TYPE.isWhileStatement(loopStatement)) return false;
+    const loop = loopStatement;
+    if (!TYPE.isBooleanLiteral(loop.test) || loop.test.value !== true) return false;
+    if (!TYPE.isBlockStatement(loop.body)) return false;
+    if (loop.body.body.length !== 1 || loop.body.body[0] !== tryOwner) return false;
+    // 退出分支:try 体最后一条 if,分支从 cleanup 标记开始、以带 end 标记的守卫收尾
+    const exitIf = startList[startList.length - 1];
+    if (!exitIf || !TYPE.isIfStatement(exitIf) || exitIf.alternate) return false;
+    if (!TYPE.isBlockStatement(exitIf.consequent)) return false;
+    const branchBody = exitIf.consequent.body;
+    if (branchBody.length === 0) return false;
+    if (!containsStringLiteralValue(branchBody[0], cleanupValue)) return false;
+    const branchCleanupRoot = isFinallyMarkerWithValue(branchBody[0], cleanupValue);
+    let branchGuardIdx = -1;
+    for (let index = 1; index < branchBody.length; index++) {
+        if (containsStringLiteralValue(branchBody[index], guardValue)) { branchGuardIdx = index; break; }
+    }
+    if (branchGuardIdx < 0) return false;
+    // 分支尾部必须是一条携带 end 标记的守卫 if,且它的非抛出分支是方法尾
+    const guardIf = branchBody[branchBody.length - 1];
+    if (!TYPE.isIfStatement(guardIf) || !containsStringLiteralValue(guardIf, endValue)) return false;
+    // 退出分支的 cleanup 副本必须与 handler 副本同型
+    const branchCleanup = branchBody.slice(branchCleanupRoot ? 1 : 0, branchGuardIdx);
+    if (branchCleanup.length !== finallyStatements.length) return false;
+    const reference = finallyStatements.map((statement) => generate(statement).code).join("\n");
+    if (branchCleanup.map((statement) => generate(statement).code).join("\n") !== reference) return false;
+    // do-while 的 continue 会先求 test,while (true) 的 continue 直接回到循环头
+    if (hasContinueBoundToBody(loop.body.body)) return false;
+    // 先定位持有循环的语句列表(校验全部通过后才改 AST)
+    const parentList = findStatementList(astNode, loop);
+    if (!parentList) return false;
+    const parentIndex = parentList.indexOf(loop);
+    if (parentIndex < 0) return false;
+    // 退出分支的副本换成 break(在 finally 里统一执行 cleanup)
+    branchBody.splice(0, branchBody.length, TYPE.breakStatement());
+    // while (true) { BODY; if (T) break } → do { BODY } while (!T)
+    const doWhile = TYPE.doWhileStatement(
+        TYPE.unaryExpression("!", exitIf.test),
+        TYPE.blockStatement(startList.slice(0, startList.length - 1)),
+    );
+    const tryNode = tryFinallyNode([doWhile], finallyStatements);
+    parentList.splice(parentIndex, 1, tryNode);
+    return true;
+}
+
+/** 循环体里是否有绑定到本循环的 continue(嵌套循环 / 函数里的不算) */
+function hasContinueBoundToBody(statements: TYPE.Statement[]): boolean {
+    let found = false;
+    const visit = (node: any): void => {
+        if (found || !node || typeof node !== "object" || !node.type) return;
+        if (TYPE.isFunction(node)) return;
+        if (TYPE.isContinueStatement(node)) { found = true; return; }
+        if (isLoopStatement(node)) return;
+        for (const key of TYPE.VISITOR_KEYS[node.type] ?? []) {
+            const child = node[key];
+            if (Array.isArray(child)) child.forEach(visit);
+            else visit(child);
+        }
+    };
+    statements.forEach(visit);
+    return found;
 }
 
 /**

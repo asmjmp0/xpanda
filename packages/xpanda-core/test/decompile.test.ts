@@ -4155,27 +4155,42 @@ function verifyLngaAsyncFinally(clazz: PandaClass, code: string): void {
     if (code.includes("try/finally not restored")) {
         throw new Error(`lnga async finally (${clazz.name.content}): try/finally 未还原\n${code}`);
     }
-    const cases: Array<[string, string, string]> = [
-        ["SaveThreadDialogs", "fetchThreadInfo", `} catch (catchAcc) {\n      this.loadError = "无法加载该帖子";\n    } finally {\n      this.loading = false;\n      this.syncOutput();\n    }`],
-        ["ProfilePanel", "startQrLoginScan", `} catch (catchAcc) {\n      appStore.showToast("扫码已取消或失败");\n    } finally {\n      this.qrScanLoading = false;\n    }`],
-        ["LoginPage", "importEncryptedCredential", `} catch (catchAcc) {\n      this.error = "解密失败，请检查密码或文件是否正确";\n    } finally {\n      this.importing = false;\n    }`],
-        ["NotificationPanel", "loadMorePrivateMessages", `} catch (catchAcc) {\n      appStore.showToast("加载更多失败");\n    } finally {\n      if (this.scope.isAlive()) {\n        this.privateLoadingMore = false;\n      }\n    }`],
+    const cases: Array<[string, string, string[]]> = [
+        ["SaveThreadDialogs", "fetchThreadInfo", [`} catch (catchAcc) {\n      this.loadError = "无法加载该帖子";\n    } finally {\n      this.loading = false;\n      this.syncOutput();\n    }`]],
+        ["ProfilePanel", "startQrLoginScan", [`} catch (catchAcc) {\n      appStore.showToast("扫码已取消或失败");\n    } finally {\n      this.qrScanLoading = false;\n    }`]],
+        ["LoginPage", "importEncryptedCredential", [`} catch (catchAcc) {\n      this.error = "解密失败，请检查密码或文件是否正确";\n    } finally {\n      this.importing = false;\n    }`]],
+        ["NotificationPanel", "loadMorePrivateMessages", [`} catch (catchAcc) {\n      appStore.showToast("加载更多失败");\n    } finally {\n      if (this.scope.isAlive()) {\n        this.privateLoadingMore = false;\n      }\n    }`]],
+        // 循环形态:try { do…while } finally,finally 在循环外只执行一次
+        ["SocialListSettings", "runFavoritesSyncLoop", [
+            "    try {\n      do {\n        this.favoritesSyncDirty = false;",
+            "    } finally {\n      this.favoritesSyncRunning = false;\n    }",
+            "} while (",
+        ]],
     ];
-    for (const [className, methodName, fragment] of cases) {
+    for (const [className, methodName, fragments] of cases) {
         if (!clazz.name.content.endsWith(`/${className};`)) continue;
         const start = code.indexOf(`async ${methodName}(`);
         if (start < 0) throw new Error(`lnga ${className}: 未找到 ${methodName}\n${code}`);
         const body = code.slice(start, code.indexOf("\n  }\n", start));
-        if (!body.includes(fragment)) {
-            throw new Error(`lnga ${className}.${methodName}: try/catch/finally 未按源码结构还原\n${body}`);
+        for (const fragment of fragments) {
+            if (!body.includes(fragment)) {
+                throw new Error(`lnga ${className}.${methodName}: try/catch/finally 未按源码结构还原(缺 ${JSON.stringify(fragment)})\n${body}`);
+            }
+        }
+        if (className === "SocialListSettings" && body.includes("while (true)")) {
+            throw new Error(`lnga ${className}.${methodName}: 循环未还原成 do-while\n${body}`);
         }
     }
-    // SaveThreadDialogs 是这批修复里最小的类(约 430 行),整类快照锁住形状与寄存器分配
-    if (clazz.name.content.endsWith("/SaveThreadDialogs;")) {
-        const expectedPath = path.join(__dirname, "expected", "lnga-save-thread-dialogs.js");
-        const snapshot = fs.readFileSync(expectedPath, "utf-8");
+    // 两个最小的修复类做整类快照,锁住形状与寄存器分配
+    const snapshots: Record<string, string> = {
+        SaveThreadDialogs: "lnga-save-thread-dialogs.js",
+        SocialListSettings: "lnga-social-list-settings.js",
+    };
+    for (const [className, fileName] of Object.entries(snapshots)) {
+        if (!clazz.name.content.endsWith(`/${className};`)) continue;
+        const snapshot = fs.readFileSync(path.join(__dirname, "expected", fileName), "utf-8");
         if (code !== snapshot) {
-            throw new Error(`lnga SaveThreadDialogs: 输出与快照不一致\n${firstDifference(snapshot, code)}`);
+            throw new Error(`lnga ${className}: 输出与快照不一致\n${firstDifference(snapshot, code)}`);
         }
     }
 }
@@ -5247,7 +5262,7 @@ const hx360eClassTests: BinaryClassTest[] = [
 const lngaClassTests: BinaryClassTest[] = [
     { label: "lnga SOURCE_FILE + qr login short circuit (lnga1.2.6.abc)", matches: (n) => n === "Lcom.example.nga_oh/entry/ets/common/utils/NgaQrLoginUtils;", run: verifyLngaQrLoginUtils },
     { label: "lnga shared-start catch + finally (lnga1.2.6.abc)", matches: (n) => n === "Lcom.example.nga_oh/entry/ets/pages/SettingsPanel;", run: verifyLngaSettingsPanelException },
-    { label: "lnga async try/catch/finally (lnga1.2.6.abc)", matches: (n) => n === "Lcom.example.nga_oh/entry/ets/common/dialogs/SaveThreadDialogs;" || n === "Lcom.example.nga_oh/entry/ets/pages/ProfilePanel;" || n === "Lcom.example.nga_oh/entry/ets/pages/LoginPage;" || n === "Lcom.example.nga_oh/entry/ets/pages/NotificationPanel;", run: verifyLngaAsyncFinally },
+    { label: "lnga async try/catch/finally (lnga1.2.6.abc)", matches: (n) => n === "Lcom.example.nga_oh/entry/ets/common/dialogs/SaveThreadDialogs;" || n === "Lcom.example.nga_oh/entry/ets/pages/ProfilePanel;" || n === "Lcom.example.nga_oh/entry/ets/pages/LoginPage;" || n === "Lcom.example.nga_oh/entry/ets/pages/NotificationPanel;" || n === "Lcom.example.nga_oh/entry/ets/store/settings/domain/SocialListSettings;", run: verifyLngaAsyncFinally },
     { label: "lnga v24 catch shapes (lnga1.2.6.abc)", matches: (n) => n === "Lcom.example.nga_oh/entry/ets/common/security/NgaRsaCipher;", run: (_clazz, _code, ctx) => verifyLngaCatchShapes(ctx) },
 ];
 
