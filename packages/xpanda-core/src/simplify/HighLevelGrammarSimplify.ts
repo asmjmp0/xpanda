@@ -29,6 +29,7 @@ const {
     assignmentExpression: assignmentExpressionBuilder,
     blockStatement: blockStatementBuilder,
     conditionalExpression: conditionalExpressionBuilder,
+    continueStatement,
     forOfStatement: forOfStatementBuilder,
     forStatement: forStatementBuilder,
     isAssignmentExpression: isAssignmentExpressionNode,
@@ -894,7 +895,7 @@ export class HighLevelGrammarSimplify implements ISimplify {
      * 只接受紧跟“确定离开函数”的语句(return/throw,含其块/if 形态)的 close;
      * break/continue 不处理(break 可能属于外层结构,continue 不会 close)。
      */
-    private collectInlinedIteratorCloses(loop: NodePath<TYPE.WhileStatement>, itName: string): NodePath<TYPE.Statement>[] {
+    private collectInlinedIteratorCloses(loop: NodePath<TYPE.WhileStatement | TYPE.DoWhileStatement>, itName: string): NodePath<TYPE.Statement>[] {
         const closes: NodePath<TYPE.Statement>[] = [];
         const body = loop.get('body');
         if (!isBlockStatementNode(body.node)) return closes;
@@ -1002,22 +1003,49 @@ export class HighLevelGrammarSimplify implements ISimplify {
     /**
      * ref 所在语句是否整体位于 loop 之后(同层或外层语句列表里)。循环之后的写入
      * 与本循环无关:删除迭代器初始化不会影响它们。
+     *
+     * 不能只看同一条语句列表:寄存器复用很常见,写入经常落在循环之后某个兄弟
+     * 分支/块里(`if (c) { ... }` 之后的另一个 `if` 里再写 `v13 = ...`)。
+     * 只要两者的最近公共语句列表里 ref 的子树排在 loop 之后即可 —— 这只是一次
+     * *写入* 的判定,不读取迭代器旧值,所以互斥分支也算安全。
      */
     private isStatementAfterLoop(ref: NodePath, loop: NodePath<TYPE.Statement>): boolean {
-        let current: NodePath = ref;
-        while (current.parentPath) {
-            const parent = current.parentPath;
-            if (current.node === loop.node) return false;
-            if (!parent.node) return false;
-            const siblings = (parent.node as { body?: TYPE.Node[] }).body;
-            if (Array.isArray(siblings)) {
-                const refIndex = siblings.indexOf(current.node);
-                const loopIndex = siblings.indexOf(loop.node);
-                if (refIndex >= 0 && loopIndex >= 0) return refIndex > loopIndex;
+        if (ref.getFunctionParent() !== loop.getFunctionParent()) return false;
+        const loopAncestors = new Set<TYPE.Node>();
+        for (let p: NodePath | null = loop; p; p = p.parentPath) loopAncestors.add(p.node);
+        let refChild: NodePath = ref;
+        let common: NodePath | null = null;
+        for (let p: NodePath | null = ref; p; p = p.parentPath) {
+            if (loopAncestors.has(p.node)) {
+                common = p;
+                break;
             }
-            current = parent;
+            refChild = p;
         }
-        return false;
+        if (!common || common.node === loop.node) return false;
+        let loopChild: NodePath = loop;
+        while (loopChild.parentPath && loopChild.parentPath.node !== common.node) {
+            loopChild = loopChild.parentPath;
+        }
+        if (!loopChild.parentPath || loopChild.parentPath.node !== common.node) return false;
+        if (this.inMutuallyExclusiveBranch(common, refChild, loopChild)) return true;
+        const siblings = (common.node as { body?: TYPE.Node[] }).body;
+        if (!Array.isArray(siblings)) return false;
+        const refIndex = siblings.indexOf(refChild.node);
+        const loopIndex = siblings.indexOf(loopChild.node);
+        if (refIndex < 0 || loopIndex < 0) return false;
+        return refIndex > loopIndex;
+    }
+
+    /** ref 和 loop 是否位于同一个 if 的两个互斥分支(then / else)。 */
+    private inMutuallyExclusiveBranch(common: NodePath, refChild: NodePath, loopChild: NodePath): boolean {
+        if (!common.isIfStatement()) return false;
+        const ifNode = common.node as TYPE.IfStatement;
+        const refInAlternate = refChild.node === ifNode.alternate;
+        const refInConsequent = refChild.node === ifNode.consequent;
+        const loopInAlternate = loopChild.node === ifNode.alternate;
+        const loopInConsequent = loopChild.node === ifNode.consequent;
+        return (refInAlternate && loopInConsequent) || (refInConsequent && loopInAlternate);
     }
 
     /**
@@ -1028,7 +1056,12 @@ export class HighLevelGrammarSimplify implements ISimplify {
      * 都说明读取的不是被删除的初始化值。只沿读取自己的祖先块向前找直接赋值,
      * 保证“只要读到这一句,赋值就一定已经执行过”。
      */
-    private hasNewerValueBefore(ref: NodePath, loop: NodePath<TYPE.Statement>, name: string): boolean {
+    private hasNewerValueBefore(
+        ref: NodePath,
+        loop: NodePath<TYPE.Statement>,
+        name: string,
+        allowMutualBranch = false,
+    ): boolean {
         // 闭包里的读取可能在循环执行期间被调用,无法按语句顺序判断,直接放弃。
         if (ref.getFunctionParent() !== loop.getFunctionParent()) return false;
 
@@ -1045,6 +1078,15 @@ export class HighLevelGrammarSimplify implements ISimplify {
             refChild = p;
         }
         if (!common || common.node === loop.node) return false;
+        let loopChild: NodePath = loop;
+        while (loopChild.parentPath && loopChild.parentPath.node !== common.node) {
+            loopChild = loopChild.parentPath;
+        }
+        if (!loopChild.parentPath || loopChild.parentPath.node !== common.node) return false;
+        // then / else 两个分支互斥:另一分支里的读取看到的值与本循环无关。
+        // 只对循环变量(vv)的读取开放:迭代器临时量的读取还会影响是否转换的
+        // 其它判定,提前放行会改变无关循环的还原轨迹(amcl t11/x11)。
+        if (allowMutualBranch && this.inMutuallyExclusiveBranch(common, refChild, loopChild)) return true;
         // 读取位于包含循环的祖先 if 的条件里:条件在分支(含循环体)之前求值一次,
         // 删除分支里的迭代器初始化不会改变这次读取。典型形态(amcl e4/s6):
         //   if (v4 !== null && v4.inheritsFrom.length === 0) { for (v4 of ...) }
@@ -1059,11 +1101,6 @@ export class HighLevelGrammarSimplify implements ISimplify {
         if (!isBlockStatementNode(common.node) && !isProgram(common.node)) return false;
 
         const body = common.node.body as TYPE.Node[];
-        let loopChild: NodePath = loop;
-        while (loopChild.parentPath && loopChild.parentPath.node !== common.node) {
-            loopChild = loopChild.parentPath;
-        }
-        if (!loopChild.parentPath || loopChild.parentPath.node !== common.node) return false;
         const loopIndex = body.indexOf(loopChild.node);
         if (loopIndex < 0) return false;
         const refIndex = body.indexOf(refChild.node);
@@ -1170,6 +1207,17 @@ export class HighLevelGrammarSimplify implements ISimplify {
      *   `it.return()`)时保持原样,避免悬空引用。
      */
     /** `X = <字面量>` 这类不读取任何名字的临时初始化。 */
+    /** `let X = <字面量>;` 同 isConstantInitStatement,用于跨过循环前的常量声明。 */
+    private isConstantDeclaration(node: TYPE.Node): boolean {
+        if (!isVariableDeclarationNode(node) || node.declarations.length !== 1) return false;
+        const declarator = node.declarations[0];
+        if (!isIdentifierNode(declarator.id) || !declarator.init) return false;
+        const right = declarator.init;
+        return isBooleanLiteral(right) || isNullLiteralNode(right)
+            || TYPE.isStringLiteral(right) || TYPE.isNumericLiteral(right)
+            || (isIdentifierNode(right) && right.name === "undefined");
+    }
+
     private isConstantInitStatement(node: TYPE.Node): boolean {
         if (!isExpressionStatementNode(node) || !isAssignmentExpressionNode(node.expression)) return false;
         const assign = node.expression;
@@ -1781,6 +1829,545 @@ export class HighLevelGrammarSimplify implements ISimplify {
      * 循环 test 为假则走循环后的出口。只有 continue 的守卫能保证 test 在
      * continue 路径上为真时才转换,否则 for-of 的 continue 会跳过附加的出口判断。
      */
+    /**
+     * 搜索循环旋转:编译器把 `for (v of xs) { if (!FOUND) continue; REST }` 旋成
+     *
+     *   do {
+     *     label_x: ;
+     *     r = it.next();
+     *     if (r.done) { DONE }          // 耗尽路径(离开函数)
+     *     v = r.value;
+     *     BODY
+     *   } while (TEST);                 // 继续循环 = 还没找到
+     *   REST;                           // 找到之后才执行的剩余函数体
+     *
+     * 内层循环耗尽时 goto label_x(伪 goto break) = 外层 for-of 的下一轮。
+     * 还原成:
+     *
+     *   label_x: for (v of ITER) { BODY; if (TEST) continue; REST' }
+     *   DONE
+     *
+     * REST' 里的伪 goto break 换成 `continue label_x`;外层 iterator close 由
+     * for-of 隐式完成,简单的 `if (it.return != undefined) it.return()` 一并删除。
+     * 迭代器临时量在 REST 里还有其它读取(别名 close 等)时保守放弃。
+     */
+    private checkAndTransformSearchLoop(value: NodePath<TYPE.DoWhileStatement>): boolean {
+        const body = value.get("body");
+        if (!body.isBlockStatement()) return false;
+        const statements = (body as NodePath<TYPE.BlockStatement>).get("body");
+        if (statements.length < 3) return false;
+        const labelStmt = statements[0];
+        if (!labelStmt.isLabeledStatement() || labelStmt.node.body.type !== "EmptyStatement") return false;
+        const labelName = (labelStmt.node as TYPE.LabeledStatement).label.name;
+        if (this.hasRealLabelReference(value, labelName)) return false;
+
+        // 初始化:`it = ITER[Symbol.iterator]()`(声明或赋值),可跨过常量初始化。
+        let initPath: NodePath | null = value.getPrevSibling();
+        let iterName: string | null = null;
+        let iterable: TYPE.Expression | null = null;
+        for (let i = 0; initPath && i < 4; i++) {
+            const node = initPath.node;
+            if (isVariableDeclarationNode(node) && node.declarations.length === 1
+                && isIdentifierNode(node.declarations[0].id) && node.declarations[0].init) {
+                const candidate = this.iterableOfIteratorInit(node.declarations[0].init as TYPE.Expression);
+                if (candidate) {
+                    iterName = (node.declarations[0].id as TYPE.Identifier).name;
+                    iterable = candidate;
+                    break;
+                }
+            }
+            if (isExpressionStatementNode(node) && isAssignmentExpressionNode(node.expression)) {
+                const assign = node.expression;
+                if (assign.operator === "=" && isIdentifierNode(assign.left)) {
+                    const candidate = this.iterableOfIteratorInit(assign.right as TYPE.Expression);
+                    if (candidate) {
+                        iterName = (assign.left as TYPE.Identifier).name;
+                        iterable = candidate;
+                        break;
+                    }
+                }
+            }
+            if (this.isConstantInitStatement(node) || this.isConstantDeclaration(node)) {
+                initPath = initPath.getPrevSibling();
+                continue;
+            }
+            break;
+        }
+        if (!initPath || !iterName || !iterable) return false;
+
+        const nextStmt = statements[1];
+        if (!nextStmt.isExpressionStatement() || !isAssignmentExpressionNode(nextStmt.node.expression)) return false;
+        const nextAssign = nextStmt.node.expression as TYPE.AssignmentExpression;
+        if (nextAssign.operator !== "=" || !isIdentifierNode(nextAssign.left)
+            || !this.isNextCallOf(nextAssign.right, iterName)) return false;
+        const nextName = (nextAssign.left as TYPE.Identifier).name;
+        const doneStmt = statements[2];
+        if (!doneStmt.isIfStatement() || doneStmt.node.alternate) return false;
+        const doneTest = doneStmt.get("test");
+        if (!isDoneMember(doneTest.node)) return false;
+        const doneObject = (doneTest.node as TYPE.MemberExpression).object;
+        if (!isIdentifierNode(doneObject) || doneObject.name !== nextName) return false;
+        const doneConsequent = doneStmt.get("consequent");
+        const doneStatements = doneConsequent.isBlockStatement()
+            ? (doneConsequent.node as TYPE.BlockStatement).body
+            : [doneConsequent.node as TYPE.Statement];
+        if (doneStatements.length === 0
+            || !this.statementAlwaysExits(doneStatements[doneStatements.length - 1])) return false;
+
+        // 元素解包:`v = r.value`(没有时循环变量就是 r,需要把 `.value` 换成 r)。
+        let vvName = nextName;
+        let bodyStart = 3;
+        let hasUnpack = false;
+        if (statements.length > 3) {
+            const unpack = statements[3].node;
+            if (isExpressionStatementNode(unpack) && isAssignmentExpressionNode(unpack.expression)
+                && unpack.expression.operator === "=" && isIdentifierNode(unpack.expression.left)
+                && isMemberExpression(unpack.expression.right) && !unpack.expression.right.computed
+                && isIdentifierNode(unpack.expression.right.object)
+                && unpack.expression.right.object.name === nextName
+                && isIdentifierNode(unpack.expression.right.property)
+                && unpack.expression.right.property.name === "value") {
+                vvName = (unpack.expression.left as TYPE.Identifier).name;
+                bodyStart = 4;
+                hasUnpack = true;
+            }
+        }
+        const test = value.node.test;
+        if (collectReadNames(test).has(iterName)) return false;
+        if (!hasUnpack && collectReadNames(test).has(nextName)
+            && !this.testReadsOnlyIteratorValue(test, nextName)) return false;
+
+        // REST:循环之后到语句列表末尾的全部语句(取自同一列表)。
+        const restPaths: NodePath<TYPE.Statement>[] = [];
+        let cursor = value.getNextSibling();
+        while (cursor.node) {
+            restPaths.push(cursor as NodePath<TYPE.Statement>);
+            cursor = cursor.getNextSibling();
+        }
+        if (restPaths.length === 0) return false;
+        const restLast = restPaths[restPaths.length - 1];
+        if (!restLast.isReturnStatement() && restLast.node.type !== "ThrowStatement") return false;
+        let restNodes = restPaths.map((path) => path.node);
+        // 没有解包语句时,REST 不能读迭代器结果对象本身(只可能读 `.value`,
+        // 但循环结束后它已经不是当前元素)。
+        if (!hasUnpack && restNodes.some((node) => collectReadNames(node).has(nextName))) return false;
+
+        const jumps: TYPE.BreakStatement[] = [];
+        for (const rest of restNodes) {
+            walkNode(rest, (node) => {
+                if (isFunctionLikeNode(node) || isClassLikeNode(node)) return false;
+                if (node.type === "BreakStatement"
+                    && this.pseudoGotoLabel(node as TYPE.BreakStatement) === labelName) {
+                    jumps.push(node as TYPE.BreakStatement);
+                }
+                return true;
+            });
+        }
+        if (jumps.length === 0) return false;
+        if (this.countLabelJumps(value, labelName, jumps[0]) > jumps.length - 1) return false;
+
+        // 内层 close 与外层 close 共用 finally 收尾时,外层 close 会通过别名读取
+        // 迭代器临时量(amcl p5):
+        //   if (inner.return == undefined) { alias = it; flag = false }
+        //   else { inner.return(); flag = false; alias = it }
+        //   if (!flag) { if (alias.return != undefined) alias.return() }
+        // for-of 会自己关闭外层迭代器,把这段外层 close 剥掉,只留内层 close。
+        this.stripAliasedOuterClose(restPaths, iterName);
+        restNodes = restPaths.map((path) => path.node).filter((node): node is TYPE.Statement => !!node);
+
+        // 迭代器临时量在循环外的读取:只允许可删除的简单 close 块。
+        const iterBinding = value.scope.getBinding(iterName);
+        if (!iterBinding) return false;
+        const closeBlocks: NodePath<TYPE.Statement>[] = [];
+        for (const restPath of restPaths) {
+            if (this.isSimpleIteratorClose(restPath.node, iterName)) closeBlocks.push(restPath);
+        }
+        const liveNodes = new Set<TYPE.Node>();
+        const functionRoot = value.getFunctionParent() ?? value;
+        walkNode(functionRoot.node, (node) => { liveNodes.add(node); return true; });
+        for (const ref of iterBinding.referencePaths) {
+            if (!ref.node || !liveNodes.has(ref.node)) continue;
+            if (ref.findParent((parent) => parent.node === value.node)) continue;
+            if (closeBlocks.some((block) => ref.findParent((parent) => parent.node === block.node))) continue;
+            if (this.hasNewerValueBefore(ref, value, iterName)) continue;
+            return false;
+        }
+        for (const violation of iterBinding.constantViolations) {
+            if (!violation.node || !liveNodes.has(violation.node)) continue;
+            if (this.isStatementAfterLoop(violation, value)) continue;
+            if (this.hasNewerValueBefore(violation, value, iterName)) continue;
+            return false;
+        }
+
+        // 循环体内联的 close(`if (it.return != undefined) it.return()` 后接 return)
+        // 由 for-of 隐式完成;在所有校验通过后、构造循环体之前删除。close 可能被
+        // hole 哨兵包成 `if (false) {} else if (…) { … }`。
+        const inlinedCloses: NodePath<TYPE.Statement>[] = [];
+        body.traverse({
+            Function: (p) => {
+                if (p.getFunctionParent() !== value.getFunctionParent()) p.skip();
+            },
+            IfStatement: (p) => {
+                if (!this.isSimpleIteratorClose(p.node, iterName)) return;
+                inlinedCloses.push(p as NodePath<TYPE.Statement>);
+                p.skip();
+            },
+        });
+        for (const close of inlinedCloses) close.remove();
+
+        // 构造 for-of 体: BODY + `if (TEST) continue` + REST'
+        const loopBody: TYPE.Statement[] = [];
+        for (let i = bodyStart; i < statements.length; i++) loopBody.push(statements[i].node);
+        loopBody.push(TYPE.ifStatement(TYPE.cloneNode(test),
+            blockStatementBuilder([continueStatement(TYPE.identifier(labelName))])));
+        for (const rest of restNodes) {
+            if (closeBlocks.some((block) => block.node === rest)) continue;
+            loopBody.push(rest);
+        }
+        // 没有解包语句时 `r.value` → r;REST 里的伪 goto break → continue label。
+        if (!hasUnpack) this.replaceIteratorValueInNodes(loopBody, nextName);
+        this.replacePseudoBreaksInNodes(loopBody, labelName);
+        const forOf = TYPE.labeledStatement(
+            TYPE.identifier(labelName),
+            forOfStatementBuilder(identifier(vvName), iterable as TYPE.Expression, blockStatementBuilder(loopBody)),
+        );
+        value.replaceWith(forOf);
+        value.insertAfter(doneStatements);
+        initPath.remove();
+        for (const rest of restPaths) {
+            if (rest.node) rest.remove();
+        }
+        return true;
+    }
+
+    private testReadsOnlyIteratorValue(test: TYPE.Expression, name: string): boolean {
+        let valid = true;
+        walkNode(test, (node, parent) => {
+            if (!valid) return false;
+            if (isIdentifierNode(node) && node.name === name) {
+                if (!parent || parent.type !== "MemberExpression" || parent.computed
+                    || parent.object !== node || !isIdentifierNode(parent.property)
+                    || parent.property.name !== "value") {
+                    valid = false;
+                    return false;
+                }
+            }
+            return true;
+        });
+        return valid;
+    }
+
+    /**
+     * 剥离“内外两层 iterator close 共用 finally 收尾”里的外层 close:
+     *
+     *   if (false) { flag = false; alias = it }          // hole 清理后的死分支
+     *   else if (inner.return == undefined) { flag = false; alias = it }
+     *   else { inner.return(); flag = false; alias = it }
+     *   if (!flag) { if (alias.return != undefined) alias.return() }
+     *
+     * for-of 会自己关闭外层迭代器,把这段外层 close 剥掉,只留内层 close
+     * (`if (inner.return != undefined) { inner.return(); }`)。
+     */
+    private stripAliasedOuterClose(restPaths: NodePath<TYPE.Statement>[], iterName: string): void {
+        const isAlias = (node: TYPE.Statement): node is TYPE.ExpressionStatement => isExpressionStatementNode(node)
+            && isAssignmentExpressionNode(node.expression) && node.expression.operator === "="
+            && isIdentifierNode(node.expression.left) && isIdentifierNode(node.expression.right)
+            && (node.expression.right as TYPE.Identifier).name === iterName;
+        const isFlagFalse = (node: TYPE.Statement): node is TYPE.ExpressionStatement => isExpressionStatementNode(node)
+            && isAssignmentExpressionNode(node.expression) && node.expression.operator === "="
+            && isIdentifierNode(node.expression.left) && TYPE.isBooleanLiteral(node.expression.right)
+            && node.expression.right.value === false;
+        const isReturnCall = (node: TYPE.Statement): node is TYPE.ExpressionStatement => {
+            if (!isExpressionStatementNode(node) || !isCallExpression(node.expression)
+                || node.expression.arguments.length !== 0) return false;
+            const callee = node.expression.callee;
+            return isMemberExpression(callee) && !callee.computed
+                && isIdentifierNode(callee.object) && isIdentifierNode(callee.property)
+                && callee.property.name === "return";
+        };
+        for (let i = 0; i + 1 < restPaths.length; i++) {
+            const first = restPaths[i];
+            const second = restPaths[i + 1];
+            if (!first.isIfStatement() || !second.isIfStatement() || second.node.alternate) continue;
+            // 解析 then/else(hole 清理可能留下 `if (false) {…} else if (C) {…} else {…}`)。
+            let condition: TYPE.Expression;
+            let thenNode: TYPE.Node | null | undefined;
+            let elseNode: TYPE.Node | null | undefined;
+            const firstNode = first.node as TYPE.IfStatement;
+            if (TYPE.isBooleanLiteral(firstNode.test) && firstNode.test.value === false) {
+                const alternate = firstNode.alternate;
+                if (!alternate || alternate.type !== "IfStatement") continue;
+                condition = alternate.test;
+                thenNode = alternate.consequent;
+                elseNode = alternate.alternate;
+            } else {
+                condition = firstNode.test;
+                thenNode = firstNode.consequent;
+                elseNode = firstNode.alternate;
+            }
+            if (!thenNode || !elseNode || !isBlockStatementNode(thenNode) || !isBlockStatementNode(elseNode)) continue;
+            const thenStmts = (thenNode as TYPE.BlockStatement).body;
+            const elseStmts = (elseNode as TYPE.BlockStatement).body;
+            // else 里可能还夹着 throw 路径的 hole 哨兵守卫,先过滤。
+            const elseClean = elseStmts.filter((stmt) => !this.isHoleSentinelCleanup(stmt));
+            if (thenStmts.length !== 2 || elseClean.length !== 3) continue;
+            const thenAlias = thenStmts.find(isAlias);
+            const thenFlag = thenStmts.find(isFlagFalse);
+            if (!thenAlias || !thenFlag) continue;
+            const innerCall = elseClean.find(isReturnCall);
+            const elseFlag = elseClean.find(isFlagFalse);
+            const elseAlias = elseClean.find(isAlias);
+            if (!innerCall || !elseFlag || !elseAlias) continue;
+            const flagName = ((thenFlag.expression as TYPE.AssignmentExpression).left as TYPE.Identifier).name;
+            const aliasName = ((thenAlias.expression as TYPE.AssignmentExpression).left as TYPE.Identifier).name;
+            const innerName = (((innerCall.expression as TYPE.CallExpression).callee as TYPE.MemberExpression)
+                .object as TYPE.Identifier).name;
+            // if (!flag) { if (alias.return != undefined) alias.return() }
+            const secondTest = second.node.test;
+            if (secondTest.type !== "UnaryExpression" || secondTest.operator !== "!"
+                || !isIdentifierNode(secondTest.argument) || secondTest.argument.name !== flagName) continue;
+            const guard = second.node.consequent;
+            if (!isBlockStatementNode(guard) || (guard as TYPE.BlockStatement).body.length !== 1) continue;
+            const guardIf = (guard as TYPE.BlockStatement).body[0];
+            if (!isIfStatementNode(guardIf) || guardIf.alternate) continue;
+            if (!this.isIteratorReturnGuard(guardIf.test, aliasName)) continue;
+            const guardBody = (isBlockStatementNode(guardIf.consequent)
+                ? (guardIf.consequent as TYPE.BlockStatement).body
+                : [guardIf.consequent as TYPE.Statement]).filter((stmt) => !this.isHoleSentinelCleanup(stmt));
+            if (guardBody.length !== 1 || !this.isIteratorReturnCall(guardBody[0], aliasName)) continue;
+            // 通过:内层 close 保留,外层 close 删除。
+            first.replaceWith(TYPE.ifStatement(
+                this.negateLoopTest(condition),
+                blockStatementBuilder([innerCall]),
+            ));
+            second.remove();
+            return;
+        }
+    }
+
+    private isSimpleIteratorClose(node: TYPE.Node, iterName: string): boolean {
+        // `if (false) {} else close` / `if (true) { close }` 都是 hole/finally
+        // 清理后留下的哨兵外壳。
+        if (isIfStatementNode(node) && node.alternate
+            && isBlockStatementNode(node.consequent) && (node.consequent as TYPE.BlockStatement).body.length === 0) {
+            return this.isSimpleIteratorClose(node.alternate, iterName);
+        }
+        if (isIfStatementNode(node) && !node.alternate && TYPE.isBooleanLiteral(node.test) && node.test.value === true
+            && isBlockStatementNode(node.consequent) && (node.consequent as TYPE.BlockStatement).body.length === 1) {
+            return this.isSimpleIteratorClose((node.consequent as TYPE.BlockStatement).body[0], iterName);
+        }
+        if (!isIfStatementNode(node) || node.alternate) return false;
+        if (!this.isIteratorReturnGuard(node.test, iterName)) return false;
+        const statements = isBlockStatementNode(node.consequent)
+            ? (node.consequent as TYPE.BlockStatement).body
+            : [node.consequent as TYPE.Statement];
+        if (statements.length === 0 || !this.isIteratorReturnCall(statements[0], iterName)) {
+            return false;
+        }
+        // throw 路径上的 hole 哨兵守卫(`if (hole != hole) throw hole;`)随后一起删除。
+        for (let i = 1; i < statements.length; i++) {
+            if (!this.isHoleSentinelCleanup(statements[i])) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private isHoleSentinelCleanup(stmt: TYPE.Statement): boolean {
+        let valid = true;
+        walkNode(stmt, (node) => {
+            if (isFunctionLikeNode(node) || isClassLikeNode(node)) return false;
+            if (node.type === "CallExpression" || node.type === "NewExpression") {
+                valid = false;
+                return false;
+            }
+            if (isIdentifierNode(node) && node.name !== "hole") {
+                valid = false;
+                return false;
+            }
+            return true;
+        });
+        return valid;
+    }
+
+    /** 把 `name.value` 成员表达式原地换成 `name`(不依赖 Babel traverse)。 */
+    private replaceIteratorValueInNodes(nodes: TYPE.Statement[], name: string): void {
+        const pending: Array<{ parent: TYPE.Node; key: string; index: number; replacement: TYPE.Identifier }> = [];
+        for (const node of nodes) {
+            walkNode(node, (current, parent, key) => {
+                if (isFunctionLikeNode(current) || isClassLikeNode(current)) return false;
+                if (current.type !== "MemberExpression" || current.computed) return true;
+                if (!isIdentifierNode(current.object) || current.object.name !== name) return true;
+                if (!isIdentifierNode(current.property) || current.property.name !== "value") return true;
+                if (!parent || !key) return true;
+                const container = (parent as any)[key];
+                const index = Array.isArray(container) ? container.indexOf(current) : -1;
+                pending.push({ parent, key, index, replacement: identifier(name) });
+                return true;
+            });
+        }
+        for (const item of pending) {
+            const container = (item.parent as any)[item.key];
+            if (Array.isArray(container)) {
+                if (item.index >= 0) container[item.index] = item.replacement;
+            } else {
+                (item.parent as any)[item.key] = item.replacement;
+            }
+        }
+    }
+
+    /** 把伪 goto break 原地换成 `continue label`(不依赖 Babel traverse)。 */
+    private replacePseudoBreaksInNodes(nodes: TYPE.Statement[], label: string): void {
+        const pending: Array<{ parent: TYPE.Node; key: string; index: number; replacement: TYPE.ContinueStatement }> = [];
+        for (const node of nodes) {
+            walkNode(node, (current, parent, key) => {
+                if (isFunctionLikeNode(current) || isClassLikeNode(current)) return false;
+                if (current.type !== "BreakStatement" || this.pseudoGotoLabel(current as TYPE.BreakStatement) !== label) {
+                    return true;
+                }
+                if (!parent || !key) return true;
+                const container = (parent as any)[key];
+                const index = Array.isArray(container) ? container.indexOf(current) : -1;
+                pending.push({ parent, key, index, replacement: continueStatement(TYPE.identifier(label)) });
+                return true;
+            });
+        }
+        for (const item of pending) {
+            const container = (item.parent as any)[item.key];
+            if (Array.isArray(container)) {
+                if (item.index >= 0) container[item.index] = item.replacement;
+            } else {
+                (item.parent as any)[item.key] = item.replacement;
+            }
+        }
+    }
+
+    /** 循环体内是否还有别的跳到 label 的伪 goto break / xpanda_goto。 */
+    private hasOtherJumpInside(value: NodePath, label: string, except: TYPE.Node): boolean {
+        let found = false;
+        walkNode(value.node, (node) => {
+            if (found) return false;
+            if (isFunctionLikeNode(node) || isClassLikeNode(node)) return false;
+            if (node === except) return true;
+            if (node.type === "BreakStatement" && this.pseudoGotoLabel(node as TYPE.BreakStatement) === label) {
+                found = true;
+                return false;
+            }
+            if (node.type === "CallExpression" && isIdentifierNode(node.callee) && node.callee.name === "xpanda_goto"
+                && node.arguments.length === 1 && isIdentifierNode(node.arguments[0] as TYPE.Node)
+                && (node.arguments[0] as TYPE.Identifier).name === label) {
+                found = true;
+                return false;
+            }
+            return true;
+        });
+        return found;
+    }
+
+    /**
+     * 循环所在的 if 的 else 分支是否是共享续接代码:
+     *   if (C) { …; loop; close; … } else { label_x: ; CONT }
+     * 循环耗尽路径跳到 label_x;转换后把 CONT 提到 if 之后,两条路径都落到它。
+     */
+    private findAlternateContinuation(
+        value: NodePath<TYPE.Statement>,
+    ): { ifPath: NodePath<TYPE.IfStatement>; block: TYPE.BlockStatement; labelName: string } | null {
+        const block = value.parentPath;
+        if (!block || !block.isBlockStatement()) return null;
+        const parent = block.parentPath;
+        if (!parent || !parent.isIfStatement()) return null;
+        const ifNode = parent.node as TYPE.IfStatement;
+        if (ifNode.consequent !== block.node) return null;
+        const alternate = ifNode.alternate;
+        if (!alternate || alternate.type !== "BlockStatement") return null;
+        const first = alternate.body[0];
+        if (!first || first.type !== "LabeledStatement" || first.body.type !== "EmptyStatement") return null;
+        return {
+            ifPath: parent as NodePath<TYPE.IfStatement>,
+            block: alternate,
+            labelName: first.label.name,
+        };
+    }
+
+    /**
+     * 共享续接标签在包含循环的 if 之后:
+     *   if (C) { …; loop; close; … } label_x: ; CONT
+     * 循环耗尽路径跳到 if 之后的 label;转换后 for-of 结束会自然落到同一位置。
+     */
+    private findFollowingContinuation(
+        value: NodePath<TYPE.Statement>,
+    ): { labelPath: NodePath<TYPE.LabeledStatement>; labelName: string } | null {
+        const block = value.parentPath;
+        if (!block || !block.isBlockStatement()) return null;
+        const ifPath = block.parentPath;
+        if (!ifPath || !ifPath.isIfStatement()) return null;
+        if ((ifPath.node as TYPE.IfStatement).consequent !== block.node) return null;
+        const labelPath = ifPath.getNextSibling();
+        if (!labelPath.node || !isLabeledStatementNode(labelPath.node)
+            || (labelPath.node as TYPE.LabeledStatement).body.type !== "EmptyStatement") return null;
+        return {
+            labelPath: labelPath as NodePath<TYPE.LabeledStatement>,
+            labelName: (labelPath.node as TYPE.LabeledStatement).label.name,
+        };
+    }
+
+    /**
+     * 撤销 flattenElseAfterExit 对“共享续接在 else”形态的展开:
+     *
+     *   if (C) { label_x: ; CONT }          // CONT 一定离开(return/throw)
+     *   INIT; LOOP; close; RETURN E         // 原 else 分支
+     *   =>
+     *   if (!C) { INIT; LOOP; close; RETURN E } else { label_x: ; CONT }
+     *
+     * 随后 do-while → for...of 把 RETURN E 搬进循环出口,并把 CONT 提出 if。
+     */
+    private rehydrateSharedContinuationIf(ifPath: NodePath<TYPE.IfStatement>): boolean {
+        if (ifPath.node.alternate) return false;
+        const consequent = ifPath.get("consequent");
+        if (!consequent.isBlockStatement()) return false;
+        const thenBody = (consequent.node as TYPE.BlockStatement).body;
+        if (thenBody.length < 2) return false;
+        const first = thenBody[0];
+        if (!isLabeledStatementNode(first) || first.body.type !== "EmptyStatement") return false;
+        const labelName = (first as TYPE.LabeledStatement).label.name;
+        if (!this.statementAlwaysExits(thenBody[thenBody.length - 1])) return false;
+        if (this.hasRealLabelReference(ifPath, labelName)) return false;
+
+        const siblings: NodePath<TYPE.Statement>[] = [];
+        let cursor = ifPath.getNextSibling();
+        while (cursor.node) {
+            siblings.push(cursor as NodePath<TYPE.Statement>);
+            cursor = cursor.getNextSibling();
+        }
+        if (siblings.length < 3) return false;
+        const last = siblings[siblings.length - 1];
+        if (!last.isReturnStatement() && last.node.type !== "ThrowStatement") return false;
+        if (!siblings.some((sibling) => sibling.isDoWhileStatement())) return false;
+
+        const jumps: TYPE.BreakStatement[] = [];
+        for (const sibling of siblings) {
+            walkNode(sibling.node, (node) => {
+                if (isFunctionLikeNode(node) || isClassLikeNode(node)) return false;
+                if (node.type === "BreakStatement"
+                    && this.pseudoGotoLabel(node as TYPE.BreakStatement) === labelName) {
+                    jumps.push(node as TYPE.BreakStatement);
+                }
+                return true;
+            });
+        }
+        if (jumps.length !== 1) return false;
+        if (this.countLabelJumps(ifPath, labelName, jumps[0]) > 0) return false;
+
+        const newIf = TYPE.ifStatement(
+            this.negateLoopTest(ifPath.node.test),
+            blockStatementBuilder(siblings.map((sibling) => sibling.node)),
+            consequent.node as TYPE.BlockStatement,
+        );
+        ifPath.replaceWith(newIf);
+        for (const sibling of siblings) sibling.remove();
+        return true;
+    }
+
     private checkAndTransformDoWhileToForOfStatement(value: NodePath<TYPE.DoWhileStatement>): boolean {
         // 循环 test 有两种形态:
         //   1) 物化标识符(`acc = T; } while (acc)` / `while (!acc)`):出口条件就是 T;
@@ -1882,9 +2469,16 @@ export class HighLevelGrammarSimplify implements ISimplify {
         // 只有耗尽分支确实是跳这个标签的伪 goto break 时才会把它一起删掉。
         const nextLabel: NodePath<TYPE.LabeledStatement> | null =
             cursor.node && isLabeledStatementNode(cursor.node) ? cursor as NodePath<TYPE.LabeledStatement> : null;
+        // 共享续接代码在 else 分支里(编译器把 if 之后的续接复制进了 else):
+        //   if (C) { a; loop; close; return E } else { label_x: CONT }
+        // 耗尽路径跳到 label_x,等价于循环结束后落到 CONT。转换后把 CONT 提到 if 之后。
+        const alternate = this.findAlternateContinuation(value);
+        // 标签也可能在包含循环的 if 之后(标签是 if 的下一个兄弟)。
+        const following = alternate ? null : this.findFollowingContinuation(value);
         let exitPath: NodePath<TYPE.ReturnStatement | TYPE.ThrowStatement> | null = null;
         let exitValue: TYPE.Expression | null = null;
         let breakPath: TYPE.Statement[] | null = null;
+        let breakWithoutPrefix = false;
         if (extras.length === 0) {
             // 没有 close:出口语句就是循环之后的第一条,且必须是该语句列表的最后
             // 一条(出口之后不会再有可执行语句,否则说明这不是该形态)。
@@ -1894,15 +2488,20 @@ export class HighLevelGrammarSimplify implements ISimplify {
             exitPath = only;
         } else if (exitPaths.length === 0) {
             const candidate = cursor as NodePath<TYPE.ReturnStatement | TYPE.ThrowStatement>;
-            if ((!candidate.isReturnStatement() && !candidate.isThrowStatement()) || !candidate.node.argument) {
-                return false;
+            if (candidate.isReturnStatement() || candidate.isThrowStatement()) {
+                if (!candidate.node.argument) return false;
+                exitPath = candidate;
+            } else {
+                // `for (const x of xs) { if (cond) break; }`:break 路径没有前缀语句。
+                // 只有耗尽分支是伪 goto break(`break; //from goto label_x`)时成立,
+                // 转换后循环耗尽与 break 都落到标签处,出口判断里只需 break。
+                breakWithoutPrefix = true;
             }
-            exitPath = candidate;
         } else {
             // break 路径:close 之后必须还有共享续接代码,前缀语句必须是直线代码
             // (搬进新循环的 if 分支后,声明会换作用域,break/continue/label 会
             // 绑定到新循环)。
-            if (!cursor.node) return false;
+            if (!cursor.node && !following) return false;
             for (const prefix of exitPaths) {
                 if (!this.isBreakPathStatement(prefix.node)) return false;
             }
@@ -1956,8 +2555,28 @@ export class HighLevelGrammarSimplify implements ISimplify {
             ? doneStatements[0] as TYPE.BreakStatement : null;
         const gotoLabel = doneBreak ? this.pseudoGotoLabel(doneBreak) : null;
         if (gotoLabel) {
-            if (!nextLabel || nextLabel.node.label.name !== gotoLabel) return false;
-            if (this.countLabelJumps(value, gotoLabel, doneBreak) > 0) return false;
+            if (nextLabel) {
+                if (nextLabel.node.label.name !== gotoLabel) return false;
+            } else if (alternate) {
+                if (alternate.labelName !== gotoLabel) return false;
+            } else if (following) {
+                if (following.labelName !== gotoLabel) return false;
+                // 移除 if 之后的标签:不能再有其它跳转指向它。
+                if (this.countLabelJumps(value, gotoLabel, doneBreak) > 0) return false;
+            } else {
+                return false;
+            }
+            // 同一个 label 名可能来自区域复制的多个副本:每个副本的伪 goto break
+            // 都紧挨着自己的 `label_x: ;`(见 nextLabel)。只禁止 *本循环体内*
+            // 还有别的跳转,否则会漏掉真正指向这个标签的跳转。
+            if (this.hasOtherJumpInside(value, gotoLabel, doneBreak)) return false;
+            if ((alternate || following) && this.hasRealLabelReference(value, gotoLabel)) return false;
+        }
+        if (breakWithoutPrefix) {
+            // 无前缀的 break 路径只有伪 goto break 形态能表达(续接代码就是标签
+            // 之后的语句);普通 break 形态必须有 close 之后的 return/throw。
+            if (!gotoLabel) return false;
+            breakPath = [];
         }
         if (!gotoLabel && !this.statementAlwaysExits(doneStatements[doneStatements.length - 1])) return false;
         if (exitValue) {
@@ -1970,8 +2589,18 @@ export class HighLevelGrammarSimplify implements ISimplify {
         // vv 只能在循环体内或提前退出路径 E 里使用。
         const iterObjectNode = ((nextAssign.right as TYPE.CallExpression).callee as TYPE.MemberExpression).object;
         const nextStatementNode = bodyStatements[0].node;
+        // 绑定里的 referencePaths 可能指向早先被替换/克隆掉的节点,它们的
+        // parentPath 链已经陈旧,findParent 会误判成“仍在循环体外”。按当前 AST
+        // 的节点集合过滤(与 checkAndTransformToForOfStatement 的处理一致)。
+        const liveNodes = new Set<TYPE.Node>();
+        const functionRoot = value.getFunctionParent() ?? value;
+        walkNode(functionRoot.node, (node) => {
+            liveNodes.add(node);
+            return true;
+        });
         for (const ref of iterBinding.referencePaths) {
             if (!ref.node || ref.node === iterObjectNode) continue;
+            if (!liveNodes.has(ref.node)) continue;
             // foldHoistedIteratorNext 改写了 `F.call(it)` → `it.next()`,绑定里的
             // referencePaths 还是改写前的节点:按语句归属再认一次首条 next()。
             if (ref.getStatementParent()?.node === nextStatementNode) continue;
@@ -1987,6 +2616,7 @@ export class HighLevelGrammarSimplify implements ISimplify {
         }
         for (const violation of iterBinding.constantViolations) {
             if (!violation.node || violation.node === init) continue;
+            if (!liveNodes.has(violation.node)) continue;
             // done 分支里的重新初始化随分支一起搬走,不再影响本循环。
             if (violation.findParent((parent) => parent.node === doneStmt.node)) continue;
             // 循环之后的重新初始化(内层循环的 `it = xs[Symbol.iterator]()`)在本循环
@@ -1998,7 +2628,7 @@ export class HighLevelGrammarSimplify implements ISimplify {
         const valueBinding = value.scope.getBinding(vv.name);
         if (valueBinding) {
             for (const ref of valueBinding.referencePaths) {
-                if (!ref.node) continue;
+                if (!ref.node || !liveNodes.has(ref.node)) continue;
                 // `for (vv of xs)` 的循环变量是写入位置,不是对旧值的读取。
                 const refParent = ref.parentPath?.node;
                 if (refParent && (isForOfStatementNode(refParent) || isForInStatementNode(refParent))
@@ -2011,13 +2641,14 @@ export class HighLevelGrammarSimplify implements ISimplify {
                 if (!exitValue && ref.findParent((parent) => parent.node === doneStmt.node)) continue;
                 // 循环之前的读取不受影响(外层循环还原后,内层循环的变量读取落在
                 // 它前面);循环之后的读取必须能看到后续赋值。
-                if (this.hasNewerValueBefore(ref, value, vv.name)) continue;
+                if (this.hasNewerValueBefore(ref, value, vv.name, true)) continue;
                 return false;
             }
         }
 
         // 循环 test 在 continue 路径上必须为真,否则附加的出口判断会被跳过。
         let valid = true;
+        const realBreaks: NodePath<TYPE.BreakStatement>[] = [];
         body.traverse({
             Function: (p) => p.skip(),
             ContinueStatement: (p) => {
@@ -2038,11 +2669,26 @@ export class HighLevelGrammarSimplify implements ISimplify {
                     || parent.isForStatement() || parent.isForInStatement() || parent.isForOfStatement()
                     || parent.isSwitchStatement());
                 if (!owner || owner.node !== value.node) return;
-                valid = false;
-                p.stop();
+                if (p.node.label) {
+                    valid = false;
+                    p.stop();
+                    return;
+                }
+                realBreaks.push(p as NodePath<TYPE.BreakStatement>);
             },
         });
         if (!valid) return false;
+        // 循环体内的真实 `break` 跳出后执行的是循环之后的尾巴(close + return E)。
+        // for-of 的 break 会直接离开循环、跳过尾巴,所以把它换成同一个 return E。
+        // 只接受尾巴就是单个 return/throw E 的形态(exitValue 已校验为纯表达式)。
+        if (realBreaks.length > 0) {
+            if (!exitValue || breakPath) return false;
+            const exitIsReturn = !exitPath || exitPath.isReturnStatement();
+            for (const brk of realBreaks) {
+                const value = TYPE.cloneNode(exitValue);
+                brk.replaceWith(exitIsReturn ? returnStatementBuilder(value) : throwStatementBuilder(value));
+            }
+        }
 
         // `vv = vv.value` 由 for-of 的循环变量赋值替代。先判定再替换,
         // 否则 `vv.value` 已被改写后这条赋值就认不出来了。
@@ -2106,6 +2752,12 @@ export class HighLevelGrammarSimplify implements ISimplify {
             arr.push(TYPE.ifStatement(exitTest, blockStatementBuilder([...(breakPath ?? []), breakStatement()])));
         }
         const forOfStatement = forOfStatementBuilder(vv, iterable as TYPE.Expression, blockStatementBuilder(arr));
+        // 伪 goto break 的 `//from goto label_x` 注释会随 replaceWith 的注释继承
+        // 挂到新循环上,先摘掉,避免输出里留下已经还原的标签名。
+        if (doneBreak) {
+            doneBreak.leadingComments = null;
+            doneBreak.trailingComments = null;
+        }
         for (const extra of extras) extra.remove();
         for (const prefix of exitPaths) prefix.remove();
         if (exitPath) exitPath.remove();
@@ -2115,6 +2767,18 @@ export class HighLevelGrammarSimplify implements ISimplify {
         // (它就是续接代码本身,删掉会丢语句)。
         if (gotoLabel && nextLabel && nextLabel.node.body.type === "EmptyStatement") nextLabel.remove();
         value.replaceWith(forOfStatement);
+        if (alternate) {
+            // 共享续接代码在 else 分支:去掉标签后整体提到 if 之后,并删掉 else。
+            // 有块级声明时保留块(不能把 else 的声明泄漏到外层作用域);纯语句直接展开。
+            alternate.block.body.shift();
+            alternate.ifPath.node.alternate = null;
+            const hoisted = alternate.block.body;
+            const hasDeclaration = hoisted.some((stmt) =>
+                isVariableDeclarationNode(stmt) || stmt.type === "FunctionDeclaration" || stmt.type === "ClassDeclaration");
+            alternate.ifPath.insertAfter(hasDeclaration ? alternate.block : hoisted);
+        } else if (following) {
+            following.labelPath.remove();
+        }
         if (exitValue) {
             // DONE 里可能有块级声明,包一层块避免与外部同名声明冲突。
             const hasDeclaration = doneStatements.some((stmt) =>
@@ -2128,6 +2792,148 @@ export class HighLevelGrammarSimplify implements ISimplify {
             for (const dead of deadInits) dead.remove();
         }
         return true;
+    }
+
+    /**
+     * 还原被拆成 do-while 的 `while (COND)`:
+     *
+     *   do {
+     *     PRE(纯读取)
+     *     if (cursors[i] >= arr.length) { break; //from goto label_x }
+     *     REST
+     *     acc = !keepSet.has(key)          // 源码 break 条件取反后的循环 test
+     *   } while (acc);
+     *   POST                               // 源码 if (FOUND) { POST; break }
+     *   label_x: ;
+     *
+     * 源码形态:
+     *
+     *   while (cursors[i] < arr.length) {
+     *     PRE
+     *     REST
+     *     if (!acc) { POST; break }
+     *   }
+     *
+     * 两个出口互换:do-while 的 done 分支是源码的 while 条件,循环 test 是源码的
+     * `break`。要求 label 是所在语句列表的最后一条(后面没有代码要读 POST 的声明),
+     * POST 不含声明/跳转,循环 test 是物化标识符且由循环体末尾赋值。
+     */
+    private checkAndTransformDoWhileConditionSplit(value: NodePath<TYPE.DoWhileStatement>): boolean {
+        const postPaths: NodePath<TYPE.Statement>[] = [];
+        let cursor = value.getNextSibling();
+        while (cursor.node && !isLabeledStatementNode(cursor.node)) {
+            postPaths.push(cursor as NodePath<TYPE.Statement>);
+            cursor = cursor.getNextSibling();
+        }
+        if (!cursor.node || !isLabeledStatementNode(cursor.node)) return false;
+        const labelPath = cursor as NodePath<TYPE.LabeledStatement>;
+        if (labelPath.node.body.type !== "EmptyStatement") return false;
+        if (labelPath.getNextSibling().node) return false;
+        if (postPaths.length === 0) return false;
+        const postNodes = postPaths.map((path) => path.node);
+        for (const post of postNodes) {
+            if (!this.isConditionSplitPostStatement(post)) return false;
+        }
+        const labelName = labelPath.node.label.name;
+        if (this.hasRealLabelReference(value, labelName)) return false;
+
+        const body = value.get("body");
+        if (!body.isBlockStatement()) return false;
+        const bodyStatements = (body as NodePath<TYPE.BlockStatement>).get("body");
+        if (bodyStatements.length < 2) return false;
+        let doneIfIndex = -1;
+        let doneBreak: TYPE.BreakStatement | null = null;
+        for (let i = 0; i < bodyStatements.length; i++) {
+            const stmt = bodyStatements[i];
+            if (!stmt.isIfStatement() || stmt.node.alternate) continue;
+            const consequent = stmt.get("consequent");
+            const statements = consequent.isBlockStatement()
+                ? (consequent.node as TYPE.BlockStatement).body
+                : [consequent.node as TYPE.Statement];
+            if (statements.length !== 1 || statements[0].type !== "BreakStatement") continue;
+            const brk = statements[0] as TYPE.BreakStatement;
+            if (this.pseudoGotoLabel(brk) !== labelName) continue;
+            doneIfIndex = i;
+            doneBreak = brk;
+            break;
+        }
+        if (!doneBreak || doneIfIndex < 0) return false;
+        if (this.countLabelJumps(value, labelName, doneBreak) > 0) return false;
+        for (let i = 0; i < doneIfIndex; i++) {
+            if (!this.isPureConditionPrefix(bodyStatements[i].node)) return false;
+        }
+        // 循环 test 必须是循环体末尾物化的标识符:它是源码 break 条件的取反。
+        const operand = this.loopTestOperand(value.node.test);
+        if (!operand) return false;
+        const testAssign = bodyStatements[bodyStatements.length - 1].node;
+        const lastAssignsTest = isExpressionStatementNode(testAssign)
+            && isAssignmentExpressionNode(testAssign.expression)
+            && testAssign.expression.operator === "=" && isIdentifierNode(testAssign.expression.left)
+            && testAssign.expression.left.name === operand.name;
+        if (!lastAssignsTest) return false;
+        if (postNodes.some((post) => collectReadNames(post).has(operand.name))) return false;
+        const doneIf = bodyStatements[doneIfIndex].node as TYPE.IfStatement;
+        const cond = doneIf.test;
+        if (!isPureExpression(cond)) return false;
+
+        const loopBody: TYPE.Statement[] = [];
+        for (let i = 0; i < bodyStatements.length; i++) {
+            if (i === doneIfIndex) continue;
+            loopBody.push(bodyStatements[i].node);
+        }
+        // 源码 break 分支:循环 test 为真时退出(do-while)即 FOUND。
+        const foundTest: TYPE.Expression = operand.negated
+            ? identifier(operand.name)
+            : unaryExpressionBuilder("!", identifier(operand.name));
+        loopBody.push(TYPE.ifStatement(foundTest, blockStatementBuilder([...postNodes, breakStatement()])));
+        const whileStatement = TYPE.whileStatement(this.negateLoopTest(cond), blockStatementBuilder(loopBody));
+        value.replaceWith(whileStatement);
+        for (const post of postPaths) post.remove();
+        labelPath.remove();
+        return true;
+    }
+
+    /** POST 能否搬进 if 分支:直线代码、无声明、无跳转、无函数/类。 */
+    private isConditionSplitPostStatement(stmt: TYPE.Statement): boolean {
+        let valid = true;
+        walkNode(stmt, (node) => {
+            if (!valid) return false;
+            if (isVariableDeclarationNode(node) || isFunctionLikeNode(node) || isClassLikeNode(node)
+                || isBreakStatement(node) || node.type === "ContinueStatement" || isLabeledStatementNode(node)
+                || node.type === "ReturnStatement" || node.type === "ThrowStatement") {
+                valid = false;
+                return false;
+            }
+            return true;
+        });
+        return valid;
+    }
+
+    /** done-if 之前的语句只能是纯读取/赋值(条件提前到 while test 后求值顺序不变)。 */
+    private isPureConditionPrefix(stmt: TYPE.Statement): boolean {
+        return isExpressionStatementNode(stmt)
+            && isAssignmentExpressionNode(stmt.expression)
+            && stmt.expression.operator === "="
+            && isPureExpression(stmt.expression.right);
+    }
+
+    /** 函数内是否还有 `break label` / `continue label`(删除空标签前检查)。 */
+    private hasRealLabelReference(start: NodePath, label: string): boolean {
+        const fn = start.getFunctionParent();
+        const root = fn ? fn.node : start.findParent((parent) => parent.isProgram())?.node;
+        if (!root) return true;
+        let found = false;
+        walkNode(root, (node) => {
+            if (found) return false;
+            if (isFunctionLikeNode(node) || isClassLikeNode(node)) return false;
+            if ((node.type === "BreakStatement" || node.type === "ContinueStatement")
+                && (node as TYPE.BreakStatement | TYPE.ContinueStatement).label?.name === label) {
+                found = true;
+                return false;
+            }
+            return true;
+        });
+        return found;
     }
 
     /** break 路径前缀能否搬进 for-of 的 if 分支(直线代码,无声明与跳转)。 */
@@ -2255,7 +3061,27 @@ export class HighLevelGrammarSimplify implements ISimplify {
         const prev = parent.getPrevSibling();
         if (!prev.node || !this.isDirectAssignmentTo(prev.node, testName)) return false;
         const rhs = ((prev.node as TYPE.ExpressionStatement).expression as TYPE.AssignmentExpression).right;
-        return isNodeEqual(rhs, guard);
+        return this.conditionsEquivalent(rhs, guard);
+    }
+
+    /**
+     * 两个条件是否等价:结构相同,或 `!rhs` 的取反比较翻转后与对方相同
+     * (`acc = !(v25 > x); if (v25 <= x) continue;`)。
+     */
+    private conditionsEquivalent(a: TYPE.Expression, b: TYPE.Expression): boolean {
+        if (isNodeEqual(a, b)) return true;
+        const unwrap = (expr: TYPE.Expression): { negated: boolean; inner: TYPE.Expression } =>
+            expr.type === "UnaryExpression" && expr.operator === "!" && !("prefix" in expr && expr.prefix === false)
+                ? { negated: true, inner: expr.argument }
+                : { negated: false, inner: expr };
+        const left = unwrap(a);
+        const right = unwrap(b);
+        if (left.negated === right.negated) {
+            return left.negated && isNodeEqual(left.inner, right.inner);
+        }
+        const flipped = this.flipComparison(left.negated ? left.inner : right.inner);
+        if (!flipped) return false;
+        return isNodeEqual(flipped, left.negated ? right.inner : left.inner);
     }
 
     /** 条件取反:去掉一层 `!`,否则补一个。 */
@@ -2421,6 +3247,29 @@ export class HighLevelGrammarSimplify implements ISimplify {
             },
         });
         if (this.foldDeadHubCopies(node)) changed = true;
+        // `if (C) { label: CONT }` + 其后的 `INIT; LOOP; CLOSE; RETURN E`:
+        // flattenElseAfterExit 把 else 分支(循环)提到了 if 之后,耗尽路径的 goto
+        // 反而跳回 if 的 then 分支。这里先恢复成 `if (!C) { … } else { label: CONT }`,
+        // 再由 do-while → for...of 把 CONT 提到 if 之后(见 findAlternateContinuation)。
+        traverse(file(node), {
+            IfStatement: (value) => {
+                if (this.rehydrateSharedContinuationIf(value)) changed = true;
+            },
+        });
+        // 源码 while (COND) 被拆成 do { if (!COND) goto END; BODY } while (breakCond);
+        // POST; END: 两个出口互换回 while (COND) { BODY; if (FOUND) { POST; break } }。
+        traverse(file(node), {
+            DoWhileStatement: (value) => {
+                if (this.checkAndTransformDoWhileConditionSplit(value)) changed = true;
+            },
+        });
+        // 搜索循环旋转:do { label: r = it.next(); if (r.done) return D; … } while (!FOUND);
+        // REST ——> label: for (v of ITER) { …; if (!FOUND) continue; REST } D
+        traverse(file(node), {
+            DoWhileStatement: (value) => {
+                if (this.checkAndTransformSearchLoop(value)) changed = true;
+            },
+        });
         if (this.restoreIteratorLoops(node)) changed = true;
         // 同一语句列表里的连续 `if (disc === v) { return ...; }` 守卫链是
         // ArkTS 对源码 switch 的 lowering(else-if 块先由 flattenElseAfterExit

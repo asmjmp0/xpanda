@@ -208,33 +208,27 @@ let local_0_3 = function (p0) {
   return v4;
 };
 let local_0_5 = function (p0) {
-  let v10, v11, v12, v17, v18, v19, v20, v21, acc;
-  let v9 = sabrReadFields(p0)[Symbol.iterator]();
-  do {
-    label_52: ;
-    v10 = v9.next();
-    if (v10.done) {
-      return undefined;
+  let v11, v12, v17, v18, v19, v20, v21, acc;
+  label_52: for (v11 of sabrReadFields(p0)) {
+    if ((v12 = v11, v11.number !== 1) || v11.wireType !== WIRE_LENGTH_DELIMITED) {
+      continue label_52;
     }
-    v11 = v10.value;
-  } while ((v12 = v11, v11.number !== 1) || v11.wireType !== WIRE_LENGTH_DELIMITED);
-  v17 = sabrReadFields(v12.getBytes())[Symbol.iterator]();
-  do {
-    v18 = v17.next();
-    if (v18.done) {
-      break; //from goto label_52
+    v17 = sabrReadFields(v12.getBytes())[Symbol.iterator]();
+    do {
+      v18 = v17.next();
+      if (v18.done) {
+        continue label_52;
+      }
+      v19 = v18.value;
+    } while ((v20 = v19, v19.number !== 1) || v19.wireType !== WIRE_LENGTH_DELIMITED);
+    v21 = v20.getString();
+    acc = v21.length > 0 ? v21 : undefined;
+    if (v17.return != undefined) {
+      v17.return();
     }
-    v19 = v18.value;
-  } while ((v20 = v19, v19.number !== 1) || v19.wireType !== WIRE_LENGTH_DELIMITED);
-  v21 = v20.getString();
-  acc = v21.length > 0 ? v21 : undefined;
-  if (v17.return != undefined) {
-    v17.return();
+    return acc;
   }
-  if (v9.return != undefined) {
-    v9.return();
-  }
-  return acc;
+  return undefined;
 };
 let local_0_10 = function (p0) {
   let v10, v11, v12;

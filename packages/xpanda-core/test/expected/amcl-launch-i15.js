@@ -233,23 +233,13 @@ export class n1484 {
     if (v2 || this.config_.sizeBytes <= 0) {
       return "JDK sizeBytes 非法";
     }
-    if (this.config_.giteeParts === undefined) {
-      label_498: ;
-      if (this.config_.giteePartSizes === undefined) {
-        if (!local_0_3(this.targetDir_, this.context_.filesDir + "/jdk")) {
-          return "JDK targetDir 超出受控安装根目录";
-        }
-        if (this.targetDir_ === this.context_.filesDir + "/jdk" + "/" + this.version_) {
-          return "";
-        }
-        return "JDK 目标目录与租约槽位不一致";
+    if (this.config_.giteeParts !== undefined) {
+      for (v5 of this.config_.giteeParts) {
+        v5 = l786(v5).length;
+        if (v5 === 0) return "JDK Gitee 分卷文件名不安全";
       }
-      if (this.config_.giteeParts === undefined || this.config_.giteePartSizes.length !== this.config_.giteeParts.length) {
-        return "JDK Gitee 分卷大小列表不匹配";
-      }
-      for (v4 of this.config_.giteePartSizes) {
-        if (v4 <= 0) return "JDK Gitee 分卷大小非法";
-      }
+    }
+    if (this.config_.giteePartSizes === undefined) {
       if (!local_0_3(this.targetDir_, this.context_.filesDir + "/jdk")) {
         return "JDK targetDir 超出受控安装根目录";
       }
@@ -258,18 +248,19 @@ export class n1484 {
       }
       return "JDK 目标目录与租约槽位不一致";
     }
-    v2 = this.config_.giteeParts[Symbol.iterator]();
-    do {
-      v5 = v2.next();
-      if (v5.done) {
-        break; //from goto label_498
-      }
-      v5 = l786(v5.value).length;
-    } while (v5 !== 0);
-    if (v2.return != undefined) {
-      v2.return();
+    if (this.config_.giteeParts === undefined || this.config_.giteePartSizes.length !== this.config_.giteeParts.length) {
+      return "JDK Gitee 分卷大小列表不匹配";
     }
-    return "JDK Gitee 分卷文件名不安全";
+    for (v4 of this.config_.giteePartSizes) {
+      if (v4 <= 0) return "JDK Gitee 分卷大小非法";
+    }
+    if (!local_0_3(this.targetDir_, this.context_.filesDir + "/jdk")) {
+      return "JDK targetDir 超出受控安装根目录";
+    }
+    if (this.targetDir_ === this.context_.filesDir + "/jdk" + "/" + this.version_) {
+      return "";
+    }
+    return "JDK 目标目录与租约槽位不一致";
   }
   async downloadAndInstall() {
     let v4, v8 /*z31*/, v9, v11 /*j1481*/, v22, v25;

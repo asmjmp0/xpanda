@@ -194,6 +194,8 @@ export class CopyPropagation extends TempVariablePass {
                 this.processStatements(stmt.body, env, ctx);
                 return;
             case "LabeledStatement":
+                this.applyPseudoGotoBarrier(
+                    (stmt as TYPE.LabeledStatement).label.name, env, list, index);
                 this.processNestedStatement(stmt.body, env, ctx);
                 return;
             case "TryStatement": {
@@ -268,6 +270,71 @@ export class CopyPropagation extends TempVariablePass {
                 return;
             default:
                 return;
+        }
+    }
+    private isLoopStatement(stmt: TYPE.Node): boolean {
+        return stmt.type === "WhileStatement" || stmt.type === "DoWhileStatement"
+            || stmt.type === "ForStatement" || stmt.type === "ForInStatement"
+            || stmt.type === "ForOfStatement";
+    }
+
+    /**
+     * 循环体里是否有跳到 `name` 的伪 goto break(`break; //from goto label_x`)
+     * 或未还原的 `xpanda_goto(label_x)`。结构化分析把“跳到 label”的 goto 输出成
+     * 带注释的 break,它不是普通 break 语义(实际目标是标签处)。
+     */
+    private containsPseudoGoto(node: TYPE.Node, name: string): boolean {
+        let found = false;
+        walkNode(node, (current) => {
+            if (found) return false;
+            if (isFunctionLike(current) || isClassLike(current)) return false;
+            if (current.type === "BreakStatement") {
+                const brk = current as TYPE.BreakStatement;
+                for (const comment of [...(brk.leadingComments ?? []), ...(brk.trailingComments ?? [])]) {
+                    const matched = /from goto ([A-Za-z_$][\w$]*)/.exec(comment.value);
+                    if (matched && matched[1] === name) {
+                        found = true;
+                        return false;
+                    }
+                }
+            }
+            if (current.type === "CallExpression" && isIdentifier((current as TYPE.CallExpression).callee)
+                && ((current as TYPE.CallExpression).callee as TYPE.Identifier).name === "xpanda_goto"
+                && (current as TYPE.CallExpression).arguments.length === 1
+                && isIdentifier((current as TYPE.CallExpression).arguments[0] as TYPE.Node)
+                && ((current as TYPE.CallExpression).arguments[0] as TYPE.Identifier).name === name) {
+                found = true;
+                return false;
+            }
+            return true;
+        });
+        return found;
+    }
+
+    /**
+     * 伪 goto break 会从循环里直接跳到标签处,跳过两者之间的语句。
+     * 这些被跳过的语句里的写入在标签处不能被复制传播沿用(同一路径上
+     * 也可能按顺序执行到这里,只能保守失效),否则
+     * `v0 = true; ...; label: if (!v0) ...` 会把标签后的读取换成 `true`,
+     * 丢掉从 done 分支跳过来的旧值(amcl r2/t4 的 `exists` 标志)。
+     */
+    private applyPseudoGotoBarrier(
+        label: string,
+        env: EnvState,
+        list: TYPE.Statement[],
+        index: number,
+    ): void {
+        let firstLoop = -1;
+        for (let i = 0; i < index; i++) {
+            if (!this.isLoopStatement(list[i])) continue;
+            if (this.containsPseudoGoto(list[i], label)) {
+                firstLoop = i;
+                break;
+            }
+        }
+        if (firstLoop < 0) return;
+        for (let i = firstLoop + 1; i < index; i++) {
+            for (const name of collectAssignedNames(list[i])) env.invalidate(name);
         }
     }
     private processNestedStatement(stmt: TYPE.Statement, env: EnvState, ctx: FunctionContext): void {

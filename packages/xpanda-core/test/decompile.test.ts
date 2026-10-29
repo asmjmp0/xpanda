@@ -2185,6 +2185,11 @@ function verifyYourpipeSabrResponseDecoder(clazz: PandaClass, code: string): voi
     if (code.includes("created by SimpleAnalysis") || code.includes("decompiler_") || /\bhole\b/.test(code)) {
         throw new Error(`SabrResponseDecoder: 反编译降级或残留伪语句\n${code}`);
     }
+    // 搜索循环旋转后,内层耗尽路径是 `continue label_52`(外层 for...of 的下一轮),
+    // 不再是语义错误的裸 break / 伪 goto 标记。
+    if (code.includes("from goto") || code.includes("xpanda_goto")) {
+        throw new Error(`SabrResponseDecoder: 仍有伪 goto 残留\n${code}`);
+    }
     // 外层迭代器循环(体内含 switch + 内层 for-of)必须还原成 for...of;
     // 旧实现会在这里崩在 addGlobal,导致整个类没有输出。
     const forOfCount = code.match(/for \(\w+ of sabrReadFields\(p0\)\)/g)?.length ?? 0;
@@ -2233,6 +2238,42 @@ function verifyYourpipeSabrResponseDecoder(clazz: PandaClass, code: string): voi
  * getDestNextPair 返回 null;simplifyConditionalSequence 旧实现直接解引用抛 NPE,
  * 整个方法降级 SimpleAnalysis(输出 decompiler_goto)。
  */
+/**
+ * 回归:yourpipe 的搜索循环旋转(for-of 的耗尽路径是外层下一轮,不是裸 break)。
+ *   - HlsManifestParser:音轨 codec 扫描,找到非音频非 ec-3 的项后 `v25 = v34; break`;
+ *   - WebClientVersionResolver:外层 for-of + `continue label_325`;
+ *   - CookieJar / YoutubeSabrInfo:直接 for-of 还原。
+ */
+function verifyYourpipeSearchLoopRestorations(clazz: PandaClass, code: string): void {
+    NodeFactory.parse(code);
+    assertNoPseudoGoto(code);
+    const expected: Record<string, string[]> = {
+        "L&youtube_core/src/main/ets/extractor/HlsManifestParser&1.0.0;": [
+            'for (v31 of v19.split(",")) {',
+            'if (v34.startsWith("mp4a") || v34.startsWith("opus") || v34.startsWith("ac-3")) {',
+            "v25 = v34;",
+            "break;",
+        ],
+        "L&youtube_core/src/main/ets/common/WebClientVersionResolver&1.0.0;": [
+            "label_325: for (v19 of v12) {",
+            "continue label_325;",
+        ],
+        "L&youtube_core/src/main/ets/network/CookieJar&1.0.0;": [
+            "for (v10 of this.cookies.values()) {",
+        ],
+        "L&youtube_core/src/main/ets/extractor/sabr/YoutubeSabrInfo&1.0.0;": [
+            "for (v12 of this.formats) {",
+        ],
+    };
+    const fragments = expected[clazz.name.content];
+    if (!fragments) throw new Error(`yourpipe search loop: 未预期的类 ${clazz.name.content}`);
+    for (const fragment of fragments) {
+        if (!code.includes(fragment)) {
+            throw new Error(`${clazz.name.content}: 缺少 ${JSON.stringify(fragment)}`);
+        }
+    }
+}
+
 function verifyYourpipeMpvPlayerView(clazz: PandaClass, code: string): void {
     NodeFactory.parse(code);
     if (code.includes("created by SimpleAnalysis") || code.includes("decompiler_")) {
@@ -3764,6 +3805,206 @@ function verifyAmclSharedCatchFinally(clazz: PandaClass, code: string): void {
 }
 
 /**
+ * 回归:伪 goto break(`break; //from goto label_x`)的 do-while → for...of 还原。
+ *
+ * 结构化分析把“跳到循环之后 label”的 goto 输出成带注释的 break;它不是普通
+ * break 语义。amcl r2/t4 的 `refresh` 里 goto 跳过了标签之前的 `exists = true`,
+ * 复制传播曾把标签之后的 `if (!exists)` 直接折成 `if (false)`,连同
+ * `backToList_()` 整段丢失。现在标签处按被跳过语句的写入失效,循环也还原成
+ * for...of(close 块由循环隐式完成)。
+ */
+function verifyAmclPseudoGotoForOf(clazz: PandaClass, code: string): void {
+    if (clazz.name.content !== "L&entry/src/main/ets/r2/t4&;") {
+        throw new Error(`amcl r2/t4: 类名不符 (${clazz.name.content})`);
+    }
+    NodeFactory.parse(code);
+    for (const leftover of ["created by SimpleAnalysis", "from goto", "label_266", "[Symbol.iterator]"]) {
+        if (code.includes(leftover)) {
+            throw new Error(`amcl r2/t4: 仍残留 ${JSON.stringify(leftover)}\n${code}`);
+        }
+    }
+    const start = code.indexOf("  refresh() {");
+    const end = code.indexOf("\n  filteredSnapshot(", start);
+    if (start < 0 || end < 0) throw new Error(`amcl r2/t4: 未找到 refresh\n${code}`);
+    const body = code.slice(start, end);
+    for (const fragment of [
+        "for (v4 of this.snapshot.all) {",
+        "v0 = true;",
+        "if (!v0) {",
+        "this.backToList_();",
+    ]) {
+        if (!body.includes(fragment)) {
+            throw new Error(`amcl r2/t4 refresh: 缺少 ${JSON.stringify(fragment)}\n${body}`);
+        }
+    }
+}
+
+/**
+ * 回归:break 路径没有前缀语句的伪 goto break 形态
+ * (`for (const x of xs) { ...; if (cond) break; }`)。
+ *
+ * amcl mods/g17 的 `roundRobinInterleave` 内层循环此前停在 do-while + close +
+ * `label_1364`,现在还原成 for...of,出口判断变成循环体末尾的
+ * `if (v4.length >= 100) break;`。
+ */
+function verifyAmclGotoBreakWithoutPrefix(clazz: PandaClass, code: string): void {
+    if (clazz.name.content !== "L&mods/src/main/ets/g17&1.0.0;") {
+        throw new Error(`amcl mods/g17: 类名不符 (${clazz.name.content})`);
+    }
+    NodeFactory.parse(code);
+    for (const leftover of ["from goto", "label_1364"]) {
+        if (code.includes(leftover)) {
+            throw new Error(`amcl mods/g17: 仍残留 ${JSON.stringify(leftover)}\n${code}`);
+        }
+    }
+    const start = code.indexOf("for (v7 of v2) {");
+    if (start < 0) throw new Error(`amcl mods/g17: 未找到还原后的 for...of\n${code}`);
+    const body = code.slice(start, start + 400);
+    for (const fragment of [
+        "if (v7.entry.modrinthSlug.length > 0) {",
+        "v4.push(v7.entry.modrinthSlug);",
+        "if (v4.length >= 100) {",
+        "break;",
+    ]) {
+        if (!body.includes(fragment)) {
+            throw new Error(`amcl mods/g17: for...of 缺少 ${JSON.stringify(fragment)}\n${body}`);
+        }
+    }
+}
+
+/** 已还原的伪 goto break 不应再残留标记 / 空标签 / xpanda_goto。 */
+function assertNoPseudoGoto(code: string, label?: string): void {
+    for (const leftover of ["from goto", "xpanda_goto"]) {
+        if (code.includes(leftover)) throw new Error(`仍残留 ${JSON.stringify(leftover)}\n${code}`);
+    }
+    if (label && new RegExp(`${label}: ;`).test(code)) throw new Error(`仍残留空标签 ${label}\n${code}`);
+}
+
+/**
+ * 回归:源码 `while (cursors[i] < arr.length)` 被拆成
+ * `do { if (cursors[i] >= …) goto END; BODY } while (breakCond); POST; END`。
+ * 两个出口互换回 while + `if (FOUND) { POST; break }`(amcl mods/e17)。
+ */
+function verifyAmclConditionSplitWhile(clazz: PandaClass, code: string): void {
+    if (clazz.name.content !== "L&mods/src/main/ets/e17&1.0.0;") {
+        throw new Error(`amcl mods/e17: 类名不符 (${clazz.name.content})`);
+    }
+    NodeFactory.parse(code);
+    assertNoPseudoGoto(code, "label_348");
+    const start = code.indexOf("local_0_6 = function");
+    const end = code.indexOf("\nlocal_0_1 = function", start);
+    if (start < 0 || end < 0) throw new Error(`amcl mods/e17: 未找到 local_0_6\n${code}`);
+    const body = code.slice(start, end);
+    for (const fragment of [
+        "while (v3[v6] < p0[v6].length) {",
+        "v2.push(v8);",
+        "v5 = true;",
+        "break;",
+    ]) {
+        if (!body.includes(fragment)) {
+            throw new Error(`amcl mods/e17 local_0_6: 缺少 ${JSON.stringify(fragment)}\n${body}`);
+        }
+    }
+    if (body.includes("do {")) {
+        throw new Error(`amcl mods/e17 local_0_6: 仍有 do-while 残留\n${body}`);
+    }
+}
+
+/**
+ * 回归:搜索循环旋转。源码 `for (nextId of ids) { …; if (cond) { upper = …; break } }`
+ * 被旋成 `do { … } while (cond); upper = …`;耗尽分支 goto 外层 for-of 的下一轮
+ * (amcl commons/h1/p1 的两处 y47)。
+ */
+function verifyAmclSearchLoopRotation(clazz: PandaClass, code: string): void {
+    if (clazz.name.content !== "L&commons/src/main/ets/h1/p1&1.0.0;") {
+        throw new Error(`amcl commons/h1/p1: 类名不符 (${clazz.name.content})`);
+    }
+    NodeFactory.parse(code);
+    assertNoPseudoGoto(code, "label_2939");
+    const count = (code.match(/for \(v25 of v2\) \{/g) ?? []).length;
+    if (count !== 2) throw new Error(`amcl commons/h1/p1: 期望 2 处 for (v25 of v2),实际 ${count}`);
+    for (const fragment of [
+        "v31 = g48(p0, v25);",
+        'if (v31?.category === "launch") {',
+        "v21 = Math.min(v21, v25);",
+        "break;",
+    ]) {
+        if (!code.includes(fragment)) {
+            throw new Error(`amcl commons/h1/p1: 缺少 ${JSON.stringify(fragment)}`);
+        }
+    }
+}
+
+/**
+ * 回归:搜索循环 + 内外两层 close 共用 finally 收尾(amcl entry/r2/p5
+ * `mouseEntryVisible_`):外层 close 通过 `v16 = v0` 别名读取迭代器,还原成
+ * 外层 for-of 后必须剥掉,只留内层 close。
+ */
+function verifyAmclMouseEntrySearchLoop(clazz: PandaClass, code: string): void {
+    if (clazz.name.content !== "L&entry/src/main/ets/r2/p5&;") {
+        throw new Error(`amcl entry/r2/p5: 类名不符 (${clazz.name.content})`);
+    }
+    NodeFactory.parse(code);
+    assertNoPseudoGoto(code, "label_32");
+    const start = code.indexOf("  mouseEntryVisible_(p0) {");
+    const end = code.indexOf("\n  mouseEntryPresented_", start);
+    if (start < 0 || end < 0) throw new Error(`amcl entry/r2/p5: 未找到 mouseEntryVisible_\n${code}`);
+    const body = code.slice(start, end);
+    for (const fragment of [
+        "label_32: for (v3 of p0.controls) {",
+        'if (v3.systemAction === "mouse") {',
+        "if (v3.return != undefined) {",
+        "return true;",
+    ]) {
+        if (!body.includes(fragment)) {
+            throw new Error(`amcl entry/r2/p5 mouseEntryVisible_: 缺少 ${JSON.stringify(fragment)}\n${body}`);
+        }
+    }
+    if (body.includes("v0.return")) {
+        throw new Error(`amcl entry/r2/p5 mouseEntryVisible_: 外层 close 未删除\n${body}`);
+    }
+}
+
+/**
+ * 回归:后向伪 goto break(label 在循环之前)由 GotoLoopRestore 包装成
+ * `label: while (true) { … continue label }`,不再是语义错误的裸 break
+ * (amcl feature_core/r5/m12、gamecontrol/a13)。
+ */
+function verifyAmclBackwardGotoBreakWhile(clazz: PandaClass, code: string): void {
+    const expected: Record<string, string> = {
+        "L&feature_core/src/main/ets/r5/m12&1.0.0;": "label_24",
+        "L&gamecontrol/src/main/ets/a13&1.0.0;": "label_137",
+    };
+    const label = expected[clazz.name.content];
+    if (!label) throw new Error(`amcl backward goto: 未预期的类 ${clazz.name.content}`);
+    NodeFactory.parse(code);
+    assertNoPseudoGoto(code, label);
+    for (const fragment of [`${label}: while (true) {`, `continue ${label};`]) {
+        if (!code.includes(fragment)) {
+            throw new Error(`${clazz.name.content}: 缺少 ${JSON.stringify(fragment)}`);
+        }
+    }
+}
+
+/** 回归:编译器把用户 GC 选择器扫描旋成搜索循环(amcl launch/c15)。 */
+function verifyAmclGcSelectorLoop(clazz: PandaClass, code: string): void {
+    if (clazz.name.content !== "L&launch/src/main/ets/c15&1.0.0;") {
+        throw new Error(`amcl launch/c15: 类名不符 (${clazz.name.content})`);
+    }
+    NodeFactory.parse(code);
+    assertNoPseudoGoto(code, "label_2162");
+    for (const fragment of [
+        "for (v16 of this.parseUserJvmArgs(this.customJvmArgs)) {",
+        "-XX:+UseG1GC",
+        "if (!v8) {",
+    ]) {
+        if (!code.includes(fragment)) {
+            throw new Error(`amcl launch/c15: 缺少 ${JSON.stringify(fragment)}`);
+        }
+    }
+}
+
+/**
  * 回归:嵌套 try/finally 的 finally 还原(amcl)。
  *
  * 内层 finally 的 guard else 会一直延伸到外层 finally 的清理(q17 `c1599` 写临时
@@ -5290,6 +5531,7 @@ const yourpipeClassTests: BinaryClassTest[] = [
     { label: "yourpipe AVPlayer resource object (yourpipe0.7.0.abc)", matches: (n) => n.includes("components/AVPlayer"), run: verifyYourpipeAVPlayerResourceObject },
     { label: "yourpipe HttpDownloader retry try/catch (yourpipe0.7.0.abc)", matches: (n) => n.includes("network/HttpDownloader"), run: verifyYourpipeHttpDownloaderRetryTryCatch },
     { label: "yourpipe ChannelInfoService shared tail merge (yourpipe0.7.0.abc)", matches: (n) => n.includes("features/user/ChannelInfoService"), run: verifyYourpipeChannelInfoService },
+    { label: "yourpipe search loop restorations (yourpipe0.7.0.abc)", matches: (n) => /HlsManifestParser|WebClientVersionResolver|network\/CookieJar|sabr\/YoutubeSabrInfo/.test(n), run: verifyYourpipeSearchLoopRestorations },
 ];
 
 const amclClassTests: BinaryClassTest[] = [
@@ -5307,6 +5549,13 @@ const amclClassTests: BinaryClassTest[] = [
     { label: "amcl display listeners loop + empty catch (amcl1.0.6.abc)", matches: (n) => n === "L&entry/src/main/ets/n4/o8&;", run: verifyAmclDisplayListenersLoop },
     { label: "amcl launch labelled-loop goto (amcl1.0.6.abc)", matches: (n) => n === "L&launch/src/main/ets/r16&1.0.0;", run: verifyAmclLaunchGotoLoop },
     { label: "amcl shared try/catch join (amcl1.0.6.abc)", matches: (n) => n === "L&entry/src/main/ets/r5/l8&;", run: verifyAmclSharedTryCatchJoin },
+    { label: "amcl pseudo goto break for...of (amcl1.0.6.abc)", matches: (n) => n === "L&entry/src/main/ets/r2/t4&;", run: verifyAmclPseudoGotoForOf },
+    { label: "amcl goto break without prefix (amcl1.0.6.abc)", matches: (n) => n === "L&mods/src/main/ets/g17&1.0.0;", run: verifyAmclGotoBreakWithoutPrefix },
+    { label: "amcl condition-split while (amcl1.0.6.abc)", matches: (n) => n === "L&mods/src/main/ets/e17&1.0.0;", run: verifyAmclConditionSplitWhile },
+    { label: "amcl search loop rotation (amcl1.0.6.abc)", matches: (n) => n === "L&commons/src/main/ets/h1/p1&1.0.0;", run: verifyAmclSearchLoopRotation },
+    { label: "amcl search loop outer close (amcl1.0.6.abc)", matches: (n) => n === "L&entry/src/main/ets/r2/p5&;", run: verifyAmclMouseEntrySearchLoop },
+    { label: "amcl backward goto break while (amcl1.0.6.abc)", matches: (n) => n === "L&feature_core/src/main/ets/r5/m12&1.0.0;" || n === "L&gamecontrol/src/main/ets/a13&1.0.0;", run: verifyAmclBackwardGotoBreakWhile },
+    { label: "amcl GC selector search loop (amcl1.0.6.abc)", matches: (n) => n === "L&launch/src/main/ets/c15&1.0.0;", run: verifyAmclGcSelectorLoop },
     { label: "amcl shared-start catch + loop-tail finally (amcl1.0.6.abc)", matches: (n) => n === "L&launch/src/main/ets/i15&1.0.0;", run: verifyAmclSharedCatchFinally },
     { label: "amcl nested try/finally restoration (amcl1.0.6.abc)", matches: (n) => n === "L&feature_core/src/main/ets/e11/i11&1.0.0;", run: verifyAmclNestedFinallyRestoration },
     { label: "amcl empty module with export table (amcl1.0.6.abc)", matches: (n) => n === "L&entry/src/main/n5&;", run: verifyAmclEmptyModuleBarrelExport },

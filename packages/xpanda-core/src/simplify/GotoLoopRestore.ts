@@ -39,6 +39,8 @@ interface GotoLoopSpan extends LabelSite {
      * 包进 while (true) 之后必须靠 break 离开,否则变成死循环。
      */
     fallsThrough: boolean;
+    /** 循环体里有伪 goto break(`break; //from goto label_x`),continue 必须带标签 */
+    keepLabel: boolean;
 }
 
 /**
@@ -208,15 +210,55 @@ function overlaps(span: GotoLoopSpan, other: GotoLoopSpan): boolean {
     return span.gotos.some((goto) => other.gotos.includes(goto));
 }
 
-/** 同一函数内(不进嵌套函数)指向 label 的全部 goto 语句 */
+/** 同一函数内(不进嵌套函数)指向 label 的全部跳转语句(goto 或伪 goto break) */
 function sameLabelGotos(fn: TYPE.Node, label: string): TYPE.Statement[] {
     const gotos: TYPE.Statement[] = [];
     walkNode(fn, (current) => {
         if (isFunctionLike(current) || isClassLike(current)) return current === fn;
-        if (isGotoStatement(current, label)) gotos.push(current as TYPE.Statement);
+        if (isJumpToLabel(current, label)) gotos.push(current as TYPE.Statement);
         return true;
     });
     return gotos;
+}
+
+/**
+ * 结构化分析把“跳到 label 的 goto”输出成带 `//from goto label_x` 注释的 break
+ * (`StructureAnalysis.virtualizeIrregularExits`)。它不是普通 break,实际目标是标签处。
+ */
+function pseudoGotoLabel(node: TYPE.Node): string | null {
+    if (node.type !== "BreakStatement") return null;
+    const comments = [
+        ...((node as TYPE.BreakStatement).leadingComments ?? []),
+        ...((node as TYPE.BreakStatement).trailingComments ?? []),
+    ];
+    for (const comment of comments) {
+        const matched = /from goto ([A-Za-z_$][\w$]*)/.exec(comment.value);
+        if (matched) return matched[1];
+    }
+    return null;
+}
+
+function isPseudoBreakTo(node: TYPE.Node, label: string): boolean {
+    return pseudoGotoLabel(node) === label;
+}
+
+function isJumpToLabel(node: TYPE.Node, label: string): boolean {
+    return isGotoStatement(node, label) || isPseudoBreakTo(node, label);
+}
+
+/** 语句列表里是否还有跳到 label 的伪 goto break(不进嵌套函数)。 */
+function containsPseudoBreak(body: TYPE.Statement[], label: string): boolean {
+    let found = false;
+    walkNode(blockStatement(body), (current) => {
+        if (found) return false;
+        if (isFunctionLike(current) || isClassLike(current)) return false;
+        if (isPseudoBreakTo(current, label)) {
+            found = true;
+            return false;
+        }
+        return true;
+    });
+    return found;
 }
 
 /** 收集候选 label:遍历所有语句列表;fn 是当前所在的函数节点,goto 只在同一函数内折算 */
@@ -269,7 +311,7 @@ function buildSpan(site: LabelSite): GotoLoopSpan | null {
     // 循环体内该 label 的 goto(不进嵌套函数)
     walkNode(blockStatement(body), (current) => {
         if (isFunctionLike(current) || isClassLike(current)) return false;
-        if (!isGotoStatement(current, site.label)) return true;
+        if (!isJumpToLabel(current, site.label)) return true;
         gotos.push(current as TYPE.Statement);
         return true;
     });
@@ -282,6 +324,9 @@ function buildSpan(site: LabelSite): GotoLoopSpan | null {
         if (site.insideJumpTarget && hasFreeJump(statement)) return null;
     }
     for (const goto of gotos) {
+        // 伪 goto break 用带标签的 continue 替换,位于嵌套循环里也能正确绑到外层;
+        // 裸 continue 形态的 xpanda_goto 仍然不能跨嵌套循环。
+        if (isPseudoBreakTo(goto, site.label)) continue;
         if (insideNestedLoop(body, goto)) return null;
     }
     // 循环体末尾可能自然落空:包装前这些语句是循环头之后的一段直线代码,落空只是
@@ -292,7 +337,10 @@ function buildSpan(site: LabelSite): GotoLoopSpan | null {
     //     =>  while (true) { A; if (c) continue; break; } B
     const last = body[body.length - 1];
     const fallsThrough = !terminatesInLoop(last, site.label);
-    return { ...site, gotos, fallsThrough };
+    // 伪 goto break 可能位于循环体内的嵌套循环里,裸 continue 会绑到内层循环;
+    // 统一用带标签的 continue,并把标签保留在包出来的 while 上。
+    const keepLabel = containsPseudoBreak(body, site.label);
+    return { ...site, gotos, fallsThrough, keepLabel };
 }
 
 /**
@@ -300,7 +348,7 @@ function buildSpan(site: LabelSite): GotoLoopSpan | null {
  * 用于确认循环体末尾可达路径一定离开循环。
  */
 function terminatesInLoop(statement: TYPE.Statement, label: string): boolean {
-    if (isGotoStatement(statement, label)) return true;
+    if (isJumpToLabel(statement, label)) return true;
     switch (statement.type) {
         case "ReturnStatement":
         case "ThrowStatement":
@@ -337,12 +385,14 @@ function applySpan(span: GotoLoopSpan): void {
     const body = span.list.splice(span.index + 1);
     // 末尾补的 break 在替换 goto 之后追加,保证它绑定到新包出来的 while 上
     const block = blockStatement(body);
-    replaceGotos(block, span.label);
+    replaceGotos(block, span.label, span.keepLabel);
     if (span.fallsThrough) block.body.push(breakStatement());
-    span.list.splice(span.index, 1, whileStatement(booleanLiteral(true), block));
+    const loop = whileStatement(booleanLiteral(true), block);
+    span.list.splice(span.index, 1,
+        span.keepLabel ? TYPE.labeledStatement(TYPE.identifier(span.label), loop) : loop);
 }
 
-/** 把子树里的 `xpanda_goto(label)` 语句换成 continue(不进嵌套函数) */
+/** 把子树里的 `xpanda_goto(label)` / 伪 goto break 换成 continue(不进嵌套函数) */
 function replaceGotos(node: TYPE.Node, label: string, keepLabel = false): void {
     const replacement = () => keepLabel ? continueStatement(TYPE.identifier(label)) : continueStatement();
     const keys = (VISITOR_KEYS as any)[node.type] as string[] | undefined;
@@ -353,7 +403,7 @@ function replaceGotos(node: TYPE.Node, label: string, keepLabel = false): void {
             for (let i = 0; i < value.length; i++) {
                 const child = value[i];
                 if (!child || typeof child.type !== "string") continue;
-                if (isGotoStatement(child, label)) {
+                if (isJumpToLabel(child, label)) {
                     value[i] = replacement();
                     continue;
                 }
@@ -361,7 +411,7 @@ function replaceGotos(node: TYPE.Node, label: string, keepLabel = false): void {
                 replaceGotos(child, label, keepLabel);
             }
         } else if (value && typeof value.type === "string") {
-            if (isGotoStatement(value, label)) {
+            if (isJumpToLabel(value, label)) {
                 (node as any)[key] = replacement();
                 continue;
             }
@@ -380,12 +430,17 @@ function isGotoStatement(node: TYPE.Node, label: string): boolean {
     return args.length === 1 && isIdentifier(args[0] as TYPE.Node) && (args[0] as TYPE.Identifier).name === label;
 }
 
-/** 子树里是否有指向其它 label 的 goto */
+/** 子树里是否有指向其它 label 的 goto / 伪 goto break */
 function hasOtherGoto(root: TYPE.Node, label: string): boolean {
     let found = false;
     walkNode(root, (current) => {
         if (found) return false;
         if (isFunctionLike(current) || isClassLike(current)) return false;
+        const pseudo = pseudoGotoLabel(current);
+        if (pseudo) {
+            if (pseudo !== label) found = true;
+            return !found;
+        }
         if (!isExpressionStatement(current) || !isCallExpression(current.expression)) return true;
         const callee = current.expression.callee;
         if (!isIdentifier(callee) || callee.name !== GOTO_CALLEE) return true;
