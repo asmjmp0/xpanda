@@ -30,7 +30,7 @@ Supported bytecode versions: `24.0.0.0` (backward compatible with `13.0.1.0`; Ar
 
 ## Monorepo layout
 
-The project is split into four yarn-workspace packages under `packages/`:
+The project is split into five yarn-workspace packages under `packages/`:
 
 | Package | Purpose |
 |---|---|
@@ -38,6 +38,7 @@ The project is split into four yarn-workspace packages under `packages/`:
 | `xpanda-cli` | command line interface (`decompile` / `unpack-index` / `dump-asm`) |
 | `xpanda-mcp` | MCP server (stdio) for AI client integration |
 | `xpanda-web` | browser UI (React + Vite, pure frontend) |
+| `panda-asm` | load, modify (replace method code / add methods, strings) and re-emit `.abc` files |
 
 ## Install and use
 

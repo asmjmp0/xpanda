@@ -4,7 +4,7 @@ This file provides working guidance for AI coding agents in this repository.
 
 ## What This Project Is
 
-**xpanda** — a HarmonyOS `.abc` (Panda / ArkCompiler bytecode) decompiler, implemented in **pure TypeScript** (Node.js ≥ 18). Supports bytecode version `24.0.0.0` (backward compatible with 13.0.1.0). The repo is a yarn (v1) workspaces monorepo split into four sub-projects: `xpanda-core` (core library), `xpanda-cli` (command line), `xpanda-mcp` (MCP Server), and `xpanda-web` (browser UI, React + Vite, pure frontend), all under `packages/`; cli/mcp/web depend on the core library via the package name `xpanda-core`. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for architecture details.
+**xpanda** — a HarmonyOS `.abc` (Panda / ArkCompiler bytecode) decompiler, implemented in **pure TypeScript** (Node.js ≥ 18). Supports bytecode version `24.0.0.0` (backward compatible with 13.0.1.0). The repo is a yarn (v1) workspaces monorepo split into five sub-projects: `xpanda-core` (core library), `xpanda-cli` (command line), `xpanda-mcp` (MCP Server), `xpanda-web` (browser UI, React + Vite, pure frontend) and `panda-asm` (`.abc` patching/writing library), all under `packages/`; cli/mcp/web depend on the core library via the package name `xpanda-core`. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for architecture details.
 
 ## Skills
 
@@ -31,6 +31,7 @@ Core library `packages/xpanda-core/`:
 | `packages/xpanda-core/src/file/` | `.abc` file format parsing (PandaFile / Header / PandaClass / PandaMethod / literals / module metadata) |
 | `packages/xpanda-core/src/codec/` | Leb128 / MUTF8 / Adler32 |
 | `packages/xpanda-core/src/disasm/` | Disassembly: `opcodes.ts` (generated), `PandaInstruction.ts` (unified instruction model + KIND_MAP), `PandaIRCFG`, `passes.ts`, `PandaLexical.ts` |
+| `packages/xpanda-core/src/asm/` | Bytecode assembler (`Assembler.ts`): encodes "instruction + operands" into bytes and decodes raw instruction streams (`decodeInstructions`); driven by the operand layout generated into `disasm/opcodes.ts`; used by panda-asm for code insertion |
 | `packages/xpanda-core/src/decompiler/` | `StructureAnalysis.ts` (region reduction core), `Region.ts` / `RegionGraphBuilder.ts` (regions, condition/logical flags, irreducible Tail duplication), `statements.ts`, `MethodHandler.ts` (HANDLES dispatch), `TryFinally.ts` (ArkTS 13 try/finally restoration), `SimpleAnalysis.ts`, `ValueGraph.ts`, `DominatorGraph.ts` |
 | `packages/xpanda-core/src/ast/` | `NodeFactory` / `NodeUtils` (Babel AST utilities); `FormatCode.ts` wraps overly long logical chains |
 | `packages/xpanda-core/src/simplify/` | optimizer pipeline (`SimplifyExport`, `TempVariableSimplify`, `ConditionSimplify`, `SyntaxRewriteSimplify`, `ClassSyntaxSimplify`, `ObjectLiteralSimplify`, `NullishCoalescingSimplify`, `HighLevelGrammarSimplify`, `GotoLoopRestore`, `AstUtils`, `NormalizeDeclarations`); the tail includes `foldConditionAssignments` (second pass over condition negation chains) and `hoistTestPrefixes` (constant prefix hoisting) |
@@ -53,14 +54,15 @@ Other sub-projects:
 | `packages/xpanda-mcp/src/` | MCP Server (`server.ts` stdio entry, `registry.ts` abc/hap session registry, `tools/` ten tools, `io.ts` disk IO), documented in [docs/MCP.md](docs/MCP.md) |
 | `packages/xpanda-mcp/scripts/test-mcp.ts` | MCP Server end-to-end test (subprocess + JSON-RPC) |
 | `packages/xpanda-web/` | browser UI (React + Vite, pure frontend): drag & drop / file picker, per-class and bulk decompile against the browser-safe core entry, zip download, IndexedDB-backed decompile result cache (`src/cache.ts`); see `packages/xpanda-web/README.md` |
+| `packages/panda-asm/` | `.abc` patching/writing library (append-only patcher): `replaceMethodCode` / `addMethod` / `addStringId` / `insertInstructions` (assembled bytecode at an instruction boundary, with jump/try-table fixups) / `prepareMethodHead` + `patchMethodHead(s)` (two-phase AOP: one or more targets per hook, random hook name, es2abc hook compile + merge with matching bytecode version, gadget prologue with frame growth, async support), then `toBytes()` re-emits with updated `file_size` + checksum (uses `xpanda-core` for entity locating and the `asm/` assembler); see `packages/panda-asm/README.md` |
 | `docs/ARCHITECTURE.md` | architecture doc |
 | `docs/MCP.md` | MCP Server doc |
 
 ## Common Commands
 
 ```bash
-yarn install               # install dependencies (workspaces installs all four sub-packages at once)
-yarn test                  # core integration tests (decompile + snapshot + Babel re-parse) + cli serial/parallel consistency regression
+yarn install               # install dependencies (workspaces installs all five sub-packages at once)
+yarn test                  # core integration tests + cli serial/parallel consistency + panda-asm tests
 yarn typecheck             # tsc --noEmit for each sub-package
 yarn gen:opcodes           # isa.yaml → packages/xpanda-core/src/disasm/opcodes.ts
 
@@ -87,6 +89,9 @@ yarn test:mcp
 
 # start the web UI dev server (http://localhost:5173, pure frontend decompiling)
 yarn web
+
+# panda-asm: bytecode editing tests (round-trip / replace method code / add method)
+yarn workspace panda-asm test
 ```
 
 ## Hard Rules
@@ -99,13 +104,13 @@ yarn web
 6. **Per-class output must be a pure function of that class**: do not introduce cross-class mutable state (global counters, mutable caches shared by offset, etc.), otherwise `-j` parallel output diverges from serial. Generated-name counters reset per class in `PandaDecompiler.decompileRaw()`; `packages/xpanda-cli/test/parallel-consistency.test.ts` has the serial/parallel consistency regression.
 7. **Cross-package imports always go through package names**: cli / mcp may only import the core library via `import ... from "xpanda-core"` (single entry `src/index.ts`); no deep relative paths. core must not depend back on cli / mcp. **core must stay browser-safe**: no Node built-in modules (fs / path / os / zlib / worker_threads / Buffer, etc.) inside the import closure of the single entry, no disk IO, no workers — disk IO is implemented by cli / mcp's own `src/io.ts`, and the parallel simplify worker pool lives in xpanda-cli's `src/parallel/`.
 8. **Only run `git commit` when the user explicitly asks for it.** Editing files, running tests, and reporting results never imply a commit; leave changes in the working tree.
-9. **Bump the affected package versions before every commit.** Before running `git commit`, raise the `version` field in every workspace `package.json` whose package is changed by that commit — `packages/xpanda-core`, `xpanda-cli`, `xpanda-mcp`, `xpanda-web` — using semver: new feature → minor, bug fix / internal compatibility fix → patch, breaking change → major. Bump the root `package.json` together with `xpanda-core` (the root version mirrors core). Use `yarn workspace <name> version --new-version <version> --no-git-tag-version` (or edit `package.json`), and never create git tags automatically. A commit that only touches repository-level docs (`README*`, `AGENTS.md`, `docs/`) may skip version bumps unless the user asks.
+9. **Bump the affected package versions before every commit.** Before running `git commit`, raise the `version` field in every workspace `package.json` whose package is changed by that commit — `packages/xpanda-core`, `xpanda-cli`, `xpanda-mcp`, `xpanda-web`, `packages/panda-asm` — using semver: new feature → minor, bug fix / internal compatibility fix → patch, breaking change → major. Bump the root `package.json` together with `xpanda-core` (the root version mirrors core). Use `yarn workspace <name> version --new-version <version> --no-git-tag-version` (or edit `package.json`), and never create git tags automatically. A commit that only touches repository-level docs (`README*`, `AGENTS.md`, `docs/`) may skip version bumps unless the user asks.
 
 ## How To Do Common Tasks
 
 ### Add/modify a bytecode instruction
 
-1. Check that the instruction exists in `packages/xpanda-core/resources/isa.yaml`; if not, update it and run `yarn gen:opcodes`;
+1. Check that the instruction exists in `packages/xpanda-core/resources/isa.yaml`; if not, update it and run `yarn gen:opcodes` (this also regenerates the operand layout in `opcodes.ts`, so `src/asm/Assembler.ts` can assemble the new instruction without further changes);
 2. Register the semantic kind in `KIND_MAP` / `classifyKind` in `packages/xpanda-core/src/disasm/PandaInstruction.ts` (don't forget the `InstructionKind` union);
 3. If it needs dedicated semantic fields, parse them in the `PandaInstruction` constructor switch;
 4. Implement a handle for that kind in `HANDLES` in `packages/xpanda-core/src/decompiler/MethodHandler.ts` (follow the existing handles' style);

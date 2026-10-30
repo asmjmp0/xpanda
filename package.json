@@ -1,18 +1,19 @@
 {
   "name": "xpanda",
-  "version": "2.40.3",
+  "version": "2.41.0",
   "private": true,
   "description": "xpanda monorepo - pure TypeScript implementation of the HarmonyOS .abc (Panda bytecode) decompiler",
   "workspaces": [
     "packages/xpanda-core",
     "packages/xpanda-cli",
     "packages/xpanda-mcp",
-    "packages/xpanda-web"
+    "packages/xpanda-web",
+    "packages/panda-asm"
   ],
   "scripts": {
     "gen:opcodes": "yarn workspace xpanda-core gen:opcodes",
-    "typecheck": "yarn workspace xpanda-core typecheck && yarn workspace xpanda-cli typecheck && yarn workspace xpanda-mcp typecheck && yarn workspace xpanda-web typecheck",
-    "test": "yarn workspace xpanda-core test && yarn workspace xpanda-cli test",
+    "typecheck": "yarn workspace xpanda-core typecheck && yarn workspace xpanda-cli typecheck && yarn workspace xpanda-mcp typecheck && yarn workspace xpanda-web typecheck && yarn workspace panda-asm typecheck",
+    "test": "yarn workspace xpanda-core test && yarn workspace xpanda-cli test && yarn workspace panda-asm test",
     "test:mcp": "yarn workspace xpanda-mcp test:mcp",
     "mcp": "yarn workspace xpanda-mcp mcp",
     "xpanda": "yarn workspace xpanda-cli xpanda",

@@ -28,7 +28,98 @@ interface IsaBean {
 }
 
 interface FormatDesc { enumName: string; size: number }
-interface InsDesc { name: string; code: number; format: string; flags: number }
+interface InsDesc {
+    name: string;
+    code: number;
+    format: string;
+    flags: number;
+    operands: OperandDesc[];
+}
+interface OperandDesc {
+    name: string;
+    kind: "v" | "imm" | "id";
+    bits: number;
+    signed: boolean;
+    float: boolean;
+}
+interface SigOperand { name: string; type: string }
+interface FormatOperand { kind: "v" | "imm" | "id"; bits: number }
+
+/** 解析 sig 的操作数列表(按签名顺序);类型如 "v1:out:any" / "imm:i32" / "string_id" */
+function parseSigOperands(sig: string): SigOperand[] {
+    const space = sig.indexOf(" ");
+    if (space < 0) return [];
+    const rest = sig.substring(space + 1).trim();
+    if (rest.length === 0) return [];
+    return rest.split(",").map((part) => part.trim()).filter((part) => part.length > 0).map((part) => {
+        const colon = part.indexOf(":");
+        if (colon < 0) return { name: part, type: "" };
+        return { name: part.substring(0, colon), type: part.substring(colon + 1) };
+    });
+}
+
+/** 解析 format 的操作数编码布局(按编码顺序,不含 opcode/prefix/none) */
+function parseFormatOperands(formatString: string): FormatOperand[] {
+    const tokens = formatString.split("_");
+    const result: FormatOperand[] = [];
+    let idx = 0;
+    while (idx < tokens.length) {
+        const token = tokens[idx];
+        if (token === "op" || token === "pref" || token === "none") {
+            idx++;
+            continue;
+        }
+        const match = /^(v|imm|id)\d*$/.exec(token);
+        if (match) {
+            const bits = parseInt(tokens[idx + 1], 10);
+            if (!Number.isFinite(bits)) throw new Error(`format '${formatString}': missing width after '${token}'`);
+            result.push({ kind: match[1] as FormatOperand["kind"], bits });
+            idx += 2;
+            continue;
+        }
+        throw new Error(`format '${formatString}': unsupported token '${token}'`);
+    }
+    return result;
+}
+
+function sigOperandKind(operand: SigOperand): "v" | "imm" | "id" {
+    if (/^v\d*$/.test(operand.name)) return "v";
+    if (/^imm\d*$/.test(operand.name)) return "imm";
+    if (operand.name === "id" || operand.name.endsWith("_id")) return "id";
+    throw new Error(`sig operand '${operand.name}' is not v/imm/id`);
+}
+
+function immIsSigned(type: string): boolean {
+    return type === "i8" || type === "i16" || type === "i32";
+}
+
+function immIsFloat(type: string): boolean {
+    return type === "f32" || type === "f64";
+}
+
+/** 把 sig 与 format 的操作数按位置合并成编码布局(两者顺序必须一致) */
+function buildOperandLayout(ins: { sig: string }, formatString: string): OperandDesc[] {
+    const sigOperands = parseSigOperands(ins.sig);
+    const formatOperands = parseFormatOperands(formatString);
+    if (sigOperands.length !== formatOperands.length) {
+        throw new Error(`${ins.sig}: sig/format operand count mismatch for '${formatString}'`);
+    }
+    return formatOperands.map((formatOperand, index) => {
+        const sigOperand = sigOperands[index];
+        const kind = sigOperandKind(sigOperand);
+        if (kind !== formatOperand.kind) {
+            throw new Error(`${ins.sig}: operand ${index} kind mismatch ('${kind}' vs '${formatOperand.kind}')`);
+        }
+        return {
+            name: sigOperand.name,
+            kind,
+            bits: formatOperand.bits,
+            signed: kind === "imm" && immIsSigned(sigOperand.type),
+            float: kind === "imm" && immIsFloat(sigOperand.type),
+        };
+    });
+}
+
 
 // Mirrors the Java generation logic: parse the format string into a format enum name and parameter byte count
 function genFormatDesc(formatString: string): FormatDesc {
@@ -117,7 +208,13 @@ function main() {
                     if (value === undefined) throw new Error("unknown prefix " + ins.prefix);
                     opcode = (opcode << 8) | value;
                 }
-                instructions.push({ name, code: opcode, format: fd.enumName, flags });
+                instructions.push({
+                    name,
+                    code: opcode,
+                    format: fd.enumName,
+                    flags,
+                    operands: buildOperandLayout(ins, formatStr),
+                });
             }
         }
     }
@@ -150,6 +247,19 @@ function main() {
     }
     lines.push("};");
     lines.push("");
+    lines.push("export interface OpcodeOperand {");
+    lines.push("    /** Operand name from the instruction signature (e.g. 'v1', 'imm', 'string_id') */");
+    lines.push("    name: string;");
+    lines.push("    /** Operand kind: register / immediate / entity id */");
+    lines.push("    kind: 'v' | 'imm' | 'id';");
+    lines.push("    /** Encoded width in bits */");
+    lines.push("    bits: number;");
+    lines.push("    /** Immediate is signed (i8/i16/i32) */");
+    lines.push("    signed: boolean;");
+    lines.push("    /** Immediate is an IEEE-754 float (f64) */");
+    lines.push("    float: boolean;");
+    lines.push("}");
+    lines.push("");
     lines.push("export interface OpcodeInfo {");
     lines.push("    /** Instruction name, e.g. 'mov', 'wide.callrange' */");
     lines.push("    name: string;");
@@ -158,11 +268,17 @@ function main() {
     lines.push("    /** Format enum name, e.g. 'IMM8_V8', 'PREF_IMM16_V8' */");
     lines.push("    format: string;");
     lines.push("    flags: number;");
+    lines.push("    /** Operand layout in encoding order */");
+    lines.push("    operands: OpcodeOperand[];");
     lines.push("}");
     lines.push("");
     lines.push("export const OPCODES: OpcodeInfo[] = [");
     for (const ins of instructions) {
-        lines.push("    { name: " + JSON.stringify(ins.name) + ", code: " + ins.code + ", format: " + JSON.stringify(ins.format) + ", flags: 0x" + ins.flags.toString(16).toUpperCase() + " },");
+        const operands = ins.operands.map((o) => {
+            return "{ name: " + JSON.stringify(o.name) + ", kind: " + JSON.stringify(o.kind)
+                + ", bits: " + o.bits + ", signed: " + o.signed + ", float: " + o.float + " }";
+        }).join(", ");
+        lines.push("    { name: " + JSON.stringify(ins.name) + ", code: " + ins.code + ", format: " + JSON.stringify(ins.format) + ", flags: 0x" + ins.flags.toString(16).toUpperCase() + ", operands: [" + operands + "] },");
     }
     lines.push("];");
     lines.push("");
