@@ -30,7 +30,7 @@ Supported bytecode versions: `24.0.0.0` (backward compatible with `13.0.1.0`; Ar
 
 ## Monorepo layout
 
-The project is split into four npm-workspace packages under `packages/`:
+The project is split into four yarn-workspace packages under `packages/`:
 
 | Package | Purpose |
 |---|---|
@@ -42,13 +42,13 @@ The project is split into four npm-workspace packages under `packages/`:
 ## Install and use
 
 ```bash
-npm install
+yarn install
 ```
 
 CLI (run from the repository root):
 
 ```bash
-npx tsx packages/xpanda-cli/src/cli.ts decompile <file.abc|file.hap> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N]
+yarn tsx packages/xpanda-cli/src/cli.ts decompile <file.abc|file.hap> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N]
 ```
 
 | Option | Description |
@@ -71,23 +71,23 @@ Examples:
 
 ```bash
 # Full decompilation (with optimizer)
-npx tsx packages/xpanda-cli/src/cli.ts decompile app.abc -o out --quiet
+yarn tsx packages/xpanda-cli/src/cli.ts decompile app.abc -o out --quiet
 
 # Per-class parallelism for large files (worker_threads)
-npx tsx packages/xpanda-cli/src/cli.ts decompile app.abc -o out -j 4 --quiet
+yarn tsx packages/xpanda-cli/src/cli.ts decompile app.abc -o out -j 4 --quiet
 
 # Inspect raw output without optimization
-npx tsx packages/xpanda-cli/src/cli.ts decompile app.abc -o out --no-simplify --quiet
+yarn tsx packages/xpanda-cli/src/cli.ts decompile app.abc -o out --no-simplify --quiet
 
 # Print to the terminal
-npx tsx packages/xpanda-cli/src/cli.ts decompile app.abc --stdout --quiet
+yarn tsx packages/xpanda-cli/src/cli.ts decompile app.abc --stdout --quiet
 ```
 
 For large files, raise the heap limit and enable per-class parallelism:
 
 ```bash
 NODE_OPTIONS=--max-old-space-size=4096 \
-  npx tsx packages/xpanda-cli/src/cli.ts decompile app.abc -o out -j 4 --quiet
+  yarn tsx packages/xpanda-cli/src/cli.ts decompile app.abc -o out -j 4 --quiet
 ```
 
 ## Programmatic API
@@ -110,8 +110,8 @@ for (const cls of pandaFile.getAllClasses()) {
 xpanda ships a built-in [Model Context Protocol](https://modelcontextprotocol.io) server, so AI clients such as Claude Code, OpenCode and Cursor can drive the decompiler — letting an agent analyze `.abc` and `.hap` files (HarmonyOS app packages containing bytecode and resources) on demand: load → browse classes → inspect metadata → decompile a single class → cross-check disassembly → search strings → query resources.
 
 ```bash
-npm run mcp          # start it (stdio transport)
-npm run test:mcp     # end-to-end test
+yarn mcp             # start it (stdio transport)
+yarn test:mcp        # end-to-end test
 ```
 
 | Tool | Purpose |
@@ -157,7 +157,7 @@ See [docs/MCP.md](docs/MCP.md) for the full tool reference.
 xpanda also ships a browser UI that decompiles `.abc` files and `.hap` app packages **entirely in the browser** — nothing is ever uploaded.
 
 ```bash
-npm run web          # vite dev server → http://localhost:5173
+yarn web             # vite dev server → http://localhost:5173
 ```
 
 - Drag & drop anywhere or pick files (`.abc` / `.hap`, multiple supported); haps are unpacked in-memory and every `.abc` entry gets its own class list;

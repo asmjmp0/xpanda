@@ -21,7 +21,7 @@ One pass, from the repo root (serial decompile of every class that has try entri
 a 1MB sample takes a couple of minutes):
 
 ```bash
-npx tsx .agents/skills/xpanda-try-restore-survey/scripts/try-survey.ts \
+yarn tsx .agents/skills/xpanda-try-restore-survey/scripts/try-survey.ts \
   packages/xpanda-core/test/resources/<sample>.abc
 # .hap: add --abc <entry> when the package holds several .abc entries
 ```
@@ -66,10 +66,10 @@ The survey only locates the delta; confirm ground truth per method with
 
 ```bash
 # is the handler really followed by the guard with no cleanup between?
-npx tsx .agents/skills/xpanda-structure-forensics/scripts/abc-inspect.ts \
+yarn tsx .agents/skills/xpanda-structure-forensics/scripts/abc-inspect.ts \
   <sample>.abc <Class> <method> --entries --plans --cfg <handlerPC> <guardEndPC>
 # map a decompiled function to its bytecode method by a string literal
-npx tsx .agents/skills/xpanda-structure-forensics/scripts/abc-inspect.ts \
+yarn tsx .agents/skills/xpanda-structure-forensics/scripts/abc-inspect.ts \
   <sample>.abc --find "some literal in the method"
 ```
 

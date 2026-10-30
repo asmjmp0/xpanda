@@ -3,7 +3,7 @@
  *   1. 单类输出与处理顺序/worker 数量无关(生成名计数器按类复位);
  *   2. worker 与主线程简化器结果一致。
  *
- * 运行:npx tsx test/parallel-consistency.test.ts(core 测试样本经相对路径引用)
+ * 运行:yarn tsx test/parallel-consistency.test.ts(core 测试样本经相对路径引用)
  * @Author: jmp0
  */
 import * as fs from "fs";

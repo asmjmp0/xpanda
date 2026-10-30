@@ -4,8 +4,8 @@
  * finally or a catch?" questions.
  *
  * Usage (from the repo root):
- *   npx tsx .agents/skills/xpanda-structure-forensics/scripts/compile-shapes.ts
- *   npx tsx .../compile-shapes.ts --out /tmp/my-shapes
+ *   yarn tsx .agents/skills/xpanda-structure-forensics/scripts/compile-shapes.ts
+ *   yarn tsx .../compile-shapes.ts --out /tmp/my-shapes
  *
  * The summary is heuristic: a `finally` handler has the `ldhole`/`noteq` rethrow
  * guard and usually comes in a pair with a pure rethrow bridge for the same try

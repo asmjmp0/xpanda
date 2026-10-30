@@ -1,6 +1,6 @@
 {
   "name": "xpanda-mcp",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "xpanda MCP Server - lets AI clients analyze HarmonyOS .abc / .hap files via Model Context Protocol",
   "main": "./src/server.ts",
   "exports": {

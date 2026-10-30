@@ -12,9 +12,9 @@ import { decompileClassesParallel, resolveJobs } from "./parallel/ParallelDecomp
 
 /**
  * CLI 入口
- *   npx tsx src/cli.ts help [decompile|unpack-index]
- *   npx tsx src/cli.ts decompile <file.abc|file.hap> [-o outDir] [--no-simplify] [--raw] [--stdout] [--quiet] [-j N]
- *   npx tsx src/cli.ts unpack-index <resources.index> [-o outDir] [--stdout]
+ *   yarn tsx src/cli.ts help [decompile|unpack-index]
+ *   yarn tsx src/cli.ts decompile <file.abc|file.hap> [-o outDir] [--no-simplify] [--raw] [--stdout] [--quiet] [-j N]
+ *   yarn tsx src/cli.ts unpack-index <resources.index> [-o outDir] [--stdout]
  * @Author: jmp0 */
 function printDecompileUsage(): void {
     console.log("Usage: xpanda decompile <file.abc|file.hap> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N]");

@@ -36,7 +36,7 @@ was asked to produce.
 Use `scripts/abc-inspect.ts` (run from the repo root):
 
 ```bash
-npx tsx .agents/skills/xpanda-structure-forensics/scripts/abc-inspect.ts \
+yarn tsx .agents/skills/xpanda-structure-forensics/scripts/abc-inspect.ts \
   packages/xpanda-core/test/resources/amcl1.0.6.abc "L&entry/src/main/ets/r5/l8&;" '#*#q776' --entries --plans --cfg 14500 14620
 ```
 
@@ -59,11 +59,11 @@ evidence for "can this write be dropped"). Two more entry points:
 
 ```bash
 # which methods touch a string literal - maps a decompiled function to #*#method
-npx tsx .agents/skills/xpanda-structure-forensics/scripts/abc-inspect.ts \
+yarn tsx .agents/skills/xpanda-structure-forensics/scripts/abc-inspect.ts \
   packages/xpanda-core/test/resources/amcl1.0.6.abc --find "解压条目CRC"
 
 # list a class's methods with code size / try count (no method argument needed)
-npx tsx .agents/skills/xpanda-structure-forensics/scripts/abc-inspect.ts \
+yarn tsx .agents/skills/xpanda-structure-forensics/scripts/abc-inspect.ts \
   packages/xpanda-core/test/resources/amcl1.0.6.abc "L&entry/src/main/ets/r5/l8&;" --list
 ```
 
@@ -79,7 +79,7 @@ decompiled class for correlation with what the output actually shows.
 function's try entries:
 
 ```bash
-npx tsx .agents/skills/xpanda-structure-forensics/scripts/compile-shapes.ts
+yarn tsx .agents/skills/xpanda-structure-forensics/scripts/compile-shapes.ts
 # optional: --out <dir>   (defaults to <tmp>/xpanda-finally-shapes)
 ```
 
@@ -188,8 +188,8 @@ unrecoverable.
 
 ## 7. Verify with a measured blast radius
 
-1. `npm test` (snapshots + Babel re-parse + cli serial/parallel consistency).
-2. `npm run typecheck`.
+1. `yarn test` (snapshots + Babel re-parse + cli serial/parallel consistency).
+2. `yarn typecheck`.
 3. Full sample: decompile `packages/xpanda-core/test/resources/amcl1.0.6.abc` to
    `/tmp/out-new` (serial or `-j 4`) and diff against a baseline build of the same
    tree without your change. Review **every** changed class; an unexplained diff means

@@ -10,7 +10,7 @@
  *     hole-sentinel / guard instructions marked
  *
  * Usage (from the repo root):
- *   npx tsx .agents/skills/xpanda-structure-forensics/scripts/abc-inspect.ts \
+ *   yarn tsx .agents/skills/xpanda-structure-forensics/scripts/abc-inspect.ts \
  *     <file.abc|file.hap> <className> [methodName] [options]
  *
  *   --list                 list the class's methods and try-block counts

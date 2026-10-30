@@ -2,7 +2,7 @@
 #
 # xpanda-web deploy script (local static hosting):
 #   1) remove packages/xpanda-web/dist
-#   2) build with vite (npm run build)
+#   2) build with vite (yarn build)
 #   3) empty /var/www/xpanda (rm -rf of non-hidden entries; the directory itself is kept)
 #  -- only reached after a successful build, so a failed build never touches the live site
 #   4) copy dist contents into /var/www/xpanda
@@ -20,7 +20,7 @@ echo "==> Cleaning $DIST_DIR"
 rm -rf "$DIST_DIR"
 
 echo "==> Building xpanda-web"
-(cd "$PKG_DIR" && npm run build)
+(cd "$PKG_DIR" && yarn build)
 
 if [ ! -d "$DIST_DIR" ]; then
     echo "error: build produced no $DIST_DIR" >&2

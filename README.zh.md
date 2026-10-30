@@ -30,7 +30,7 @@
 
 ## 目录结构
 
-项目拆分为四个 npm workspaces 子包,位于 `packages/` 下:
+项目拆分为四个 yarn workspaces 子包,位于 `packages/` 下:
 
 | 子包 | 职责 |
 |---|---|
@@ -42,13 +42,13 @@
 ## 安装与使用
 
 ```bash
-npm install
+yarn install
 ```
 
 CLI(在仓库根目录执行):
 
 ```bash
-npx tsx packages/xpanda-cli/src/cli.ts decompile <file.abc|file.hap> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N]
+yarn tsx packages/xpanda-cli/src/cli.ts decompile <file.abc|file.hap> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N]
 ```
 
 | 参数 | 说明 |
@@ -70,23 +70,23 @@ hap 支持说明:
 
 ```bash
 # 完整反编译(含优化器)
-npx tsx packages/xpanda-cli/src/cli.ts decompile app.abc -o out --quiet
+yarn tsx packages/xpanda-cli/src/cli.ts decompile app.abc -o out --quiet
 
 # 大文件按类并行(worker_threads)
-npx tsx packages/xpanda-cli/src/cli.ts decompile app.abc -o out -j 4 --quiet
+yarn tsx packages/xpanda-cli/src/cli.ts decompile app.abc -o out -j 4 --quiet
 
 # 只看反编译结果,不优化
-npx tsx packages/xpanda-cli/src/cli.ts decompile app.abc -o out --no-simplify --quiet
+yarn tsx packages/xpanda-cli/src/cli.ts decompile app.abc -o out --no-simplify --quiet
 
 # 输出到终端
-npx tsx packages/xpanda-cli/src/cli.ts decompile app.abc --stdout --quiet
+yarn tsx packages/xpanda-cli/src/cli.ts decompile app.abc --stdout --quiet
 ```
 
 大文件建议加堆并开启按类并行:
 
 ```bash
 NODE_OPTIONS=--max-old-space-size=4096 \
-  npx tsx packages/xpanda-cli/src/cli.ts decompile app.abc -o out -j 4 --quiet
+  yarn tsx packages/xpanda-cli/src/cli.ts decompile app.abc -o out -j 4 --quiet
 ```
 
 ## 编程 API
@@ -109,8 +109,8 @@ for (const cls of pandaFile.getAllClasses()) {
 xpanda 内置 [Model Context Protocol](https://modelcontextprotocol.io) Server,可把反编译能力接入 Claude Code、OpenCode、Cursor 等 AI 客户端,让 agent 按需、增量地分析 `.abc` 与 `.hap`(应用包,内含字节码与资源表):加载 → 浏览类 → 查看元数据 → 反编译单类 → 反汇编对照 → 搜索字符串 → 查询资源。
 
 ```bash
-npm run mcp          # 启动(stdio transport)
-npm run test:mcp     # 端到端测试
+yarn mcp             # 启动(stdio transport)
+yarn test:mcp        # 端到端测试
 ```
 
 | 工具 | 作用 |
@@ -156,7 +156,7 @@ opencode mcp add xpanda -- npx tsx /absolute/path/to/xpanda/packages/xpanda-mcp/
 xpanda 还带一个浏览器 UI,`.abc` 文件与 `.hap` 应用包**全程在浏览器内**反编译,不向服务器上传任何数据。
 
 ```bash
-npm run web          # vite dev server → http://localhost:5173
+yarn web             # vite dev server → http://localhost:5173
 ```
 
 - 任意位置拖拽或选择文件(`.abc` / `.hap`,支持多选);hap 在内存中解包,每个 `.abc` 条目有独立的类列表;

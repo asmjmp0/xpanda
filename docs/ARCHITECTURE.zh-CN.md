@@ -6,7 +6,7 @@
 
 输入 `.abc` 字节码(或 `.hap` 应用包),输出可读的 JavaScript 源码。内置 AST 优化器负责清理寄存器临时变量、还原函数/类/控制流语法和模块(import/export)语法。
 
-> 路径约定:本仓库为 npm workspaces monorepo。除特别注明外,本文的 `src/`、`scripts/`、`resources/`、`test/` 均相对于 `packages/xpanda-core/`;CLI 位于 `packages/xpanda-cli/`,MCP Server 位于 `packages/xpanda-mcp/`。
+> 路径约定:本仓库为 yarn workspaces monorepo。除特别注明外,本文的 `src/`、`scripts/`、`resources/`、`test/` 均相对于 `packages/xpanda-core/`;CLI 位于 `packages/xpanda-cli/`,MCP Server 位于 `packages/xpanda-mcp/`。
 
 ## 1. 总览
 
@@ -97,7 +97,7 @@ JavaScript 源码(落盘 / stdout / 编程 API)
 
 ### 6.1 Opcode 表(`opcodes.ts`)—— 生成文件,勿手改
 
-由 `scripts/gen-opcodes.ts` 依据 `resources/isa.yaml` 生成(`npm run gen:opcodes`)。包含 `BYTECODE_VERSION`、每条指令的标志位(`OPCODE_FLAG`,如 JUMP / CONDITIONAL / TYPE_ID / ACC_READ / ACC_WRITE)、格式参数大小与查找表(`OPCODES`、`OPCODE_BY_CODE`)。最后一条指令编码为 **251**;前缀指令编码为 `(idx << 8) | prefixByte`,因此首字节 `>= 251` 即为 2 字节 opcode。
+由 `scripts/gen-opcodes.ts` 依据 `resources/isa.yaml` 生成(`yarn gen:opcodes`)。包含 `BYTECODE_VERSION`、每条指令的标志位(`OPCODE_FLAG`,如 JUMP / CONDITIONAL / TYPE_ID / ACC_READ / ACC_WRITE)、格式参数大小与查找表(`OPCODES`、`OPCODE_BY_CODE`)。最后一条指令编码为 **251**;前缀指令编码为 `(idx << 8) | prefixByte`,因此首字节 `>= 251` 即为 2 字节 opcode。
 
 ### 6.2 统一指令模型(`PandaInstruction.ts`)
 
@@ -305,8 +305,8 @@ normalizeDeclarations
 ### 11.2 CLI —— `packages/xpanda-cli/src/cli.ts`
 
 ```bash
-npx tsx packages/xpanda-cli/src/cli.ts decompile <file.abc|file.hap> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N]
-npx tsx packages/xpanda-cli/src/cli.ts unpack-index <resources.index> [-o outDir] [--stdout]
+yarn tsx packages/xpanda-cli/src/cli.ts decompile <file.abc|file.hap> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N]
+yarn tsx packages/xpanda-cli/src/cli.ts unpack-index <resources.index> [-o outDir] [--stdout]
 ```
 
 - 任意 ZIP 容器(以 `ZipFile.isZip` 判定,不限于 `.hap`)走 HAP 流程:打印 `module.json` 摘要,把每个 `.abc` 条目反编译到 `outDir/<条目路径>/`,写出 `resources.json`,并解出 `resources/` 资源文件(对条目名做路径穿越防护)。
@@ -342,9 +342,9 @@ React + Vite 单页应用,在**浏览器内**完成全部反编译(纯前端,不
 - **高亮**(`src/highlight.ts`):零依赖的按行 JavaScript 高亮器;`src/format.ts` 与 CLI 的 `io.ts` 共用类名 demangle 规则。
 
 ```bash
-npm run web                            # vite dev server → http://localhost:5173
-npm run build --workspace xpanda-web   # 生产构建
-npm run preview --workspace xpanda-web # 预览构建产物
+yarn web                               # vite dev server → http://localhost:5173
+yarn workspace xpanda-web build        # 生产构建
+yarn workspace xpanda-web preview      # 预览构建产物
 ```
 
 ## 14. 验证与测试
@@ -361,15 +361,15 @@ npm run preview --workspace xpanda-web # 预览构建产物
 - 并行一致性测试对选定类逐字节比较串行与 `-j` 输出。
 
 ```bash
-npm test
-npm run typecheck
+yarn test
+yarn typecheck
 ```
 
 更新 `test/expected/` 快照前,先确认输出变化**符合预期** —— 不要为了让测试通过而直接覆盖快照,并在提交说明中解释变化。
 
 ## 15. 约束与注意事项
 
-1. **`src/disasm/opcodes.ts` 是生成文件** —— 改 `resources/isa.yaml` 后运行 `npm run gen:opcodes`,不要手改。
+1. **`src/disasm/opcodes.ts` 是生成文件** —— 改 `resources/isa.yaml` 后运行 `yarn gen:opcodes`,不要手改。
 2. **降级路径是设计行为**,不是 bug:单方法 > 2000 基本块(`MAX_STRUCTURED_BLOCKS`)、指令 kind 未注册、`jeq` 家族指令,三者都降级到 `SimpleAnalysis`(或占位函数体),不会中断整个类或文件。结构展开规模超过 `MAX_STRUCTURED_STATEMENTS` 时先做 §7.3 步骤 6 的区域级共享尾块消除,仍超限才降级。
 3. 前缀指令占 2 字节(首字节 ≥ 251)。新增指令 kind 用 isa.yaml `sig` 的首词登记(如 `wide.callrange`)。
 4. **单类输出必须是该类的纯函数** —— 不要引入跨类的可变状态(全局计数器、按偏移共享的可变缓存),否则 `-j` 并行结果与串行不一致。生成名计数器按类复位。

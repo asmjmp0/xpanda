@@ -9,7 +9,7 @@ import * as path from "path";
  *   依次调用全部 7 个工具并校验结果。
  *   同时隐式校验 stdout 纯净性:任何混入 stdout 的非 JSON 行都会导致解析失败。
  *
- * 运行:npm run test:mcp
+ * 运行:yarn test:mcp
  */
 
 const PROTOCOL_VERSION = "2025-06-18";
@@ -25,7 +25,7 @@ function findTxBin(): string {
         const candidate = path.join(dir, "node_modules", ".bin", "tsx");
         if (fs.existsSync(candidate)) return candidate;
         const parent = path.dirname(dir);
-        if (parent === dir) throw new Error("tsx not found: run npm install first");
+        if (parent === dir) throw new Error("tsx not found: run yarn install first");
         dir = parent;
     }
 }

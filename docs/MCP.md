@@ -5,9 +5,9 @@
 ## Quick Start
 
 ```bash
-npm install                       # install dependencies (including @modelcontextprotocol/sdk)
-npm run mcp                       # start directly (stdio transport)
-npm run test:mcp                  # end-to-end test (subprocess simulating an MCP client)
+yarn install                      # install dependencies (including @modelcontextprotocol/sdk)
+yarn mcp                          # start directly (stdio transport)
+yarn test:mcp                     # end-to-end test (subprocess simulating an MCP client)
 ```
 
 ### Client Integration

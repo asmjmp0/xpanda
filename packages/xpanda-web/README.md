@@ -49,12 +49,12 @@ Project repository / 项目仓库: <https://github.com/asmjmp0/xpanda>
 ## Run
 
 ```bash
-npm install          # from the repo root (npm workspaces)
-npm run web          # vite dev server → http://localhost:5173
+yarn install         # from the repo root (yarn workspaces)
+yarn web             # vite dev server → http://localhost:5173
 
 # production build / preview
-npm run build --workspace xpanda-web
-npm run preview --workspace xpanda-web
+yarn workspace xpanda-web build
+yarn workspace xpanda-web preview
 ```
 
 ## Structure

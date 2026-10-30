@@ -2,7 +2,7 @@
  * xpanda MCP Server 入口(stdio transport)
  *
  * 启动方式:
- *   npx tsx src/mcp/server.ts
+ *   yarn tsx src/mcp/server.ts
  *
  * 客户端接入(Claude Code / Cursor 等):
  *   {

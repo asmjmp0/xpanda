@@ -15,7 +15,7 @@
  * and are reported as census, not findings - see SKILL.md for the taxonomy.
  *
  * Usage (from the repo root):
- *   npx tsx .agents/skills/xpanda-try-restore-survey/scripts/try-survey.ts \
+ *   yarn tsx .agents/skills/xpanda-try-restore-survey/scripts/try-survey.ts \
  *     <file.abc|file.hap> [--abc <entry>]
  * @Author: jmp0
  */
