@@ -35,7 +35,7 @@ patchFile.insertInstructions("L_GLOBAL;", "foo", 20, assemble(`
 `));
 
 // 5) AOP 两段式:prepareMethodHead 返回随机 hook 名,patchMethodHead 内部
-//    编译 hook(es2abc)→ merge → 插入函数头前导
+//    编译 hook(es2abc)→ 把 hook class 搬进目标 abc → 插入函数头前导
 const hookName = patchFile.prepareMethodHead("L&entry/src/main/ets/target&;", "#*#target");
 patchFile.patchMethodHead(hookName, `function ${hookName}(args) {
     console.log("recorded arguments:", args);
@@ -43,7 +43,7 @@ patchFile.patchMethodHead(hookName, `function ${hookName}(args) {
 }`, { /* es2abc: 可选,缺省按操作系统自动定位 assets/bin/<os>/es2abc[.exe] */ });
 
 // 同一个 hook 挂多个函数:用同一个 hookGlobalName 多 prepare 几次,
-// 然后 patchMethodHeads 一次编译/merge、逐个插入
+// 然后 patchMethodHeads 一次编译/搬运、逐个插入
 const multiHook = "aop_multi_hook";
 patchFile.prepareMethodHead(className, "#*#targetA", { hookGlobalName: multiHook });
 patchFile.prepareMethodHead(className, "#*#targetB", { hookGlobalName: multiHook });
@@ -60,7 +60,7 @@ writeFileSync("app.patched.abc", patchFile.toBytes());
 
 ## AOP 工作流
 
-目标 abc 先由你自己的构建流程产出(es2abc 编译/merge 的应用包),然后:
+目标 abc 先由你自己的构建流程产出(es2abc 编译的普通 abc 或 merge 后的应用包),然后:
 
 ```ts
 const patchFile = PandaPatchFile.loadFile("app.abc");
@@ -74,16 +74,17 @@ patchFile.patchMethodHead(hookName, `function ${hookName}(args) {
 writeFileSync("app.patched.abc", patchFile.toBytes());
 ```
 
-`patchMethodHead` 的行为:
+`patchMethodHead` 的行为(只有一种注入方式:**搬运 hook class**):
 
 1. `prepareMethodHead(className, methodName)` 校验目标(存在、非 generator;async 支持)并返回 hook 名;
    同一个 hook 名可以给多个方法各调用一次(显式传同一个 `hookGlobalName`);
 2. `patchMethodHead(hookName, hookSource)`(单目标)或 `patchMethodHeads(...)`(多目标,返回全部结果):
-   - 把 hook 源码包装成 module,并自动追加 `globalThis.<hookName> = <hookName>;`;
-   - 读取目标 abc 的 bytecode 版本,映射到 es2abc 的 `--target-api-version`;
-   - 用**相同版本**编译 hook module(12.0.2.0→12、12.0.6.0→13、13.0.1.0→18、24.0.0.0→24;未知版本自动探测);
-   - 用**相同版本**执行 es2abc abc-input merge(否则 merge 会把结果升级成工具默认版本,例如 13.0.1.0 → 24.0.0.0);
-   - 合并后校验版本未变化,再在方法头插入 `getunmappedargs → 取全局 hook → callarg1 → res[0] === 0 → return res[1]`;
+   - 读取目标 abc 的 bytecode 版本,映射到 es2abc 的 `--target-api-version`,用**相同版本**把 hook 源码
+     编译成带独立 module record 的 abc(12.0.2.0→12、12.0.6.0→13、13.0.1.0→18、24.0.0.0→24;未知版本自动探测);
+   - 把这个 **hook class 整体搬到目标 abc 的同一 region**:类实体 + 方法实体 + code + 字符串 + literal array
+     (含嵌套)全部重定位,class / method 索引表追加到文件末尾,hook class 的 module 元数据字段被丢弃;
+   - 在方法头插入 `getunmappedargs → definefunc <hook_method_id> → callarg1 → res[0] === 0 → return res[1]`。
+     函数按方法 id **直接引用**,不经过 `globalThis`,也不依赖 hook module 初始化;
 3. 方法没有局部寄存器时自动**扩帧**并把参数寄存器整体后移(同步修正跳转、try/catch);
 4. IC slot 从方法已有 slot 之后分配;
 5. async 方法支持(见下方「异步函数 hook」):前导插在 `asyncfunctionenter; sta vCtx` 之后,
@@ -91,10 +92,17 @@ writeFileSync("app.patched.abc", patchFile.toBytes());
    async 的 catch-all try 内,hook 抛异常会走 `asyncfunctionreject`;
 6. generator 方法不支持(函数头在创建/恢复路径上的语义不同)。
 
+要求:
+
+- 目标 region 的 proto index table 必须无效(bytecode >= 12.0.1.0);
+- hook 源码必须声明 `function <hookName>(...)`(表达式形式不支持);
+- 目标类与 hook class 必须落在同一个 index region。
+
 es2abc 查找顺序:显式 `{ es2abc }` → `XPANDA_ES2ABC` → 仓库 `assets/bin/<os>/es2abc[.exe]` → `PATH`。
-目标 filesInfo 默认从 `L&...&;` record 推导(单 record 目标可直接用);多 record 应用请传
-`patchMethodHead(..., { targetFilesInfo })`。真实应用中目标模块需要确保 hook module 已初始化
-(注入代码按全局名查找),否则会抛 `ReferenceError`。
+
+> 为什么不注入 ESM `import`:`ldexternalmodulevar` 依赖 module record 的 import/export 表
+> 和运行时模块管理器。搬运后的 class 与目标方法在同一个 region,前导用 `definefunc <method_id>`
+> 直接取函数(等价于模块内绑定),不占用全局对象,也不需要模块初始化。
 
 ## Hook 返回协议
 
@@ -115,7 +123,7 @@ hook(arguments) -> [code, value]
 注入的前导等价于:
 
 ```js
-const res = hook(arguments);   // getunmappedargs → tryldglobalbyname → callarg1
+const res = hook(arguments);   // getunmappedargs → definefunc → callarg1
 if (res[0] === 0) {            // ldobjbyvalue res[0] → ldai 0 → stricteq
     return res[1];             // ldobjbyvalue res[1] → return
 }
@@ -176,7 +184,7 @@ append-only patcher:
 
 - 原始字节不变,新实体追加到文件末尾(4 字节对齐);
 - 定长指针原位改写(方法的 CODE tag、类索引表项);
-- 需要改长度的实体(类实体,用于加方法)整体复制到末尾,再重定位引用它的索引表;
+- 需要改长度的实体(类实体,用于加方法 / 搬运 hook class)整体复制到末尾,再重定位引用它的索引表;
 - 写回时更新 `file_size` 与 Adler32 checksum。
 
 ## 当前支持范围(v0)
@@ -186,6 +194,7 @@ append-only patcher:
 - ✅ 新增字符串 / 字符串 id(`addString` / `addStringId`)
 - ✅ 在任意指令边界插入汇编字节码(`insertInstructions`):自动修正相对跳转、try/catch 范围、numVregs
 - ✅ AOP 函数头 hook:`prepareMethodHead` + `patchMethodHead(s)`,支持一个 hook 挂多个函数、多个 hook、async 函数
+- ✅ AOP hook 统一走 class 搬运:把 es2abc 编译出的 hook class 整体搬进目标 abc(merge / 非 merge 目标均可),用 `definefunc` 直接调用(不绑定 globalThis)
 - ✅ 同一次会话里连续新增方法 / 追加字符串 / 替换代码 / 连续插入(代码模型会累积最新版本)
 - ✅ 无修改时字节级 round-trip
 - ✅ 已在 bytecode 11.0.2.0 / 12.0.2.0 / 13.0.1.0 / 24.0.0.0(merged abc)上验证
@@ -193,7 +202,8 @@ append-only patcher:
 
 限制:
 
-- ⏳ 新增类 / 新增 proto / 新增 literal array(后续)
+- ⏳ 新增任意类 / 新增 proto / 新增 literal array(目前仅 AOP 的 hook class 搬运支持 class/literal array 导入)
+- ⚠️ hook class 搬运要求目标 proto index table 无效(>= 12.0.1.0),且 class 无父类/接口;module 元数据字段会被丢弃
 - ⚠️ 替换代码/插入代码时保留原 debug info(行号可能过时,不影响执行)
 - ⚠️ 插入的指令会真实执行:片段若改写 `acc`/寄存器,需要自行保证不破坏后续代码的寄存器状态
 - ⚠️ 插入片段内部的相对跳转只能指向片段内部(或片段末尾);引用原有指令的跳转需要自行换算,当前直接拒绝

@@ -19,7 +19,7 @@ import {
     assemble, assembleInstruction, decodeInstructions, encodeInstructionWithOpcode,
 } from "xpanda-core";
 import type { DecodedInstruction, OpcodeInfo } from "xpanda-core";
-import { concatBytes, encodeStringEntity, readUleb128, writeUleb128 } from "./codec";
+import { concatBytes, encodeStringEntity, readStringEntity, readUleb128, writeUleb128 } from "./codec";
 import { encodeMethodCode, type CatchBlockInput, type MethodCodeInput, type TryBlockInput } from "./MethodCode";
 
 export type { CatchBlockInput, MethodCodeInput, TryBlockInput };
@@ -27,7 +27,11 @@ export type { CatchBlockInput, MethodCodeInput, TryBlockInput };
 const HEADER_CHECKSUM_OFF = 8;
 const HEADER_VERSION_OFF = 12;
 const HEADER_FILE_SIZE_OFF = 16;
+const HEADER_NUM_CLASSES_OFF = 28;
+const HEADER_CLASS_IDX_OFF = 32;
 const INDEX_HEADER_SIZE = 40;
+const INDEX_HEADER_CLASS_IDX_SIZE_OFF = 8;
+const INDEX_HEADER_CLASS_IDX_OFF_OFF = 12;
 const INDEX_HEADER_METHOD_IDX_SIZE_OFF = 16;
 const INDEX_HEADER_METHOD_IDX_OFF_OFF = 20;
 
@@ -120,14 +124,6 @@ export interface PatchMethodHeadSourceOptions {
     /** es2abc 可执行文件路径;缺省读 XPANDA_ES2ABC,再回退到仓库 assets/bin/<os>/es2abc[.exe] / PATH */
     es2abc?: string;
     /**
-     * 目标 abc 的 filesInfo 行(不含 hook 行)。
-     * 缺省从当前 abc 的 `L&...&;` record 推导(单 record 目标可直接工作;
-     * 多 record 应用建议显式传入,字段格式见 build.sh)。
-     */
-    targetFilesInfo?: string[];
-    /** hook module 的 record 名;缺省 `&xpanda/hook/<hookGlobalName>&` */
-    hookRecordName?: string;
-    /**
      * 目标 bytecode 版本对应的 es2abc `--target-api-version`。
      * 缺省按目标 abc 的版本自动映射(12.0.2.0→12、12.0.6.0→13、13.0.1.0→18、24.0.0.0→24),
      * 未知版本会探测 es2abc 的版本映射。
@@ -167,6 +163,20 @@ interface PreparedTarget {
     insertionPC?: number;
 }
 
+/** 已搬进目标 abc 的 hook 函数:region 内方法 id + hook 名(用于结果回传) */
+interface HookLoader {
+    methodId: number;
+    name: string;
+}
+
+/** hook class 搬运时,源实体偏移 → 目标实体偏移/id 的缓存 */
+interface ClassImportCaches {
+    stringEntities: Map<number, number>;
+    stringIds: Map<number, number>;
+    literalEntities: Map<number, number>;
+    literalIds: Map<number, number>;
+}
+
 export interface InsertInstructionsOptions {
     /**
      * atPC 恰好等于 try 起点时,插入的代码是否归入 try:
@@ -188,6 +198,10 @@ export class PandaPatchFile {
     private readonly classOverrides = new Map<PandaClass, ClassOverride>();
     /** 方法代码的内存覆盖(多次编辑时基于最新版本,而不是载入时快照) */
     private readonly methodCodeOverrides = new Map<PandaMethod, MethodCode>();
+    /** 每个 region 的类索引表当前状态(追加新类后 size/off 已过时) */
+    private readonly classTableState = new Map<PandaClass["indexHeader"], { offset: number; size: number }>();
+    /** 文件头全局类索引表当前状态 */
+    private headerClassTableState: { offset: number; size: number } | null = null;
     /** prepareMethodHead 预约的 hook 名 → 目标方法列表(同一个 hook 可挂多个函数) */
     private readonly preparedMethodHeads = new Map<string, PreparedTarget[]>();
 
@@ -205,7 +219,7 @@ export class PandaPatchFile {
         return new PandaPatchFile(new Uint8Array(fs.readFileSync(filePath)));
     }
 
-    /** 用新的 abc 字节重置内部状态(merge 之后重新加载) */
+    /** 用新的 abc 字节重置内部状态 */
     private reset(data: Uint8Array): void {
         const input = data.slice();
         this.pf = new PandaFile(input);
@@ -216,6 +230,8 @@ export class PandaPatchFile {
         this.indexHeaderEnds.clear();
         this.classOverrides.clear();
         this.methodCodeOverrides.clear();
+        this.classTableState.clear();
+        this.headerClassTableState = null;
         this.entityTableState.clear();
         this.preparedMethodHeads.clear();
         for (const indexHeader of this.pf.indexHeaders) {
@@ -418,12 +434,13 @@ export class PandaPatchFile {
     }
 
     /**
-     * 内部:在已 merge 的 abc 上插入 gadget 前导(hook 已由 patchMethodHead 编译并合并)。
+     * 内部:在目标方法头插入 hook 前导。
+     * hook 函数是搬进目标 abc 的 hook class 方法,用 `definefunc` 按方法 id 直接取函数。
      */
     private applyMethodHeadPrologue(
         className: string,
         methodName: string,
-        hookGlobalName: string,
+        hook: HookLoader,
         asyncContextRegister?: number,
         insertionPC = 0,
     ): InsertInstructionsResult {
@@ -459,9 +476,7 @@ export class PandaPatchFile {
             free = free.concat(collectFree(numVregs, oldNumVregs));
         }
 
-        const { id: hookStringId } = this.addStringId(className, hookGlobalName);
-
-        // IC slot 分配(tryldglobalbyname 1 槽,ldobjbyvalue 2 槽,stricteq 1 槽)
+        // IC slot 分配(definefunc 1 槽,ldobjbyvalue 2 槽,stricteq 1 槽)
         let base = maxIcSlot(preparedInstructions) + 1;
         if (base + 8 > 250) base = 0;
         let nextSlot = base;
@@ -480,7 +495,7 @@ export class PandaPatchFile {
         const head = concatBytes([
             assemble("getunmappedargs"),
             assembleInstruction("sta", [vResult]),
-            assembleInstruction("tryldglobalbyname", [slotGlobal, hookStringId]),
+            assembleInstruction("definefunc", [slotGlobal, hook.methodId, 1]),
             assembleInstruction("callarg1", [1, vResult]),
             assembleInstruction("sta", [vResult]),
             assemble("ldai 0"),
@@ -505,7 +520,7 @@ export class PandaPatchFile {
         const result = this.insertInstructions(className, methodName, insertionPC, snippet, {
             tryInclusion: asyncContextRegister !== undefined ? "inside" : "outside",
         });
-        return { ...result, hookGlobalName };
+        return { ...result, hookGlobalName: hook.name };
     }
 
     /**
@@ -557,8 +572,8 @@ export class PandaPatchFile {
     }
 
     /**
-     * 两段式 AOP 第二步:编译 hook 源码 → 与当前 abc merge → 重新加载 → 给所有预约的方法插入前导。
-     * 同一个 hook 名预约了多个方法时,这里只编译/merge 一次,然后逐个插入。
+     * 两段式 AOP 第二步:编译 hook 源码 → 把 hook class 搬进目标 abc → 给所有预约的方法插入前导。
+     * 同一个 hook 名预约了多个方法时,这里只编译/搬运一次,然后逐个插入。
      */
     patchMethodHeads(hookGlobalName: string, hookSource: string, options: PatchMethodHeadSourceOptions = {}): InsertInstructionsResult[] {
         const targets = this.preparedMethodHeads.get(hookGlobalName);
@@ -566,67 +581,14 @@ export class PandaPatchFile {
             throw new PandaPatchError(`unknown hook name '${hookGlobalName}'; call prepareMethodHead first`);
         }
         const es2abc = resolveEs2abc(options.es2abc);
-        // hook / merge 必须使用与目标 abc 相同的字节码版本,否则 merge 会把结果升级到工具默认版本
+        // hook 必须使用与目标 abc 相同的字节码版本
         const targetBcVersion = this.pf.header.versionString();
         const targetApiVersion = resolveTargetApiVersion(es2abc, targetBcVersion, options.targetApiVersion);
         const apiVersionArgs = ["--target-api-version", String(targetApiVersion)];
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "panda-asm-"));
         try {
-            // 1) 编译 hook module(与目标同一 bytecode 版本)
-            const hookSourcePath = path.join(tempDir, "hook.js");
-            fs.writeFileSync(hookSourcePath, buildHookModuleSource(hookGlobalName, hookSource));
-            const hookAbcPath = path.join(tempDir, "hook.abc");
-            const hookRecordName = options.hookRecordName ?? `&xpanda/hook/${hookGlobalName}&`;
-            runEs2abc(es2abc, [
-                "--module", "--merge-abc", ...apiVersionArgs,
-                "--record-name", hookRecordName,
-                "--output", hookAbcPath,
-                hookSourcePath,
-            ]);
-
-            // 2) merge 当前 abc + hook.abc
-            const baseAbcPath = path.join(tempDir, "base.abc");
-            fs.writeFileSync(baseAbcPath, this.toBytes());
-            const targetLines = options.targetFilesInfo ?? this.deriveTargetFilesInfo(baseAbcPath);
-            if (targetLines.length === 0) {
-                throw new PandaPatchError(
-                    "cannot derive target filesInfo from this abc (no `L&...&;` records); pass targetFilesInfo explicitly");
-            }
-            const hookImportPath = `xpanda/hook/${hookGlobalName}.js`;
-            const filesInfoPath = path.join(tempDir, "filesInfo.txt");
-            fs.writeFileSync(filesInfoPath, [
-                ...targetLines,
-                `${hookAbcPath};${hookRecordName};esm;entry|entry|1.0.0|${hookImportPath};entry;false;js`,
-            ].join("\n") + "\n");
-
-            const mergedAbcPath = path.join(tempDir, "merged.abc");
-            runEs2abc(es2abc, [
-                "--module", "--merge-abc", "--enable-abc-input", ...apiVersionArgs,
-                "--output", mergedAbcPath,
-                `@${filesInfoPath}`,
-            ]);
-
-            // 3) 校验版本未被升级;保留其它已预约的 hook,然后用 merge 结果重置
-            const merged = new Uint8Array(fs.readFileSync(mergedAbcPath));
-            const mergedVersion = `${merged[12]}.${merged[13]}.${merged[14]}.${merged[15]}`;
-            if (mergedVersion !== targetBcVersion) {
-                throw new PandaPatchError(
-                    `merged bytecode version ${mergedVersion} does not match target ${targetBcVersion}; `
-                    + "pass targetApiVersion explicitly");
-            }
-            const remaining = new Map(this.preparedMethodHeads);
-            remaining.delete(hookGlobalName);
-            this.reset(merged);
-            for (const [name, list] of remaining) {
-                this.preparedMethodHeads.set(name, list);
-            }
-            return targets.map((target) => this.applyMethodHeadPrologue(
-                target.className,
-                target.methodName,
-                hookGlobalName,
-                target.asyncContextRegister,
-                target.insertionPC ?? 0,
-            ));
+            return this.patchMethodHeadsClass(
+                hookGlobalName, hookSource, targets, es2abc, apiVersionArgs, targetBcVersion, tempDir);
         } finally {
             if (options.keepTemp) {
                 console.log(`[panda-asm] temp dir kept: ${tempDir}`);
@@ -637,34 +599,338 @@ export class PandaPatchFile {
     }
 
     /**
+     * class 注入:es2abc 把 hook 源码编译成带独立 module record 的 abc,把这个 hook class
+     * (类实体 + 方法 + 字符串/literal array 依赖)整体搬到目标 abc 的同一 region,再用
+     * `definefunc` 直接引用 hook 函数方法 —— 不经过 globalThis。
+     *
+     * 目标 region 需要 proto index table 无效(>= 12.0.1.0);搬运时丢弃 class 的 module
+     * 字段(pkgName/moduleRecordIdx 等)与 tag,只保留方法。
+     */
+    private patchMethodHeadsClass(
+        hookGlobalName: string,
+        hookSource: string,
+        targets: PreparedTarget[],
+        es2abc: string,
+        apiVersionArgs: string[],
+        targetBcVersion: string,
+        tempDir: string,
+    ): InsertInstructionsResult[] {
+        const hookSourcePath = path.join(tempDir, "hook-class.js");
+        fs.writeFileSync(hookSourcePath, buildHookClassSource(hookGlobalName, hookSource));
+        const hookAbcPath = path.join(tempDir, "hook-class.abc");
+        const hookRecordName = `&xpanda/hook/${hookGlobalName}&`;
+        runEs2abc(es2abc, [
+            "--module", "--merge-abc", ...apiVersionArgs,
+            "--record-name", hookRecordName,
+            "--output", hookAbcPath,
+            hookSourcePath,
+        ]);
+
+        const hookBytes = new Uint8Array(fs.readFileSync(hookAbcPath));
+        const hookVersion = `${hookBytes[12]}.${hookBytes[13]}.${hookBytes[14]}.${hookBytes[15]}`;
+        if (hookVersion !== targetBcVersion) {
+            throw new PandaPatchError(
+                `hook bytecode version ${hookVersion} does not match target ${targetBcVersion}; `
+                + "pass targetApiVersion explicitly");
+        }
+        const hookFile = new PandaFile(hookBytes);
+        const hookPatch = PandaPatchFile.load(hookBytes);
+        const hookClassName = `L${hookRecordName};`;
+        const hookClass = hookFile.getAllClasses().find((clazz) => clazz.getClassName() === hookClassName);
+        const hookMethodName = `#*#${hookGlobalName}`;
+        if (!hookClass || !hookClass.pandaMethods.has(hookMethodName)) {
+            throw new PandaPatchError(
+                "moving the hook class requires the hook source to declare "
+                + `'function ${hookGlobalName}(...)'; method '${hookClassName}::${hookMethodName}' was not compiled`);
+        }
+
+        // hook class 只搬进第一个目标类所属的 region;跨 region 需要多份副本,暂不支持
+        const targetRegion = this.requireClass(targets[0].className).indexHeader;
+        for (const target of targets) {
+            if (this.requireClass(target.className).indexHeader !== targetRegion) {
+                throw new PandaPatchError(
+                    "moving the hook class into methods of different index regions is not supported");
+            }
+        }
+
+        const methodIds = this.importHookClass(hookFile, hookPatch, hookClass, targets[0].className);
+        const hookMethodId = methodIds.get(hookMethodName);
+        if (hookMethodId === undefined) {
+            throw new PandaPatchError(`imported hook class has no method '${hookMethodName}'`);
+        }
+        const results = targets.map((target) => this.applyMethodHeadPrologue(
+            target.className,
+            target.methodName,
+            { methodId: hookMethodId, name: hookGlobalName },
+            target.asyncContextRegister,
+            target.insertionPC ?? 0,
+        ));
+        this.preparedMethodHeads.delete(hookGlobalName);
+        return results;
+    }
+
+    /**
+     * 把一个 class 从 hook abc 搬到目标 region:
+     *   - 方法代码里的字符串 / literal array / 方法 id 按目标 region 重新分配;
+     *   - 方法实体重写 class_idx / proto_idx / name,丢弃 debug/annotation tag;
+     *   - 类实体只保留 name / super / access_flags / num_methods 与方法,module 字段与 tag 丢弃;
+     *   - 类与方法的索引表追加到文件末尾。
+     * 返回导入后的方法名 → region 内方法 id。
+     */
+    private importHookClass(
+        hookFile: PandaFile,
+        hookPatch: PandaPatchFile,
+        hookClass: PandaClass,
+        targetClassName: string,
+    ): Map<string, number> {
+        const targetRegion = this.requireClass(targetClassName).indexHeader;
+        if (targetRegion.protoIdxSize !== 0xffffffff) {
+            throw new PandaPatchError(
+                "moving the hook class into this abc is not supported: the target has a proto index table");
+        }
+        if (hookClass.numIfaces > 0) {
+            throw new PandaPatchError("moving the hook class is not supported: the class declares interfaces");
+        }
+        if (hookClass.superClassOff.isValid()) {
+            throw new PandaPatchError("moving the hook class is not supported: the class has a super class");
+        }
+
+        const sourceClassName = hookClass.getClassName();
+        const methods = [...hookClass.pandaMethods.entries()].map(([name, method]) => {
+            const code = hookPatch.getMethodCode(sourceClassName, name);
+            if (!code || method.methodExternal || !method.methodCode) {
+                throw new PandaPatchError(
+                    `moving the hook class is not supported: method '${sourceClassName}::${name}' has no code`);
+            }
+            return { name, method, code };
+        });
+        const caches: ClassImportCaches = {
+            stringEntities: new Map(),
+            stringIds: new Map(),
+            literalEntities: new Map(),
+            literalIds: new Map(),
+        };
+        const sourceRegion = hookClass.indexHeader;
+
+        // 第一遍:把代码引用的字符串 / literal array 导入目标 region(id 会登记进实体表)
+        for (const { code } of methods) {
+            for (const instruction of decodeInstructions(code.instructions)) {
+                for (const ref of this.hookIdOperands(instruction, sourceRegion)) {
+                    if (ref.kind === "string") {
+                        this.importStringId(hookFile, ref.sourceOffset, targetClassName, caches);
+                    } else if (ref.kind === "literal-array") {
+                        this.importLiteralArrayId(hookFile, ref.sourceOffset, targetClassName, caches);
+                    }
+                }
+            }
+        }
+
+        // 方法实体按顺序追加,方法 id = 当前实体表大小 + 序号
+        const methodIdBase = this.currentEntityTableSize(targetRegion);
+        const methodIdByOffset = new Map<number, number>();
+        methods.forEach((entry, index) => methodIdByOffset.set(entry.method.getOffset(), methodIdBase + index));
+
+        // 第二遍:重映射指令并追加 code item
+        const codeOffsets = methods.map((entry) => this.append(encodeMethodCode({
+            numVregs: entry.code.numVregs,
+            numArgs: entry.code.numArgs,
+            instructions: this.remapHookInstructions(entry.code, sourceRegion, methodIdByOffset, caches),
+            tries: [],
+        })));
+
+        const newClassIndex = this.currentClassTableSize(targetRegion);
+        const methodBodies: Uint8Array[] = [];
+        const methodIds = new Map<string, number>();
+        methods.forEach((entry, index) => {
+            const nameOffset = this.addString(entry.name);
+            const body = buildImportedMethodEntity(
+                newClassIndex, entry.method.protoIdx & 0xffff, nameOffset, entry.method.accessFlag, codeOffsets[index]);
+            const entityOffset = this.append(body);
+            const id = this.appendMethodIndex(targetRegion, entityOffset);
+            if (id !== methodIdBase + index) {
+                throw new PandaPatchError("internal error: imported hook method id mismatch");
+            }
+            methodIds.set(entry.name, id);
+            methodBodies.push(body);
+        });
+
+        const classBytes = buildImportedClassEntity(sourceClassName, hookClass.accessFlags, methodBodies);
+        const classOffset = this.append(classBytes);
+        const registeredIndex = this.appendClassIndex(targetRegion, classOffset);
+        if (registeredIndex !== newClassIndex) {
+            throw new PandaPatchError("internal error: imported hook class index mismatch");
+        }
+        // 追加的实体/索引表都落在文件末尾,region end 覆盖到文件尾
+        this.extendRegion(targetRegion, this.size);
+        return methodIds;
+    }
+
+    /** 当前 region 实体(method/string/literal array)索引表大小(含本次会话已追加的条目) */
+    private currentEntityTableSize(region: PandaClass["indexHeader"]): number {
+        return this.entityTableState.get(region)?.size ?? region.methodIdxSize;
+    }
+
+    /** 当前 region 类索引表大小(含本次会话已追加的条目) */
+    private currentClassTableSize(region: PandaClass["indexHeader"]): number {
+        return this.classTableState.get(region)?.size ?? region.classIdxSize;
+    }
+
+    /**
+     * 重映射 hook 方法代码里的实体 id 并按目标 region 重新编码:
+     *   - 字符串 / literal array id 使用第一遍导入时登记的目标 id;
+     *   - 方法 id 通过 methodIdByOffset 映射(同一 class 内的方法,如 definefunc 目标)。
+     */
+    private remapHookInstructions(
+        source: MethodCode,
+        sourceRegion: PandaClass["indexHeader"],
+        methodIdByOffset: Map<number, number>,
+        caches: ClassImportCaches,
+    ): Uint8Array {
+        const parts: Uint8Array[] = [];
+        for (const instruction of decodeInstructions(source.instructions)) {
+            const operands = instruction.operands.slice();
+            for (const ref of this.hookIdOperands(instruction, sourceRegion)) {
+                if (ref.kind === "string") {
+                    const id = caches.stringIds.get(ref.sourceOffset);
+                    if (id === undefined) throw new PandaPatchError("internal error: hook string id not imported");
+                    operands[ref.index] = id;
+                } else if (ref.kind === "literal-array") {
+                    const id = caches.literalIds.get(ref.sourceOffset);
+                    if (id === undefined) throw new PandaPatchError("internal error: hook literal array id not imported");
+                    operands[ref.index] = id;
+                } else {
+                    const id = methodIdByOffset.get(ref.sourceOffset);
+                    if (id === undefined) {
+                        throw new PandaPatchError(
+                            `moving the hook class does not support method '${instruction.opcode.name}' `
+                            + "referencing a method outside the imported class");
+                    }
+                    operands[ref.index] = id;
+                }
+            }
+            parts.push(encodeInstructionWithOpcode(instruction.opcode, operands));
+        }
+        return concatBytes(parts);
+    }
+
+    /** 列出一条指令里的实体 id 引用(string / literal array / method) */
+    private hookIdOperands(
+        instruction: DecodedInstruction,
+        sourceRegion: PandaClass["indexHeader"],
+    ): Array<{ index: number; kind: "string" | "literal-array" | "method"; sourceOffset: number }> {
+        const refs: Array<{ index: number; kind: "string" | "literal-array" | "method"; sourceOffset: number }> = [];
+        const flags = instruction.opcode.flags;
+        instruction.opcode.operands.forEach((operand, index) => {
+            if (operand.kind !== "id") return;
+            const sourceId = instruction.operands[index];
+            const entry = sourceRegion.pandaMethods[sourceId];
+            if (!entry) {
+                throw new PandaPatchError(
+                    `moving the hook class: entity id ${sourceId} of '${instruction.opcode.name}' is out of range`);
+            }
+            if ((flags & OPCODE_FLAG.STRING_ID) !== 0) {
+                refs.push({ index, kind: "string", sourceOffset: entry.getOffset() });
+            } else if ((flags & OPCODE_FLAG.LITERALARRAY_ID) !== 0) {
+                refs.push({ index, kind: "literal-array", sourceOffset: entry.getOffset() });
+            } else if ((flags & OPCODE_FLAG.METHOD_ID) !== 0) {
+                refs.push({ index, kind: "method", sourceOffset: entry.getOffset() });
+            } else {
+                throw new PandaPatchError(
+                    `moving the hook class does not support '${instruction.opcode.name}' entity references`);
+            }
+        });
+        return refs;
+    }
+
+    /** 把源字符串实体复制到目标文件,并登记到目标类的 region 实体表,返回目标 id */
+    private importStringId(
+        sourceFile: PandaFile,
+        sourceOffset: number,
+        className: string,
+        caches: ClassImportCaches,
+    ): number {
+        let id = caches.stringIds.get(sourceOffset);
+        if (id === undefined) {
+            const targetOffset = this.copyStringEntity(sourceFile, sourceOffset, caches);
+            id = this.appendMethodIndex(this.requireClass(className).indexHeader, targetOffset);
+            caches.stringIds.set(sourceOffset, id);
+        }
+        return id;
+    }
+
+    /** 复制源字符串实体,返回目标文件中的绝对偏移 */
+    private copyStringEntity(sourceFile: PandaFile, sourceOffset: number, caches: ClassImportCaches): number {
+        let offset = caches.stringEntities.get(sourceOffset);
+        if (offset === undefined) {
+            offset = this.append(encodeStringEntity(readStringEntity(sourceFile.data, sourceOffset)));
+            caches.stringEntities.set(sourceOffset, offset);
+        }
+        return offset;
+    }
+
+    /** 复制源 literal array 实体(含嵌套实体),登记到目标类的 region 实体表,返回目标 id */
+    private importLiteralArrayId(
+        sourceFile: PandaFile,
+        sourceOffset: number,
+        className: string,
+        caches: ClassImportCaches,
+    ): number {
+        let id = caches.literalIds.get(sourceOffset);
+        if (id === undefined) {
+            const targetOffset = this.copyLiteralArrayEntity(sourceFile, sourceOffset, caches);
+            id = this.appendMethodIndex(this.requireClass(className).indexHeader, targetOffset);
+            caches.literalIds.set(sourceOffset, id);
+        }
+        return id;
+    }
+
+    /**
+     * 复制 literal array 实体到目标文件末尾,把其中的绝对偏移(字符串 / 嵌套 literal array)
+     * 重定位到新位置,返回新实体的绝对偏移。
+     */
+    private copyLiteralArrayEntity(
+        sourceFile: PandaFile,
+        sourceOffset: number,
+        caches: ClassImportCaches,
+    ): number {
+        const cached = caches.literalEntities.get(sourceOffset);
+        if (cached !== undefined) return cached;
+        const data = sourceFile.data;
+        const count = readU32At(data, sourceOffset);
+        const realSize = Math.trunc(count / 2);
+        const parts: Uint8Array[] = [u32Bytes(count)];
+        let pos = sourceOffset + 4;
+        for (let i = 0; i < realSize; i++) {
+            const tag = data[pos++];
+            if (tag === LITERAL_TAG.STRING) {
+                const entityOffset = this.copyStringEntity(sourceFile, readU32At(data, pos), caches);
+                pos += 4;
+                parts.push(Uint8Array.of(tag), u32Bytes(entityOffset));
+            } else if (tag === LITERAL_TAG.LITERALARRAY) {
+                const entityOffset = this.copyLiteralArrayEntity(sourceFile, readU32At(data, pos), caches);
+                pos += 4;
+                parts.push(Uint8Array.of(tag), u32Bytes(entityOffset));
+            } else {
+                const payload = literalPayloadSize(tag);
+                if (payload === null) {
+                    throw new PandaPatchError(
+                        `moving the hook class: literal tag 0x${tag.toString(16)} is not supported (method/array literal)`);
+                }
+                parts.push(data.subarray(pos - 1, pos + payload));
+                pos += payload;
+            }
+        }
+        const offset = this.append(concatBytes(parts));
+        caches.literalEntities.set(sourceOffset, offset);
+        return offset;
+    }
+
+    /**
      * 单个目标版本的 patchMethodHeads(只返回第一个结果)。
      * 给同一个 hook 预约了多个方法时请用 patchMethodHeads 拿到全部结果。
      */
     patchMethodHead(hookGlobalName: string, hookSource: string, options: PatchMethodHeadSourceOptions = {}): InsertInstructionsResult {
         return this.patchMethodHeads(hookGlobalName, hookSource, options)[0];
-    }
-
-    /**
-     * 从当前 abc 的 merged 风格 record(`L&...&;`)推导 filesInfo 行。
-     * 只适用于单 module 的简单目标;多 record 应用请显式传 targetFilesInfo。
-     */
-    private deriveTargetFilesInfo(baseAbcPath: string): string[] {
-        const records = new Set<string>();
-        for (const clazz of this.classes()) {
-            const match = /^L(&[^;]+&);$/.exec(clazz.getClassName());
-            if (!match) continue;
-            // 已合并进来的 hook record 不再作为目标输入
-            if (match[1].startsWith("&xpanda/hook/")) continue;
-            records.add(match[1]);
-        }
-        const lines: string[] = [];
-        for (const record of records) {
-            const content = record.slice(1, -1); // strip &...&
-            const moduleName = content.split("/")[0] || "entry";
-            const importPath = `${content}.js`;
-            lines.push(`${baseAbcPath};${record};esm;entry|${moduleName}|1.0.0|${importPath};${moduleName};false;js`);
-        }
-        return lines;
     }
 
     /**
@@ -752,6 +1018,7 @@ export class PandaPatchFile {
         }
         return null;
     }
+
 
     private requireClass(className: string): PandaClass {
         const clazz = this.findClass(className);
@@ -1097,6 +1364,54 @@ export class PandaPatchFile {
         return this.pf.header.indexSectionOff + index * INDEX_HEADER_SIZE;
     }
 
+    /**
+     * 把一个新类实体登记到 region 的类索引表(表整体搬到文件末尾),同时追加到文件头的
+     * 全局类索引表。返回新类在 region 类表中的下标。
+     */
+    private appendClassIndex(indexHeader: PandaClass["indexHeader"], entityOffset: number): number {
+        let state = this.classTableState.get(indexHeader);
+        if (!state) {
+            if (indexHeader.classIdxSize === 0 || indexHeader.classIdxOff === 0xffffffff) {
+                throw new PandaPatchError("class has no class index table to extend");
+            }
+            state = { offset: indexHeader.classIdxOff, size: indexHeader.classIdxSize };
+            this.classTableState.set(indexHeader, state);
+        }
+        const index = state.size;
+        const table = new Uint8Array((state.size + 1) * 4);
+        for (let i = 0; i < state.size; i++) {
+            writeU32(table, i * 4, this.readU32(state.offset + i * 4));
+        }
+        writeU32(table, state.size * 4, entityOffset);
+        const newTableOffset = this.append(table);
+
+        const recordOffset = this.indexHeaderRecordOffset(indexHeader);
+        this.patchU32(recordOffset + INDEX_HEADER_CLASS_IDX_SIZE_OFF, state.size + 1);
+        this.patchU32(recordOffset + INDEX_HEADER_CLASS_IDX_OFF_OFF, newTableOffset);
+        state.offset = newTableOffset;
+        state.size += 1;
+
+        // 文件头全局类索引表(所有 region 的类都登记在这里)
+        if (this.pf.header.classIdxOff !== 0xffffffff) {
+            let headerState = this.headerClassTableState;
+            if (!headerState) {
+                headerState = { offset: this.pf.header.classIdxOff, size: this.pf.header.numClasses };
+                this.headerClassTableState = headerState;
+            }
+            const headerTable = new Uint8Array((headerState.size + 1) * 4);
+            for (let i = 0; i < headerState.size; i++) {
+                writeU32(headerTable, i * 4, this.readU32(headerState.offset + i * 4));
+            }
+            writeU32(headerTable, headerState.size * 4, entityOffset);
+            const headerTableOffset = this.append(headerTable);
+            this.patchU32(HEADER_NUM_CLASSES_OFF, headerState.size + 1);
+            this.patchU32(HEADER_CLASS_IDX_OFF, headerTableOffset);
+            headerState.offset = headerTableOffset;
+            headerState.size += 1;
+        }
+        return index;
+    }
+
     private computeChecksum(bytes: Uint8Array): number {
         const adler32 = new Adler32();
         adler32.update(bytes, HEADER_VERSION_OFF, bytes.length - HEADER_VERSION_OFF);
@@ -1212,7 +1527,7 @@ function maxIcSlot(instructions: Uint8Array): number {
     return max;
 }
 
-/** 已知 bytecode 版本 → es2abc --target-api-version(保证 hook/merge 与目标同版本) */
+/** 已知 bytecode 版本 → es2abc --target-api-version(保证 hook 与目标同版本) */
 const TARGET_API_BY_BC_VERSION: Record<string, number> = {
     "12.0.2.0": 12,
     "12.0.6.0": 13,
@@ -1284,21 +1599,135 @@ function runEs2abc(binary: string, args: string[]): void {
     }
 }
 
+/** literal array 里的 tag 值(与 Panda LiteralTag 一致) */
+const LITERAL_TAG = {
+    TAGVALUE: 0x00,
+    BOOL: 0x01,
+    INTEGER: 0x02,
+    FLOAT: 0x03,
+    DOUBLE: 0x04,
+    STRING: 0x05,
+    METHOD: 0x06,
+    GENERATORMETHOD: 0x07,
+    ACCESSOR: 0x08,
+    METHODAFFILIATE: 0x09,
+    ARRAY_U1: 0x0a,
+    ARRAY_U8: 0x0b,
+    ARRAY_I8: 0x0c,
+    ARRAY_U16: 0x0d,
+    ARRAY_I16: 0x0e,
+    ARRAY_U32: 0x0f,
+    ARRAY_I32: 0x10,
+    ARRAY_U64: 0x11,
+    ARRAY_I64: 0x12,
+    ARRAY_F32: 0x13,
+    ARRAY_F64: 0x14,
+    ARRAY_STRING: 0x15,
+    ASYNCGENERATORMETHOD: 0x16,
+    LITERALBUFFERINDEX: 0x17,
+    LITERALARRAY: 0x18,
+    BUILTINTYPEINDEX: 0x19,
+    GETTER: 0x1a,
+    SETTER: 0x1b,
+    NULLVALU: 0xff,
+} as const;
+
 /**
- * 把用户提供的 hook 源码包装成 module:
- *   - 源码已声明同名函数/变量时直接使用,并追加 `globalThis.<name> = <name>;`
- *   - 否则当作表达式(`(args) => ...` / `function () {}`),包装成 `const <name> = (...)`。
+ * 直接复制的 literal tag 的载荷字节数;STRING / LITERALARRAY 由调用方重定位,
+ * METHOD 系列与 ARRAY 系列暂不支持(返回 null)。
  */
-function buildHookModuleSource(hookName: string, source: string): string {
+function literalPayloadSize(tag: number): number | null {
+    switch (tag) {
+        case LITERAL_TAG.INTEGER:
+        case LITERAL_TAG.FLOAT:
+        case LITERAL_TAG.LITERALBUFFERINDEX:
+            return 4;
+        case LITERAL_TAG.DOUBLE:
+            return 8;
+        case LITERAL_TAG.METHODAFFILIATE:
+            return 2;
+        case LITERAL_TAG.TAGVALUE:
+        case LITERAL_TAG.BOOL:
+        case LITERAL_TAG.ACCESSOR:
+        case LITERAL_TAG.BUILTINTYPEINDEX:
+        case LITERAL_TAG.NULLVALU:
+            return 1;
+        default:
+            return null;
+    }
+}
+
+function readU32At(bytes: Uint8Array, offset: number): number {
+    return (bytes[offset] | (bytes[offset + 1] << 8) | (bytes[offset + 2] << 16) | (bytes[offset + 3] << 24)) >>> 0;
+}
+
+function u32Bytes(value: number): Uint8Array {
+    const out = new Uint8Array(4);
+    writeU32(out, 0, value);
+    return out;
+}
+
+function writeU16(target: Uint8Array, offset: number, value: number): void {
+    target[offset] = value & 0xff;
+    target[offset + 1] = (value >>> 8) & 0xff;
+}
+
+/**
+ * 重建一个方法实体:class_idx / proto_idx / name / access flags + CODE tag(丢弃
+ * debug info 与注解 tag,避免搬运 LNP / 注解引用)。
+ */
+function buildImportedMethodEntity(
+    classIdx: number,
+    protoIdx: number,
+    nameOffset: number,
+    accessFlags: number,
+    codeOffset: number,
+): Uint8Array {
+    const head = new Uint8Array(8);
+    writeU16(head, 0, classIdx);
+    writeU16(head, 2, protoIdx);
+    writeU32(head, 4, nameOffset);
+    return concatBytes([
+        head,
+        writeUleb128(accessFlags),
+        Uint8Array.of(METHOD_TAG_CODE),
+        u32Bytes(codeOffset),
+        Uint8Array.of(0x00),
+    ]);
+}
+
+/**
+ * 重建一个类实体:name + super(0) + access_flags + num_fields(0) + num_methods
+ * + 空 tag 区 + 方法实体。hook class 的 module 元数据字段(pkgName / moduleRecordIdx
+ * 等)在搬运时丢弃 —— 方法代码不依赖它们。
+ */
+function buildImportedClassEntity(name: string, accessFlags: number, methods: Uint8Array[]): Uint8Array {
+    return concatBytes([
+        encodeStringEntity(name),
+        u32Bytes(0),
+        writeUleb128(accessFlags),
+        writeUleb128(0),
+        writeUleb128(methods.length),
+        Uint8Array.of(0x00),
+        ...methods,
+    ]);
+}
+
+/**
+ * class 注入要求 hook 源码声明同名函数(编译后成为 hook class 的 `#*#<name>` 方法)。
+ */
+function buildHookClassSource(hookName: string, source: string): string {
     if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(hookName)) {
         throw new PandaPatchError(`invalid hook name '${hookName}'`);
     }
     const trimmed = source.trim();
-    const declares = new RegExp(`(?:function|class|const|let|var)\\s+${hookName}\\b`).test(trimmed);
-    const code = declares ? trimmed : `const ${hookName} = (${trimmed});`;
-    const assignment = `globalThis.${hookName} = ${hookName};`;
-    const needsAssignment = !code.includes(`globalThis.${hookName}`);
-    return `${code}\n${needsAssignment ? assignment : ""}\n`;
+    const declaration = new RegExp(`(?:^|[\\s;}])(?:async\\s+)?function\\s+${hookName}\\b`);
+    if (!declaration.test(trimmed)) {
+        throw new PandaPatchError(
+            "moving the hook class requires the hook source to declare "
+            + `'function ${hookName}(...)'`);
+    }
+    return `${trimmed}\n`;
 }
 
 function $0(){

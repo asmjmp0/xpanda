@@ -45,6 +45,26 @@ export function readUleb128(bytes: Uint8Array, offset: number): { value: number;
     return { value: result >>> 0, size };
 }
 
+/** MUTF-8(CESU-8 兼容)解码:size 为 UTF-16 code unit 上限,遇到 0x00 终止 */
+export function decodeMutf8(bytes: Uint8Array, offset: number, size: number): string {
+    const out: number[] = [];
+    let pos = offset;
+    for (let i = 0; i < size; i++) {
+        const a = bytes[pos++] & 0xff;
+        if (a === 0) break;
+        if (a < 0x80) {
+            out.push(a);
+        } else if ((a & 0xe0) === 0xc0) {
+            out.push(((a & 0x1f) << 6) | (bytes[pos++] & 0x3f));
+        } else if ((a & 0xf0) === 0xe0) {
+            out.push(((a & 0x0f) << 12) | ((bytes[pos++] & 0x3f) << 6) | (bytes[pos++] & 0x3f));
+        } else {
+            throw new Error(`bad MUTF-8 byte 0x${a.toString(16)} at ${pos - 1}`);
+        }
+    }
+    return String.fromCharCode(...out);
+}
+
 /** MUTF-8(CESU-8 兼容)编码,与 Panda 的 MUTF8 语义一致 */
 export function encodeMutf8(text: string): Uint8Array {
     const out: number[] = [];
@@ -80,6 +100,15 @@ export function encodeStringEntity(text: string): Uint8Array {
     out.set(mutf8, lengthPrefix.length);
     out[out.length - 1] = 0;
     return out;
+}
+
+/**
+ * 读取一个 String 实体(uleb128(utf16Size << 1 | isAscii) + MUTF8 + NUL)。
+ * 与 encodeStringEntity 互为逆操作,用于把其它 abc 的字符串导入当前文件。
+ */
+export function readStringEntity(bytes: Uint8Array, offset: number): string {
+    const leb = readUleb128(bytes, offset);
+    return decodeMutf8(bytes, offset + leb.size, leb.value >> 1);
 }
 
 /** 拼接若干字节数组 */
