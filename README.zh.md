@@ -35,7 +35,7 @@
 | 子包 | 职责 |
 |---|---|
 | `xpanda-core` | `.abc` / `.hap` 解析、反汇编、反编译与优化器——其余子包依赖的核心库 |
-| `xpanda-cli` | 命令行(`decompile` / `unpack-index`) |
+| `xpanda-cli` | 命令行(`decompile` / `unpack-index` / `dump-asm`) |
 | `xpanda-mcp` | MCP Server(stdio,供 AI 客户端接入) |
 | `xpanda-web` | 浏览器 UI(React + Vite,纯前端) |
 
@@ -49,6 +49,7 @@ CLI(在仓库根目录执行):
 
 ```bash
 yarn tsx packages/xpanda-cli/src/cli.ts decompile <file.abc|file.hap> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N]
+yarn tsx packages/xpanda-cli/src/cli.ts dump-asm <file.abc|file.hap> [-o outDir] [--stdout]
 ```
 
 | 参数 | 说明 |
@@ -80,6 +81,21 @@ yarn tsx packages/xpanda-cli/src/cli.ts decompile app.abc -o out --no-simplify -
 
 # 输出到终端
 yarn tsx packages/xpanda-cli/src/cli.ts decompile app.abc --stdout --quiet
+```
+
+### 导出字节码汇编
+
+`dump-asm` 把每个类的全部方法反汇编为字节码汇编文本(`.asm` 文件,每类一个,
+目录结构与 `decompile` 一致),便于查看反编译结果对应的原始字节码。每个方法输出
+`vregs` / `args` / 代码字节数 / try 块数,随后是带标签的基本块;跳转指令会打印
+解析后的目标标签(`[label_221]`)。
+
+```bash
+# 落盘为 .asm 文件(hap 输出到 out/<abc 条目路径>/<类路径>.asm)
+yarn tsx packages/xpanda-cli/src/cli.ts dump-asm app.hap -o out
+
+# 或全部输出到终端
+yarn tsx packages/xpanda-cli/src/cli.ts dump-asm app.abc --stdout
 ```
 
 大文件建议加堆并开启按类并行:

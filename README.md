@@ -35,7 +35,7 @@ The project is split into four yarn-workspace packages under `packages/`:
 | Package | Purpose |
 |---|---|
 | `xpanda-core` | `.abc` / `.hap` parsing, disassembly, decompilation and the optimizer — the library everything else builds on |
-| `xpanda-cli` | command line interface (`decompile` / `unpack-index`) |
+| `xpanda-cli` | command line interface (`decompile` / `unpack-index` / `dump-asm`) |
 | `xpanda-mcp` | MCP server (stdio) for AI client integration |
 | `xpanda-web` | browser UI (React + Vite, pure frontend) |
 
@@ -49,6 +49,7 @@ CLI (run from the repository root):
 
 ```bash
 yarn tsx packages/xpanda-cli/src/cli.ts decompile <file.abc|file.hap> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N]
+yarn tsx packages/xpanda-cli/src/cli.ts dump-asm <file.abc|file.hap> [-o outDir] [--stdout]
 ```
 
 | Option | Description |
@@ -81,6 +82,22 @@ yarn tsx packages/xpanda-cli/src/cli.ts decompile app.abc -o out --no-simplify -
 
 # Print to the terminal
 yarn tsx packages/xpanda-cli/src/cli.ts decompile app.abc --stdout --quiet
+```
+
+### Dump bytecode assembly
+
+`dump-asm` disassembles every method of every class to bytecode assembly (`.asm` files,
+one per class, same per-class layout as `decompile`) — handy for inspecting the bytecode
+that a decompiled method came from. Per-method output shows `vregs` / `args` / code size /
+try-block count, followed by labeled basic blocks; jump instructions print their resolved
+target label (`[label_221]`).
+
+```bash
+# Write .asm files (out/<abc entry path>/<class path>.asm for haps)
+yarn tsx packages/xpanda-cli/src/cli.ts dump-asm app.hap -o out
+
+# Or print everything to the terminal
+yarn tsx packages/xpanda-cli/src/cli.ts dump-asm app.abc --stdout
 ```
 
 For large files, raise the heap limit and enable per-class parallelism:

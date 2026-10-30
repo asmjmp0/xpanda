@@ -2,6 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 import {
     HapFile,
+    PandaClass,
     PandaDecompiler,
     PandaFile,
     ResourceIndexFile,
@@ -12,9 +13,10 @@ import { decompileClassesParallel, resolveJobs } from "./parallel/ParallelDecomp
 
 /**
  * CLI 入口
- *   yarn tsx src/cli.ts help [decompile|unpack-index]
+ *   yarn tsx src/cli.ts help [decompile|unpack-index|dump-asm]
  *   yarn tsx src/cli.ts decompile <file.abc|file.hap> [-o outDir] [--no-simplify] [--raw] [--stdout] [--quiet] [-j N]
  *   yarn tsx src/cli.ts unpack-index <resources.index> [-o outDir] [--stdout]
+ *   yarn tsx src/cli.ts dump-asm <file.abc|file.hap> [-o outDir] [--stdout]
  * @Author: jmp0 */
 function printDecompileUsage(): void {
     console.log("Usage: xpanda decompile <file.abc|file.hap> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N]");
@@ -33,13 +35,23 @@ function printUnpackIndexUsage(): void {
     console.log("  --stdout         Prints the JSON to standard output");
 }
 
+function printDumpAsmUsage(): void {
+    console.log("Usage: xpanda dump-asm <file.abc|file.hap> [-o outDir] [--stdout]");
+    console.log("  Disassembles every class to bytecode assembly (.asm files, same per-class layout as decompile)");
+    console.log("  file.hap         HarmonyOS app package: dumps every .abc entry (to outDir/<entry path>/)");
+    console.log("  -o outDir        Writes .asm files named by class (default out/)");
+    console.log("  --stdout         Concatenates the result to standard output");
+}
+
 /** Print usage for one command, or all commands when no (known) topic given. */
 function help(command?: string): void {
     if (command === "decompile") return printDecompileUsage();
     if (command === "unpack-index") return printUnpackIndexUsage();
-    if (command !== undefined) console.error(`Unknown help topic: ${command} (available: decompile | unpack-index)`);
+    if (command === "dump-asm") return printDumpAsmUsage();
+    if (command !== undefined) console.error(`Unknown help topic: ${command} (available: decompile | unpack-index | dump-asm)`);
     printDecompileUsage();
     printUnpackIndexUsage();
+    printDumpAsmUsage();
 }
 
 /** Command parse failure: print the reason plus usage, then exit non-zero. */
@@ -188,6 +200,93 @@ async function decompileHap(decompiler: PandaDecompiler, data: Uint8Array, optio
     return allOutputs;
 }
 
+interface AsmOptions {
+    outDir: string;
+    stdout: boolean;
+}
+
+/** 反汇编单个类:每个方法一节,输出方法头信息 + CFG 基本块与指令 */
+function dumpClassAsm(pandaClass: PandaClass): string {
+    const builder: string[] = [];
+    builder.push("// class: " + pandaClass.name.content + "\n");
+    builder.push("// methods: " + pandaClass.pandaMethods.size + "\n");
+    for (const method of pandaClass.pandaMethods.values()) {
+        builder.push("\n.function " + method.name.content + "\n");
+        if (method.methodExternal || !method.methodCode) {
+            builder.push("  (external)\n");
+            continue;
+        }
+        const code = method.methodCode;
+        builder.push(`  // vregs: ${code.numVregs}, args: ${code.numArgs}, code: ${code.codeSize} bytes, tries: ${code.triesSize}\n`);
+        try {
+            const cfg = method.disAssemble();
+            if (cfg) builder.push(cfg.toString());
+        } catch (e) {
+            // 单方法反汇编失败(如未识别的 opcode)不中断整体
+            builder.push("  // disassembly failed: " + e + "\n");
+        }
+    }
+    return builder.join("");
+}
+
+/** 反汇编一个 abc 的全部类,.asm 文件落盘到 classOutDir,返回按类序拼接的输出段(--stdout 用) */
+function dumpAsmAbcData(data: Uint8Array, options: AsmOptions, classOutDir: string): string[] {
+    const pandaFile = new PandaFile(data);
+    const classes = pandaFile.getAllClasses();
+    if (!options.stdout) fs.mkdirSync(classOutDir, { recursive: true });
+    console.error(`classes: ${classes.length}`);
+    const outputs: string[] = [];
+    for (const clazz of classes) {
+        const text = dumpClassAsm(clazz);
+        if (text.length === 0) continue;
+        if (options.stdout) {
+            outputs.push("\n/***************************" + clazz.name.content + "*************************************/\n" + text);
+        } else {
+            saveClassFile(classOutDir, clazz, text, ".asm");
+            console.log("written: " + clazz.name.content);
+        }
+    }
+    return outputs;
+}
+
+/** 反汇编 HAP 应用包:解出全部 .abc 条目逐个反汇编 */
+function dumpAsmHap(data: Uint8Array, options: AsmOptions): string[] {
+    const hap = new HapFile(data);
+    const abcEntries = hap.getAbcEntries();
+    if (abcEntries.length === 0) throw new Error("hap: no .abc entry found");
+    const allOutputs: string[] = [];
+    for (const entry of abcEntries) {
+        // ets/modules.abc → outDir/ets/modules/<类路径>.asm
+        const classOutDir = path.join(options.outDir, entry.name.replace(/\.abc$/i, ""));
+        console.error(`hap: dump-asm ${entry.name} (${entry.uncompressedSize} bytes)`);
+        allOutputs.push(...dumpAsmAbcData(entry.read(), options, classOutDir));
+    }
+    return allOutputs;
+}
+
+function dumpAsm(args: string[]): void {
+    if (args.length < 1) fail("dump-asm: missing <file.abc|file.hap> file argument", "dump-asm");
+    const input = args[0];
+    let outDir = "out";
+    let stdout = false;
+    for (let i = 1; i < args.length; i++) {
+        if (args[i] === "-o") {
+            const value = args[++i];
+            if (value === undefined) fail("option -o requires a value", "dump-asm");
+            outDir = value;
+        }
+        else if (args[i] === "--stdout") stdout = true;
+        else fail(`unknown argument: ${args[i]}`, "dump-asm");
+    }
+    const data = new Uint8Array(fs.readFileSync(path.resolve(input)));
+    const options: AsmOptions = { outDir, stdout };
+    // .hap(或任意 ZIP 容器)走应用包解包流程,否则按裸 abc 处理(与 decompile 一致)
+    const outputs = path.extname(input).toLowerCase() === ".hap" || ZipFile.isZip(data)
+        ? dumpAsmHap(data, options)
+        : dumpAsmAbcData(data, options, outDir);
+    if (stdout) console.log(outputs.map((out) => out + "\n").join(""));
+}
+
 async function main(): Promise<void> {
     const args = process.argv.slice(2);
     // help 命令(无参数时等价于 help):打印用法后正常退出
@@ -197,6 +296,10 @@ async function main(): Promise<void> {
     }
     if (args[0] === "unpack-index") {
         unpackIndex(args.slice(1));
+        return;
+    }
+    if (args[0] === "dump-asm") {
+        dumpAsm(args.slice(1));
         return;
     }
     if (args[0] !== "decompile") fail(`unknown command: ${args[0]}`);
