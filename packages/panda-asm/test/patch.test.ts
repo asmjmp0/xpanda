@@ -592,6 +592,69 @@ function testMultipleHooksInOneSession(): void {
     assert((sandbox.targetB as (a: number, b: number) => unknown)(2, 3) === 22, "second hook must patch targetB");
 }
 
+// ---------------------------------------------------------------- 11b. multiple hooks from one source file
+function testHookBundleSingleSource(): void {
+    const es2abc = bundledEs2abc();
+    if (!es2abc) {
+        console.log("[patch] skip hook bundle (es2abc not found)");
+        return;
+    }
+    const targetClass = "L&entry/src/main/ets/target&;";
+    const patchFile = PandaPatchFile.load(
+        new Uint8Array(fs.readFileSync(path.join(__dirname, "resources", "target-multi.abc"))));
+
+    const first = patchFile.prepareMethodHead(targetClass, "#*#targetA");
+    const second = patchFile.prepareMethodHead(targetClass, "#*#targetB");
+    const results = patchFile.patchHookBundle([first, second], `
+        function bundleHelper(args) { return args[0] + args[1]; }
+        function ${first}(args) { return [0, bundleHelper(args) + 10]; }
+        function ${second}(args) { return [0, bundleHelper(args) + 20]; }
+    `, { es2abc });
+    assert(results.length === 2, `one bundle must patch both methods, got ${results.length}`);
+    assert(results[0].hookGlobalName === first && results[1].hookGlobalName === second,
+        "bundle results must keep hook order");
+
+    const pandaFile = new PandaFile(patchFile.toBytes());
+    pandaFile.parseAssembly();
+    const hookClasses = pandaFile.indexHeaders.flatMap((header) => header.pandaClasses)
+        .filter((clazz) => !clazz.classExternal && clazz.getClassName().includes("xpanda/hook/"));
+    assert(hookClasses.length === 1, `one bundle must move exactly one hook class, got ${hookClasses.length}`);
+    assert(hookClasses[0].pandaMethods.has(`#*#${first}`) && hookClasses[0].pandaMethods.has(`#*#${second}`),
+        "both hook functions must live in the same moved hook class");
+    assert(hookClasses[0].pandaMethods.has("#*#bundleHelper"),
+        "helper functions declared in the same source must move with the hook class");
+
+    const target = findClass(pandaFile, targetClass);
+    assert(target, "target class must survive the hook class move");
+    const moduleImports = target.pandaClassModuleData!.imports;
+    for (const hook of [first, second]) {
+        assert(moduleImports.some((entry) => entry.importName === hook),
+            `target module must import hook '${hook}'`);
+    }
+    const bundleRequest = `@normalized:N&&&xpanda/hook/${first}&`;
+    const requestEntries = target.pandaClassModuleData!.requestedModules!
+        .filter((moduleRequest) => moduleRequest.toString() === bundleRequest);
+    assert(requestEntries.length === 1,
+        `both hook imports must share one module request, got ${requestEntries.length}`);
+    for (const [methodName, hook] of [["#*#targetA", first], ["#*#targetB", second]] as const) {
+        const code = target.pandaMethods.get(methodName)!.methodCode!;
+        const load = decodeInstructions(code.instructions)
+            .find((instruction) => instruction.opcode.name === "ldexternalmodulevar");
+        assert(load, `prologue of '${methodName}' must use ldexternalmodulevar`);
+        assert(moduleImports[load!.operands[0] as number]?.importName === hook,
+            `prologue of '${methodName}' must reference its own import entry`);
+    }
+
+    const sandbox: Record<string, unknown> = { console: { log: () => { /* ignore */ } } };
+    sandbox.globalThis = sandbox;
+    runHookModule(pandaFile, first, sandbox);
+    vm.runInNewContext(stripModuleSyntax(new PandaDecompiler().decompileClass(target)), sandbox, { timeout: 5000 });
+    assert((sandbox.targetA as (a: number, b: number) => unknown)(2, 3) === 15,
+        "first hook must run with the shared helper");
+    assert((sandbox.targetB as (a: number, b: number) => unknown)(2, 3) === 25,
+        "second hook must run with the shared helper");
+}
+
 // ---------------------------------------------------------------- 12. async function
 async function testHookAsyncFunction(): Promise<void> {
     const es2abc = bundledEs2abc();
@@ -767,6 +830,7 @@ async function main(): Promise<void> {
     testPatchPreservesBytecodeVersion();
     testHookMultipleFunctions();
     testMultipleHooksInOneSession();
+    testHookBundleSingleSource();
     testHookModuleImport();
     testHookAddsModuleRecord();
     await testHookAsyncFunction();

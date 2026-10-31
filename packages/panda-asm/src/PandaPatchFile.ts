@@ -613,6 +613,46 @@ export class PandaPatchFile {
         if (!targets || targets.length === 0) {
             throw new PandaPatchError(`unknown hook name '${hookGlobalName}'; call prepareMethodHead first`);
         }
+        return this.patchHookSource(
+            [hookGlobalName], new Map([[hookGlobalName, targets]]), hookSource, options);
+    }
+
+    /**
+     * 把同一份 hook 源文件里的多个 hook 函数一次性注入目标 abc:
+     * 源文件按 hook 名分组只编译一次、只搬一个 hook module,每个 hook 各自 import,
+     * 再挂到 `prepareMethodHead` 预约的目标方法上。
+     *
+     * 源文件里除这些入口函数外的顶层函数会作为同一个 module 的辅助函数一起搬走。
+     * 所有 hook 的目标类必须位于同一个 index region(hook class 只会搬一份)。
+     */
+    patchHookBundle(
+        hookGlobalNames: string[],
+        hookSource: string,
+        options: PatchMethodHeadSourceOptions = {},
+    ): InsertInstructionsResult[] {
+        if (hookGlobalNames.length === 0) {
+            throw new PandaPatchError("patchHookBundle requires at least one hook name");
+        }
+        if (new Set(hookGlobalNames).size !== hookGlobalNames.length) {
+            throw new PandaPatchError("patchHookBundle hook names must be unique");
+        }
+        const targetsByHook = new Map<string, PreparedTarget[]>();
+        for (const hookGlobalName of hookGlobalNames) {
+            const targets = this.preparedMethodHeads.get(hookGlobalName);
+            if (!targets || targets.length === 0) {
+                throw new PandaPatchError(`unknown hook name '${hookGlobalName}'; call prepareMethodHead first`);
+            }
+            targetsByHook.set(hookGlobalName, targets);
+        }
+        return this.patchHookSource(hookGlobalNames, targetsByHook, hookSource, options);
+    }
+
+    private patchHookSource(
+        hookGlobalNames: string[],
+        targetsByHook: Map<string, PreparedTarget[]>,
+        hookSource: string,
+        options: PatchMethodHeadSourceOptions,
+    ): InsertInstructionsResult[] {
         const es2abc = resolveEs2abc(options.es2abc);
         // hook 必须使用与目标 abc 相同的字节码版本
         const targetBcVersion = this.pf.header.versionString();
@@ -621,7 +661,7 @@ export class PandaPatchFile {
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "panda-asm-"));
         try {
             return this.patchMethodHeadsClass(
-                hookGlobalName, hookSource, targets, es2abc, apiVersionArgs, targetBcVersion, tempDir, options);
+                hookGlobalNames, targetsByHook, hookSource, es2abc, apiVersionArgs, targetBcVersion, tempDir, options);
         } finally {
             if (options.keepTemp) {
                 console.log(`[panda-asm] temp dir kept: ${tempDir}`);
@@ -636,25 +676,27 @@ export class PandaPatchFile {
      * (类实体 + 方法 + 字符串/literal array 依赖 + module record)整体搬到目标 abc 的同一
      * region,并把 module 字段(import/export 表)一起搬过来。
      *
-     * 然后给目标 module 追加一条 import 表项(指向 hook record),前导用
+     * 然后给目标 module 追加 import 表项(指向 hook record),前导用
      * `ldexternalmodulevar` 取 hook 函数 —— hook 内部的 import / 顶层变量因此能正常解析。
      *
      * 目标 region 需要 proto index table 无效(>= 12.0.1.0)。
      */
     private patchMethodHeadsClass(
-        hookGlobalName: string,
+        hookGlobalNames: string[],
+        targetsByHook: Map<string, PreparedTarget[]>,
         hookSource: string,
-        targets: PreparedTarget[],
         es2abc: string,
         apiVersionArgs: string[],
         targetBcVersion: string,
         tempDir: string,
         options: PatchMethodHeadSourceOptions,
     ): InsertInstructionsResult[] {
+        // 一个 bundle 只生成一个 hook module;module 名取第一个 hook 名(与单 hook 的命名保持一致)
+        const hookModuleName = hookGlobalNames[0];
         const hookSourcePath = path.join(tempDir, "hook-class.js");
-        fs.writeFileSync(hookSourcePath, buildHookClassSource(hookGlobalName, hookSource));
+        fs.writeFileSync(hookSourcePath, buildHookClassSource(hookGlobalNames, hookSource));
         const hookAbcPath = path.join(tempDir, "hook-class.abc");
-        const hookRecordName = `&xpanda/hook/${hookGlobalName}&`;
+        const hookRecordName = `&xpanda/hook/${hookModuleName}&`;
         runEs2abc(es2abc, [
             "--module", "--merge-abc", ...apiVersionArgs,
             "--record-name", hookRecordName,
@@ -673,33 +715,65 @@ export class PandaPatchFile {
         const hookPatch = PandaPatchFile.load(hookBytes);
         const hookClassName = `L${hookRecordName};`;
         const hookClass = hookFile.getAllClasses().find((clazz) => clazz.getClassName() === hookClassName);
-        const hookMethodName = `#*#${hookGlobalName}`;
-        if (!hookClass || !hookClass.pandaMethods.has(hookMethodName)) {
+        if (!hookClass) {
             throw new PandaPatchError(
                 "moving the hook class requires the hook source to declare "
-                + `'function ${hookGlobalName}(...)'; method '${hookClassName}::${hookMethodName}' was not compiled`);
+                + `'function ${hookModuleName}(...)'; class '${hookClassName}' was not compiled`);
         }
         const hookModuleData = hookClass.pandaClassModuleData;
         if (!hookModuleData) {
             throw new PandaPatchError("hook abc has no module record; the hook must be compiled as an ES module");
         }
-        const exported = hookModuleData.exports.some((exp) =>
-            exp.path === null && exp.exportName === hookGlobalName);
-        if (!exported) {
-            throw new PandaPatchError(
-                `the hook module must export '${hookGlobalName}' (use 'export function ${hookGlobalName}(...)')`);
+        for (const hookGlobalName of hookGlobalNames) {
+            const hookMethodName = `#*#${hookGlobalName}`;
+            if (!hookClass.pandaMethods.has(hookMethodName)) {
+                throw new PandaPatchError(
+                    "moving the hook class requires the hook source to declare "
+                    + `'function ${hookGlobalName}(...)'; method '${hookClassName}::${hookMethodName}' was not compiled`);
+            }
+            const exported = hookModuleData.exports.some((exp) =>
+                exp.path === null && exp.exportName === hookGlobalName);
+            if (!exported) {
+                throw new PandaPatchError(
+                    `the hook module must export '${hookGlobalName}' (use 'export function ${hookGlobalName}(...)')`);
+            }
         }
 
-        // hook class 只搬进第一个目标类所属的 region;跨 region 需要多份副本,暂不支持
-        const targetRegion = this.requireClass(targets[0].className).indexHeader;
+        // 一个 bundle 的 hook class 只搬进一个 region;所有 hook 的目标类必须都在该 region,
+        // 否则需要多份 hook class 副本,暂不支持。
+        let targetRegion: PandaClass["indexHeader"] | undefined;
         const targetClasses: PandaClass[] = [];
-        for (const target of targets) {
-            const targetClass = this.requireClass(target.className);
-            if (targetClass.indexHeader !== targetRegion) {
-                throw new PandaPatchError(
-                    "moving the hook class into methods of different index regions is not supported");
+        const hooksByClass = new Map<string, Set<string>>();
+        for (const hookGlobalName of hookGlobalNames) {
+            for (const target of targetsByHook.get(hookGlobalName)!) {
+                const targetClass = this.requireClass(target.className);
+                if (targetRegion === undefined) {
+                    targetRegion = targetClass.indexHeader;
+                } else if (targetClass.indexHeader !== targetRegion) {
+                    throw new PandaPatchError(
+                        "moving the hook class into methods of different index regions is not supported");
+                }
+                if (!targetClasses.includes(targetClass)) targetClasses.push(targetClass);
+                let classHooks = hooksByClass.get(target.className);
+                if (!classHooks) {
+                    classHooks = new Set();
+                    hooksByClass.set(target.className, classHooks);
+                }
+                classHooks.add(hookGlobalName);
             }
-            if (!targetClasses.includes(targetClass)) targetClasses.push(targetClass);
+        }
+        if (targetRegion === undefined || targetClasses.length === 0) {
+            throw new PandaPatchError("patchHookBundle requires at least one prepared target method");
+        }
+        // localName 是目标 module record 内的局部名:同一个类导入多个 hook 时无法共用一个
+        if (options.localName !== undefined) {
+            for (const [className, classHooks] of hooksByClass) {
+                if (classHooks.size > 1) {
+                    throw new PandaPatchError(
+                        `localName cannot be used because '${className}' imports multiple hooks; `
+                        + "use the default per-hook local names");
+                }
+            }
         }
 
         // 目标类没有 module record(bundle-pack / 未合并 abc)时硬加一个:
@@ -708,25 +782,43 @@ export class PandaPatchFile {
             this.ensureModuleRecord(targetClass);
         }
 
-        this.importHookClass(hookFile, hookPatch, hookClass, targets[0].className, options);
+        this.importHookClass(hookFile, hookPatch, hookClass, targetClasses[0].getClassName(), options);
 
         const recordName = hookClassName.slice(1, -1);
         const request = normalizedRequestForRecord(recordName);
-        const localName = options.localName ?? hookGlobalName;
-        const importIndexByClass = new Map<string, number>();
-        for (const targetClass of targetClasses) {
-            importIndexByClass.set(targetClass.getClassName(),
-                this.addModuleImport(targetClass.getClassName(), localName, hookGlobalName, request));
+        const importKey = (className: string, hookGlobalName: string): string =>
+            `${className}\u0000${hookGlobalName}`;
+        const importIndexByClassHook = new Map<string, number>();
+        for (const hookGlobalName of hookGlobalNames) {
+            for (const target of targetsByHook.get(hookGlobalName)!) {
+                const key = importKey(target.className, hookGlobalName);
+                if (importIndexByClassHook.has(key)) continue;
+                importIndexByClassHook.set(key, this.addModuleImport(
+                    target.className,
+                    options.localName ?? hookGlobalName,
+                    hookGlobalName,
+                    request));
+            }
         }
 
-        const results = targets.map((target) => this.applyMethodHeadPrologue(
-            target.className,
-            target.methodName,
-            { importIndex: importIndexByClass.get(target.className)!, name: hookGlobalName },
-            target.asyncContextRegister,
-            target.insertionPC ?? 0,
-        ));
-        this.preparedMethodHeads.delete(hookGlobalName);
+        const results: InsertInstructionsResult[] = [];
+        for (const hookGlobalName of hookGlobalNames) {
+            for (const target of targetsByHook.get(hookGlobalName)!) {
+                results.push(this.applyMethodHeadPrologue(
+                    target.className,
+                    target.methodName,
+                    {
+                        importIndex: importIndexByClassHook.get(importKey(target.className, hookGlobalName))!,
+                        name: hookGlobalName,
+                    },
+                    target.asyncContextRegister,
+                    target.insertionPC ?? 0,
+                ));
+            }
+        }
+        for (const hookGlobalName of hookGlobalNames) {
+            this.preparedMethodHeads.delete(hookGlobalName);
+        }
         return results;
     }
 
@@ -1048,12 +1140,24 @@ export class PandaPatchFile {
             if (readStringEntity(this.bytes, record.moduleRequests[entry.moduleRequestIdx]) !== request) continue;
             return i;
         }
+        // 同一 hook bundle 的多个 hook 从同一个 module 导入:复用已有的 module request,
+        // 避免同一个请求串在 module record 里出现多份
+        let requestIndex = -1;
+        for (let i = 0; i < record.moduleRequests.length; i++) {
+            if (readStringEntity(this.bytes, record.moduleRequests[i]) === request) {
+                requestIndex = i;
+                break;
+            }
+        }
+        if (requestIndex < 0) {
+            requestIndex = record.moduleRequests.length;
+            record.moduleRequests.push(this.addString(request));
+        }
         const index = record.regularImports.length;
-        record.moduleRequests.push(this.addString(request));
         record.regularImports.push({
             localName: this.addString(localName),
             importName: this.addString(importName),
-            moduleRequestIdx: record.moduleRequests.length - 1,
+            moduleRequestIdx: requestIndex,
         });
         const newOffset = this.append(encodeModuleRecord(record));
         if (!this.patchModuleRecordField(clazz, newOffset)) {
@@ -2339,36 +2443,37 @@ function normalizedRequestForRecord(recordName: string): string {
  * class 注入要求 hook 源码声明同名函数(编译后成为 hook class 的 `#*#<name>` 方法)。
  * 函数声明会被改写成 `export function` —— 目标 module 需要 import 这个导出。
  */
-function buildHookClassSource(hookName: string, source: string): string {
-    if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(hookName)) {
-        throw new PandaPatchError(`invalid hook name '${hookName}'`);
-    }
-    const trimmed = source.trim();
-    const declaration = new RegExp(`(?:^|[\\s;}])(?:async\\s+)?function\\s+${hookName}\\b`);
-    if (!declaration.test(trimmed)) {
-        throw new PandaPatchError(
-            "moving the hook class requires the hook source to declare "
-            + `'function ${hookName}(...)'`);
-    }
+function buildHookClassSource(hookNames: string[], source: string): string {
+    let result = source.trim();
+    for (const hookName of hookNames) {
+        if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(hookName)) {
+            throw new PandaPatchError(`invalid hook name '${hookName}'`);
+        }
+        const declaration = new RegExp(`(?:^|[\\s;}])(?:async\\s+)?function\\s+${hookName}\\b`);
+        if (!declaration.test(result)) {
+            throw new PandaPatchError(
+                "moving the hook class requires the hook source to declare "
+                + `'function ${hookName}(...)'`);
+        }
 
-    if (new RegExp(`(?:^|[\\s;}])export\\s+default\\s+(?:async\\s+)?function\\s+${hookName}\\b`).test(trimmed)) {
-        throw new PandaPatchError(
-            `the hook module cannot use 'export default function ${hookName}'; `
-            + `declare 'export function ${hookName}(...)' instead`);
+        if (new RegExp(`(?:^|[\\s;}])export\\s+default\\s+(?:async\\s+)?function\\s+${hookName}\\b`).test(result)) {
+            throw new PandaPatchError(
+                `the hook module cannot use 'export default function ${hookName}'; `
+                + `declare 'export function ${hookName}(...)' instead`);
+        }
+        const exportedFunction = new RegExp(`(?:^|[\\s;}])export\\s+(?:async\\s+)?function\\s+${hookName}\\b`);
+        const exportedSpecifier = new RegExp(`\\bexport\\s*\\{[^}]*\\b${hookName}\\b[^}]*\\}`);
+        if (exportedFunction.test(result) || exportedSpecifier.test(result)) continue;
+        const match = new RegExp(`(^|[\\s;}])((?:async\\s+)?function\\s+${hookName}\\b)`).exec(result);
+        if (!match) {
+            throw new PandaPatchError(
+                "moving the hook class requires the hook source to declare "
+                + `'function ${hookName}(...)'`);
+        }
+        const insertAt = match.index + match[1].length;
+        result = `${result.slice(0, insertAt)}export ${result.slice(insertAt)}`;
     }
-    const exportedFunction = new RegExp(`(?:^|[\\s;}])export\\s+(?:async\\s+)?function\\s+${hookName}\\b`);
-    const exportedSpecifier = new RegExp(`\\bexport\\s*\\{[^}]*\\b${hookName}\\b[^}]*\\}`);
-    if (exportedFunction.test(trimmed) || exportedSpecifier.test(trimmed)) {
-        return `${trimmed}\n`;
-    }
-    const match = new RegExp(`(^|[\\s;}])((?:async\\s+)?function\\s+${hookName}\\b)`).exec(trimmed);
-    if (!match) {
-        throw new PandaPatchError(
-            "moving the hook class requires the hook source to declare "
-            + `'function ${hookName}(...)'`);
-    }
-    const insertAt = match.index + match[1].length;
-    return `${trimmed.slice(0, insertAt)}export ${trimmed.slice(insertAt)}\n`;
+    return `${result}\n`;
 }
 
 function $0(){

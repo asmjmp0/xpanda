@@ -62,6 +62,17 @@ const secondHook = patchFile.prepareMethodHead(className, "#*#targetB");
 patchFile.patchMethodHead(firstHook, `function ${firstHook}(args) { return [0, 11]; }`);
 patchFile.patchMethodHead(secondHook, `function ${secondHook}(args) { return [0, 22]; }`);
 
+// 另一种写法:多个 hook 函数写在同一个源文件,一次编译、只搬一个 hook module,
+// 每个 hook 各自 import 后挂到自己的目标方法;同一文件里的其它顶层函数
+// 会作为该 module 的辅助函数一起搬走(与上面的示例二选一)
+const bundledA = patchFile.prepareMethodHead(className, "#*#targetA");
+const bundledB = patchFile.prepareMethodHead(className, "#*#targetB");
+patchFile.patchHookBundle([bundledA, bundledB], `
+function sharedHelper(args) { return args[0]; }
+function ${bundledA}(args) { return [0, sharedHelper(args)]; }
+function ${bundledB}(args) { return [1]; }
+`);
+
 writeFileSync("app.patched.abc", patchFile.toBytes());
 ```
 
@@ -85,16 +96,19 @@ writeFileSync("app.patched.abc", patchFile.toBytes());
 
 1. `prepareMethodHead(className, methodName)` 校验目标(存在、非 generator;async 支持)并返回 hook 名;
    同一个 hook 名可以给多个方法各调用一次(显式传同一个 `hookGlobalName`);
-2. `patchMethodHead(hookName, hookSource)`(单目标)或 `patchMethodHeads(...)`(多目标,返回全部结果):
+2. `patchMethodHead(hookName, hookSource)`(单目标)、`patchMethodHeads(...)`(同一个 hook 挂多目标)
+   或 `patchHookBundle([hookA, hookB, ...], hookSource)`(多个 hook 函数写在同一个源文件):
    - 读取目标 abc 的 bytecode 版本,映射到 es2abc 的 `--target-api-version`,用**相同版本**把 hook 源码
      编译成带独立 module record 的 abc(12.0.2.0→12、12.0.6.0→13、13.0.1.0→18、24.0.0.0→24;未知版本自动探测);
    - 把 **hook class 整体搬到目标 abc 的同一 region**:类实体 + 方法 + code + 字符串 + literal array
      (含嵌套)+ module record(import/export 表)全部重定位,class / method 索引表追加到文件末尾;
-   - hook 源码里的同名函数会被自动改写成 `export function`(已导出/已 `export { name }` 则保持不变),
-     hook module 因此有一个可被 import 的导出;
-   - hook 的记录名是 `&xpanda/hook/<hookName>&`,目标 module 追加的 import 请求串为
-     `@normalized:N&&&xpanda/hook/<hookName>&`(结果里的 `hookGlobalName` 就是 `<hookName>`);
-   - 给目标类所在 module 的 module record 追加一条 import 表项(指向 hook record);
+   - hook 源码里的入口函数会被自动改写成 `export function`(已导出/已 `export { name }` 则保持不变);
+     `patchHookBundle` 会对列表里的每个 hook 分别导出,同一个源文件里的其它顶层函数作为辅助函数
+     随 module 一起搬走;
+   - 单 hook 的记录名是 `&xpanda/hook/<hookName>&`;bundle 只搬一个 module,记录名取
+     `&xpanda/hook/<第一个 hook 名>&`,目标 module 为每个 hook 追加一条 import 表项,请求串为
+     `@normalized:N&&&xpanda/hook/<记录名>&`(结果里的 `hookGlobalName` 就是各自的 `<hookName>`);
+   - 给目标类所在 module 的 module record 追加 import 表项(指向 hook record);
    - 在方法头插入 `getunmappedargs → ldexternalmodulevar <import_idx> → callarg1 → res[0] === 0 → return res[1]`;
    - hook 自己的 `import ... from "x"`:显式 `moduleRequests` 映射优先;否则 `@...`/相对路径原样保留,
      裸模块名按目标 abc 的记录名后缀唯一匹配(如 `ohop` → `@normalized:N&&&.../ohop&`),
@@ -113,9 +127,13 @@ writeFileSync("app.patched.abc", patchFile.toBytes());
   注意:运行时会因为出现 `moduleRecordIdx` 把整个 abc 当 merged abc 加载, bundle-pack 文件
   只有在确认加载方式仍成立时才这样用(更稳妥的是先合并/重新编译目标 abc);
 - 目标 region 的 proto index table 必须无效(bytecode >= 12.0.1.0);
-- hook 源码必须声明 `function <hookName>(...)`(表达式形式不支持);
-- 目标类与 hook class 必须落在同一个 index region;
-- 目标 module 不能带 namespace import(追加 regular import 会移动它们的环境下标)。
+- hook 源码必须声明 `function <hookName>(...)`(表达式形式不支持);`patchHookBundle` 里的每个 hook 名都要有同名函数
+  (hook 函数写在固定文件里时,用 `prepareMethodHead(..., { hookGlobalName: "myHook" })` 让文件名与 hook 名一致,
+  再把 `readFileSync(...)` 的内容作为 `hookSource` 传入);
+- 目标类与 hook class 必须落在同一个 index region(`patchHookBundle` 的所有目标类也必须同 region,hook class 只搬一份);
+- 目标 module 不能带 namespace import(追加 regular import 会移动它们的环境下标);
+- `localName` 是目标 module record 内的局部名:同一个类从 bundle 导入多个 hook 时不能共用一个自定义名,
+  缺省按各自 hook 名生成。
 
 es2abc 查找顺序:显式 `{ es2abc }` → `XPANDA_ES2ABC` → 仓库 `assets/bin/<os>/es2abc[.exe]` → `PATH`。
 
@@ -213,7 +231,7 @@ append-only patcher:
 - ✅ 新增方法(`addMethod`,克隆已有方法的 proto/access flags)
 - ✅ 新增字符串 / 字符串 id(`addString` / `addStringId`)
 - ✅ 在任意指令边界插入汇编字节码(`insertInstructions`):自动修正相对跳转、try/catch 范围、numVregs
-- ✅ AOP 函数头 hook:`prepareMethodHead` + `patchMethodHead(s)`,支持一个 hook 挂多个函数、多个 hook、async 函数
+- ✅ AOP 函数头 hook:`prepareMethodHead` + `patchMethodHead(s)` / `patchHookBundle`,支持一个 hook 挂多个函数、多个 hook、多个 hook 写在同一个源文件、async 函数
 - ✅ AOP hook 统一走 module record 搬运:hook class 的 import/export 表随类整体搬进目标 abc,目标 module 追加 import,前导用 `ldexternalmodulevar` 调用(hook 内部的 import / 顶层变量可正常解析)
 - ✅ 同一次会话里连续新增方法 / 追加字符串 / 替换代码 / 连续插入(代码模型会累积最新版本)
 - ✅ 无修改时字节级 round-trip
