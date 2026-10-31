@@ -29,6 +29,23 @@ export function writeUleb128(value: number): Uint8Array {
     return out;
 }
 
+/** sleb128 编码(字段 INT_VALUE 使用) */
+export function writeSleb128(value: number): Uint8Array {
+    const out: number[] = [];
+    let v = value | 0;
+    while (true) {
+        const byte = v & 0x7f;
+        v >>= 7;
+        const signBit = (byte & 0x40) !== 0;
+        if ((v === 0 && !signBit) || (v === -1 && signBit)) {
+            out.push(byte);
+            break;
+        }
+        out.push(byte | 0x80);
+    }
+    return Uint8Array.from(out);
+}
+
 /** uleb128 解码 */
 export function readUleb128(bytes: Uint8Array, offset: number): { value: number; size: number } {
     let result = 0;

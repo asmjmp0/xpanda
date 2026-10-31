@@ -19,8 +19,12 @@ import {
     assemble, assembleInstruction, decodeInstructions, encodeInstructionWithOpcode,
 } from "xpanda-core";
 import type { DecodedInstruction, OpcodeInfo } from "xpanda-core";
-import { concatBytes, encodeStringEntity, readStringEntity, readUleb128, writeUleb128 } from "./codec";
+import { concatBytes, encodeStringEntity, readStringEntity, readUleb128, writeSleb128, writeUleb128 } from "./codec";
 import { encodeMethodCode, type CatchBlockInput, type MethodCodeInput, type TryBlockInput } from "./MethodCode";
+import {
+    encodeModuleRecord, readModuleRecord,
+    type ModuleRecord,
+} from "./ModuleRecord";
 
 export type { CatchBlockInput, MethodCodeInput, TryBlockInput };
 
@@ -37,6 +41,11 @@ const INDEX_HEADER_METHOD_IDX_OFF_OFF = 20;
 
 const METHOD_TAG_CODE = 0x01;
 const METHOD_TAG_DEBUG_INFO = 0x05;
+
+/** 字段实体 tag(与 Panda FieldTag 一致) */
+const FIELD_TAG_NOTHING = 0x00;
+const FIELD_TAG_INT_VALUE = 0x01;
+const FIELD_TAG_VALUE = 0x02;
 
 /** 方法实体 tag 的载荷长度(所有 tag 载荷均为定长) */
 const METHOD_TAG_PAYLOAD_SIZE: Record<number, number> = {
@@ -131,6 +140,19 @@ export interface PatchMethodHeadSourceOptions {
     targetApiVersion?: number;
     /** 保留临时目录(调试用) */
     keepTemp?: boolean;
+    /**
+     * hook 源码里的模块请求重写:源码 specifier → 目标 abc 中可直接解析的请求串。
+     * 例如 `{ ohop: "@normalized:N&&&entry/src/main/ets/common/ohop&" }`。
+     * 缺省按目标 abc 的记录名做唯一后缀匹配(见 resolveModuleRequests)。
+     */
+    moduleRequests?: Record<string, string>;
+    /**
+     * 未显式给出映射时,是否按目标 abc 里的记录名后缀自动解析 hook 的 import
+     * (例如 `ohop` → `@normalized:N&&&<recordName>`)。默认 true。
+     */
+    resolveModuleRequests?: boolean;
+    /** 追加到目标 module import 表里的 local 名;缺省用 hook 名 */
+    localName?: string;
 }
 
 export interface PrepareMethodHeadOptions {
@@ -163,9 +185,9 @@ interface PreparedTarget {
     insertionPC?: number;
 }
 
-/** 已搬进目标 abc 的 hook 函数:region 内方法 id + hook 名(用于结果回传) */
+/** 已搬进目标 abc 的 hook 函数:目标 module import 下标 + hook 名 */
 interface HookLoader {
-    methodId: number;
+    importIndex: number;
     name: string;
 }
 
@@ -175,6 +197,8 @@ interface ClassImportCaches {
     stringIds: Map<number, number>;
     literalEntities: Map<number, number>;
     literalIds: Map<number, number>;
+    /** hook 源 module record 偏移 → 目标 module record 偏移 */
+    moduleRecords: Map<number, number>;
 }
 
 export interface InsertInstructionsOptions {
@@ -204,6 +228,10 @@ export class PandaPatchFile {
     private headerClassTableState: { offset: number; size: number } | null = null;
     /** prepareMethodHead 预约的 hook 名 → 目标方法列表(同一个 hook 可挂多个函数) */
     private readonly preparedMethodHeads = new Map<string, PreparedTarget[]>();
+    /** 已改写过的 module record(目标类 → 当前记录 + 当前偏移),避免同一次会话重复读取旧值 */
+    private readonly moduleRecordOverrides = new Map<PandaClass, { record: ModuleRecord; offset: number }>();
+    /** 硬加 module record 时,moduleRecordIdx 字段值在新类实体里的绝对偏移 */
+    private readonly moduleRecordValueOffsets = new Map<PandaClass, number>();
 
     private constructor(data: Uint8Array) {
         this.reset(data);
@@ -234,6 +262,8 @@ export class PandaPatchFile {
         this.headerClassTableState = null;
         this.entityTableState.clear();
         this.preparedMethodHeads.clear();
+        this.moduleRecordOverrides.clear();
+        this.moduleRecordValueOffsets.clear();
         for (const indexHeader of this.pf.indexHeaders) {
             this.indexHeaderEnds.set(indexHeader, indexHeader.end);
         }
@@ -435,7 +465,8 @@ export class PandaPatchFile {
 
     /**
      * 内部:在目标方法头插入 hook 前导。
-     * hook 函数是搬进目标 abc 的 hook class 方法,用 `definefunc` 按方法 id 直接取函数。
+     * hook 函数从目标 module 的 import 绑定读取(`ldexternalmodulevar <import_idx>`),
+     * 该 import 指向随 hook class 一起搬进目标 abc 的 hook module record。
      */
     private applyMethodHeadPrologue(
         className: string,
@@ -476,7 +507,7 @@ export class PandaPatchFile {
             free = free.concat(collectFree(numVregs, oldNumVregs));
         }
 
-        // IC slot 分配(definefunc 1 槽,ldobjbyvalue 2 槽,stricteq 1 槽)
+        // IC slot 分配(ldobjbyvalue 2 槽,stricteq 1 槽)
         let base = maxIcSlot(preparedInstructions) + 1;
         if (base + 8 > 250) base = 0;
         let nextSlot = base;
@@ -485,17 +516,19 @@ export class PandaPatchFile {
             nextSlot += count;
             return slot;
         };
-        const slotGlobal = takeSlots(1);
         const slotObject0 = takeSlots(2);
         const slotStrictEq = takeSlots(1);
         const slotObject1 = takeSlots(2);
+
+        // hook 函数来自目标 module 的 import 绑定(hook 以独立 module 求值)。
+        const loadHook = assembleInstruction("ldexternalmodulevar", [hook.importIndex]);
 
         const vResult = free[0];
         const vTemp = free[1];
         const head = concatBytes([
             assemble("getunmappedargs"),
             assembleInstruction("sta", [vResult]),
-            assembleInstruction("definefunc", [slotGlobal, hook.methodId, 1]),
+            loadHook,
             assembleInstruction("callarg1", [1, vResult]),
             assembleInstruction("sta", [vResult]),
             assemble("ldai 0"),
@@ -588,7 +621,7 @@ export class PandaPatchFile {
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "panda-asm-"));
         try {
             return this.patchMethodHeadsClass(
-                hookGlobalName, hookSource, targets, es2abc, apiVersionArgs, targetBcVersion, tempDir);
+                hookGlobalName, hookSource, targets, es2abc, apiVersionArgs, targetBcVersion, tempDir, options);
         } finally {
             if (options.keepTemp) {
                 console.log(`[panda-asm] temp dir kept: ${tempDir}`);
@@ -600,11 +633,13 @@ export class PandaPatchFile {
 
     /**
      * class 注入:es2abc 把 hook 源码编译成带独立 module record 的 abc,把这个 hook class
-     * (类实体 + 方法 + 字符串/literal array 依赖)整体搬到目标 abc 的同一 region,再用
-     * `definefunc` 直接引用 hook 函数方法 —— 不经过 globalThis。
+     * (类实体 + 方法 + 字符串/literal array 依赖 + module record)整体搬到目标 abc 的同一
+     * region,并把 module 字段(import/export 表)一起搬过来。
      *
-     * 目标 region 需要 proto index table 无效(>= 12.0.1.0);搬运时丢弃 class 的 module
-     * 字段(pkgName/moduleRecordIdx 等)与 tag,只保留方法。
+     * 然后给目标 module 追加一条 import 表项(指向 hook record),前导用
+     * `ldexternalmodulevar` 取 hook 函数 —— hook 内部的 import / 顶层变量因此能正常解析。
+     *
+     * 目标 region 需要 proto index table 无效(>= 12.0.1.0)。
      */
     private patchMethodHeadsClass(
         hookGlobalName: string,
@@ -614,6 +649,7 @@ export class PandaPatchFile {
         apiVersionArgs: string[],
         targetBcVersion: string,
         tempDir: string,
+        options: PatchMethodHeadSourceOptions,
     ): InsertInstructionsResult[] {
         const hookSourcePath = path.join(tempDir, "hook-class.js");
         fs.writeFileSync(hookSourcePath, buildHookClassSource(hookGlobalName, hookSource));
@@ -643,25 +679,50 @@ export class PandaPatchFile {
                 "moving the hook class requires the hook source to declare "
                 + `'function ${hookGlobalName}(...)'; method '${hookClassName}::${hookMethodName}' was not compiled`);
         }
+        const hookModuleData = hookClass.pandaClassModuleData;
+        if (!hookModuleData) {
+            throw new PandaPatchError("hook abc has no module record; the hook must be compiled as an ES module");
+        }
+        const exported = hookModuleData.exports.some((exp) =>
+            exp.path === null && exp.exportName === hookGlobalName);
+        if (!exported) {
+            throw new PandaPatchError(
+                `the hook module must export '${hookGlobalName}' (use 'export function ${hookGlobalName}(...)')`);
+        }
 
         // hook class 只搬进第一个目标类所属的 region;跨 region 需要多份副本,暂不支持
         const targetRegion = this.requireClass(targets[0].className).indexHeader;
+        const targetClasses: PandaClass[] = [];
         for (const target of targets) {
-            if (this.requireClass(target.className).indexHeader !== targetRegion) {
+            const targetClass = this.requireClass(target.className);
+            if (targetClass.indexHeader !== targetRegion) {
                 throw new PandaPatchError(
                     "moving the hook class into methods of different index regions is not supported");
             }
+            if (!targetClasses.includes(targetClass)) targetClasses.push(targetClass);
         }
 
-        const methodIds = this.importHookClass(hookFile, hookPatch, hookClass, targets[0].className);
-        const hookMethodId = methodIds.get(hookMethodName);
-        if (hookMethodId === undefined) {
-            throw new PandaPatchError(`imported hook class has no method '${hookMethodName}'`);
+        // 目标类没有 module record(bundle-pack / 未合并 abc)时硬加一个:
+        // isCommonjs + moduleRecordIdx + 空 module record,后续再追加 hook import。
+        for (const targetClass of targetClasses) {
+            this.ensureModuleRecord(targetClass);
         }
+
+        this.importHookClass(hookFile, hookPatch, hookClass, targets[0].className, options);
+
+        const recordName = hookClassName.slice(1, -1);
+        const request = normalizedRequestForRecord(recordName);
+        const localName = options.localName ?? hookGlobalName;
+        const importIndexByClass = new Map<string, number>();
+        for (const targetClass of targetClasses) {
+            importIndexByClass.set(targetClass.getClassName(),
+                this.addModuleImport(targetClass.getClassName(), localName, hookGlobalName, request));
+        }
+
         const results = targets.map((target) => this.applyMethodHeadPrologue(
             target.className,
             target.methodName,
-            { methodId: hookMethodId, name: hookGlobalName },
+            { importIndex: importIndexByClass.get(target.className)!, name: hookGlobalName },
             target.asyncContextRegister,
             target.insertionPC ?? 0,
         ));
@@ -672,8 +733,9 @@ export class PandaPatchFile {
     /**
      * 把一个 class 从 hook abc 搬到目标 region:
      *   - 方法代码里的字符串 / literal array / 方法 id 按目标 region 重新分配;
-     *   - 方法实体重写 class_idx / proto_idx / name,丢弃 debug/annotation tag;
-     *   - 类实体只保留 name / super / access_flags / num_methods 与方法,module 字段与 tag 丢弃;
+     *   - 方法实体重写 class_idx / proto_idx / name / header index,丢弃 debug/annotation tag;
+     *   - 类实体保留 name / super / access_flags / fields / methods,module 字段
+     *     (含 module record)一起搬过来;
      *   - 类与方法的索引表追加到文件末尾。
      * 返回导入后的方法名 → region 内方法 id。
      */
@@ -682,6 +744,7 @@ export class PandaPatchFile {
         hookPatch: PandaPatchFile,
         hookClass: PandaClass,
         targetClassName: string,
+        options: PatchMethodHeadSourceOptions,
     ): Map<string, number> {
         const targetRegion = this.requireClass(targetClassName).indexHeader;
         if (targetRegion.protoIdxSize !== 0xffffffff) {
@@ -709,6 +772,7 @@ export class PandaPatchFile {
             stringIds: new Map(),
             literalEntities: new Map(),
             literalIds: new Map(),
+            moduleRecords: new Map(),
         };
         const sourceRegion = hookClass.indexHeader;
 
@@ -738,24 +802,40 @@ export class PandaPatchFile {
             tries: [],
         })));
 
+        // 字段类型(原生类型)条目可能追加到 region 类表,必须先解析,
+        // 否则新类的下标会在字段构建过程中被挤后。
+        const fieldTypeIndexes = this.resolveImportedFieldTypeIndexes(hookClass, sourceRegion, targetRegion);
         const newClassIndex = this.currentClassTableSize(targetRegion);
-        const methodBodies: Uint8Array[] = [];
+
+        // 把 module record 一起搬过来,并重建 module 字段
+        const fields = this.buildImportedModuleFields(
+            hookFile, hookClass, newClassIndex, caches, options, fieldTypeIndexes);
+
+        const targetRegionIndex = this.pf.indexHeaders.indexOf(targetRegion);
+        const methodBodies = methods.map((entry, index) => {
+            const nameOffset = this.addString(entry.name);
+            // 高 16 位是 method 所属的 index region 下标,hook abc 里恒为 0,搬运后必须改写
+            const accessFlags = (entry.method.accessFlag & 0xffff) | (targetRegionIndex << 16);
+            return buildImportedMethodEntity(
+                newClassIndex, entry.method.protoIdx & 0xffff, nameOffset, accessFlags, codeOffsets[index]);
+        });
+
+        const classBytes = buildImportedClassEntity(sourceClassName, hookClass.accessFlags, fields, methodBodies);
+        const classOffset = this.append(classBytes);
+        // 方法实体内联在类实体里;实体表直接指向内联副本,这样解析出的 PandaMethod
+        // 能通过 class_idx 找到父类(module 字段 / import 表都挂在父类上)。
+        const methodsLength = methodBodies.reduce((total, body) => total + body.length, 0);
+        let methodOffset = classOffset + classBytes.length - methodsLength;
         const methodIds = new Map<string, number>();
         methods.forEach((entry, index) => {
-            const nameOffset = this.addString(entry.name);
-            const body = buildImportedMethodEntity(
-                newClassIndex, entry.method.protoIdx & 0xffff, nameOffset, entry.method.accessFlag, codeOffsets[index]);
-            const entityOffset = this.append(body);
-            const id = this.appendMethodIndex(targetRegion, entityOffset);
+            const id = this.appendMethodIndex(targetRegion, methodOffset);
             if (id !== methodIdBase + index) {
                 throw new PandaPatchError("internal error: imported hook method id mismatch");
             }
             methodIds.set(entry.name, id);
-            methodBodies.push(body);
+            methodOffset += methodBodies[index].length;
         });
 
-        const classBytes = buildImportedClassEntity(sourceClassName, hookClass.accessFlags, methodBodies);
-        const classOffset = this.append(classBytes);
         const registeredIndex = this.appendClassIndex(targetRegion, classOffset);
         if (registeredIndex !== newClassIndex) {
             throw new PandaPatchError("internal error: imported hook class index mismatch");
@@ -763,6 +843,490 @@ export class PandaPatchFile {
         // 追加的实体/索引表都落在文件末尾,region end 覆盖到文件尾
         this.extendRegion(targetRegion, this.size);
         return methodIds;
+    }
+
+    /** 为 module 字段解析目标 region 里的原生类型下标(必要时追加) */
+    private resolveImportedFieldTypeIndexes(
+        hookClass: PandaClass,
+        sourceRegion: PandaClass["indexHeader"],
+        targetRegion: PandaClass["indexHeader"],
+    ): Map<string, number> {
+        const indexes = new Map<string, number>();
+        for (const field of hookClass.pandaFields ?? []) {
+            const fieldName = field.getName();
+            if (fieldName === "scopeNames") continue;
+            const sourceType = sourceRegion.pandaClasses[field.typeIdx];
+            if (!sourceType) {
+                throw new PandaPatchError(`hook module field '${fieldName}' has an unknown type index`);
+            }
+            const typeRawValue = sourceType.getOffset();
+            if (typeRawValue > 0xffff) {
+                throw new PandaPatchError(
+                    `hook module field '${fieldName}' uses a class type; only primitive module fields are supported`);
+            }
+            indexes.set(fieldName, this.targetClassIndexForValue(targetRegion, typeRawValue));
+        }
+        return indexes;
+    }
+
+    /**
+     * 重建 hook class 的 module 字段:
+     *   - moduleRecordIdx 指向搬进目标文件的 module record;
+     *   - isCommonjs / hasTopLevelAwait / isSharedModule / pkgName@... 原样复制(INT_VALUE);
+     *   - scopeNames 是编译期 AOP 元数据,运行时不读,直接丢弃;
+     *   - 其余 VALUE 字段(注解等)暂不支持。
+     */
+    private buildImportedModuleFields(
+        hookFile: PandaFile,
+        hookClass: PandaClass,
+        newClassIndex: number,
+        caches: ClassImportCaches,
+        options: PatchMethodHeadSourceOptions,
+        fieldTypeIndexes: Map<string, number>,
+    ): Uint8Array[] {
+        const moduleRecordField = hookClass.pandaFields?.find((field) => field.getName() === "moduleRecordIdx");
+        if (!moduleRecordField) {
+            throw new PandaPatchError(
+                "the hook class must carry a 'moduleRecordIdx' field");
+        }
+        const sourceModuleRecordValueOffset = findFieldValueOffset(hookFile.data, moduleRecordField);
+        if (sourceModuleRecordValueOffset === undefined) {
+            throw new PandaPatchError("hook 'moduleRecordIdx' field has no VALUE tag");
+        }
+        const sourceModuleRecordOffset = readU32At(hookFile.data, sourceModuleRecordValueOffset);
+        const targetModuleRecordOffset = this.importHookModuleRecord(
+            hookFile, sourceModuleRecordOffset, caches, options);
+
+        const fields: Uint8Array[] = [];
+        for (const field of hookClass.pandaFields ?? []) {
+            const fieldName = field.getName();
+            if (fieldName === "scopeNames") continue; // 编译期 AOP 元数据,运行时不需要
+            const typeIdx = fieldTypeIndexes.get(fieldName);
+            if (typeIdx === undefined) {
+                throw new PandaPatchError(`hook module field '${fieldName}' has an unknown type index`);
+            }
+            const nameOffset = this.addString(fieldName);
+            let value: Uint8Array;
+            if (fieldName === "moduleRecordIdx") {
+                value = concatBytes([Uint8Array.of(FIELD_TAG_VALUE), u32Bytes(targetModuleRecordOffset)]);
+            } else if (field.pandaFieldValue) {
+                throw new PandaPatchError(
+                    `hook module field '${fieldName}' has an unsupported VALUE entity; only moduleRecordIdx is supported`);
+            } else {
+                value = concatBytes([Uint8Array.of(FIELD_TAG_INT_VALUE), writeSleb128(field.intValue)]);
+            }
+            fields.push(encodeImportedField(newClassIndex, typeIdx, nameOffset, field.accessFlag, value));
+        }
+        return fields;
+    }
+
+    /**
+     * 把 hook 的 module record 搬进目标文件:字符串实体重新分配,hook 的 import 请求
+     * 按 moduleRequests 映射或按目标记录名后缀自动解析。
+     */
+    private importHookModuleRecord(
+        hookFile: PandaFile,
+        sourceOffset: number,
+        caches: ClassImportCaches,
+        options: PatchMethodHeadSourceOptions,
+    ): number {
+        const cached = caches.moduleRecords.get(sourceOffset);
+        if (cached !== undefined) return cached;
+        const record = readModuleRecord(hookFile.data, sourceOffset);
+        const importString = (offset: number): number => this.copyStringEntity(hookFile, offset, caches);
+        const imported: ModuleRecord = {
+            moduleRequests: record.moduleRequests.map((offset) => {
+                const request = readStringEntity(hookFile.data, offset);
+                const rewritten = this.resolveHookModuleRequest(request, options);
+                return rewritten === request
+                    ? importString(offset)
+                    : this.addString(rewritten);
+            }),
+            regularImports: record.regularImports.map((entry) => ({
+                localName: importString(entry.localName),
+                importName: importString(entry.importName),
+                moduleRequestIdx: entry.moduleRequestIdx,
+            })),
+            namespaceImports: record.namespaceImports.map((entry) => ({
+                localName: importString(entry.localName),
+                moduleRequestIdx: entry.moduleRequestIdx,
+            })),
+            localExports: record.localExports.map((entry) => ({
+                localName: importString(entry.localName),
+                exportName: importString(entry.exportName),
+            })),
+            indirectExports: record.indirectExports.map((entry) => ({
+                exportName: importString(entry.exportName),
+                importName: importString(entry.importName),
+                moduleRequestIdx: entry.moduleRequestIdx,
+            })),
+            starExports: record.starExports.slice(),
+        };
+        const targetOffset = this.append(encodeModuleRecord(imported));
+        caches.moduleRecords.set(sourceOffset, targetOffset);
+        return targetOffset;
+    }
+
+    /**
+     * hook 源码的 import 请求 → 目标 abc 中可解析的请求串:
+     *   - 显式 moduleRequests 映射优先(值可以是请求串,也可以直接写 `&recordName&`);
+     *   - `@...` / 相对路径原样保留;
+     *   - 其余按记录名后缀唯一匹配,转成 `@normalized:N&&&<recordName>`;
+     *   - 匹配不到时原样保留(交给运行时/用户显式映射)。
+     */
+    private resolveHookModuleRequest(
+        request: string,
+        options: PatchMethodHeadSourceOptions,
+    ): string {
+        const explicit = options.moduleRequests?.[request];
+        if (explicit !== undefined) {
+            // 也接受直接写记录名(&recordName&),统一转成 normalized 请求
+            return explicit.startsWith("&") ? normalizedRequestForRecord(explicit) : explicit;
+        }
+        if (options.resolveModuleRequests === false) return request;
+        if (request.startsWith("@") || request.startsWith(".") || request.startsWith("/")) return request;
+        const matches = this.findRecordNamesBySuffix(request);
+        if (matches.length === 1) return normalizedRequestForRecord(matches[0]);
+        if (matches.length > 1) {
+            throw new PandaPatchError(
+                `hook import '${request}' matches multiple records (${matches.join(", ")}); `
+                + "pass moduleRequests to disambiguate");
+        }
+        return request;
+    }
+
+    /** 目标 abc 里以 name 结尾的记录名(用于把 hook 的裸 import 解析成记录名) */
+    private findRecordNamesBySuffix(name: string): string[] {
+        const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const pattern = new RegExp(`(^|.*/)${escaped}(&[^/]*)?$`);
+        const matches: string[] = [];
+        for (const clazz of this.pf.getAllClasses()) {
+            if (clazz.classExternal) continue;
+            const className = clazz.getClassName();
+            if (className.length < 3 || !className.startsWith("L") || !className.endsWith(";")) continue;
+            const recordName = className.slice(1, -1);
+            if (pattern.test(recordName) && !matches.includes(recordName)) matches.push(recordName);
+        }
+        return matches;
+    }
+
+    /** 在目标 region 类表里找原生类型条目(offset 值 ≤ header size),没有则只在 region 表追加 */
+    private targetClassIndexForValue(region: PandaClass["indexHeader"], rawValue: number): number {
+        const state = this.classTableState.get(region)
+            ?? { offset: region.classIdxOff, size: region.classIdxSize };
+        for (let i = 0; i < state.size; i++) {
+            if (this.readU32(state.offset + i * 4) === rawValue) return i;
+        }
+        return this.appendClassIndex(region, rawValue, false);
+    }
+
+    /**
+     * 给目标类的 module record 追加一条 regular import,返回它在 module 环境数组里的下标。
+     * 要求目标 module 没有 namespace import(追加 regular import 会移动它们的下标)。
+     * 已存在相同 (importName, request) 的 import 时直接复用。
+     */
+    private addModuleImport(className: string, localName: string, importName: string, request: string): number {
+        const clazz = this.requireClass(className);
+        let state = this.moduleRecordOverrides.get(clazz);
+        if (!state) {
+            if (!clazz.pandaClassModuleData) {
+                throw new PandaPatchError(`class '${className}' has no module record`);
+            }
+            const offset = clazz.pandaClassModuleData.getOffset();
+            state = { record: readModuleRecord(this.bytes, offset), offset };
+            this.moduleRecordOverrides.set(clazz, state);
+        }
+        const record = state.record;
+        if (record.namespaceImports.length > 0) {
+            throw new PandaPatchError(
+                `module '${className}' has namespace imports; appending a regular import would shift them`);
+        }
+        for (let i = 0; i < record.regularImports.length; i++) {
+            const entry = record.regularImports[i];
+            if (entry.moduleRequestIdx >= record.moduleRequests.length) continue;
+            if (readStringEntity(this.bytes, entry.importName) !== importName) continue;
+            if (readStringEntity(this.bytes, record.moduleRequests[entry.moduleRequestIdx]) !== request) continue;
+            return i;
+        }
+        const index = record.regularImports.length;
+        record.moduleRequests.push(this.addString(request));
+        record.regularImports.push({
+            localName: this.addString(localName),
+            importName: this.addString(importName),
+            moduleRequestIdx: record.moduleRequests.length - 1,
+        });
+        const newOffset = this.append(encodeModuleRecord(record));
+        if (!this.patchModuleRecordField(clazz, newOffset)) {
+            throw new PandaPatchError(`cannot patch 'moduleRecordIdx' of '${className}'`);
+        }
+        state.offset = newOffset;
+        this.extendRegion(clazz.indexHeader, this.size);
+        return index;
+    }
+
+    /** 把 class 的 moduleRecordIdx 字段值改成新的 module record 偏移 */
+    private patchModuleRecordField(clazz: PandaClass, newOffset: number): boolean {
+        const tracked = this.moduleRecordValueOffsets.get(clazz);
+        if (tracked !== undefined) {
+            this.patchU32(tracked, newOffset);
+            return true;
+        }
+        const field = clazz.pandaFields?.find((candidate) => candidate.getName() === "moduleRecordIdx");
+        if (!field) return false;
+        const valueOffset = findFieldValueOffset(this.bytes, field);
+        if (valueOffset === undefined) return false;
+        this.patchU32(valueOffset, newOffset);
+        return true;
+    }
+
+    /**
+     * 目标类没有 module record 时硬加一个:给类实体追加 `isCommonjs`(INT 0)与
+     * `moduleRecordIdx`(VALUE → 新 module record)字段,并重建/重定位类实体。
+     *
+     * 注意:运行时用"任意类带 moduleRecordIdx/isCommonjs"判定 merged abc;对 bundle-pack
+     * 文件做这件事会让整个文件按 merged 语义加载(调用方需自行确认可接受)。
+     */
+    private ensureModuleRecord(clazz: PandaClass): void {
+        if (clazz.pandaClassModuleData) return;
+        if (this.moduleRecordOverrides.has(clazz)) return;
+
+        const record: ModuleRecord = {
+            moduleRequests: [],
+            regularImports: [],
+            namespaceImports: [],
+            localExports: [],
+            indirectExports: [],
+            starExports: [],
+        };
+        const recordOffset = this.append(encodeModuleRecord(record));
+
+        const region = clazz.indexHeader;
+        const classIndex = this.classIndexOf(clazz);
+        // 与 es2abc 的 module 字段一致:isCommonjs 用 U1(编码值 2),moduleRecordIdx 用 I32(6)
+        const isCommonjsType = this.targetClassIndexForValue(region, 2);
+        const moduleRecordType = this.targetClassIndexForValue(region, 6);
+        const isCommonjsField = encodeImportedField(
+            classIndex, isCommonjsType, this.addString("isCommonjs"), 0,
+            concatBytes([Uint8Array.of(FIELD_TAG_INT_VALUE), writeSleb128(0)]));
+        const moduleRecordField = encodeImportedField(
+            classIndex, moduleRecordType, this.addString("moduleRecordIdx"), 0,
+            concatBytes([Uint8Array.of(FIELD_TAG_VALUE), u32Bytes(recordOffset)]));
+
+        const { bytes, appendedFieldOffsets, methodShift } = this.buildClassWithAppendedFields(
+            clazz, [isCommonjsField, moduleRecordField]);
+        const newOffset = this.relocateClassEntity(clazz, bytes, methodShift);
+        // VALUE tag 的 u32 载荷 = 字段实体起点 + 8(class/type/name) + uleb(access=0) + tag
+        const valueOffset = newOffset + appendedFieldOffsets[1] + 8 + writeUleb128(0).length + 1;
+        this.moduleRecordValueOffsets.set(clazz, valueOffset);
+        this.moduleRecordOverrides.set(clazz, { record, offset: recordOffset });
+        this.extendRegion(region, this.size);
+    }
+
+    /** 类在所属 region 类表里的下标 */
+    private classIndexOf(clazz: PandaClass): number {
+        const state = this.classOverrides.get(clazz);
+        const offset = state?.offset ?? clazz.getOffset();
+        const table = this.classTableState.get(clazz.indexHeader)
+            ?? { offset: clazz.indexHeader.classIdxOff, size: clazz.indexHeader.classIdxSize };
+        for (let i = 0; i < table.size; i++) {
+            if (this.readU32(table.offset + i * 4) === offset) return i;
+        }
+        throw new PandaPatchError(`class '${clazz.getClassName()}' is not registered in its region class table`);
+    }
+
+    /**
+     * 在类实体的字段区末尾追加字段实体(num_fields 同步 +1),返回新类实体字节与
+     * 每个新字段在类实体内的相对偏移。
+     */
+    private buildClassWithAppendedFields(
+        clazz: PandaClass,
+        fields: Uint8Array[],
+    ): { bytes: Uint8Array; appendedFieldOffsets: number[]; methodShift: number } {
+        const state = this.getClassOverride(clazz);
+        const raw = state.bytes;
+        const nameSize = clazz.name.getSize();
+        let pos = nameSize + 4; // super_class_off
+        const access = readUleb128(raw, pos); pos += access.size;
+        const numFields = readUleb128(raw, pos); pos += numFields.size;
+        const numMethods = readUleb128(raw, pos); pos += numMethods.size;
+        const tagsStart = pos;
+
+        // 跳过类 tag 区(注解 tag 无法安全重建)
+        let tagPos = tagsStart;
+        while (tagPos < raw.length && raw[tagPos] !== 0) {
+            const tag = raw[tagPos++];
+            if (tag === 0x01) { // INTERFACES
+                const count = readUleb128(raw, tagPos);
+                tagPos += count.size + count.value * 2;
+            } else if (tag === 0x02) { // SOURCE_LANG
+                tagPos += 1;
+            } else if (tag === 0x07) { // SOURCE_FILE
+                tagPos += 4;
+            } else {
+                throw new PandaPatchError(
+                    `cannot add module fields to a class with tag 0x${tag.toString(16)}`);
+            }
+        }
+        if (tagPos >= raw.length) {
+            throw new PandaPatchError("class entity tags are truncated");
+        }
+        const tagsEnd = tagPos + 1;
+
+        let methodsStart = tagsEnd;
+        for (const field of clazz.pandaFields ?? []) methodsStart += field.getSize();
+        if (methodsStart > raw.length) {
+            throw new PandaPatchError(`class '${clazz.getClassName()}' layout mismatch (fields exceed entity)`);
+        }
+
+        const header = concatBytes([
+            raw.subarray(0, nameSize),
+            raw.subarray(nameSize, nameSize + 4),
+            writeUleb128(access.value),
+            writeUleb128(numFields.value + fields.length),
+            writeUleb128(numMethods.value),
+        ]);
+        const tags = raw.subarray(tagsStart, tagsEnd);
+        const existingFields = raw.subarray(tagsEnd, methodsStart);
+        const methods = raw.subarray(methodsStart);
+
+        const appendedFieldOffsets: number[] = [];
+        let cursor = header.length + tags.length + existingFields.length;
+        for (const field of fields) {
+            appendedFieldOffsets.push(cursor);
+            cursor += field.length;
+        }
+        const bytes = concatBytes([header, tags, existingFields, ...fields, methods]);
+        // 方法整体右移(字段插在方法之前);状态更新留给 relocateClassEntity,
+        // 那里才能同时用旧相对偏移改方法索引表。
+        return { bytes, appendedFieldOffsets, methodShift: cursor - methodsStart };
+    }
+
+    /**
+     * 把重建后的类实体追加到文件末尾,并把类索引表 / 方法索引表里的旧偏移改成新偏移。
+     * (类实体里的方法实体是内联的,方法索引表必须跟着搬。)
+     */
+    private relocateClassEntity(clazz: PandaClass, newBytes: Uint8Array, methodShift: number): number {
+        const state = this.getClassOverride(clazz);
+        const oldOffset = state.offset;
+        const oldRelativeOffsets = new Map(state.methodRelativeOffsets);
+        const newOffset = this.append(newBytes);
+
+        const regionTable = this.classTableState.get(clazz.indexHeader)
+            ?? { offset: clazz.indexHeader.classIdxOff, size: clazz.indexHeader.classIdxSize };
+        for (let i = 0; i < regionTable.size; i++) {
+            const entry = regionTable.offset + i * 4;
+            if (this.readU32(entry) === oldOffset) this.patchU32(entry, newOffset);
+        }
+        if (this.pf.header.classIdxOff !== 0xffffffff) {
+            const headerTable = this.headerClassTableState
+                ?? { offset: this.pf.header.classIdxOff, size: this.pf.header.numClasses };
+            for (let i = 0; i < headerTable.size; i++) {
+                const entry = headerTable.offset + i * 4;
+                if (this.readU32(entry) === oldOffset) this.patchU32(entry, newOffset);
+            }
+        }
+
+        const moved = new Map<number, number>();
+        for (const [, relative] of oldRelativeOffsets) {
+            moved.set(oldOffset + relative, newOffset + relative + methodShift);
+        }
+        const entityTable = this.entityTableState.get(clazz.indexHeader)
+            ?? { offset: clazz.indexHeader.methodIdxOff, size: clazz.indexHeader.methodIdxSize };
+        for (let i = 0; i < entityTable.size; i++) {
+            const entry = entityTable.offset + i * 4;
+            const target = moved.get(this.readU32(entry));
+            if (target !== undefined) this.patchU32(entry, target);
+        }
+
+        // 字面量数组里的 METHOD tag 存的是方法实体绝对偏移(不是 id),也要跟着搬
+        this.patchMethodLiteralOffsets(moved);
+
+        for (const [name, relative] of oldRelativeOffsets) {
+            state.methodRelativeOffsets.set(name, relative + methodShift);
+        }
+        state.offset = newOffset;
+        state.bytes = newBytes;
+        this.extendRegion(clazz.indexHeader, newOffset + newBytes.length);
+        return newOffset;
+    }
+
+    /**
+     * 改写 literal array 里指向旧方法实体的 METHOD/GETTER/SETTER 偏移。
+     * v24 的 header 没有 literal array 表,因此从所有方法的 `literalarray_id`
+     * 操作数收集数组偏移(defineclasswithbuffer 的类 buffer 也在其中)。
+     */
+    private patchMethodLiteralOffsets(moved: Map<number, number>): void {
+        if (moved.size === 0) return;
+        const arrays = new Set<number>();
+        for (const clazz of this.pf.getAllClasses()) {
+            if (clazz.classExternal) continue;
+            const className = clazz.getClassName();
+            if (!className.startsWith("L") || !className.endsWith(";")) continue;
+            for (const method of clazz.pandaMethods.values()) {
+                const code = this.getMethodCode(className, method.name.content);
+                if (!code) continue;
+                for (const instruction of decodeInstructions(code.instructions)) {
+                    for (let i = 0; i < instruction.opcode.operands.length; i++) {
+                        if (instruction.opcode.operands[i].name !== "literalarray_id") continue;
+                        const id = instruction.operands[i];
+                        const entry = method.indexHeader.pandaMethods[id];
+                        if (entry) arrays.add(entry.getOffset());
+                    }
+                }
+            }
+        }
+        for (const offset of arrays) this.patchMethodLiteralOffsetsInArray(offset, moved);
+    }
+
+    private patchMethodLiteralOffsetsInArray(offset: number, moved: Map<number, number>): void {
+        const realSize = Math.trunc(this.readU32(offset) / 2);
+        let pos = offset + 4;
+        for (let i = 0; i < realSize; i++) {
+            if (pos >= this.size) return;
+            const tag = this.bytes[pos++];
+            switch (tag) {
+                case LITERAL_TAG.METHOD:
+                case LITERAL_TAG.GENERATORMETHOD:
+                case LITERAL_TAG.ASYNCGENERATORMETHOD:
+                case LITERAL_TAG.GETTER:
+                case LITERAL_TAG.SETTER: {
+                    const target = moved.get(this.readU32(pos));
+                    if (target !== undefined) this.patchU32(pos, target);
+                    pos += 4;
+                    break;
+                }
+                case LITERAL_TAG.STRING:
+                case LITERAL_TAG.LITERALARRAY:
+                case LITERAL_TAG.INTEGER:
+                case LITERAL_TAG.FLOAT:
+                case LITERAL_TAG.LITERALBUFFERINDEX:
+                    pos += 4;
+                    break;
+                case LITERAL_TAG.DOUBLE:
+                    pos += 8;
+                    break;
+                case LITERAL_TAG.METHODAFFILIATE:
+                    pos += 2;
+                    break;
+                case LITERAL_TAG.ARRAY_U1:
+                case LITERAL_TAG.ARRAY_U8:
+                case LITERAL_TAG.ARRAY_I8:
+                case LITERAL_TAG.ARRAY_U16:
+                case LITERAL_TAG.ARRAY_I16:
+                case LITERAL_TAG.ARRAY_U32:
+                case LITERAL_TAG.ARRAY_I32:
+                case LITERAL_TAG.ARRAY_U64:
+                case LITERAL_TAG.ARRAY_I64:
+                case LITERAL_TAG.ARRAY_F32:
+                case LITERAL_TAG.ARRAY_F64:
+                case LITERAL_TAG.ARRAY_STRING:
+                    // 数组字面量的载荷长度依赖元素类型,遇到即停止(方法引用不会出现在其后)
+                    return;
+                default: // TAGVALUE / BOOL / ACCESSOR / BUILTINTYPEINDEX / NULLVALUE
+                    pos += 1;
+                    break;
+            }
+        }
     }
 
     /** 当前 region 实体(method/string/literal array)索引表大小(含本次会话已追加的条目) */
@@ -1367,8 +1931,13 @@ export class PandaPatchFile {
     /**
      * 把一个新类实体登记到 region 的类索引表(表整体搬到文件末尾),同时追加到文件头的
      * 全局类索引表。返回新类在 region 类表中的下标。
+     * registerGlobal=false 用于原生类型条目(值 ≤ header size,不能进全局类表)。
      */
-    private appendClassIndex(indexHeader: PandaClass["indexHeader"], entityOffset: number): number {
+    private appendClassIndex(
+        indexHeader: PandaClass["indexHeader"],
+        entityOffset: number,
+        registerGlobal = true,
+    ): number {
         let state = this.classTableState.get(indexHeader);
         if (!state) {
             if (indexHeader.classIdxSize === 0 || indexHeader.classIdxOff === 0xffffffff) {
@@ -1392,7 +1961,7 @@ export class PandaPatchFile {
         state.size += 1;
 
         // 文件头全局类索引表(所有 region 的类都登记在这里)
-        if (this.pf.header.classIdxOff !== 0xffffffff) {
+        if (registerGlobal && this.pf.header.classIdxOff !== 0xffffffff) {
             let headerState = this.headerClassTableState;
             if (!headerState) {
                 headerState = { offset: this.pf.header.classIdxOff, size: this.pf.header.numClasses };
@@ -1697,24 +2266,78 @@ function buildImportedMethodEntity(
 }
 
 /**
- * 重建一个类实体:name + super(0) + access_flags + num_fields(0) + num_methods
- * + 空 tag 区 + 方法实体。hook class 的 module 元数据字段(pkgName / moduleRecordIdx
- * 等)在搬运时丢弃 —— 方法代码不依赖它们。
+ * 重建一个类实体:name + super(0) + access_flags + num_fields + num_methods
+ * + 空 tag 区 + 字段实体 + 方法实体。
+ * fields 里包含 module 元数据字段(moduleRecordIdx 等)。
  */
-function buildImportedClassEntity(name: string, accessFlags: number, methods: Uint8Array[]): Uint8Array {
+function buildImportedClassEntity(
+    name: string,
+    accessFlags: number,
+    fields: Uint8Array[],
+    methods: Uint8Array[],
+): Uint8Array {
     return concatBytes([
         encodeStringEntity(name),
         u32Bytes(0),
         writeUleb128(accessFlags),
-        writeUleb128(0),
+        writeUleb128(fields.length),
         writeUleb128(methods.length),
         Uint8Array.of(0x00),
+        ...fields,
         ...methods,
     ]);
 }
 
+/** 字段实体:class_idx(u16) + type_idx(u16) + name(u32) + access_flags(uleb) + tag 区 */
+function encodeImportedField(
+    classIdx: number,
+    typeIdx: number,
+    nameOffset: number,
+    accessFlags: number,
+    valueTags: Uint8Array,
+): Uint8Array {
+    const head = new Uint8Array(8);
+    writeU16(head, 0, classIdx);
+    writeU16(head, 2, typeIdx);
+    writeU32(head, 4, nameOffset);
+    return concatBytes([
+        head,
+        writeUleb128(accessFlags),
+        valueTags,
+        Uint8Array.of(FIELD_TAG_NOTHING),
+    ]);
+}
+
+/**
+ * 找到字段实体里 VALUE tag 的 u32 载荷偏移(用于原位改写 moduleRecordIdx)。
+ * 字段布局:class_idx(u16) + type_idx(u16) + name(u32) + access_flags(uleb) + tag 区。
+ */
+function findFieldValueOffset(data: Uint8Array, field: { getOffset(): number }): number | undefined {
+    let pos = field.getOffset() + 8;
+    pos += readUleb128(data, pos).size;
+    while (pos < data.length) {
+        const tag = data[pos++];
+        if (tag === FIELD_TAG_NOTHING) return undefined;
+        if (tag === FIELD_TAG_INT_VALUE) {
+            pos += readUleb128(data, pos).size;
+        } else if (tag === FIELD_TAG_VALUE) {
+            return pos;
+        } else {
+            return undefined;
+        }
+    }
+    return undefined;
+}
+
+/** 记录名 → 运行时可直接解析的 normalized 请求串(前缀 15 字节,第 16 个 & 属于记录名) */
+function normalizedRequestForRecord(recordName: string): string {
+    const bare = recordName.startsWith("&") ? recordName.slice(1) : recordName;
+    return `@normalized:N&&&${bare}`;
+}
+
 /**
  * class 注入要求 hook 源码声明同名函数(编译后成为 hook class 的 `#*#<name>` 方法)。
+ * 函数声明会被改写成 `export function` —— 目标 module 需要 import 这个导出。
  */
 function buildHookClassSource(hookName: string, source: string): string {
     if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(hookName)) {
@@ -1727,7 +2350,25 @@ function buildHookClassSource(hookName: string, source: string): string {
             "moving the hook class requires the hook source to declare "
             + `'function ${hookName}(...)'`);
     }
-    return `${trimmed}\n`;
+
+    if (new RegExp(`(?:^|[\\s;}])export\\s+default\\s+(?:async\\s+)?function\\s+${hookName}\\b`).test(trimmed)) {
+        throw new PandaPatchError(
+            `the hook module cannot use 'export default function ${hookName}'; `
+            + `declare 'export function ${hookName}(...)' instead`);
+    }
+    const exportedFunction = new RegExp(`(?:^|[\\s;}])export\\s+(?:async\\s+)?function\\s+${hookName}\\b`);
+    const exportedSpecifier = new RegExp(`\\bexport\\s*\\{[^}]*\\b${hookName}\\b[^}]*\\}`);
+    if (exportedFunction.test(trimmed) || exportedSpecifier.test(trimmed)) {
+        return `${trimmed}\n`;
+    }
+    const match = new RegExp(`(^|[\\s;}])((?:async\\s+)?function\\s+${hookName}\\b)`).exec(trimmed);
+    if (!match) {
+        throw new PandaPatchError(
+            "moving the hook class requires the hook source to declare "
+            + `'function ${hookName}(...)'`);
+    }
+    const insertAt = match.index + match[1].length;
+    return `${trimmed.slice(0, insertAt)}export ${trimmed.slice(insertAt)}\n`;
 }
 
 function $0(){

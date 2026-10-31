@@ -394,9 +394,23 @@ function testInsertRejectsInvalidInput(): void {
 }
 
 // ---------------------------------------------------------------- 9. prepare + patch workflow
-function stripModuleExports(code: string): string {
-    return code.replace(/^export\s+\{[^}]*\};\s*$/gm, "")
+function stripModuleSyntax(code: string): string {
+    return code.replace(/^import\s+[^;]+;\s*$/gm, "")
+        .replace(/^export\s+\{[^}]*\};\s*$/gm, "")
+        .replace(/^export\s+default\s+/gm, "")
         .replace(/^export\s+(?=(?:async\s+)?(?:class|function|const|let|var)\b)/gm, "");
+}
+
+/** 反编译 hook 的 module record 类并执行(等价于运行时求值 hook module,定义导出的 hook 函数) */
+function runHookModule(
+    pandaFile: PandaFile,
+    hookName: string,
+    sandbox: Record<string, unknown>,
+): void {
+    const hookClass = pandaFile.indexHeaders.flatMap((header) => header.pandaClasses)
+        .find((clazz) => !clazz.classExternal && clazz.getClassName().includes(`xpanda/hook/${hookName}`));
+    assert(hookClass, "moved hook class must exist");
+    vm.runInNewContext(stripModuleSyntax(new PandaDecompiler().decompileClass(hookClass)), sandbox, { timeout: 5000 });
 }
 
 // ---------------------------------------------------------------- 10. two-phase workflow
@@ -427,7 +441,8 @@ function testPrepareAndPatchWorkflow(): void {
 
     const sandbox: Record<string, unknown> = { console: { log: () => { /* ignore */ } } };
     sandbox.globalThis = sandbox;
-    vm.runInNewContext(stripModuleExports(new PandaDecompiler().decompileClass(target)), sandbox, { timeout: 5000 });
+    runHookModule(pandaFile, hookName, sandbox);
+    vm.runInNewContext(stripModuleSyntax(new PandaDecompiler().decompileClass(target)), sandbox, { timeout: 5000 });
     const targetFn = sandbox.target as (a: number, b: number) => unknown;
     assert(targetFn(1, 2) === 3, "hook returning [1] must preserve the original result");
 
@@ -440,7 +455,8 @@ function testPrepareAndPatchWorkflow(): void {
     assert(interceptTarget, "intercept target must exist");
     const interceptSandbox: Record<string, unknown> = { console: { log: () => { /* ignore */ } } };
     interceptSandbox.globalThis = interceptSandbox;
-    vm.runInNewContext(stripModuleExports(new PandaDecompiler().decompileClass(interceptTarget)),
+    runHookModule(interceptPanda, interceptHook, interceptSandbox);
+    vm.runInNewContext(stripModuleSyntax(new PandaDecompiler().decompileClass(interceptTarget)),
         interceptSandbox, { timeout: 5000 });
     assert((interceptSandbox.target as (a: number, b: number) => unknown)(1, 2) === 42,
         "hook returning [0, value] must early-return the value");
@@ -506,7 +522,8 @@ function testHookMultipleFunctions(): void {
 
     const sandbox: Record<string, unknown> = { console: { log: () => { /* ignore */ } } };
     sandbox.globalThis = sandbox;
-    vm.runInNewContext(stripModuleExports(new PandaDecompiler().decompileClass(target)), sandbox, { timeout: 5000 });
+    runHookModule(pandaFile, hookName, sandbox);
+    vm.runInNewContext(stripModuleSyntax(new PandaDecompiler().decompileClass(target)), sandbox, { timeout: 5000 });
     const targetA = sandbox.targetA as (a: number, b: number) => unknown;
     const targetB = sandbox.targetB as (a: number, b: number) => unknown;
     assert(targetA(2, 3) === 5 && targetB(2, 3) === 6, "both functions must keep their original behavior");
@@ -521,7 +538,8 @@ function testHookMultipleFunctions(): void {
     assert(interceptTarget, "intercept target must exist");
     const interceptSandbox: Record<string, unknown> = { console: { log: () => { /* ignore */ } } };
     interceptSandbox.globalThis = interceptSandbox;
-    vm.runInNewContext(stripModuleExports(new PandaDecompiler().decompileClass(interceptTarget)),
+    runHookModule(interceptPanda, interceptHook, interceptSandbox);
+    vm.runInNewContext(stripModuleSyntax(new PandaDecompiler().decompileClass(interceptTarget)),
         interceptSandbox, { timeout: 5000 });
     assert((interceptSandbox.targetA as (a: number, b: number) => unknown)(2, 3) === 42
         && (interceptSandbox.targetB as (a: number, b: number) => unknown)(2, 3) === 42,
@@ -553,10 +571,23 @@ function testMultipleHooksInOneSession(): void {
     const hookClasses = pandaFile.indexHeaders.flatMap((header) => header.pandaClasses)
         .filter((clazz) => !clazz.classExternal && clazz.getClassName().includes("xpanda/hook/"));
     assert(hookClasses.length === 2, `both hook classes must exist, got ${hookClasses.length}`);
+    const moduleImports = target.pandaClassModuleData!.imports;
+    for (const hook of [first, second]) {
+        assert(moduleImports.some((entry) => entry.importName === hook),
+            `target module must import hook '${hook}'`);
+        const code = target.pandaMethods.get(hook === first ? "#*#targetA" : "#*#targetB")!.methodCode!;
+        const load = decodeInstructions(code.instructions)
+            .find((instruction) => instruction.opcode.name === "ldexternalmodulevar");
+        assert(load, `prologue of '${hook}' must use ldexternalmodulevar`);
+        assert(moduleImports[load!.operands[0] as number]?.importName === hook,
+            `prologue of '${hook}' must reference its own import entry`);
+    }
 
     const sandbox: Record<string, unknown> = { console: { log: () => { /* ignore */ } } };
     sandbox.globalThis = sandbox;
-    vm.runInNewContext(stripModuleExports(new PandaDecompiler().decompileClass(target)), sandbox, { timeout: 5000 });
+    runHookModule(pandaFile, first, sandbox);
+    runHookModule(pandaFile, second, sandbox);
+    vm.runInNewContext(stripModuleSyntax(new PandaDecompiler().decompileClass(target)), sandbox, { timeout: 5000 });
     assert((sandbox.targetA as (a: number, b: number) => unknown)(2, 3) === 11, "first hook must patch targetA");
     assert((sandbox.targetB as (a: number, b: number) => unknown)(2, 3) === 22, "second hook must patch targetB");
 }
@@ -586,7 +617,8 @@ async function testHookAsyncFunction(): Promise<void> {
 
     const sandbox: Record<string, unknown> = { console: { log: () => { /* ignore */ } } };
     sandbox.globalThis = sandbox;
-    vm.runInNewContext(stripModuleExports(new PandaDecompiler().decompileClass(target)), sandbox, { timeout: 5000 });
+    runHookModule(pandaFile, hookName, sandbox);
+    vm.runInNewContext(stripModuleSyntax(new PandaDecompiler().decompileClass(target)), sandbox, { timeout: 5000 });
     const af = sandbox.af as (a: number) => Promise<number>;
     assert(await af(1) === 2, "non-fatal hook must preserve the async result");
 
@@ -599,82 +631,122 @@ async function testHookAsyncFunction(): Promise<void> {
     assert(interceptTarget, "intercept async target must exist");
     const interceptSandbox: Record<string, unknown> = { console: { log: () => { /* ignore */ } } };
     interceptSandbox.globalThis = interceptSandbox;
-    vm.runInNewContext(stripModuleExports(new PandaDecompiler().decompileClass(interceptTarget)),
+    runHookModule(interceptPanda, interceptHook, interceptSandbox);
+    vm.runInNewContext(stripModuleSyntax(new PandaDecompiler().decompileClass(interceptTarget)),
         interceptSandbox, { timeout: 5000 });
     assert(await (interceptSandbox.af as (a: number) => Promise<number>)(1) === 42,
         "hook returning [0, value] must early-return from the async function");
 }
 
-// ---------------------------------------------------------------- 13. move hook class into a non-merge target
-function testMoveHookClassIntoUnmergedAbc(): void {
+// ---------------------------------------------------------------- 13. hook module: import / export 表随类搬运
+function testHookModuleImport(): void {
     const es2abc = bundledEs2abc();
     if (!es2abc) {
-        console.log("[patch] skip class move workflow (es2abc not found)");
+        console.log("[patch] skip hook module import (es2abc not found)");
         return;
     }
-    const patchFile = PandaPatchFile.load(
-        new Uint8Array(fs.readFileSync(path.join(__dirname, "resources", "unmerged.abc"))));
-    const hookName = patchFile.prepareMethodHead("L_GLOBAL;", "#~@0<#test");
-    patchFile.patchMethodHead(hookName, `function ${hookName}(args) {
-        console.log("hook args", args);
-        return [1];
-    }`, { es2abc });
+    const targetClass = "L&entry/src/main/ets/target&;";
+    const fixturePath = path.join(__dirname, "resources", "target-only.abc");
+    const patchFile = PandaPatchFile.load(new Uint8Array(fs.readFileSync(fixturePath)));
+    const hookName = patchFile.prepareMethodHead(targetClass, "#*#target");
+    patchFile.patchMethodHead(hookName, `import { dep } from "depmod";
+function ${hookName}(args) {
+    console.log("dep", dep.value);
+    return [1];
+}`, { es2abc, moduleRequests: { depmod: "@normalized:N&&&entry/src/main/ets/depmod&" } });
 
     const pandaFile = new PandaFile(patchFile.toBytes());
     pandaFile.parseAssembly();
-    const classes = pandaFile.indexHeaders.flatMap((header) => header.pandaClasses)
-        .filter((clazz) => !clazz.classExternal);
-    const target = classes.find((clazz) => clazz.getClassName() === "L_GLOBAL;");
-    const hookClass = classes.find((clazz) => clazz.getClassName().includes(`xpanda/hook/${hookName}`));
-    assert(target, "target _GLOBAL must survive the class move");
-    assert(hookClass, "moved hook class must exist in the target abc");
-    assert(hookClass.pandaMethods.has(`#*#${hookName}`), "moved hook class must carry the hook function");
+    const target = findClass(pandaFile, targetClass);
+    assert(target, "target class must survive the hook class move");
+    const hookClass = pandaFile.indexHeaders.flatMap((header) => header.pandaClasses)
+        .find((clazz) => !clazz.classExternal && clazz.getClassName().includes(`xpanda/hook/${hookName}`));
+    assert(hookClass, "moved hook class must exist");
+    assert(hookClass.pandaClassModuleData, "moved hook class must keep its module record");
+    assert(hookClass.pandaFields?.some((field) => field.getName() === "moduleRecordIdx"),
+        "moved hook class must keep moduleRecordIdx");
+    assert(hookClass.pandaFields?.some((field) => field.getName() === "isCommonjs"),
+        "moved hook class must stay a runtime record (isCommonjs field)");
+    assert(hookClass.pandaClassModuleData.exports.some((exp) =>
+        exp.path === null && exp.exportName === hookName),
+    "hook module must export the hook function");
 
-    const decompiler = new PandaDecompiler();
-    const hookClassCode = stripModuleExports(decompiler.decompileClass(hookClass));
-    assert(!hookClassCode.includes("globalThis"), "moved hook class must not bind the hook to a global");
+    const hookImports = hookClass.pandaClassModuleData.imports.map((entry) => entry.toString());
+    assert(hookImports.some((entry) => entry.includes(`"@normalized:N&&&entry/src/main/ets/depmod&"`)),
+        `hook import must be rewritten to the target request, got ${JSON.stringify(hookImports)}`);
 
+    const targetModule = target.pandaClassModuleData;
+    assert(targetModule, "target class must keep its module record");
+    const addedImport = targetModule.imports.find((entry) => entry.importName === hookName);
+    assert(addedImport, "target module must import the hook export");
+    assert(addedImport!.path === `@normalized:N&&&xpanda/hook/${hookName}&`,
+        `target import must reference the hook record, got ${addedImport!.path}`);
+
+    const targetMethod = target.pandaMethods.get("#*#target");
+    assert(targetMethod?.methodCode, "patched target method must keep code");
+    const prologue = decodeInstructions(targetMethod.methodCode.instructions)
+        .slice(0, 4)
+        .map((instruction) => instruction.opcode.name);
+    assert(prologue.includes("ldexternalmodulevar"),
+        `prologue must load the hook via the module import, got ${prologue.join(",")}`);
+
+    // 执行:反编译 hook module(定义导出的 hook 函数)+ 目标类
     const logs: unknown[][] = [];
-    const sandbox: Record<string, unknown> = { console: { log: (...args: unknown[]) => logs.push(args) } };
+    const sandbox: Record<string, unknown> = {
+        console: { log: (...args: unknown[]) => logs.push(args) },
+        dep: { value: 7 },
+    };
     sandbox.globalThis = sandbox;
-    vm.runInNewContext(hookClassCode, sandbox, { timeout: 5000 });
-    vm.runInNewContext(stripModuleExports(decompiler.decompileClass(target)), sandbox, { timeout: 5000 });
-    assert(logs.length === 2, `hook plus original body must both log, got ${JSON.stringify(logs)}`);
-    assert(logs[0][0] === "hook args" && (logs[0][1] as { 0?: unknown })[0] === "hello",
-        "hook must receive the unmapped arguments");
-    assert(logs[1][0] === "hello", "pass-through hook must keep the original body");
+    runHookModule(pandaFile, hookName, sandbox);
+    vm.runInNewContext(stripModuleSyntax(new PandaDecompiler().decompileClass(target)), sandbox, { timeout: 5000 });
+    const targetFn = sandbox.target as (a: number, b: number) => unknown;
+    assert(targetFn(1, 2) === 3, "hook returning [1] must preserve the original result");
+    assert(logs.length === 1 && logs[0][0] === "dep" && logs[0][1] === 7,
+        `hook module import must stay readable, got ${JSON.stringify(logs)}`);
 }
 
-// ---------------------------------------------------------------- 14. move hook class: interception
-function testMoveHookClassIntercepts(): void {
+// ---------------------------------------------------------------- 14. 目标没有 module record 时硬加
+function testHookAddsModuleRecord(): void {
     const es2abc = bundledEs2abc();
     if (!es2abc) {
-        console.log("[patch] skip class move interception (es2abc not found)");
+        console.log("[patch] skip forced module record (es2abc not found)");
         return;
     }
     const patchFile = PandaPatchFile.load(
         new Uint8Array(fs.readFileSync(path.join(__dirname, "resources", "unmerged.abc"))));
-    const hookName = patchFile.prepareMethodHead("L_GLOBAL;", "#~@0<#test");
-    patchFile.patchMethodHead(hookName, `function ${hookName}(args) {
-        console.log("intercepted", args);
-        return [0, 42];
-    }`, { es2abc });
+    const hookName = patchFile.prepareMethodHead("L_GLOBAL;", "#~@0<#test", { hookGlobalName: "TestHook" });
+    patchFile.patchMethodHead(hookName,
+        `function TestHook(args) { console.log("hook args", args); return [1]; }`, { es2abc });
 
     const pandaFile = new PandaFile(patchFile.toBytes());
     pandaFile.parseAssembly();
-    const classes = pandaFile.indexHeaders.flatMap((header) => header.pandaClasses)
-        .filter((clazz) => !clazz.classExternal);
-    const target = classes.find((clazz) => clazz.getClassName() === "L_GLOBAL;")!;
-    const hookClass = classes.find((clazz) => clazz.getClassName().includes(`xpanda/hook/${hookName}`))!;
+    const target = findClass(pandaFile, "L_GLOBAL;");
+    assert(target, "target _GLOBAL must survive the class rebuild");
+    assert(target.pandaClassModuleData, "target must gain a module record");
+    assert(target.pandaFields?.some((field) => field.getName() === "moduleRecordIdx"),
+        "target must gain moduleRecordIdx");
+    assert(target.pandaFields?.some((field) => field.getName() === "isCommonjs"),
+        "target must gain isCommonjs");
+    const addedImport = target.pandaClassModuleData.imports.find((entry) => entry.importName === hookName);
+    assert(addedImport, "target module must import the hook");
 
+    const testMethod = target.pandaMethods.get("#~@0<#test");
+    assert(testMethod?.methodCode, "hooked target method must keep code");
+    const prologue = decodeInstructions(testMethod.methodCode.instructions)
+        .slice(0, 4)
+        .map((instruction) => instruction.opcode.name);
+    assert(prologue.includes("ldexternalmodulevar"),
+        `prologue must load the hook via the module import, got ${prologue.join(",")}`);
+
+    // 类被重建/重定位后,方法仍要能正确解析(类 buffer 里的方法偏移已同步)
     const logs: unknown[][] = [];
     const sandbox: Record<string, unknown> = { console: { log: (...args: unknown[]) => logs.push(args) } };
     sandbox.globalThis = sandbox;
-    const decompiler = new PandaDecompiler();
-    vm.runInNewContext(stripModuleExports(decompiler.decompileClass(hookClass)), sandbox, { timeout: 5000 });
-    vm.runInNewContext(stripModuleExports(decompiler.decompileClass(target)), sandbox, { timeout: 5000 });
-    assert(logs.length === 1 && logs[0][0] === "intercepted",
-        `[0, value] must skip the original body, got ${JSON.stringify(logs)}`);
+    runHookModule(pandaFile, hookName, sandbox);
+    // 目标模块末尾本来就有 Test.test("hello") 调用,执行反编译结果即可
+    vm.runInNewContext(stripModuleSyntax(new PandaDecompiler().decompileClass(target)), sandbox, { timeout: 5000 });
+    assert(logs.some((entry) => entry[0] === "hook args") && logs.some((entry) => entry[0] === "hello"),
+        `hook plus original body must both log, got ${JSON.stringify(logs)}`);
 }
 
 async function main(): Promise<void> {
@@ -695,8 +767,8 @@ async function main(): Promise<void> {
     testPatchPreservesBytecodeVersion();
     testHookMultipleFunctions();
     testMultipleHooksInOneSession();
-    testMoveHookClassIntoUnmergedAbc();
-    testMoveHookClassIntercepts();
+    testHookModuleImport();
+    testHookAddsModuleRecord();
     await testHookAsyncFunction();
     console.log("panda-asm: all tests passed");
 }

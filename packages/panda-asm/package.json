@@ -1,6 +1,6 @@
 {
   "name": "panda-asm",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "panda-asm - load, modify and re-emit HarmonyOS .abc (Panda bytecode) files",
   "main": "./src/index.ts",
   "exports": {
