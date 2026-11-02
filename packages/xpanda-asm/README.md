@@ -27,7 +27,7 @@ const { methodId } = patchFile.addMethod("L_GLOBAL;", {
 const { id } = patchFile.addStringId("L_GLOBAL;", "patched literal");
 
 // 4) 在方法的任意指令边界插入汇编后的字节码
-//    (自动修正相对跳转、try/catch 的 start/length/handlerPC、numVregs)
+//    (自动修正相对跳转、try/catch 的 start/length/handlerPC;片段可以直接写参数寄存器)
 patchFile.insertInstructions("L_GLOBAL;", "foo", 12, assemble("nop"));
 patchFile.insertInstructions("L_GLOBAL;", "foo", 20, assemble(`
     ldai 1
@@ -39,9 +39,9 @@ patchFile.insertInstructions("L_GLOBAL;", "foo", 20, assemble(`
 //    → 给目标 module 追加 import 表项 → 插入函数头前导
 const hookName = patchFile.prepareMethodHead("L&entry/src/main/ets/target&;", "#*#target");
 patchFile.patchMethodHead(hookName, `import { ohos } from "ohop";
-function ${hookName}(args) {
-    console.log("recorded arguments:", args, ohos);
-    return [1];
+function ${hookName}(self, args) {
+    console.log("recorded this/arguments:", self, args, ohos);
+    return {};
 }`, {
     // es2abc: 可选,缺省按操作系统自动定位 assets/bin/<os>/es2abc[.exe]
     // hook 里的 import:裸模块名按目标 abc 记录名后缀自动解析,
@@ -54,13 +54,13 @@ function ${hookName}(args) {
 const multiHook = "aop_multi_hook";
 patchFile.prepareMethodHead(className, "#*#targetA", { hookGlobalName: multiHook });
 patchFile.prepareMethodHead(className, "#*#targetB", { hookGlobalName: multiHook });
-const results = patchFile.patchMethodHeads(multiHook, `function ${multiHook}(args) { return [1]; }`);
+const results = patchFile.patchMethodHeads(multiHook, `function ${multiHook}(self, args) { return {}; }`);
 
 // 不同 hook:各自 prepare(随机名)后依次 patch;上一次 patch 的 hook 会保留
 const firstHook = patchFile.prepareMethodHead(className, "#*#targetA");
 const secondHook = patchFile.prepareMethodHead(className, "#*#targetB");
-patchFile.patchMethodHead(firstHook, `function ${firstHook}(args) { return [0, 11]; }`);
-patchFile.patchMethodHead(secondHook, `function ${secondHook}(args) { return [0, 22]; }`);
+patchFile.patchMethodHead(firstHook, `function ${firstHook}(self, args) { return { res: 11 }; }`);
+patchFile.patchMethodHead(secondHook, `function ${secondHook}(self, args) { return { res: 22 }; }`);
 
 // 另一种写法:多个 hook 函数写在同一个源文件,一次编译、只搬一个 hook module,
 // 每个 hook 各自 import 后挂到自己的目标方法;同一文件里的其它顶层函数
@@ -69,8 +69,8 @@ const bundledA = patchFile.prepareMethodHead(className, "#*#targetA");
 const bundledB = patchFile.prepareMethodHead(className, "#*#targetB");
 patchFile.patchHookBundle([bundledA, bundledB], `
 function sharedHelper(args) { return args[0]; }
-function ${bundledA}(args) { return [0, sharedHelper(args)]; }
-function ${bundledB}(args) { return [1]; }
+function ${bundledA}(self, args) { return { res: sharedHelper(args) }; }
+function ${bundledB}(self, args) { return {}; }
 `);
 
 writeFileSync("app.patched.abc", patchFile.toBytes());
@@ -100,9 +100,9 @@ console.log(result.classes, result.dependencies);
 const patchFile = PandaPatchFile.loadFile("app.abc");
 
 const hookName = patchFile.prepareMethodHead(className, methodName);
-patchFile.patchMethodHead(hookName, `function ${hookName}(args) {
-    console.log("recorded arguments:", args);
-    return [1];
+patchFile.patchMethodHead(hookName, `function ${hookName}(self, args) {
+    console.log("recorded this/arguments:", self, args);
+    return {};
 }`);
 
 writeFileSync("app.patched.abc", patchFile.toBytes());
@@ -125,7 +125,7 @@ writeFileSync("app.patched.abc", patchFile.toBytes());
      `&xpanda/hook/<第一个 hook 名>&`,目标 module 为每个 hook 追加一条 import 表项,请求串为
      `@normalized:N&&&xpanda/hook/<记录名>&`(结果里的 `hookGlobalName` 就是各自的 `<hookName>`);
    - 给目标类所在 module 的 module record 追加 import 表项(指向 hook record);
-   - 在方法头插入 `getunmappedargs → ldexternalmodulevar <import_idx> → callarg1 → res[0] === 0 → return res[1]`;
+   - 在方法头插入 `getunmappedargs → lda this → ldexternalmodulevar <import_idx> → callargs2 → if (res.arg) 写回参数寄存器 → if (res.res) return res.res`;
    - hook 自己的 `import ... from "x"`:显式 `moduleRequests` 映射优先;否则 `@...`/相对路径原样保留,
      裸模块名按目标 abc 的记录名后缀唯一匹配(如 `ohop` → `@normalized:N&&&.../ohop&`),
      匹配不到时原样保留(由运行时/显式映射负责);
@@ -160,26 +160,32 @@ es2abc 查找顺序:显式 `{ es2abc }` → `XPANDA_ES2ABC` → 仓库 `assets/b
 
 ## Hook 返回协议
 
-hook 返回一个二元组 `[code, value]`:
+hook 的签名是 `hook(this, arguments)`,返回一个对象,可以同时改写参数和提前返回:
 
 ```ts
-hook(arguments) -> [code, value]
+hook(this, arguments) -> { arg?: any[]; res?: any }
 ```
+
+`this` 是目标方法的接收者(实例方法/组件方法就是实例;模块级函数是 `undefined`)。
 
 | 返回 | 行为 |
 |---|---|
-| `[0, value]` | **拦截**:目标函数直接返回 `value`,原函数体不执行 |
-| `[1]` / `[1, anything]` / 其它非 0 | **放行**:继续执行原函数,`value` 被忽略 |
-| `[0]` / `[0, undefined]` | 拦截并返回 `undefined` |
-
-判断条件是严格等于 `0`(即 `res[0] === 0`),所以 `[1]` 只表示“不拦截”,不需要第二个元素。
+| `{ arg: [...] }` | **改写参数**:按顺序写回目标函数的参数寄存器(等价于 `[p0, p1] = arg`) |
+| `{ res: value }` | **拦截**:目标函数直接返回 `value`,原函数体不执行 |
+| `{ arg, res }` | 先改写参数,再拦截 |
+| `{}` / `undefined` 字段 | **放行**:继续执行原函数 |
 
 注入的前导等价于:
 
 ```js
-const res = hook(arguments);   // getunmappedargs → ldexternalmodulevar → callarg1
-if (res[0] === 0) {            // ldobjbyvalue res[0] → ldai 0 → stricteq
-    return res[1];             // ldobjbyvalue res[1] → return
+const res = hook(this, arguments); // lda this → getunmappedargs → ldexternalmodulevar → callargs2
+if (res.arg) {                 // ldobjbyname "arg" → callruntime.isfalse → jnez
+    p0 = res.arg[0];           // ldai i → ldobjbyvalue → sta pN
+    p1 = res.arg[1];
+    // ... 目标的每个参数
+}
+if (res.res) {                 // ldobjbyname "res" → callruntime.isfalse → jnez
+    return res.res;            // (async: asyncfunctionresolve vCtx; return)
 }
 // 否则落到原函数第一条指令
 ```
@@ -187,23 +193,35 @@ if (res[0] === 0) {            // ldobjbyvalue res[0] → ldai 0 → stricteq
 示例:
 
 ```ts
-// 只记录,不拦截:目标函数行为不变
-function hook(args) {
-    console.log("args:", args);
-    return [1];
+// 只记录,不改变行为
+function hook(self, args) {
+    console.log("this:", self, "args:", args);
+    return {};
 }
 
 // 拦截:目标函数直接返回 42
-function hook(args) {
-    return [0, 42];
+function hook(self, args) {
+    return { res: 42 };
+}
+
+// 改写参数:目标函数用 p0 = 10 / p1 = 20 执行原函数体
+function hook(self, args) {
+    return { arg: [10, 20] };
 }
 ```
 
 注意:
 
-- hook 是**同步调用**的,必须直接返回数组,不能返回 `Promise<[1]>`;
-- `res[0]` 只认数字 `0`(`false` 等其它 falsy 值不会触发拦截);
-- `[1]` 与 `[1, x]` 等价,`x` 不会被读取。
+- hook 是**同步调用**的,不能返回 `Promise`;
+- hook 收到的 `arguments` 是 `getunmappedargs` 的快照对象:有 `length` / 下标,但不是 Array 实例
+  (没有 `join` 等 Array 方法);
+- `this` 是目标函数的真实接收者(直接 `lda` 保留的 this 寄存器);模块级函数的 `this` 是 `undefined`;
+- `arg` 按数组/类数组下标读取(`res.arg[i]`),不做迭代器解构;缺省元素写入 `undefined`;
+  目标函数的每个参数都会被覆盖(参数个数 = `numArgs - 3`);
+- `res.res` 按**真值**判断(`if (res.res)`),所以返回 `0` / `""` / `false` / `null` / `undefined`
+  不会拦截(与源码里的 `if (res.res)` 一致);需要拦截 falsy 返回值时把协议改成
+  `res.res !== undefined` 的判断;
+- 参数改写发生在原函数体的第一条指令之前,函数体的默认参数逻辑会看到新值。
 
 ## 异步函数 hook
 
@@ -212,10 +230,10 @@ function hook(args) {
 ```ts
 // 目标:export async function fetchUser(id: string) { ... }
 const hookName = patchFile.prepareMethodHead(className, "#*#fetchUser");
-patchFile.patchMethodHead(hookName, `function ${hookName}(args) {
+patchFile.patchMethodHead(hookName, `function ${hookName}(self, args) {
     const id = args[0];
-    if (id === "test") return [0, { name: "mock" }]; // await fetchUser("test") -> { name: "mock" }
-    return [1];                                      // 继续执行原异步函数
+    if (id === "test") return { res: { name: "mock" } }; // await fetchUser("test") -> { name: "mock" }
+    return {};                                           // 继续执行原异步函数
 }`);
 ```
 
@@ -224,7 +242,7 @@ patchFile.patchMethodHead(hookName, `function ${hookName}(args) {
 1. async 函数头是 `asyncfunctionenter; sta vCtx`,await 恢复时从 `suspendgenerator` 之后继续,
    **不会重跑函数头**;前导插在 `sta vCtx` 之后,每次调用只执行一次;
 2. 临时寄存器避开 `vCtx`;
-3. 早退路径会先 `asyncfunctionresolve vCtx` 再 `return`,所以 `[0, value]` 返回的是
+3. 早退路径会先 `asyncfunctionresolve vCtx` 再 `return`,所以 `{ res: value }` 返回的是
    `Promise.resolve(value)`;
 4. 注入代码位于 async 的 catch-all try 内,hook 抛异常会走 `asyncfunctionreject`,
    表现为 Promise rejection,而不是同步抛出。
@@ -246,7 +264,7 @@ append-only patcher:
 - ✅ 替换方法代码(`replaceMethodCode`)
 - ✅ 新增方法(`addMethod`,克隆已有方法的 proto/access flags)
 - ✅ 新增字符串 / 字符串 id(`addString` / `addStringId`)
-- ✅ 在任意指令边界插入汇编字节码(`insertInstructions`):自动修正相对跳转、try/catch 范围、numVregs
+- ✅ 在任意指令边界插入汇编字节码(`insertInstructions`):自动修正相对跳转、try/catch 范围;片段可以写参数寄存器(`index >= numVregs`),不会改变帧布局
 - ✅ AOP 函数头 hook:`prepareMethodHead` + `patchMethodHead(s)` / `patchHookBundle`,支持一个 hook 挂多个函数、多个 hook、多个 hook 写在同一个源文件、async 函数
 - ✅ AOP hook 统一走 module record 搬运:hook class 的 import/export 表随类整体搬进目标 abc,目标 module 追加 import,前导用 `ldexternalmodulevar` 调用(hook 内部的 import / 顶层变量可正常解析)
 - ✅ 同一次会话里连续新增方法 / 追加字符串 / 替换代码 / 连续插入(代码模型会累积最新版本)

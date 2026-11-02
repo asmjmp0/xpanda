@@ -233,6 +233,8 @@ export class PandaPatchFile {
     private readonly moduleRecordOverrides = new Map<PandaClass, { record: ModuleRecord; offset: number }>();
     /** 硬加 module record 时,moduleRecordIdx 字段值在新类实体里的绝对偏移 */
     private readonly moduleRecordValueOffsets = new Map<PandaClass, number>();
+    /** hook 协议字段名(arg / res)在 region 里的 string id 缓存 */
+    private readonly hookProtocolStringIdsByRegion = new Map<PandaClass["indexHeader"], { arg: number; res: number }>();
 
     private constructor(data: Uint8Array) {
         this.reset(data);
@@ -265,6 +267,7 @@ export class PandaPatchFile {
         this.preparedMethodHeads.clear();
         this.moduleRecordOverrides.clear();
         this.moduleRecordValueOffsets.clear();
+        this.hookProtocolStringIdsByRegion.clear();
         for (const indexHeader of this.pf.indexHeaders) {
             this.indexHeaderEnds.set(indexHeader, indexHeader.end);
         }
@@ -452,13 +455,13 @@ export class PandaPatchFile {
             };
         });
 
-        // 插入代码可能使用更高的寄存器
+        // 插入代码可能使用更高的局部寄存器;参数寄存器(index >= numVregs)不占局部寄存器空间
         let numVregs = current.numVregs;
         for (const instruction of insertedDecoded) {
             instruction.opcode.operands.forEach((operand, index) => {
                 if (operand.kind === "v") {
                     const register = instruction.operands[index];
-                    if (register + 1 > numVregs) numVregs = register + 1;
+                    if (register < current.numVregs && register + 1 > numVregs) numVregs = register + 1;
                 }
             });
         }
@@ -476,6 +479,15 @@ export class PandaPatchFile {
      * 内部:在目标方法头插入 hook 前导。
      * hook 函数从目标 module 的 import 绑定读取(`ldexternalmodulevar <import_idx>`),
      * 该 import 指向随 hook class 一起搬进目标 abc 的 hook module record。
+     *
+     * 注入的前导等价于:
+     *   const res = hook(this, arguments);
+     *   if (res.arg) { p0 = res.arg[0]; p1 = res.arg[1]; ... }
+     *   if (res.res) { return res.res; }
+     *
+     * 参数直接写回参数寄存器:局部寄存器之后的前 3 个是
+     * func_name / new.target / this,p0 从 `numVregs + 3` 开始。
+     * `res.arg` 按数组/类数组下标读取(等价于 `[p0, p1] = res.arg`)。
      */
     private applyMethodHeadPrologue(
         className: string,
@@ -516,53 +528,115 @@ export class PandaPatchFile {
             free = free.concat(collectFree(numVregs, oldNumVregs));
         }
 
-        // IC slot 分配(ldobjbyvalue 2 槽,stricteq 1 槽)
-        let base = maxIcSlot(preparedInstructions) + 1;
-        if (base + 8 > 250) base = 0;
+        // 参数寄存器:numArgs 的前 3 个保留给 func_name / new.target / this
+        const paramCount = Math.max(0, current.numArgs - 3);
+        const paramBase = numVregs + 3;
+        const fieldIds = this.hookProtocolStringIds(className);
+
+        // IC slot 分配:ldobjbyname / ldobjbyvalue / callargs2 各占 2 槽,callruntime.isfalse 占 1 槽
+        const slotCount = 2 + (paramCount > 0 ? 3 : 0) + paramCount * 2 + 3;
+        let base = maxIcSlot(preparedInstructions) + 2;
+        if (base + slotCount > 250) base = 0;
         let nextSlot = base;
         const takeSlots = (count: number): number => {
             const slot = nextSlot;
             nextSlot += count;
             return slot;
         };
-        const slotObject0 = takeSlots(2);
-        const slotStrictEq = takeSlots(1);
-        const slotObject1 = takeSlots(2);
+        const slotCall = takeSlots(2);
+        const slotArgName = paramCount > 0 ? takeSlots(2) : 0;
+        const slotArgIsFalse = paramCount > 0 ? takeSlots(1) : 0;
+        const slotArgElem = Array.from({ length: paramCount }, () => takeSlots(2));
+        const slotResName = takeSlots(2);
+        const slotResIsFalse = takeSlots(1);
 
         // hook 函数来自目标 module 的 import 绑定(hook 以独立 module 求值)。
         const loadHook = assembleInstruction("ldexternalmodulevar", [hook.importIndex]);
 
         const vResult = free[0];
         const vTemp = free[1];
+        // 参数寄存器布局:numVregs + 0/1/2 = func_name / new.target / this
+        const thisRegister = numVregs + 2;
+
+        // 跳过一段指令块(`jnez` 的目标 = 当前 pc + imm),块太长时用 16 位变体
+        const jumpOver = (block: Uint8Array): Uint8Array => {
+            if (2 + block.length <= 0x7f) {
+                return assembleInstruction("jnez", [2 + block.length], { format: "IMM8" });
+            }
+            return assembleInstruction("jnez", [3 + block.length], { format: "IMM16" });
+        };
+
         const head = concatBytes([
             assemble("getunmappedargs"),
             assembleInstruction("sta", [vResult]),
-            loadHook,
-            assembleInstruction("callarg1", [1, vResult]),
-            assembleInstruction("sta", [vResult]),
-            assemble("ldai 0"),
-            assembleInstruction("ldobjbyvalue", [slotObject0, vResult]),
+            assembleInstruction("lda", [thisRegister]),
             assembleInstruction("sta", [vTemp]),
-            assemble("ldai 0"),
-            assembleInstruction("stricteq", [slotStrictEq, vTemp]),
+            loadHook,
+            assembleInstruction("callargs2", [slotCall, vTemp, vResult]),
+            assembleInstruction("sta", [vResult]),
         ]);
-        const earlyReturn: Uint8Array[] = [
-            assemble("ldai 1"),
-            assembleInstruction("ldobjbyvalue", [slotObject1, vResult]),
-        ];
+
+        // if (res.arg) { p0 = res.arg[0]; ... }
+        let argBlock: Uint8Array = new Uint8Array(0);
+        if (paramCount > 0) {
+            const test = concatBytes([
+                assembleInstruction("lda", [vResult]),
+                assembleInstruction("ldobjbyname", [slotArgName, fieldIds.arg]),
+                assembleInstruction("sta", [vTemp]),
+                assembleInstruction("lda", [vTemp]),
+                assembleInstruction("callruntime.isfalse", [slotArgIsFalse]),
+            ]);
+            const assign: Uint8Array[] = [];
+            for (let index = 0; index < paramCount; index++) {
+                assign.push(
+                    assembleInstruction("ldai", [index]),
+                    assembleInstruction("ldobjbyvalue", [slotArgElem[index], vTemp]),
+                    assembleInstruction("sta", [paramBase + index]),
+                );
+            }
+            const assignBytes = concatBytes(assign);
+            argBlock = concatBytes([test, jumpOver(assignBytes), assignBytes]);
+        }
+
+        // if (res.res) { return res.res; }
+        const earlyReturn: Uint8Array[] = [assembleInstruction("lda", [vTemp])];
         if (asyncContextRegister !== undefined) {
             // async 函数的 return 必须先 resolve 成 Promise
             earlyReturn.push(assembleInstruction("asyncfunctionresolve", [asyncContextRegister]));
         }
         earlyReturn.push(assemble("return"));
-        const tail = concatBytes(earlyReturn);
-        // jeqz 的相对偏移 = jeqz 自身长度 + 早退块长度,目标为插入片段末尾(原方法第一条指令)
-        const jump = assembleInstruction("jeqz", [2 + tail.length]);
-        const snippet = concatBytes([head, jump, tail]);
+        const earlyReturnBytes = concatBytes(earlyReturn);
+        const resBlock = concatBytes([
+            assembleInstruction("lda", [vResult]),
+            assembleInstruction("ldobjbyname", [slotResName, fieldIds.res]),
+            assembleInstruction("sta", [vTemp]),
+            assembleInstruction("lda", [vTemp]),
+            assembleInstruction("callruntime.isfalse", [slotResIsFalse]),
+            jumpOver(earlyReturnBytes),
+            earlyReturnBytes,
+        ]);
+
+        const snippet = concatBytes([head, argBlock, resBlock]);
         const result = this.insertInstructions(className, methodName, insertionPC, snippet, {
             tryInclusion: asyncContextRegister !== undefined ? "inside" : "outside",
         });
         return { ...result, hookGlobalName: hook.name };
+    }
+
+    /**
+     * hook 协议字段名(`arg` / `res`)在目标 region 里的 string id。
+     * 实体索引表按 region 共享,同一个 region 只追加一次。
+     */
+    private hookProtocolStringIds(className: string): { arg: number; res: number } {
+        const clazz = this.requireClass(className);
+        const cached = this.hookProtocolStringIdsByRegion.get(clazz.indexHeader);
+        if (cached) return cached;
+        const ids = {
+            arg: this.addStringId(className, "arg").id,
+            res: this.addStringId(className, "res").id,
+        };
+        this.hookProtocolStringIdsByRegion.set(clazz.indexHeader, ids);
+        return ids;
     }
 
     /**

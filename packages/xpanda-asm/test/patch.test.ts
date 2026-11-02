@@ -428,7 +428,7 @@ function testPrepareAndPatchWorkflow(): void {
     const hookName = patchFile.prepareMethodHead(targetClass, methodName);
     assert(/^__xpanda_hook_[a-z0-9]{12}$/.test(hookName), `prepare must return a random hook name, got ${hookName}`);
 
-    const result = patchFile.patchMethodHead(hookName, `function ${hookName}(args) { return [1]; }`, { es2abc });
+    const result = patchFile.patchMethodHead(hookName, `function ${hookName}(self, args) { return {}; }`, { es2abc });
     assert(result.hookGlobalName === hookName, "workflow must report the prepared hook name");
 
     const pandaFile = new PandaFile(patchFile.toBytes());
@@ -444,12 +444,12 @@ function testPrepareAndPatchWorkflow(): void {
     runHookModule(pandaFile, hookName, sandbox);
     vm.runInNewContext(stripModuleSyntax(new PandaDecompiler().decompileClass(target)), sandbox, { timeout: 5000 });
     const targetFn = sandbox.target as (a: number, b: number) => unknown;
-    assert(targetFn(1, 2) === 3, "hook returning [1] must preserve the original result");
+    assert(targetFn(1, 2) === 3, "hook returning {} must preserve the original result");
 
-    // interception: patch a fresh copy with [0, value]
+    // interception: patch a fresh copy with { res: value }
     const interceptFile = PandaPatchFile.load(new Uint8Array(fs.readFileSync(fixturePath)));
     const interceptHook = interceptFile.prepareMethodHead(targetClass, methodName);
-    interceptFile.patchMethodHead(interceptHook, `function ${interceptHook}(args) { return [0, 42]; }`, { es2abc });
+    interceptFile.patchMethodHead(interceptHook, `function ${interceptHook}(self, args) { return { res: 42 }; }`, { es2abc });
     const interceptPanda = new PandaFile(interceptFile.toBytes());
     const interceptTarget = findClass(interceptPanda, targetClass);
     assert(interceptTarget, "intercept target must exist");
@@ -459,7 +459,45 @@ function testPrepareAndPatchWorkflow(): void {
     vm.runInNewContext(stripModuleSyntax(new PandaDecompiler().decompileClass(interceptTarget)),
         interceptSandbox, { timeout: 5000 });
     assert((interceptSandbox.target as (a: number, b: number) => unknown)(1, 2) === 42,
-        "hook returning [0, value] must early-return the value");
+        "hook returning { res } must early-return the value");
+
+    // argument rewriting: { arg } must overwrite the parameter registers
+    const argFile = PandaPatchFile.load(new Uint8Array(fs.readFileSync(fixturePath)));
+    const argHook = argFile.prepareMethodHead(targetClass, methodName);
+    argFile.patchMethodHead(argHook, `function ${argHook}(args) { return { arg: [10, 20] }; }`, { es2abc });
+    const argPanda = new PandaFile(argFile.toBytes());
+    const argTarget = findClass(argPanda, targetClass);
+    assert(argTarget, "arg target must exist");
+    const argSandbox: Record<string, unknown> = { console: { log: () => { /* ignore */ } } };
+    argSandbox.globalThis = argSandbox;
+    runHookModule(argPanda, argHook, argSandbox);
+    vm.runInNewContext(stripModuleSyntax(new PandaDecompiler().decompileClass(argTarget)),
+        argSandbox, { timeout: 5000 });
+    assert((argSandbox.target as (a: number, b: number) => unknown)(1, 2) === 30,
+        "hook returning { arg } must replace the target parameters");
+
+    // this propagation: hook(this, arguments) must receive the target's receiver
+    const thisFile = PandaPatchFile.load(new Uint8Array(fs.readFileSync(fixturePath)));
+    const thisHook = thisFile.prepareMethodHead(targetClass, methodName);
+    thisFile.patchMethodHead(thisHook,
+        `function ${thisHook}(self, args) {
+            globalThis.__hookSelf = self;
+            globalThis.__hookArgCount = args.length;
+            return { res: 42 };
+        }`, { es2abc });
+    const thisPanda = new PandaFile(thisFile.toBytes());
+    const thisTarget = findClass(thisPanda, targetClass);
+    assert(thisTarget, "this target must exist");
+    const thisSandbox: Record<string, unknown> = { console: { log: () => { /* ignore */ } } };
+    thisSandbox.globalThis = thisSandbox;
+    runHookModule(thisPanda, thisHook, thisSandbox);
+    vm.runInNewContext(stripModuleSyntax(new PandaDecompiler().decompileClass(thisTarget)),
+        thisSandbox, { timeout: 5000 });
+    const receiver = { marker: "receiver" };
+    const thisResult = (thisSandbox.target as (a: number, b: number) => unknown).call(receiver, 1, 2);
+    assert(thisResult === 42, "this-propagation target must early-return the hook value");
+    assert(thisSandbox.__hookSelf === receiver, "hook must receive the target's this");
+    assert(thisSandbox.__hookArgCount === 2, "hook must still receive the arguments snapshot");
 }
 
 // ---------------------------------------------------------------- 9. version consistency
@@ -488,7 +526,7 @@ function testPatchPreservesBytecodeVersion(): void {
     assert(before.header.versionString() === "13.0.1.0", `fixture must be 13.0.1.0, got ${before.header.versionString()}`);
 
     const hookName = patchFile.prepareMethodHead(targetClass, methodName);
-    patchFile.patchMethodHead(hookName, `function ${hookName}(args) { return [1]; }`, { es2abc });
+    patchFile.patchMethodHead(hookName, `function ${hookName}(self, args) { return {}; }`, { es2abc });
 
     const after = new PandaFile(patchFile.toBytes());
     assert(after.header.versionString() === "13.0.1.0",
@@ -509,7 +547,7 @@ function testHookMultipleFunctions(): void {
     const hookName = patchFile.prepareMethodHead(targetClass, "#*#targetA");
     patchFile.prepareMethodHead(targetClass, "#*#targetB", { hookGlobalName: hookName });
 
-    const results = patchFile.patchMethodHeads(hookName, `function ${hookName}(args) { return [1]; }`, { es2abc });
+    const results = patchFile.patchMethodHeads(hookName, `function ${hookName}(self, args) { return {}; }`, { es2abc });
     assert(results.length === 2, `one hook must patch both methods, got ${results.length}`);
 
     const pandaFile = new PandaFile(patchFile.toBytes());
@@ -532,7 +570,7 @@ function testHookMultipleFunctions(): void {
     const interceptFile = PandaPatchFile.load(new Uint8Array(fs.readFileSync(fixturePath)));
     const interceptHook = interceptFile.prepareMethodHead(targetClass, "#*#targetA");
     interceptFile.prepareMethodHead(targetClass, "#*#targetB", { hookGlobalName: interceptHook });
-    interceptFile.patchMethodHeads(interceptHook, `function ${interceptHook}(args) { return [0, 42]; }`, { es2abc });
+    interceptFile.patchMethodHeads(interceptHook, `function ${interceptHook}(self, args) { return { res: 42 }; }`, { es2abc });
     const interceptPanda = new PandaFile(interceptFile.toBytes());
     const interceptTarget = findClass(interceptPanda, targetClass);
     assert(interceptTarget, "intercept target must exist");
@@ -561,8 +599,8 @@ function testMultipleHooksInOneSession(): void {
     const second = patchFile.prepareMethodHead(targetClass, "#*#targetB");
     assert(first !== second, "random hooks must differ");
 
-    patchFile.patchMethodHead(first, `function ${first}(args) { return [0, 11]; }`, { es2abc });
-    patchFile.patchMethodHead(second, `function ${second}(args) { return [0, 22]; }`, { es2abc });
+    patchFile.patchMethodHead(first, `function ${first}(self, args) { return { res: 11 }; }`, { es2abc });
+    patchFile.patchMethodHead(second, `function ${second}(self, args) { return { res: 22 }; }`, { es2abc });
 
     const pandaFile = new PandaFile(patchFile.toBytes());
     pandaFile.parseAssembly();
@@ -607,8 +645,8 @@ function testHookBundleSingleSource(): void {
     const second = patchFile.prepareMethodHead(targetClass, "#*#targetB");
     const results = patchFile.patchHookBundle([first, second], `
         function bundleHelper(args) { return args[0] + args[1]; }
-        function ${first}(args) { return [0, bundleHelper(args) + 10]; }
-        function ${second}(args) { return [0, bundleHelper(args) + 20]; }
+        function ${first}(self, args) { return { res: bundleHelper(args) + 10 }; }
+        function ${second}(self, args) { return { res: bundleHelper(args) + 20 }; }
     `, { es2abc });
     assert(results.length === 2, `one bundle must patch both methods, got ${results.length}`);
     assert(results[0].hookGlobalName === first && results[1].hookGlobalName === second,
@@ -668,7 +706,7 @@ async function testHookAsyncFunction(): Promise<void> {
 
     const patchFile = PandaPatchFile.load(new Uint8Array(fs.readFileSync(fixturePath)));
     const hookName = patchFile.prepareMethodHead(targetClass, methodName);
-    patchFile.patchMethodHead(hookName, `function ${hookName}(args) { return [1]; }`, { es2abc });
+    patchFile.patchMethodHead(hookName, `function ${hookName}(self, args) { return {}; }`, { es2abc });
 
     const pandaFile = new PandaFile(patchFile.toBytes());
     pandaFile.parseAssembly();
@@ -685,10 +723,10 @@ async function testHookAsyncFunction(): Promise<void> {
     const af = sandbox.af as (a: number) => Promise<number>;
     assert(await af(1) === 2, "non-fatal hook must preserve the async result");
 
-    // interception: fresh copy with [0, value]
+    // interception: fresh copy with { res: value }
     const interceptFile = PandaPatchFile.load(new Uint8Array(fs.readFileSync(fixturePath)));
     const interceptHook = interceptFile.prepareMethodHead(targetClass, methodName);
-    interceptFile.patchMethodHead(interceptHook, `function ${interceptHook}(args) { return [0, 42]; }`, { es2abc });
+    interceptFile.patchMethodHead(interceptHook, `function ${interceptHook}(self, args) { return { res: 42 }; }`, { es2abc });
     const interceptPanda = new PandaFile(interceptFile.toBytes());
     const interceptTarget = findClass(interceptPanda, targetClass);
     assert(interceptTarget, "intercept async target must exist");
@@ -698,7 +736,7 @@ async function testHookAsyncFunction(): Promise<void> {
     vm.runInNewContext(stripModuleSyntax(new PandaDecompiler().decompileClass(interceptTarget)),
         interceptSandbox, { timeout: 5000 });
     assert(await (interceptSandbox.af as (a: number) => Promise<number>)(1) === 42,
-        "hook returning [0, value] must early-return from the async function");
+        "hook returning { res } must early-return from the async function");
 }
 
 // ---------------------------------------------------------------- 13. hook module: import / export 表随类搬运
@@ -713,9 +751,9 @@ function testHookModuleImport(): void {
     const patchFile = PandaPatchFile.load(new Uint8Array(fs.readFileSync(fixturePath)));
     const hookName = patchFile.prepareMethodHead(targetClass, "#*#target");
     patchFile.patchMethodHead(hookName, `import { dep } from "depmod";
-function ${hookName}(args) {
+function ${hookName}(self, args) {
     console.log("dep", dep.value);
-    return [1];
+    return {};
 }`, { es2abc, moduleRequests: { depmod: "@normalized:N&&&entry/src/main/ets/depmod&" } });
 
     const pandaFile = new PandaFile(patchFile.toBytes());
@@ -748,7 +786,7 @@ function ${hookName}(args) {
     const targetMethod = target.pandaMethods.get("#*#target");
     assert(targetMethod?.methodCode, "patched target method must keep code");
     const prologue = decodeInstructions(targetMethod.methodCode.instructions)
-        .slice(0, 4)
+        .slice(0, 6)
         .map((instruction) => instruction.opcode.name);
     assert(prologue.includes("ldexternalmodulevar"),
         `prologue must load the hook via the module import, got ${prologue.join(",")}`);
@@ -763,7 +801,7 @@ function ${hookName}(args) {
     runHookModule(pandaFile, hookName, sandbox);
     vm.runInNewContext(stripModuleSyntax(new PandaDecompiler().decompileClass(target)), sandbox, { timeout: 5000 });
     const targetFn = sandbox.target as (a: number, b: number) => unknown;
-    assert(targetFn(1, 2) === 3, "hook returning [1] must preserve the original result");
+    assert(targetFn(1, 2) === 3, "hook returning {} must preserve the original result");
     assert(logs.length === 1 && logs[0][0] === "dep" && logs[0][1] === 7,
         `hook module import must stay readable, got ${JSON.stringify(logs)}`);
 }
@@ -833,7 +871,7 @@ function testHookAddsModuleRecord(): void {
         new Uint8Array(fs.readFileSync(path.join(__dirname, "resources", "unmerged.abc"))));
     const hookName = patchFile.prepareMethodHead("L_GLOBAL;", "#~@0<#test", { hookGlobalName: "TestHook" });
     patchFile.patchMethodHead(hookName,
-        `function TestHook(args) { console.log("hook args", args); return [1]; }`, { es2abc });
+        `function TestHook(self, args) { console.log("hook args", args); return {}; }`, { es2abc });
 
     const pandaFile = new PandaFile(patchFile.toBytes());
     pandaFile.parseAssembly();
@@ -850,7 +888,7 @@ function testHookAddsModuleRecord(): void {
     const testMethod = target.pandaMethods.get("#~@0<#test");
     assert(testMethod?.methodCode, "hooked target method must keep code");
     const prologue = decodeInstructions(testMethod.methodCode.instructions)
-        .slice(0, 4)
+        .slice(0, 6)
         .map((instruction) => instruction.opcode.name);
     assert(prologue.includes("ldexternalmodulevar"),
         `prologue must load the hook via the module import, got ${prologue.join(",")}`);
