@@ -8,6 +8,7 @@ import {
     ResourceIndexFile,
     ZipFile,
 } from "xpanda-core";
+import { PandaPatchFile } from "panda-asm";
 import { saveClassFile } from "./io";
 import { decompileClassesParallel, resolveJobs } from "./parallel/ParallelDecompiler";
 
@@ -17,6 +18,7 @@ import { decompileClassesParallel, resolveJobs } from "./parallel/ParallelDecomp
  *   yarn tsx src/cli.ts decompile <file.abc|file.hap> [-o outDir] [--no-simplify] [--raw] [--stdout] [--quiet] [-j N]
  *   yarn tsx src/cli.ts unpack-index <resources.index> [-o outDir] [--stdout]
  *   yarn tsx src/cli.ts dump-asm <file.abc|file.hap> [-o outDir] [--stdout]
+ *   yarn tsx src/cli.ts dump <file.abc|file.hap> -c <class> [-c ...] [-o out.abc|outDir]
  * @Author: jmp0 */
 function printDecompileUsage(): void {
     console.log("Usage: xpanda decompile <file.abc|file.hap> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N]");
@@ -43,15 +45,25 @@ function printDumpAsmUsage(): void {
     console.log("  --stdout         Concatenates the result to standard output");
 }
 
+function printDumpUsage(): void {
+    console.log("Usage: xpanda dump <file.abc|file.hap> -c <class> [-c <class> ...] [-o out.abc|outDir]");
+    console.log("  Copies one or more classes (plus the classes/methods they reference) into a new .abc file");
+    console.log("  -c, --class NAME  Class to dump: Lpkg/Name;, pkg/Name, or a unique name suffix; repeatable or comma-separated");
+    console.log("  -o PATH           .abc input: output file (default dump.abc); .hap input: output directory (default out/)");
+    console.log("                    A hap writes one <entry>.dump.abc per .abc entry that contains matching classes");
+}
+
 /** Print usage for one command, or all commands when no (known) topic given. */
 function help(command?: string): void {
     if (command === "decompile") return printDecompileUsage();
     if (command === "unpack-index") return printUnpackIndexUsage();
     if (command === "dump-asm") return printDumpAsmUsage();
-    if (command !== undefined) console.error(`Unknown help topic: ${command} (available: decompile | unpack-index | dump-asm)`);
+    if (command === "dump") return printDumpUsage();
+    if (command !== undefined) console.error(`Unknown help topic: ${command} (available: decompile | unpack-index | dump-asm | dump)`);
     printDecompileUsage();
     printUnpackIndexUsage();
     printDumpAsmUsage();
+    printDumpUsage();
 }
 
 /** Command parse failure: print the reason plus usage, then exit non-zero. */
@@ -287,6 +299,154 @@ function dumpAsm(args: string[]): void {
     if (stdout) console.log(outputs.map((out) => out + "\n").join(""));
 }
 
+/** Class-name query matching for `dump`: exact raw name, exact demangled name, then suffix/substring. */
+function matchDumpClasses(pf: PandaFile, query: string): PandaClass[] {
+    const all = pf.getAllClasses().filter((clazz) => !clazz.classExternal && clazz.name.content.length > 0);
+    const strip = (name: string): string => name.replace(/^L/, "").replace(/;$/, "");
+    const normalized = strip(query);
+    const exact = all.filter((clazz) => clazz.name.content === query);
+    if (exact.length > 0) return exact;
+    const demangled = all.filter((clazz) => strip(clazz.name.content) === normalized);
+    if (demangled.length > 0) return demangled;
+    const suffix = all.filter((clazz) => {
+        const name = strip(clazz.name.content);
+        return name.endsWith("/" + normalized) || name === normalized;
+    });
+    if (suffix.length > 0) return suffix;
+    return all.filter((clazz) => clazz.name.content.includes(query) || strip(clazz.name.content).includes(normalized));
+}
+
+function resolveDumpClasses(pf: PandaFile, queries: string[], source: string): string[] {
+    const names: string[] = [];
+    for (const query of queries) {
+        const matches = matchDumpClasses(pf, query);
+        if (matches.length === 0) fail(`dump: class not found in ${source}: ${query}`, "dump");
+        if (matches.length > 1) {
+            const candidates = matches.slice(0, 10).map((clazz) => clazz.name.content).join(", ");
+            fail(`dump: ambiguous class ${query} in ${source}: ${candidates}`, "dump");
+        }
+        const name = matches[0].name.content;
+        if (!names.includes(name)) names.push(name);
+    }
+    return names;
+}
+
+/** Prefer a repository-relative path for logs, but keep an absolute path when it is outside cwd. */
+function displayPath(outPath: string): string {
+    const relative = path.relative(process.cwd(), outPath);
+    return relative.length > 0 && !relative.startsWith("..") ? relative : outPath;
+}
+
+/** Dump selected classes from one abc to a single new abc file. */
+function dumpAbcData(data: Uint8Array, queries: string[], output: string, source: string): void {
+    const pandaFile = new PandaFile(data);
+    const names = resolveDumpClasses(pandaFile, queries, source);
+    const result = PandaPatchFile.load(data).dumpClasses(names);
+    const outPath = path.resolve(output);
+    fs.mkdirSync(path.dirname(outPath), { recursive: true });
+    fs.writeFileSync(outPath, result.data);
+    const extra = result.dependencies.length > 0 ? `, ${result.dependencies.length} referenced classes` : "";
+    console.log(`written: ${displayPath(outPath)} (${result.classes.length} classes${extra})`);
+}
+
+/** Dump selected classes from a hap: one output abc per .abc entry that contains matches. */
+function dumpHapData(data: Uint8Array, queries: string[], output: string): void {
+    const hap = new HapFile(data);
+    const entries = hap.getAbcEntries();
+    if (entries.length === 0) fail("dump: no .abc entry found in hap", "dump");
+    const fileOutput = output.toLowerCase().endsWith(".abc");
+    const found = new Set<string>();
+    const pending: Array<{ entryIndex: number; names: string[] }> = [];
+    for (let entryIndex = 0; entryIndex < entries.length; entryIndex++) {
+        const entry = entries[entryIndex];
+        const entryData = entry.read();
+        const pandaFile = new PandaFile(entryData);
+        const names: string[] = [];
+        for (const query of queries) {
+            const matches = matchDumpClasses(pandaFile, query);
+            if (matches.length === 0) continue;
+            if (matches.length > 1) {
+                const candidates = matches.slice(0, 10).map((clazz) => clazz.name.content).join(", ");
+                fail(`dump: ambiguous class ${query} in ${entry.name}: ${candidates}`, "dump");
+            }
+            found.add(query);
+            if (!names.includes(matches[0].name.content)) names.push(matches[0].name.content);
+        }
+        if (names.length > 0) pending.push({ entryIndex, names });
+    }
+    const missing = queries.filter((query) => !found.has(query));
+    if (missing.length > 0) fail(`dump: class not found in hap: ${missing.join(", ")}`, "dump");
+    if (fileOutput && pending.length > 1) {
+        fail("dump: multiple hap .abc entries contain matching classes; pass a directory for -o", "dump");
+    }
+    for (const item of pending) {
+        const entry = entries[item.entryIndex];
+        const outPath = fileOutput
+            ? path.resolve(output)
+            : path.resolve(output, entry.name.replace(/\.abc$/i, "") + ".dump.abc");
+        const result = PandaPatchFile.load(entry.read()).dumpClasses(item.names);
+        if (!fileOutput) {
+            const root = path.resolve(output) + path.sep;
+            if (!outPath.startsWith(root)) fail(`dump: unsafe hap entry name: ${entry.name}`, "dump");
+        }
+        fs.mkdirSync(path.dirname(outPath), { recursive: true });
+        fs.writeFileSync(outPath, result.data);
+        const extra = result.dependencies.length > 0 ? `, ${result.dependencies.length} referenced classes` : "";
+        console.log(`written: ${displayPath(outPath)} (${result.classes.length} classes${extra})`);
+    }
+}
+
+function dump(args: string[]): void {
+    if (args.length < 1) fail("dump: missing <file.abc|file.hap> file argument", "dump");
+    const input = args[0];
+    let output: string | null = null;
+    const queries: string[] = [];
+    const pushQuery = (value: string): void => {
+        for (const part of value.split(",")) {
+            const trimmed = part.trim();
+            if (trimmed.length > 0) queries.push(trimmed);
+        }
+    };
+    for (let i = 1; i < args.length; i++) {
+        const arg = args[i];
+        if (arg === "-o" || arg === "--output") {
+            const value = args[++i];
+            if (value === undefined) fail("option " + arg + " requires a value", "dump");
+            output = value;
+        } else if (arg.startsWith("--output=")) {
+            output = arg.substring("--output=".length);
+        } else if (arg === "-c" || arg === "--class") {
+            const value = args[++i];
+            if (value === undefined) fail("option " + arg + " requires a value", "dump");
+            pushQuery(value);
+        } else if (arg.startsWith("--class=")) {
+            pushQuery(arg.substring("--class=".length));
+        } else if (arg.startsWith("-")) {
+            fail(`unknown argument: ${arg}`, "dump");
+        } else {
+            // Positional class names are accepted as a convenience.
+            pushQuery(arg);
+        }
+    }
+    if (queries.length === 0) fail("dump: at least one -c/--class is required", "dump");
+
+    const data = new Uint8Array(fs.readFileSync(path.resolve(input)));
+    const hapInput = path.extname(input).toLowerCase() === ".hap" || ZipFile.isZip(data);
+    const resolvedOutput = output ?? (hapInput ? "out" : "dump.abc");
+    if (hapInput) {
+        dumpHapData(data, queries, resolvedOutput);
+        return;
+    }
+    let outFile = resolvedOutput;
+    try {
+        if (fs.statSync(outFile).isDirectory()) outFile = path.join(outFile, "dump.abc");
+    } catch {
+        // Not an existing path; treat it as a file name.
+    }
+    if (outFile.endsWith("/") || outFile.endsWith(path.sep)) outFile = path.join(outFile, "dump.abc");
+    dumpAbcData(data, queries, outFile, input);
+}
+
 async function main(): Promise<void> {
     const args = process.argv.slice(2);
     // help 命令(无参数时等价于 help):打印用法后正常退出
@@ -300,6 +460,10 @@ async function main(): Promise<void> {
     }
     if (args[0] === "dump-asm") {
         dumpAsm(args.slice(1));
+        return;
+    }
+    if (args[0] === "dump") {
+        dump(args.slice(1));
         return;
     }
     if (args[0] !== "decompile") fail(`unknown command: ${args[0]}`);

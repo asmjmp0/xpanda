@@ -20,6 +20,7 @@ import {
 } from "xpanda-core";
 import type { DecodedInstruction, OpcodeInfo } from "xpanda-core";
 import { concatBytes, encodeStringEntity, readStringEntity, readUleb128, writeSleb128, writeUleb128 } from "./codec";
+import { dumpClasses, type DumpClassesResult } from "./ClassDump";
 import { encodeMethodCode, type CatchBlockInput, type MethodCodeInput, type TryBlockInput } from "./MethodCode";
 import {
     encodeModuleRecord, readModuleRecord,
@@ -288,6 +289,14 @@ export class PandaPatchFile {
         const clazz = this.findClass(className);
         const method = clazz?.pandaMethods.get(methodName);
         return !!method && !method.methodExternal;
+    }
+
+    /**
+     * 把一个或多个类(以及它们引用到的类/方法)导出为一个新的、独立的 .abc。
+     * 当前补丁会话里的修改会先经过 toBytes(),因此导出结果反映最新状态。
+     */
+    dumpClasses(classNames: string[]): DumpClassesResult {
+        return dumpClasses(this.toBytes(), classNames);
     }
 
     /** 读取方法代码(用于克隆/改写);方法无代码项时返回 null */

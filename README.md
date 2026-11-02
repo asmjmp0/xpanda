@@ -35,10 +35,10 @@ The project is split into five yarn-workspace packages under `packages/`:
 | Package | Purpose |
 |---|---|
 | `xpanda-core` | `.abc` / `.hap` parsing, disassembly, decompilation and the optimizer — the library everything else builds on |
-| `xpanda-cli` | command line interface (`decompile` / `unpack-index` / `dump-asm`) |
+| `xpanda-cli` | command line interface (`decompile` / `unpack-index` / `dump-asm` / `dump`) |
 | `xpanda-mcp` | MCP server (stdio) for AI client integration |
 | `xpanda-web` | browser UI (React + Vite, pure frontend) |
-| `panda-asm` | load, modify (replace method code / add methods, strings) and re-emit `.abc` files |
+| `panda-asm` | load, modify (replace method code / add methods, strings), dump classes and re-emit `.abc` files |
 
 ## Install and use
 
@@ -51,6 +51,7 @@ CLI (run from the repository root):
 ```bash
 yarn tsx packages/xpanda-cli/src/cli.ts decompile <file.abc|file.hap> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N]
 yarn tsx packages/xpanda-cli/src/cli.ts dump-asm <file.abc|file.hap> [-o outDir] [--stdout]
+yarn tsx packages/xpanda-cli/src/cli.ts dump <file.abc|file.hap> -c <class> [-c ...] [-o out.abc|outDir]
 ```
 
 | Option | Description |
@@ -100,6 +101,27 @@ yarn tsx packages/xpanda-cli/src/cli.ts dump-asm app.hap -o out
 # Or print everything to the terminal
 yarn tsx packages/xpanda-cli/src/cli.ts dump-asm app.abc --stdout
 ```
+
+### Dump selected classes to a new abc
+
+`dump` copies one or more classes (plus the classes/methods they reference) out of a
+`.abc`/`.hap` and writes a new `.abc` — useful for isolating a class
+before inspecting or patching it with `panda-asm`. Class names accept `Lpkg/Name;`,
+`pkg/Name`, or a unique name suffix.
+
+```bash
+# One class to a new abc
+yarn tsx packages/xpanda-cli/src/cli.ts dump app.abc -c 'Lpkg/Name;' -o out/Name.abc
+
+# Several classes (repeat -c or use positional/comma-separated names)
+yarn tsx packages/xpanda-cli/src/cli.ts dump app.abc -c Foo -c Bar -o out/foo-bar.abc
+
+# hap input: one <entry>.dump.abc per .abc entry containing matches
+yarn tsx packages/xpanda-cli/src/cli.ts dump app.hap -c Foo -o out
+```
+
+The dumped abc is meant for analysis/patching: module imports are preserved in the class
+metadata, but the imported modules themselves are not bundled.
 
 For large files, raise the heap limit and enable per-class parallelism:
 

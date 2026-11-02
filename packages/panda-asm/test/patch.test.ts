@@ -12,7 +12,7 @@ import * as path from "path";
 import * as vm from "vm";
 import * as crypto from "crypto";
 import { assemble, decodeInstructions, PandaDecompiler, PandaFile } from "xpanda-core";
-import { PandaPatchFile } from "../src";
+import { PandaPatchFile, dumpClasses } from "../src";
 
 function assert(condition: unknown, message: string): asserts condition {
     if (!condition) throw new Error("ASSERT FAILED: " + message);
@@ -768,7 +768,61 @@ function ${hookName}(args) {
         `hook module import must stay readable, got ${JSON.stringify(logs)}`);
 }
 
-// ---------------------------------------------------------------- 14. 目标没有 module record 时硬加
+// ---------------------------------------------------------------- 14. dump 单个/多个 class 到新 abc
+function testDumpClasses(): void {
+    const original = loadSample("class.abc");
+    const result = dumpClasses(original, ["L_GLOBAL;"]);
+    assert(result.classes.length === 1 && result.classes[0] === "L_GLOBAL;",
+        "dump must report the requested class");
+    assert(result.data.length < original.length, "dump must drop unrelated classes/data");
+
+    const pandaFile = new PandaFile(result.data);
+    const classes = pandaFile.getAllClasses().filter((clazz) => !clazz.classExternal && clazz.name.content);
+    assert(classes.length === 1, `dumped abc must contain one real class, got ${classes.map((c) => c.name.content)}`);
+    assert(classes[0].name.content === "L_GLOBAL;", "dumped class name must be L_GLOBAL;");
+    pandaFile.parseAssembly();
+    const code = new PandaDecompiler().decompileClass(classes[0]);
+    assert(code.includes("class Test") && code.includes('console.log("123")'),
+        `dumped class must decompile to the original body:\n${code}`);
+
+    // multiple classes + module fields/literal arrays (24.0.0.0 sample)
+    const multi = dumpClasses(loadSample("hx360e1.0.2.abc"), [
+        "L&entry/src/main/ets/common/LogExport&;",
+        "L&entry/src/main/ets/common/AppLog&;",
+    ]);
+    const multiFile = new PandaFile(multi.data);
+    const names = multiFile.getAllClasses().map((clazz) => clazz.name.content);
+    assert(names.includes("L&entry/src/main/ets/common/LogExport&;"), "multi dump must contain LogExport");
+    assert(names.includes("L&entry/src/main/ets/common/AppLog&;"), "multi dump must contain AppLog");
+    assert(multi.classes.length === 2, "multi dump must report both requested classes");
+    multiFile.parseAssembly();
+    const logCode = new PandaDecompiler().decompileClass(
+        multiFile.getAllClasses().find((clazz) => clazz.name.content === "L&entry/src/main/ets/common/LogExport&;")!);
+    assert(logCode.includes("export class LogExport"), `LogExport must decompile from the dump:\n${logCode.slice(0, 300)}`);
+    const sourceLog = new PandaFile(loadSample("hx360e1.0.2.abc")).getAllClasses()
+        .find((clazz) => clazz.name.content === "L&entry/src/main/ets/common/LogExport&;");
+    const dumpedLog = multiFile.getAllClasses()
+        .find((clazz) => clazz.name.content === "L&entry/src/main/ets/common/LogExport&;");
+    assert(sourceLog && dumpedLog && sourceLog.sourceLang === dumpedLog.sourceLang,
+        "dump must preserve the class source language");
+
+    // PandaPatchFile convenience wrapper dumps the current (possibly patched) state
+    const patched = PandaPatchFile.load(original);
+    const wrapped = patched.dumpClasses(["L_GLOBAL;"]);
+    assert(wrapped.classes[0] === "L_GLOBAL;", "PandaPatchFile.dumpClasses must work");
+
+    // older bytecode keeps a real proto index table; the dump must copy it too
+    const md5 = dumpClasses(loadSample("md5.abc"), ["L_GLOBAL;"]);
+    const md5File = new PandaFile(md5.data);
+    md5File.parseAssembly();
+    const md5Class = md5File.getAllClasses().find((clazz) => clazz.name.content === "L_GLOBAL;");
+    assert(md5Class, "dumped md5 class must parse");
+    const md5Code = new PandaDecompiler().decompileClass(md5Class);
+    assert(md5Code.includes("function add32") && md5Code.includes("function md5"),
+        `dumped md5 class must decompile with its proto table:\n${md5Code.slice(0, 300)}`);
+}
+
+// ---------------------------------------------------------------- 15. 目标没有 module record 时硬加
 function testHookAddsModuleRecord(): void {
     const es2abc = bundledEs2abc();
     if (!es2abc) {
@@ -832,6 +886,7 @@ async function main(): Promise<void> {
     testMultipleHooksInOneSession();
     testHookBundleSingleSource();
     testHookModuleImport();
+    testDumpClasses();
     testHookAddsModuleRecord();
     await testHookAsyncFunction();
     console.log("panda-asm: all tests passed");

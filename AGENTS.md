@@ -47,7 +47,7 @@ Other sub-projects:
 
 | Path | Responsibility |
 |---|---|
-| `packages/xpanda-cli/src/cli.ts` | CLI: `decompile <file.abc|file.hap> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N]`, `unpack-index <resources.index> [-o outDir] [--stdout]` |
+| `packages/xpanda-cli/src/cli.ts` | CLI: `decompile <file.abc|file.hap> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N]`, `unpack-index <resources.index> [-o outDir] [--stdout]`, `dump-asm <file> [-o outDir] [--stdout]`, `dump <file> -c <class> [-o out.abc]` |
 | `packages/xpanda-cli/src/io.ts` | CLI file IO: writes files by class name (saveClassFile) |
 | `packages/xpanda-cli/src/parallel/` | per-class parallel simplify worker pool (`ParallelDecompiler.ts` scheduler, `simplify-worker.ts` worker entry; worker_threads, Node only) |
 | `packages/xpanda-cli/test/parallel-consistency.test.ts` | serial/parallel byte-exact consistency regression (core samples) |

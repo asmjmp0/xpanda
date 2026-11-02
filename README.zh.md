@@ -30,14 +30,15 @@
 
 ## 目录结构
 
-项目拆分为四个 yarn workspaces 子包,位于 `packages/` 下:
+项目拆分为五个 yarn workspaces 子包,位于 `packages/` 下:
 
 | 子包 | 职责 |
 |---|---|
 | `xpanda-core` | `.abc` / `.hap` 解析、反汇编、反编译与优化器——其余子包依赖的核心库 |
-| `xpanda-cli` | 命令行(`decompile` / `unpack-index` / `dump-asm`) |
+| `xpanda-cli` | 命令行(`decompile` / `unpack-index` / `dump-asm` / `dump`) |
 | `xpanda-mcp` | MCP Server(stdio,供 AI 客户端接入) |
 | `xpanda-web` | 浏览器 UI(React + Vite,纯前端) |
+| `panda-asm` | 加载、修改(替换方法代码 / 新增方法、字符串)、导出 class 并重新写回 `.abc` |
 
 ## 安装与使用
 
@@ -50,6 +51,7 @@ CLI(在仓库根目录执行):
 ```bash
 yarn tsx packages/xpanda-cli/src/cli.ts decompile <file.abc|file.hap> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N]
 yarn tsx packages/xpanda-cli/src/cli.ts dump-asm <file.abc|file.hap> [-o outDir] [--stdout]
+yarn tsx packages/xpanda-cli/src/cli.ts dump <file.abc|file.hap> -c <class> [-c ...] [-o out.abc|outDir]
 ```
 
 | 参数 | 说明 |
@@ -97,6 +99,26 @@ yarn tsx packages/xpanda-cli/src/cli.ts dump-asm app.hap -o out
 # 或全部输出到终端
 yarn tsx packages/xpanda-cli/src/cli.ts dump-asm app.abc --stdout
 ```
+
+### 导出单个/多个 class 到新 abc
+
+`dump` 把一个或多个 class(以及它们引用到的 class/方法)从 `.abc` / `.hap` 中复制出来,
+写成新的 `.abc`,适合在丢给 `panda-asm` 打补丁前先隔离出目标类。类名支持
+`Lpkg/Name;`、`pkg/Name` 或唯一的名称后缀。
+
+```bash
+# 单个 class
+yarn tsx packages/xpanda-cli/src/cli.ts dump app.abc -c 'Lpkg/Name;' -o out/Name.abc
+
+# 多个 class(重复 -c,或直接写位置参数 / 逗号分隔)
+yarn tsx packages/xpanda-cli/src/cli.ts dump app.abc -c Foo -c Bar -o out/foo-bar.abc
+
+# hap 输入:每个包含匹配类的 .abc 条目输出一个 <entry>.dump.abc
+yarn tsx packages/xpanda-cli/src/cli.ts dump app.hap -c Foo -o out
+```
+
+导出的 abc 用于分析/打补丁:类元数据里的 module import 会保留,但被 import 的模块本身
+不会被打包进去。
 
 大文件建议加堆并开启按类并行:
 

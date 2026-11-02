@@ -76,6 +76,22 @@ function ${bundledB}(args) { return [1]; }
 writeFileSync("app.patched.abc", patchFile.toBytes());
 ```
 
+## 导出单个/多个 class 到新 abc
+
+`PandaPatchFile.dumpClasses()`(或独立函数 `dumpClasses(data, names)`)把选中的类以及它们
+引用到的类/方法复制成一个新的、独立的单 region `.abc`。类索引表、方法/字符串/literal
+array 实体表、prototype 表都会重新生成,type id / method id / literal array 引用同步重映射;
+输出反映当前 patch 会话的最新状态。
+
+```ts
+const result = patchFile.dumpClasses(["L&entry/src/main/ets/common/AppLog&;"]);
+writeFileSync("AppLog.abc", result.data);
+console.log(result.classes, result.dependencies);
+```
+
+限制:目前不支持带 bytecode 级父类/接口表的类(ArkTS 合并后的 abc 通常为 0)、
+非 module 元数据的 VALUE 字段,以及 field-id 指令;遇到时会抛出 `Error`。
+
 ## AOP 工作流
 
 目标 abc 先由你自己的构建流程产出(es2abc 编译的普通 abc 或 merge 后的应用包),然后:
