@@ -237,7 +237,8 @@ function buildKindMap(): Map<string, InstructionKind> {
     put("copyRestArgs", "copyrestargs", "wide.copyrestargs");
 
     put("storeModuleVar", "stmodulevar", "wide.stmodulevar");
-    put("loadModuleVar", "ldlocalmodulevar", "wide.ldlocalmodulevar");
+    put("loadModuleVar", "ldlocalmodulevar", "wide.ldlocalmodulevar",
+        "callruntime.ldsendablelocalmodulevar", "callruntime.wideldsendablelocalmodulevar");
     put("loadExternalModuleVar",
         "ldexternalmodulevar", "wide.ldexternalmodulevar",
         "callruntime.ldlazymodulevar", "callruntime.wideldlazymodulevar",
