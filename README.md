@@ -38,7 +38,7 @@ The project is split into five yarn-workspace packages under `packages/`:
 | `xpanda-cli` | command line interface (`decompile` / `unpack-index` / `dump-asm` / `dump`) |
 | `xpanda-mcp` | MCP server (stdio) for AI client integration |
 | `xpanda-web` | browser UI (React + Vite, pure frontend) |
-| `panda-asm` | load, modify (replace method code / add methods, strings), dump classes and re-emit `.abc` files |
+| `xpanda-asm` | load, modify (replace method code / add methods, strings), dump classes and re-emit `.abc` files |
 
 ## Install and use
 
@@ -106,7 +106,7 @@ yarn tsx packages/xpanda-cli/src/cli.ts dump-asm app.abc --stdout
 
 `dump` copies one or more classes (plus the classes/methods they reference) out of a
 `.abc`/`.hap` and writes a new `.abc` — useful for isolating a class
-before inspecting or patching it with `panda-asm`. Class names accept `Lpkg/Name;`,
+before inspecting or patching it with `xpanda-asm`. Class names accept `Lpkg/Name;`,
 `pkg/Name`, or a unique name suffix.
 
 ```bash

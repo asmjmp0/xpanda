@@ -1,4 +1,4 @@
-# panda-asm
+# xpanda-asm
 
 加载 HarmonyOS `.abc`(Panda 字节码)文件,修改/新增实体后重新写回。用于静态 AOP、
 字节码插桩、实验性工具链等场景。
@@ -8,7 +8,7 @@
 ```ts
 import { readFileSync, writeFileSync } from "fs";
 import { assemble } from "xpanda-core";
-import { PandaPatchFile } from "panda-asm";
+import { PandaPatchFile } from "xpanda-asm";
 
 const patchFile = PandaPatchFile.load(new Uint8Array(readFileSync("app.abc")));
 
@@ -289,5 +289,5 @@ decodeInstructions(bytes);                        // 结构化解码(用于插�
 ## 测试
 
 ```bash
-yarn workspace panda-asm test
+yarn workspace xpanda-asm test
 ```

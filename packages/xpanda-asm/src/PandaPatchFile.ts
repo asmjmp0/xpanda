@@ -1,5 +1,5 @@
 /**
- * panda-asm:加载 .abc(Panda 字节码)文件,修改/新增实体后重新写回。
+ * xpanda-asm:加载 .abc(Panda 字节码)文件,修改/新增实体后重新写回。
  *
  * 实现策略(append-only patcher):
  *   - 原始文件字节保持不变;新增实体追加到文件末尾(4 字节对齐);
@@ -667,13 +667,13 @@ export class PandaPatchFile {
         const targetBcVersion = this.pf.header.versionString();
         const targetApiVersion = resolveTargetApiVersion(es2abc, targetBcVersion, options.targetApiVersion);
         const apiVersionArgs = ["--target-api-version", String(targetApiVersion)];
-        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "panda-asm-"));
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "xpanda-asm-"));
         try {
             return this.patchMethodHeadsClass(
                 hookGlobalNames, targetsByHook, hookSource, es2abc, apiVersionArgs, targetBcVersion, tempDir, options);
         } finally {
             if (options.keepTemp) {
-                console.log(`[panda-asm] temp dir kept: ${tempDir}`);
+                console.log(`[xpanda-asm] temp dir kept: ${tempDir}`);
             } else {
                 fs.rmSync(tempDir, { recursive: true, force: true });
             }

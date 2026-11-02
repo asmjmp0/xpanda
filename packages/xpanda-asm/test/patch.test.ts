@@ -1,5 +1,5 @@
 /**
- * panda-asm 集成测试:
+ * xpanda-asm 集成测试:
  *   1. 无修改 round-trip 字节级一致;
  *   2. replaceMethodCode:换掉方法实现,重新解析/反编译确认生效;
  *   3. addMethod:新增方法(克隆模板 proto),类实体重定位后索引表可用;
@@ -889,7 +889,7 @@ async function main(): Promise<void> {
     testDumpClasses();
     testHookAddsModuleRecord();
     await testHookAsyncFunction();
-    console.log("panda-asm: all tests passed");
+    console.log("xpanda-asm: all tests passed");
 }
 
 main().catch((error) => {

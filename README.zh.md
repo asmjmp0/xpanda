@@ -38,7 +38,7 @@
 | `xpanda-cli` | 命令行(`decompile` / `unpack-index` / `dump-asm` / `dump`) |
 | `xpanda-mcp` | MCP Server(stdio,供 AI 客户端接入) |
 | `xpanda-web` | 浏览器 UI(React + Vite,纯前端) |
-| `panda-asm` | 加载、修改(替换方法代码 / 新增方法、字符串)、导出 class 并重新写回 `.abc` |
+| `xpanda-asm` | 加载、修改(替换方法代码 / 新增方法、字符串)、导出 class 并重新写回 `.abc` |
 
 ## 安装与使用
 
@@ -103,7 +103,7 @@ yarn tsx packages/xpanda-cli/src/cli.ts dump-asm app.abc --stdout
 ### 导出单个/多个 class 到新 abc
 
 `dump` 把一个或多个 class(以及它们引用到的 class/方法)从 `.abc` / `.hap` 中复制出来,
-写成新的 `.abc`,适合在丢给 `panda-asm` 打补丁前先隔离出目标类。类名支持
+写成新的 `.abc`,适合在丢给 `xpanda-asm` 打补丁前先隔离出目标类。类名支持
 `Lpkg/Name;`、`pkg/Name` 或唯一的名称后缀。
 
 ```bash

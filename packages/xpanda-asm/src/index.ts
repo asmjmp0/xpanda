@@ -1,5 +1,5 @@
 /**
- * panda-asm 公共入口。
+ * xpanda-asm 公共入口。
  * @Author: jmp0
  */
 export { PandaPatchFile, PandaPatchError, generateHookName } from "./PandaPatchFile";

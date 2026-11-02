@@ -8,7 +8,7 @@ import {
     ResourceIndexFile,
     ZipFile,
 } from "xpanda-core";
-import { PandaPatchFile } from "panda-asm";
+import { PandaPatchFile } from "xpanda-asm";
 import { saveClassFile } from "./io";
 import { decompileClassesParallel, resolveJobs } from "./parallel/ParallelDecompiler";
 
