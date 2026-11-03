@@ -4,6 +4,7 @@ import { PandaLexical } from "./disasm/PandaLexical";
 import { PandaDecompilerMethodHandler } from "./decompiler/MethodHandler";
 import { StructureAnalysis } from "./decompiler/StructureAnalysis";
 import { SimpleAnalysis } from "./decompiler/SimpleAnalysis";
+import { flattenRethrowTryChains } from "./decompiler/RethrowTryFlatten";
 import { NodeFactory } from "./ast/NodeFactory";
 import { NodeUtils } from "./ast/NodeUtils";
 import { SimplifyExport } from "./simplify/SimplifyExport";
@@ -92,6 +93,9 @@ export class PandaDecompiler {
         }
         const pandaIRCFG = pandaLexical.getPandaIRCFG(funcMain0Method);
         this.decompileSingleFunction(pandaIRCFG, pandaLexical, programNode);
+        // 模块级 class 定义的 rethrow try 壳会层层嵌套(每个 class 一层),每层给后面
+        // 所有行加 2 空格缩进;合并成一层,raw 输出与 simplify 的 AST 都小一个数量级。
+        flattenRethrowTryChains(programNode as any);
 
         // exports
         if (pandaClass.pandaClassModuleData) {

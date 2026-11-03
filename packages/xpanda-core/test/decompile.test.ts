@@ -9,6 +9,7 @@ import { SimplifyExport } from "../src/simplify/SimplifyExport";
 import { NullishCoalescingSimplify } from "../src/simplify/NullishCoalescingSimplify";
 import { SyntaxRewriteSimplify } from "../src/simplify/SyntaxRewriteSimplify";
 import { restoreGotoLoops } from "../src/simplify/GotoLoopRestore";
+import { flattenRethrowTryChains } from "../src/decompiler/RethrowTryFlatten";
 import { HapFile } from "../src/hap/HapFile";
 import type { PandaClass } from "../src/file/clazz/PandaClass";
 import { ResourceIndexFile } from "../src/res/ResourceIndexFile";
@@ -2454,6 +2455,95 @@ export { Plain };
     }
     if (/export\s*\{\s*Plain\s*\}/.test(code)) {
         throw new Error(`无装饰器的类仍残留独立 export 语句\n${code}`);
+    }
+}
+
+/**
+ * 回归:模块级 class 定义的 rethrow try 壳不能层层嵌套。
+ *
+ * ArkTS 给每个模块级 class 定义生成一个词法环境保护壳
+ * `try { …class… } catch (e) { acc = e; throw acc }`;结构化归约把后续语句并进
+ * try 体后,这些壳会一层套一层——issue7 的 liverevlink-impl 有 80 层,每层给后面
+ * 所有行加 2 格缩进,raw 输出(50MB)的 71.8% 是行首空白。
+ * `flattenRethrowTryChains` 把内层壳的语句并进外层块,嵌套层数归零。
+ * 内层 try 不在外层块的末尾、或它的块级声明会被外层前面的语句看到时保持原样。
+ */
+function verifyRethrowTryFlattening(): void {
+    const countTries = (node: TYPE.Node): number => {
+        let count = TYPE.isTryStatement(node) ? 1 : 0;
+        const keys = (TYPE.VISITOR_KEYS as any)[node.type] as string[] | undefined;
+        if (keys) {
+            for (const key of keys) {
+                const value = (node as any)[key];
+                if (Array.isArray(value)) {
+                    for (const child of value) if (child && typeof child.type === "string") count += countTries(child);
+                } else if (value && typeof value.type === "string") {
+                    count += countTries(value);
+                }
+            }
+        }
+        return count;
+    };
+    const nested = NodeFactory.parse(`
+try {
+  a();
+  try {
+    let slot = make();
+    b(slot);
+  } catch (catchAcc) {
+    acc = catchAcc;
+    throw acc;
+  }
+} catch (catchAcc) {
+  acc = catchAcc;
+  throw acc;
+}
+`);
+    flattenRethrowTryChains(nested);
+    if (countTries(nested) !== 1) {
+        throw new Error(`嵌套 rethrow try 未合并\n${NodeFactory.generate(nested)}`);
+    }
+    const flattenedBody = (nested.body[0] as TYPE.TryStatement).block.body;
+    if (flattenedBody.length !== 3) {
+        throw new Error(`合并后语句数不对(${flattenedBody.length})\n${NodeFactory.generate(nested)}`);
+    }
+    const blocked = NodeFactory.parse(`
+try {
+  use(slot);
+  try {
+    let slot = make();
+    b(slot);
+  } catch (catchAcc) {
+    acc = catchAcc;
+    throw acc;
+  }
+} catch (catchAcc) {
+  acc = catchAcc;
+  throw acc;
+}
+`);
+    flattenRethrowTryChains(blocked);
+    if (countTries(blocked) !== 2) {
+        throw new Error(`声明被外层引用时不应合并\n${NodeFactory.generate(blocked)}`);
+    }
+    const notLast = NodeFactory.parse(`
+try {
+  try {
+    let slot = make();
+    b(slot);
+  } catch (catchAcc) {
+    acc = catchAcc;
+    throw acc;
+  }
+  after();
+} catch (catchAcc) {
+  acc = catchAcc;
+  throw acc;
+}
+`);
+    flattenRethrowTryChains(notLast);
+    if (countTries(notLast) !== 2) {
+        throw new Error(`内层 try 不是块末尾时不应合并\n${NodeFactory.generate(notLast)}`);
     }
 }
 
@@ -6033,6 +6123,10 @@ async function main(): Promise<void> {
 
     console.log("[test] simplify decorated class named export");
     verifyDecoratedClassNamedExport();
+    console.log("    ok");
+
+    console.log("[test] rethrow try chain flattening");
+    verifyRethrowTryFlattening();
     console.log("    ok");
 
     console.log("[test] simplify hole sentinel cleanup");

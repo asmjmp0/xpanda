@@ -8,7 +8,6 @@ import { YTCoreLogger } from "@normalized:N&&&youtube_core/src/main/ets/common/Y
 import deviceInfo from "@ohos:deviceInfo";
 import http from "@ohos:net.http";
 let HttpAbortToken, HttpError, HttpErrorType;
-let acc;
 let local_0_0, local_0_1, local_0_2, local_0_3;
 HttpErrorType = undefined;
 local_0_0 = function (p0) {
@@ -79,7 +78,7 @@ class FinalResponseHookInterceptor {
 }
 let local_1_0;
 {
-  acc = class HttpError extends Error {
+  local_1_0 = class HttpError extends Error {
     constructor(p0, p1, p2, p3, p4, p5, p6) {
       let v10;
       let v2 = super(p0);
@@ -211,8 +210,7 @@ let local_1_0;
         || v14.includes("could not connect to server");
     }
   };
-  local_1_0 = acc;
-  HttpError = acc;
+  HttpError = local_1_0;
   HttpAbortToken = class HttpAbortToken {
     constructor() {
       this.aborted = false;
