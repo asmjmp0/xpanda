@@ -1,6 +1,8 @@
+import { spawnSync } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 import {
+    ENTRY_FUNCTION_MAIN,
     HapFile,
     PandaClass,
     PandaDecompiler,
@@ -11,23 +13,60 @@ import {
 import { PandaPatchFile } from "xpanda-asm";
 import { saveClassFile } from "./io";
 import { decompileClassesParallel, resolveJobs } from "./parallel/ParallelDecompiler";
+import { DecompileProgress } from "./progress";
+
+/** Old-space cap for the decompile process, in MiB (8 GiB). */
+const CLI_HEAP_MB = 8 * 1024;
+
+/**
+ * `--max-old-space-size` is applied only at process start. Re-exec once when
+ * the caller did not set it, so `yarn xpanda` and `yarn tsx .../cli.ts` both
+ * get an 8 GiB heap. An explicit flag, including one from NODE_OPTIONS, wins.
+ */
+function hasHeapFlag(args: readonly string[]): boolean {
+    return args.some((arg) => arg === "--max-old-space-size" || arg.startsWith("--max-old-space-size="));
+}
+
+/** NODE_OPTIONS is applied by Node but is not copied into process.execArgv. */
+function nodeOptionsArgs(options: string | undefined): string[] {
+    if (!options) return [];
+    return options.match(/"[^"]*"|'[^']*'|\S+/g)?.map((arg) => arg.replace(/^['"]|['"]$/g, "")) ?? [];
+}
+
+function ensureCliHeap(): void {
+    if (hasHeapFlag(process.execArgv) || hasHeapFlag(nodeOptionsArgs(process.env.NODE_OPTIONS))) return;
+    const child = spawnSync(process.execPath, [
+        `--max-old-space-size=${CLI_HEAP_MB}`,
+        ...process.execArgv,
+        ...process.argv.slice(1),
+    ], { stdio: "inherit" });
+    if (child.error) {
+        console.error(child.error.message);
+        process.exit(1);
+    }
+    if (child.signal) process.kill(process.pid, child.signal);
+    process.exit(child.status ?? 1);
+}
+
+ensureCliHeap();
 
 /**
  * CLI 入口
  *   yarn tsx src/cli.ts help [decompile|unpack-index|dump-asm]
- *   yarn tsx src/cli.ts decompile <file.abc|file.hap> [-o outDir] [--no-simplify] [--raw] [--stdout] [--quiet] [-j N]
+ *   yarn tsx src/cli.ts decompile <file.abc|file.hap> [-o outDir] [--no-simplify] [--raw] [--stdout] [--quiet] [-j N] [--timeout SEC]
  *   yarn tsx src/cli.ts unpack-index <resources.index> [-o outDir] [--stdout]
  *   yarn tsx src/cli.ts dump-asm <file.abc|file.hap> [-o outDir] [--stdout]
  *   yarn tsx src/cli.ts dump <file.abc|file.hap> -c <class> [-c ...] [-o out.abc|outDir]
  * @Author: jmp0 */
 function printDecompileUsage(): void {
-    console.log("Usage: xpanda decompile <file.abc|file.hap> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N]");
+    console.log("Usage: xpanda decompile <file.abc|file.hap> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N] [--timeout SEC]");
     console.log("  file.hap         HarmonyOS app package: decompiles every .abc entry and unpacks resources.index plus resources/ files");
     console.log("  -o outDir        Writes .js files named by class (default out/; in hap mode abc entries go to outDir/<entry path>/)");
     console.log("  --no-simplify    Disables the optimizer (skips the simplify stage, same as --raw)");
     console.log("  --stdout         Concatenates the result to standard output");
-    console.log("  --quiet          Suppresses decompilation progress logs");
+    console.log("  --quiet          Hides the progress view (class total, current class, simplify workers)");
     console.log("  -j, --jobs N     Worker count for per-class parallel simplify; 0 = auto (CPU-1, capped at 4)");
+    console.log("  --timeout SEC    Stop simplify after SEC seconds and keep that class's raw output. Warns at the end. 0 disables");
 }
 
 function printUnpackIndexUsage(): void {
@@ -123,53 +162,100 @@ function unpackIndex(args: string[]): void {
     console.log("written: " + outPath);
 }
 
+interface SimplifyTimeout {
+    label: string;
+    className: string;
+}
+
 interface DecompileOptions {
     outDir: string;
     raw: boolean;
     stdout: boolean;
     jobs: number;
+    /** 0 表示不限制 simplify 时长 */
+    simplifyTimeoutSec: number;
+    simplifyTimeouts: SimplifyTimeout[];
+    progress: DecompileProgress;
 }
 
 /**
  * 反编译一个 abc 的全部类,类文件落盘到 classOutDir,返回按类序拼接的输出段(--stdout 用)。
  * abc 模式与 hap 模式共用该流程。
  */
-async function decompileAbcData(decompiler: PandaDecompiler, data: Uint8Array, options: DecompileOptions, classOutDir: string): Promise<string[]> {
+async function decompileAbcData(
+    decompiler: PandaDecompiler,
+    data: Uint8Array,
+    options: DecompileOptions,
+    classOutDir: string,
+    label: string,
+): Promise<string[]> {
     const pandaFile = new PandaFile(data);
     const classes = pandaFile.getAllClasses();
     if (!options.stdout) fs.mkdirSync(classOutDir, { recursive: true });
-    // 进度/配置信息走 stderr,避免污染 --stdout 的源码输出
-    if (options.jobs > 1) console.error("parallel simplify jobs: " + options.jobs);
 
-    // 按类序保存输出,保证 --stdout 与文件内容不受完成顺序影响
-    const outputs: Array<string | undefined> = new Array(classes.length);
+    const targets = classes
+        .map((clazz, index) => ({ clazz, index }))
+        .filter(({ clazz }) => clazz.pandaMethods.has(ENTRY_FUNCTION_MAIN));
+    // 只有 --stdout 需要按类序攒全文。落盘后的源码再留在这个数组里,大包会把已写盘的结果一直留到进程结束。
+    const outputs: Array<string | undefined> | null = options.stdout ? new Array(classes.length) : null;
+    let written = 0;
     const emit = (index: number, content: string): void => {
         if (content.length === 0) return;
         const clazz = classes[index];
-        outputs[index] = "\n/***************************" + clazz.name.content + "*************************************\n" + content;
-        if (!options.stdout) {
-            saveClassFile(classOutDir, clazz, content);
-            console.log("written: " + clazz.name.content);
+        if (outputs) {
+            outputs[index] = "\n/***************************" + clazz.name.content + "*************************************\n" + content;
+            return;
         }
+        saveClassFile(classOutDir, clazz, content);
+        written++;
+        // 交互进度面板占着终端;逐类 written 会把它冲掉
+        if (!options.progress.live) console.log("written: " + clazz.name.content);
     };
 
-    if (options.jobs > 1) {
-        await decompileClassesParallel(decompiler, classes, {
-            jobs: options.jobs,
-            onClassDone: ({ index, content }) => emit(index, content),
-            onWarning: (message) => console.error(message),
-        });
-    } else {
-        for (let i = 0; i < classes.length; i++) {
-            try {
-                emit(i, options.raw ? decompiler.decompileClassRaw(classes[i]) : decompiler.decompileClass(classes[i]));
-            } catch (e) {
-                // 单类反编译失败不中断整体
-                console.error("decompile failed: " + classes[i].name.content + " " + e);
-            }
-        }
+    const noun = targets.length === 1 ? "class" : "classes";
+    const summary = (): string => options.stdout
+        ? `${label}  ${targets.length} ${noun}`
+        : `${label}  ${targets.length} ${noun}, ${written} written  →  ${classOutDir}`;
+    if (targets.length === 0) {
+        options.progress.finish(summary());
+        return [];
     }
-    return outputs.filter((out): out is string => out !== undefined);
+
+    const slots = !options.raw && options.jobs > 1 && targets.length > 1
+        ? Math.min(options.jobs, targets.length)
+        : 0;
+    options.progress.begin(label, targets.length, slots, !options.raw);
+    try {
+        if (options.raw) {
+            for (const target of targets) {
+                options.progress.setDecompiling(target.clazz.name.content);
+                try {
+                    emit(target.index, decompiler.decompileClassRaw(target.clazz));
+                } catch (e) {
+                    options.progress.note("decompile failed: " + target.clazz.name.content + " " + e);
+                } finally {
+                    options.progress.setDecompiling(null);
+                    options.progress.markDone();
+                }
+            }
+        } else {
+            await decompileClassesParallel(decompiler, classes, {
+                jobs: options.jobs,
+                simplifyTimeoutMs: Math.round(options.simplifyTimeoutSec * 1000),
+                onDecompileStart: (name) => options.progress.setDecompiling(name),
+                onDecompileEnd: () => options.progress.setDecompiling(null),
+                onSimplifyStart: (slot, name) => options.progress.setWorker(slot, name),
+                onSimplifyEnd: (slot) => options.progress.setWorker(slot, null),
+                onClassSettled: () => options.progress.markDone(),
+                onClassDone: ({ index, content }) => emit(index, content),
+                onSimplifyTimeout: (className) => options.simplifyTimeouts.push({ label, className }),
+                onWarning: (message) => options.progress.note(message),
+            });
+        }
+    } finally {
+        options.progress.finish(summary());
+    }
+    return outputs ? outputs.filter((out): out is string => out !== undefined) : [];
 }
 
 /** 反编译 HAP 应用包:解出全部 .abc 条目逐个反编译,并解包 resources.index */
@@ -188,7 +274,7 @@ async function decompileHap(decompiler: PandaDecompiler, data: Uint8Array, optio
         // ets/modules.abc → outDir/ets/modules/<类路径>.js
         const classOutDir = path.join(options.outDir, entry.name.replace(/\.abc$/i, ""));
         console.error(`hap: decompile ${entry.name} (${entry.uncompressedSize} bytes)`);
-        const outs = await decompileAbcData(decompiler, entry.read(), options, classOutDir);
+        const outs = await decompileAbcData(decompiler, entry.read(), options, classOutDir, entry.name);
         allOutputs.push(...outs);
     }
     // resources.index → outDir/resources.json;resources/ 资源文件按包内相对路径落盘(--stdout 模式不落盘)
@@ -474,6 +560,7 @@ async function main(): Promise<void> {
     let stdout = false;
     let quiet = false;
     let jobsArg = 1;
+    let simplifyTimeoutSec = 0;
     for (let i = 2; i < args.length; i++) {
         if (args[i] === "-o") {
             const value = args[++i];
@@ -487,10 +574,20 @@ async function main(): Promise<void> {
             const value = Number(args[++i]);
             jobsArg = Number.isFinite(value) ? value : 1;
         }
+        else if (args[i] === "--timeout") {
+            const value = Number(args[++i]);
+            if (!Number.isFinite(value) || value < 0) fail("option --timeout requires a non-negative number of seconds", "decompile");
+            simplifyTimeoutSec = value;
+        }
         else fail(`unknown argument: ${args[i]}`, "decompile");
     }
     const jobs = raw ? 1 : resolveJobs(jobsArg);
-    const options: DecompileOptions = { outDir, raw, stdout, jobs };
+    const options: DecompileOptions = {
+        outDir, raw, stdout, jobs,
+        simplifyTimeoutSec: raw ? 0 : simplifyTimeoutSec,
+        simplifyTimeouts: [],
+        progress: new DecompileProgress(!quiet),
+    };
 
     // --quiet:静默 simplify 内部的过程日志
     const originalLog = console.log;
@@ -501,7 +598,13 @@ async function main(): Promise<void> {
     // .hap(或任意 ZIP 容器)走应用包解包流程,否则按裸 abc 处理
     const outputs = path.extname(input).toLowerCase() === ".hap" || ZipFile.isZip(data)
         ? await decompileHap(decompiler, data, options)
-        : await decompileAbcData(decompiler, data, options, outDir);
+        : await decompileAbcData(decompiler, data, options, outDir, path.basename(input));
+
+    if (options.simplifyTimeouts.length > 0) {
+        const seconds = simplifyTimeoutSec;
+        console.error(`warn: simplify timed out after ${seconds}s, kept raw (${options.simplifyTimeouts.length}):`);
+        for (const item of options.simplifyTimeouts) console.error(`  ${item.label}  ${item.className}`);
+    }
 
     if (quiet) console.log = originalLog;
     if (stdout) {

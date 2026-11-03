@@ -16,6 +16,12 @@ interface TaskMessage {
 }
 
 parentPort!.on("message", (msg: TaskMessage) => {
+    // Test hook only: a busy wait that stands in for a simplify call stuck past --timeout.
+    const spinMs = Number(process.env.XPANDA_TEST_SIMPLIFY_SPIN_MS);
+    if (Number.isFinite(spinMs) && spinMs > 0) {
+        const start = Date.now();
+        while (Date.now() - start < spinMs) { /* keep the worker busy until it is terminated */ }
+    }
     try {
         parentPort!.postMessage({ id: msg.id, text: decompiler.simplifyInProcess(msg.ast) });
     } catch (e) {

@@ -49,7 +49,7 @@ yarn install
 CLI (run from the repository root):
 
 ```bash
-yarn tsx packages/xpanda-cli/src/cli.ts decompile <file.abc|file.hap> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N]
+yarn tsx packages/xpanda-cli/src/cli.ts decompile <file.abc|file.hap> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N] [--timeout SEC]
 yarn tsx packages/xpanda-cli/src/cli.ts dump-asm <file.abc|file.hap> [-o outDir] [--stdout]
 yarn tsx packages/xpanda-cli/src/cli.ts dump <file.abc|file.hap> -c <class> [-c ...] [-o out.abc|outDir]
 ```
@@ -61,6 +61,7 @@ yarn tsx packages/xpanda-cli/src/cli.ts dump <file.abc|file.hap> -c <class> [-c 
 | `--stdout` | Print the result to stdout instead of writing files |
 | `--quiet` | Suppress progress logs |
 | `-j, --jobs N` | Number of workers that run simplify per class; `0` = auto (CPU-1, max 4) |
+| `--timeout SEC` | Stop a class's simplify after SEC seconds and keep that class's raw output. Timed-out classes are listed in a warning at the end. `0` disables (the default) |
 
 HAP support:
 
@@ -78,6 +79,9 @@ yarn tsx packages/xpanda-cli/src/cli.ts decompile app.abc -o out --quiet
 
 # Per-class parallelism for large files (worker_threads)
 yarn tsx packages/xpanda-cli/src/cli.ts decompile app.abc -o out -j 4 --quiet
+
+# Cap each class's simplify at 30 seconds; timed-out classes keep raw output
+yarn tsx packages/xpanda-cli/src/cli.ts decompile app.abc -o out -j 4 --timeout 30 --quiet
 
 # Inspect raw output without optimization
 yarn tsx packages/xpanda-cli/src/cli.ts decompile app.abc -o out --no-simplify --quiet
@@ -123,11 +127,11 @@ yarn tsx packages/xpanda-cli/src/cli.ts dump app.hap -c Foo -o out
 The dumped abc is meant for analysis/patching: module imports are preserved in the class
 metadata, but the imported modules themselves are not bundled.
 
-For large files, raise the heap limit and enable per-class parallelism:
+The CLI raises its own heap to 8 GiB unless `--max-old-space-size` is already set
+(on the command line or in `NODE_OPTIONS`). For large files, enable per-class parallelism:
 
 ```bash
-NODE_OPTIONS=--max-old-space-size=4096 \
-  yarn tsx packages/xpanda-cli/src/cli.ts decompile app.abc -o out -j 4 --quiet
+yarn tsx packages/xpanda-cli/src/cli.ts decompile app.abc -o out -j 4 --quiet
 ```
 
 ## Programmatic API

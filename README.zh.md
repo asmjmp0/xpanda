@@ -49,7 +49,7 @@ yarn install
 CLI(在仓库根目录执行):
 
 ```bash
-yarn tsx packages/xpanda-cli/src/cli.ts decompile <file.abc|file.hap> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N]
+yarn tsx packages/xpanda-cli/src/cli.ts decompile <file.abc|file.hap> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N] [--timeout SEC]
 yarn tsx packages/xpanda-cli/src/cli.ts dump-asm <file.abc|file.hap> [-o outDir] [--stdout]
 yarn tsx packages/xpanda-cli/src/cli.ts dump <file.abc|file.hap> -c <class> [-c ...] [-o out.abc|outDir]
 ```
@@ -61,6 +61,7 @@ yarn tsx packages/xpanda-cli/src/cli.ts dump <file.abc|file.hap> -c <class> [-c 
 | `--stdout` | 把结果输出到标准输出,不落盘 |
 | `--quiet` | 关闭过程日志 |
 | `-j, --jobs N` | 按类并行 simplify 的 worker 数;`0` 表示自动(CPU-1,上限 4) |
+| `--timeout SEC` | 单个类的 simplify 超过 SEC 秒即停止,并保留该类的原始输出。结束时用警告列出超时的类。`0` 表示关闭(默认) |
 
 hap 支持说明:
 
@@ -77,6 +78,9 @@ yarn tsx packages/xpanda-cli/src/cli.ts decompile app.abc -o out --quiet
 
 # 大文件按类并行(worker_threads)
 yarn tsx packages/xpanda-cli/src/cli.ts decompile app.abc -o out -j 4 --quiet
+
+# 单个类的 simplify 最多 30 秒,超时的类保留原始输出
+yarn tsx packages/xpanda-cli/src/cli.ts decompile app.abc -o out -j 4 --timeout 30 --quiet
 
 # 只看反编译结果,不优化
 yarn tsx packages/xpanda-cli/src/cli.ts decompile app.abc -o out --no-simplify --quiet
@@ -120,11 +124,11 @@ yarn tsx packages/xpanda-cli/src/cli.ts dump app.hap -c Foo -o out
 导出的 abc 用于分析/打补丁:类元数据里的 module import 会保留,但被 import 的模块本身
 不会被打包进去。
 
-大文件建议加堆并开启按类并行:
+CLI 会把自身堆上限提到 8 GiB,除非已经通过命令行或 `NODE_OPTIONS` 设置了
+`--max-old-space-size`。大文件建议开启按类并行:
 
 ```bash
-NODE_OPTIONS=--max-old-space-size=4096 \
-  yarn tsx packages/xpanda-cli/src/cli.ts decompile app.abc -o out -j 4 --quiet
+yarn tsx packages/xpanda-cli/src/cli.ts decompile app.abc -o out -j 4 --quiet
 ```
 
 ## 编程 API

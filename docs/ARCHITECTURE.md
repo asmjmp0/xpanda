@@ -300,7 +300,7 @@ Why the tail is ordered this way:
 - **Scheduling**: eligible classes (those with `func_main_0`) are sorted by estimated weight — total method `codeSize` — descending, then dispatched to idle workers (large-first reduces tail latency). Results are written back by class index, so output order is independent of completion order.
 - **Determinism**: `PandaDecompiler.decompileRaw()` resets the generated-name counter per class, therefore single-class output is a pure function of that class — serial and parallel outputs are byte-identical (regression-tested).
 - **Failure handling**: a worker error demotes that class to in-process simplify; **two consecutive worker failures** disable workers for the remaining classes. Worker stdout/stderr are piped so `--quiet` stays quiet.
-- **Memory**: workers default to a 3 GB old-generation cap (`XPANDA_WORKER_HEAP_MB`); a single very large class can peak around 1.4 GB during simplify — more than 4 workers is not recommended.
+- **Memory**: workers default to an 8 GB old-generation cap (`XPANDA_WORKER_HEAP_MB`); a single very large class can peak around 1.4 GB during simplify — more than 4 workers is not recommended.
 
 ## 11. Entry Points
 

@@ -1,7 +1,7 @@
 import * as os from "os";
 import * as path from "path";
 import { Worker } from "worker_threads";
-import { ENTRY_FUNCTION_MAIN } from "xpanda-core";
+import { ENTRY_FUNCTION_MAIN, NodeFactory } from "xpanda-core";
 import type { PandaClass } from "xpanda-core";
 import type { PandaDecompiler } from "xpanda-core";
 
@@ -24,8 +24,48 @@ export interface ParallelDecompileOptions {
     jobs?: number;
     /** 单类完成后回调(完成顺序,不保证类序),用于落盘/进度 */
     onClassDone?: (info: { index: number; className: string; content: string }) => void;
+    /** 主线程开始把该类降成 AST */
+    onDecompileStart?: (className: string) => void;
+    /** 主线程结束该类的 AST 构建(成功、失败或空结果) */
+    onDecompileEnd?: () => void;
+    /**
+     * simplify 开始。slot < 0 是主线程串行 simplify;
+     * slot >= 0 是对应的 simplify worker。
+     */
+    onSimplifyStart?: (slot: number, className: string) => void;
+    onSimplifyEnd?: (slot: number) => void;
+    /** 该类的反编译流程结束(含失败和空输出),进度条据此前进 */
+    onClassSettled?: (className: string) => void;
+    /**
+     * simplify 超过该毫秒数则终止 worker,并改用 raw 输出。
+     * 0 或未设置表示不限制。串行路径也会改走 worker,否则主线程里的 simplify 停不下来。
+     */
+    simplifyTimeoutMs?: number;
+    /** simplify 超时、已保留 raw 的类。调用方在全部结束后再警告。 */
+    onSimplifyTimeout?: (className: string) => void;
     /** 非致命告警(worker 崩溃降级、单类失败等) */
     onWarning?: (message: string) => void;
+}
+
+/** simplify 被 --timeout 终止。发生在主线程,不是 worker 抛出的。 */
+export class SimplifyTimeoutError extends Error {
+    constructor() {
+        super("simplify timed out");
+        this.name = "SimplifyTimeoutError";
+    }
+}
+
+function isSimplifyTimeout(error: unknown): error is SimplifyTimeoutError {
+    return error instanceof SimplifyTimeoutError;
+}
+
+/** AST JSON → 未 simplify 的源码,与 decompileClassRaw 同一条生成路径。 */
+function renderRaw(ast: string): string {
+    try {
+        return NodeFactory.generate(JSON.parse(ast));
+    } catch {
+        return "";
+    }
 }
 
 /** 自动并发数:留一个核给主线程,上限 4(单类 simplify 峰值内存约 1.4GB) */
@@ -53,9 +93,15 @@ function estimateWeight(clazz: PandaClass): number {
 }
 
 class SimplifyWorker {
+    constructor(readonly slot: number) {}
+
     private worker: Worker | null = null;
     private seq = 0;
-    private readonly pending = new Map<number, { resolve: (text: string) => void; reject: (e: Error) => void }>();
+    private readonly pending = new Map<number, {
+        resolve: (text: string) => void;
+        reject: (e: Error) => void;
+        timer?: ReturnType<typeof setTimeout>;
+    }>();
 
     private ensure(): Worker {
         if (this.worker) return this.worker;
@@ -63,12 +109,13 @@ class SimplifyWorker {
             // 不把 worker 内日志直接混进主线程 stdout(--quiet 依赖主线程静默)
             stdout: true,
             stderr: true,
-            resourceLimits: { maxOldGenerationSizeMb: Number(process.env.XPANDA_WORKER_HEAP_MB) || 3072 },
+            resourceLimits: { maxOldGenerationSizeMb: Number(process.env.XPANDA_WORKER_HEAP_MB) || 8192 },
         });
         worker.on("message", (msg: { id: number; text?: string; error?: string }) => {
             const task = this.pending.get(msg.id);
             if (!task) return;
             this.pending.delete(msg.id);
+            if (task.timer) clearTimeout(task.timer);
             if (msg.error) task.reject(new Error(msg.error));
             else task.resolve(msg.text ?? "");
         });
@@ -84,17 +131,33 @@ class SimplifyWorker {
     private fail(worker: Worker, error: Error): void {
         if (this.worker !== worker) return;
         this.worker = null;
-        for (const task of this.pending.values()) task.reject(error);
+        for (const task of this.pending.values()) {
+            if (task.timer) clearTimeout(task.timer);
+            task.reject(error);
+        }
         this.pending.clear();
         // error 事件后 worker 未必已退出,主动回收避免线程泄漏
         void worker.terminate().catch(() => {});
     }
 
-    run(ast: string): Promise<string> {
+    run(ast: string, timeoutMs = 0): Promise<string> {
         const worker = this.ensure();
         const id = ++this.seq;
         return new Promise<string>((resolve, reject) => {
-            this.pending.set(id, { resolve, reject });
+            const task: { resolve: (text: string) => void; reject: (e: Error) => void; timer?: ReturnType<typeof setTimeout> } = { resolve, reject };
+            if (timeoutMs > 0) {
+                task.timer = setTimeout(() => {
+                    if (!this.pending.has(id)) return;
+                    this.pending.delete(id);
+                    // Drop the worker before terminate so its exit does not fail the next one.
+                    const current = this.worker;
+                    this.worker = null;
+                    reject(new SimplifyTimeoutError());
+                    if (current) void current.terminate().catch(() => {});
+                }, timeoutMs);
+                task.timer.unref();
+            }
+            this.pending.set(id, task);
             worker.postMessage({ id, ast });
         });
     }
@@ -118,35 +181,79 @@ export async function decompileClassesParallel(
     const jobs = resolveJobs(options.jobs);
     const results: Array<string | null> = new Array(classes.length).fill(null);
     const warn = options.onWarning ?? (() => {});
+    const timeoutMs = options.simplifyTimeoutMs ?? 0;
+
+    const simplifyWithTimeout = async (ast: string, run: () => Promise<string>, className: string): Promise<string> => {
+        try {
+            return await run();
+        } catch (e) {
+            if (!isSimplifyTimeout(e)) throw e;
+            options.onSimplifyTimeout?.(className);
+            return renderRaw(ast);
+        }
+    };
 
     const todo = classes
         .map((clazz, index) => ({ clazz, index, weight: estimateWeight(clazz) }))
         .filter((job) => job.clazz.pandaMethods.has(ENTRY_FUNCTION_MAIN))
         .sort((a, b) => b.weight - a.weight);
 
-    const runInProcess = (): void => {
-        for (const job of todo) {
-            if (results[job.index] !== null) continue;
-            try {
-                const ast = decompiler.decompileClassAst(job.clazz);
-                if (ast.length === 0) continue;
-                const content = decompiler.simplifyInProcess(ast);
-                if (content.length === 0) continue;
-                results[job.index] = content;
-                options.onClassDone?.({ index: job.index, className: job.clazz.name.content, content });
-            } catch (e) {
-                warn("decompile failed: " + job.clazz.name.content + " " + e);
+    const processJob = async (
+        job: { clazz: PandaClass; index: number },
+        slot: number,
+        simplify: (ast: string) => Promise<string>,
+    ): Promise<void> => {
+        const name = job.clazz.name.content;
+        let ast = "";
+        options.onDecompileStart?.(name);
+        try {
+            ast = decompiler.decompileClassAst(job.clazz);
+        } finally {
+            options.onDecompileEnd?.();
+        }
+        if (ast.length === 0) return;
+        let content = "";
+        options.onSimplifyStart?.(slot, name);
+        try {
+            content = await simplify(ast);
+        } finally {
+            options.onSimplifyEnd?.(slot);
+        }
+        if (content.length === 0) return;
+        results[job.index] = content;
+        options.onClassDone?.({ index: job.index, className: name, content });
+    };
+
+    const runInProcess = async (): Promise<void> => {
+        // 主线程里的 simplify 停不下来,有超时就改用可 terminate 的 worker。
+        const worker = timeoutMs > 0 ? new SimplifyWorker(0) : null;
+        try {
+            for (const job of todo) {
+                if (results[job.index] !== null) continue;
+                try {
+                    await processJob(job, -1, (ast) => {
+                        if (!worker) return Promise.resolve(decompiler.simplifyInProcess(ast));
+                        return simplifyWithTimeout(ast, () => worker.run(ast, timeoutMs), job.clazz.name.content);
+                    });
+                } catch (e) {
+                    warn("decompile failed: " + job.clazz.name.content + " " + e);
+                } finally {
+                    options.onClassSettled?.(job.clazz.name.content);
+                }
             }
+        } finally {
+            if (worker) await worker.terminate();
         }
     };
 
     if (jobs <= 1 || todo.length <= 1) {
-        runInProcess();
+        await runInProcess();
         return results;
     }
 
-    const workers = Array.from({ length: Math.min(jobs, todo.length) }, () => new SimplifyWorker());
-    const idle: SimplifyWorker[] = [...workers];
+    const workers = Array.from({ length: Math.min(jobs, todo.length) }, (_, slot) => new SimplifyWorker(slot));
+    // pop() takes the tail, so reverse once and worker 1 is busy before worker 2.
+    const idle: SimplifyWorker[] = [...workers].reverse();
     const running = new Set<Promise<void>>();
     const pending = [...todo];
     /** worker 连续崩溃次数上限:超过后剩余类全部主线程处理,避免崩溃循环 */
@@ -155,41 +262,27 @@ export async function decompileClassesParallel(
 
     const dispatch = (worker: SimplifyWorker, job: { clazz: PandaClass; index: number }): void => {
         const task = (async () => {
-            let ast: string;
             try {
-                ast = decompiler.decompileClassAst(job.clazz);
+                await processJob(job, worker.slot, (ast) => {
+                    if (!workersEnabled) return Promise.resolve(decompiler.simplifyInProcess(ast));
+                    return simplifyWithTimeout(ast, () => worker.run(ast, timeoutMs), job.clazz.name.content).catch((e) => {
+                        workerFailures++;
+                        warn("simplify worker failed, falling back to main thread: " + job.clazz.name.content + " (" + e + ")");
+                        if (workerFailures >= 2) {
+                            workersEnabled = false;
+                            warn("simplify worker failed repeatedly, remaining classes fall back to serial simplify on the main thread");
+                        }
+                        return decompiler.simplifyInProcess(ast);
+                    });
+                });
             } catch (e) {
                 warn("decompile failed: " + job.clazz.name.content + " " + e);
-                return;
+            } finally {
+                options.onClassSettled?.(job.clazz.name.content);
             }
-            if (ast.length === 0) return;
-
-            let content: string;
-            if (workersEnabled) {
-                try {
-                    content = await worker.run(ast);
-                } catch (e) {
-                    workerFailures++;
-                    warn("simplify worker failed, falling back to main thread: " + job.clazz.name.content + " (" + e + ")");
-                    if (workerFailures >= 2) {
-                        workersEnabled = false;
-                        warn("simplify worker failed repeatedly, remaining classes fall back to serial simplify on the main thread");
-                    }
-                    content = decompiler.simplifyInProcess(ast);
-                }
-            } else {
-                content = decompiler.simplifyInProcess(ast);
-            }
-            if (content.length === 0) return;
-            results[job.index] = content;
-            options.onClassDone?.({ index: job.index, className: job.clazz.name.content, content });
-        })()
-            .catch((e) => {
-                warn("decompile failed: " + job.clazz.name.content + " " + e);
-            })
-            .finally(() => {
-                idle.push(worker);
-            });
+        })().finally(() => {
+            idle.push(worker);
+        });
         running.add(task);
         task.finally(() => {
             running.delete(task);

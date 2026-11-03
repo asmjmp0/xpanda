@@ -79,9 +79,8 @@ yarn tsx packages/xpanda-cli/src/cli.ts decompile packages/xpanda-core/test/reso
 # skip the optimizer to validate parsing/disassembly changes
 yarn tsx packages/xpanda-cli/src/cli.ts decompile packages/xpanda-core/test/resources/zhihupp0.59.hap -o out --no-simplify --quiet
 
-# larger heap for big files
-NODE_OPTIONS=--max-old-space-size=4096 \
-  yarn tsx packages/xpanda-cli/src/cli.ts decompile packages/xpanda-core/test/resources/zhihupp0.59.hap -o out --quiet
+# the CLI re-execs with --max-old-space-size=8192 (8 GiB) unless that flag is already set
+yarn tsx packages/xpanda-cli/src/cli.ts decompile packages/xpanda-core/test/resources/zhihupp0.59.hap -o out --quiet
 
 # start the MCP Server (stdio) / MCP end-to-end test
 yarn mcp
