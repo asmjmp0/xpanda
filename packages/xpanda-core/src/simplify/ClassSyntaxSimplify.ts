@@ -732,6 +732,13 @@ export class ClassSyntaxSimplify implements ISimplify {
                 if (name !== null && !folded.has(name)) {
                     const decl = declarations.get(name);
                     if (decl && program.body.includes(decl)) {
+                        // `export @dec class {}` 不是合法装饰器位置(装饰器必须在 export 前),
+                        // 带装饰器的类(如 @Sendable)不能内联,specifier 必须留在独立导出语句里;
+                        // 先移出 specifier 再跳过内联会把整条 export 删掉(模块不再导出该类)
+                        if (isDecoratedClass(decl)) {
+                            keptSpecifiers.push(spec);
+                            continue;
+                        }
                         foldedDecls.push(decl);
                         folded.add(name);
                         continue;
@@ -748,9 +755,6 @@ export class ClassSyntaxSimplify implements ISimplify {
             for (const decl of foldedDecls) {
                 const index = program.body.indexOf(decl);
                 if (index < 0) continue; // 防御:同一绑定重复导出时只折第一次
-                // `export @dec class {}` 不是合法装饰器位置(装饰器必须在 export 前),
-                // 带装饰器的类(如 @Sendable)保持 `export { Name };` 独立语句
-                if (isDecoratedClass(decl)) continue;
                 program.body[index] = exportNamedDeclaration(decl, [], null);
             }
             const currentIndex = program.body.indexOf(stmt);

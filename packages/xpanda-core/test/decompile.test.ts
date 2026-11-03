@@ -2417,6 +2417,47 @@ function verifyAmclDefaultClassExport(clazz: PandaClass, code: string): void {
 }
 
 /**
+ * 回归:带装饰器类的命名导出语句不能被删除(issue7 的 StrategyWebInjectJS)。
+ *
+ * ArkTS 的 `@Sendable class Name {}` + `export { Name };` 无法内联成
+ * `export @Sendable class Name {}`(装饰器必须写在 export 之前),所以保留独立的
+ * `export { Name };` 语句。旧实现先把 specifier 从 keptSpecifiers 里移走再跳过
+ * 内联,`keptSpecifiers.length === 0` 时把整条 export 语句 splice 掉,模块不再
+ * 导出该类。没有装饰器的类仍要内联成 `export class Name {}`。
+ */
+function verifyDecoratedClassNamedExport(): void {
+    const program = NodeFactory.parse(`
+@Sendable
+class EnableRule {
+  enableScenes;
+  constructor(p0) {
+    this.enableScenes = p0;
+  }
+}
+class Plain {
+  value;
+}
+export { EnableRule };
+export { Plain };
+`);
+    SimplifyExport.simplify(program);
+    const code = NodeFactory.generate(program);
+    NodeFactory.parse(code);
+    if (!code.includes("@Sendable\nclass EnableRule {")) {
+        throw new Error(`带装饰器的类声明未保留装饰器\n${code}`);
+    }
+    if (!code.includes("export { EnableRule };")) {
+        throw new Error(`带装饰器的类丢失命名导出语句\n${code}`);
+    }
+    if (!code.includes("export class Plain {")) {
+        throw new Error(`无装饰器的类未内联成 export class\n${code}`);
+    }
+    if (/export\s*\{\s*Plain\s*\}/.test(code)) {
+        throw new Error(`无装饰器的类仍残留独立 export 语句\n${code}`);
+    }
+}
+
+/**
  * 回归:findFollowLatch 兜底(goto)产生的 `label_x: ;` + `xpanda_goto(label_x)`。
  *
  * SabrOfflineDownloader.dumpDualTrack 是 `while (true)` 循环:循环头(`if (!videoDone)`)
@@ -5988,6 +6029,10 @@ async function main(): Promise<void> {
 
     console.log("[test] simplify redundant rethrow catch");
     verifyRedundantRethrowCatchRemoval();
+    console.log("    ok");
+
+    console.log("[test] simplify decorated class named export");
+    verifyDecoratedClassNamedExport();
     console.log("    ok");
 
     console.log("[test] simplify hole sentinel cleanup");
