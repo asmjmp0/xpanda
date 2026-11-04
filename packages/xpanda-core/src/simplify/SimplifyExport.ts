@@ -11,6 +11,7 @@ import { NullishCoalescingSimplify } from "./NullishCoalescingSimplify";
 import { CallResultSimplify } from "./CallResultSimplify";
 import { AccCallSimplify } from "./AccCallSimplify";
 import { TailMergeSimplify } from "./TailMergeSimplify";
+import { RepeatedBranchMergeSimplify } from "./RepeatedBranchMergeSimplify";
 import { normalizeDeclarations } from "./NormalizeDeclarations";
 import { restoreGotoLoops } from "./GotoLoopRestore";
 import { LoopEnvSimplify } from "./LoopEnvSimplify";
@@ -210,5 +211,10 @@ export class SimplifyExport {
         // 类折叠和死存储清理会删掉模块级 `acc = ...`,声明要再扫一次。
         // 这次把 acc / vN 也算进去,并忽略已经被替换掉的 binding 路径。
         TempVariableSimplify.removeUnusedLexicalDeclarations(node, true);
+        // 共享 continuation 的分支合并:区域归约没有 goto,两个条件跳到同一个
+        // 后续块时会按前驱各复制一份(`if (A) S else if (B) S` / `if (C) { if (D) S } S`)。
+        // 只能放在 simplify 末尾的一次性收尾:simplify 之前副本还带着各自的
+        // acc 中转语句,结构不同;条件折叠/物化清理跑完后两份副本才逐字相同。
+        new RepeatedBranchMergeSimplify().simplify(node);
     }
 }

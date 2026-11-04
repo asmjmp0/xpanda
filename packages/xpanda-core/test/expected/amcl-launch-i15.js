@@ -290,81 +290,17 @@ export class n1484 {
     v8 = this.context_.filesDir + "/jdk" + "/.staging-" + v8;
     try {
       v22 = null;
-      if (!this.forceReinstall_) {
-        if (!this.isInstalledFn_()) {
-          v11 = j1481.writer(this.context_.filesDir, this.version_);
-          v22 = v11;
-          this.report(false, "准备安全安装目录...");
-          h50(v9);
-          h50(this.context_.filesDir + "/jdk");
-          try {
-            i50(v8);
-          } catch (catchAcc) {}
-          v22 = v11;
-          if (!(await this.downloadJdkArchive(v9 + "/archive.zip", "JDK " + this.version_))) {
-            if (await this.waitForNativeOwners_()) {
-              try {
-                i50(v9);
-              } catch (catchAcc) {}
-            } else {
-              this.deferredDownloadCleanup_.push(v9);
-              this.alog().warn(local_0_1, "原生下载仍在结束，暂时保留独占目录：" + v9, null, z31);
-            }
-            if (v11 !== null) {
-              v11.release();
-            }
-            this.currentDmTaskId_ = 0;
-            this.giteeTaskIds_ = [];
-            try {
-              i50(v8);
-            } catch (catchAcc) {}
-            this.downloading_ = false;
-            return false;
-          }
-          if (!(await this.completeJdkInstall(v9 + "/archive.zip", this.targetDir_, v8, "JDK " + this.version_))) {
-            if (await this.waitForNativeOwners_()) {
-              try {
-                i50(v9);
-              } catch (catchAcc) {}
-            } else {
-              this.deferredDownloadCleanup_.push(v9);
-              this.alog().warn(local_0_1, "原生下载仍在结束，暂时保留独占目录：" + v9, null, z31);
-            }
-            if (v11 !== null) {
-              v11.release();
-            }
-            this.currentDmTaskId_ = 0;
-            this.giteeTaskIds_ = [];
-            try {
-              i50(v8);
-            } catch (catchAcc) {}
-            this.downloading_ = false;
-            return false;
-          }
-          v22 = v11;
-          if (this.isInstalledFn_()) {
-            this.reportDownload("verifying", 100, 0, "JDK " + this.version_ + " 安装完成 ✅");
-            this.report(true, "JDK " + this.version_ + " 安装完成 ✅");
-            if (await this.waitForNativeOwners_()) {
-              try {
-                i50(v9);
-              } catch (catchAcc) {}
-            } else {
-              this.deferredDownloadCleanup_.push(v9);
-              this.alog().warn(local_0_1, "原生下载仍在结束，暂时保留独占目录：" + v9, null, z31);
-            }
-            if (v11 !== null) {
-              v11.release();
-            }
-            this.currentDmTaskId_ = 0;
-            this.giteeTaskIds_ = [];
-            try {
-              i50(v8);
-            } catch (catchAcc) {}
-            this.downloading_ = false;
-            return true;
-          }
-          this.report(false, "❌ " + ("JDK " + this.version_) + " 安装验证失败");
+      if (this.forceReinstall_ || !this.isInstalledFn_()) {
+        v11 = j1481.writer(this.context_.filesDir, this.version_);
+        v22 = v11;
+        this.report(false, "准备安全安装目录...");
+        h50(v9);
+        h50(this.context_.filesDir + "/jdk");
+        try {
+          i50(v8);
+        } catch (catchAcc) {}
+        v22 = v11;
+        if (!(await this.downloadJdkArchive(v9 + "/archive.zip", "JDK " + this.version_))) {
           if (await this.waitForNativeOwners_()) {
             try {
               i50(v9);
@@ -384,6 +320,69 @@ export class n1484 {
           this.downloading_ = false;
           return false;
         }
+        if (!(await this.completeJdkInstall(v9 + "/archive.zip", this.targetDir_, v8, "JDK " + this.version_))) {
+          if (await this.waitForNativeOwners_()) {
+            try {
+              i50(v9);
+            } catch (catchAcc) {}
+          } else {
+            this.deferredDownloadCleanup_.push(v9);
+            this.alog().warn(local_0_1, "原生下载仍在结束，暂时保留独占目录：" + v9, null, z31);
+          }
+          if (v11 !== null) {
+            v11.release();
+          }
+          this.currentDmTaskId_ = 0;
+          this.giteeTaskIds_ = [];
+          try {
+            i50(v8);
+          } catch (catchAcc) {}
+          this.downloading_ = false;
+          return false;
+        }
+        v22 = v11;
+        if (this.isInstalledFn_()) {
+          this.reportDownload("verifying", 100, 0, "JDK " + this.version_ + " 安装完成 ✅");
+          this.report(true, "JDK " + this.version_ + " 安装完成 ✅");
+          if (await this.waitForNativeOwners_()) {
+            try {
+              i50(v9);
+            } catch (catchAcc) {}
+          } else {
+            this.deferredDownloadCleanup_.push(v9);
+            this.alog().warn(local_0_1, "原生下载仍在结束，暂时保留独占目录：" + v9, null, z31);
+          }
+          if (v11 !== null) {
+            v11.release();
+          }
+          this.currentDmTaskId_ = 0;
+          this.giteeTaskIds_ = [];
+          try {
+            i50(v8);
+          } catch (catchAcc) {}
+          this.downloading_ = false;
+          return true;
+        }
+        this.report(false, "❌ " + ("JDK " + this.version_) + " 安装验证失败");
+        if (await this.waitForNativeOwners_()) {
+          try {
+            i50(v9);
+          } catch (catchAcc) {}
+        } else {
+          this.deferredDownloadCleanup_.push(v9);
+          this.alog().warn(local_0_1, "原生下载仍在结束，暂时保留独占目录：" + v9, null, z31);
+        }
+        if (v11 !== null) {
+          v11.release();
+        }
+        this.currentDmTaskId_ = 0;
+        this.giteeTaskIds_ = [];
+        try {
+          i50(v8);
+        } catch (catchAcc) {}
+        this.downloading_ = false;
+        return false;
+      } else {
         v22 = null;
         if (this.isInstalledFn_()) {
           this.reportDownload("verifying", 100, 0, "JDK " + this.version_ + " 安装完成 ✅");
@@ -421,97 +420,6 @@ export class n1484 {
         this.downloading_ = false;
         return false;
       }
-      v11 = j1481.writer(this.context_.filesDir, this.version_);
-      v22 = v11;
-      this.report(false, "准备安全安装目录...");
-      h50(v9);
-      h50(this.context_.filesDir + "/jdk");
-      try {
-        i50(v8);
-      } catch (catchAcc) {}
-      v22 = v11;
-      if (!(await this.downloadJdkArchive(v9 + "/archive.zip", "JDK " + this.version_))) {
-        if (await this.waitForNativeOwners_()) {
-          try {
-            i50(v9);
-          } catch (catchAcc) {}
-        } else {
-          this.deferredDownloadCleanup_.push(v9);
-          this.alog().warn(local_0_1, "原生下载仍在结束，暂时保留独占目录：" + v9, null, z31);
-        }
-        if (v11 !== null) {
-          v11.release();
-        }
-        this.currentDmTaskId_ = 0;
-        this.giteeTaskIds_ = [];
-        try {
-          i50(v8);
-        } catch (catchAcc) {}
-        this.downloading_ = false;
-        return false;
-      }
-      if (!(await this.completeJdkInstall(v9 + "/archive.zip", this.targetDir_, v8, "JDK " + this.version_))) {
-        if (await this.waitForNativeOwners_()) {
-          try {
-            i50(v9);
-          } catch (catchAcc) {}
-        } else {
-          this.deferredDownloadCleanup_.push(v9);
-          this.alog().warn(local_0_1, "原生下载仍在结束，暂时保留独占目录：" + v9, null, z31);
-        }
-        if (v11 !== null) {
-          v11.release();
-        }
-        this.currentDmTaskId_ = 0;
-        this.giteeTaskIds_ = [];
-        try {
-          i50(v8);
-        } catch (catchAcc) {}
-        this.downloading_ = false;
-        return false;
-      }
-      v22 = v11;
-      if (this.isInstalledFn_()) {
-        this.reportDownload("verifying", 100, 0, "JDK " + this.version_ + " 安装完成 ✅");
-        this.report(true, "JDK " + this.version_ + " 安装完成 ✅");
-        if (await this.waitForNativeOwners_()) {
-          try {
-            i50(v9);
-          } catch (catchAcc) {}
-        } else {
-          this.deferredDownloadCleanup_.push(v9);
-          this.alog().warn(local_0_1, "原生下载仍在结束，暂时保留独占目录：" + v9, null, z31);
-        }
-        if (v11 !== null) {
-          v11.release();
-        }
-        this.currentDmTaskId_ = 0;
-        this.giteeTaskIds_ = [];
-        try {
-          i50(v8);
-        } catch (catchAcc) {}
-        this.downloading_ = false;
-        return true;
-      }
-      this.report(false, "❌ " + ("JDK " + this.version_) + " 安装验证失败");
-      if (await this.waitForNativeOwners_()) {
-        try {
-          i50(v9);
-        } catch (catchAcc) {}
-      } else {
-        this.deferredDownloadCleanup_.push(v9);
-        this.alog().warn(local_0_1, "原生下载仍在结束，暂时保留独占目录：" + v9, null, z31);
-      }
-      if (v11 !== null) {
-        v11.release();
-      }
-      this.currentDmTaskId_ = 0;
-      this.giteeTaskIds_ = [];
-      try {
-        i50(v8);
-      } catch (catchAcc) {}
-      this.downloading_ = false;
-      return false;
     } catch (catchAcc) {
       v25.alog().error(local_0_1, "Download failed", catchAcc, z31);
       v25.reportDownload("downloading", 0, 0, "下载失败: " + catchAcc.message);
