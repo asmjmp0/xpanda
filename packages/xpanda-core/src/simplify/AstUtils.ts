@@ -48,7 +48,7 @@ const {
 /** 编译器生成的临时变量:acc / vN / local_X_Y / local_X_Y_Z(同层级重复的 lexenv 实例) / sendable_X_Y(_Z) */
 export function isTempName(name: string): boolean {
     return name === "acc" || /^v\d+$/.test(name) || /^local_\d+_\d+(_\d+)?$/.test(name) || /^sendable_\d+_\d+(_\d+)?$/.test(name)
-        || /^catchAcc\d*$/.test(name) || /^panda_jmp0_reserved_param_p\d+$/.test(name);
+        || /^catchAcc\d*$/.test(name);
 }
 
 const FUNCTION_TYPES = new Set([

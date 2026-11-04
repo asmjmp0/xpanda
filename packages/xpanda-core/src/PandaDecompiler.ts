@@ -5,6 +5,8 @@ import { PandaDecompilerMethodHandler } from "./decompiler/MethodHandler";
 import { StructureAnalysis } from "./decompiler/StructureAnalysis";
 import { SimpleAnalysis } from "./decompiler/SimpleAnalysis";
 import { flattenRethrowTryChains } from "./decompiler/RethrowTryFlatten";
+import { resolveReservedParams } from "./decompiler/ReservedParamResolver";
+import { declareUndeclaredLexicalTemps } from "./decompiler/LexicalTempRepair";
 import { NodeFactory } from "./ast/NodeFactory";
 import { NodeUtils } from "./ast/NodeUtils";
 import { SimplifyExport } from "./simplify/SimplifyExport";
@@ -96,6 +98,9 @@ export class PandaDecompiler {
         // 模块级 class 定义的 rethrow try 壳会层层嵌套(每个 class 一层),每层给后面
         // 所有行加 2 空格缩进;合并成一层,raw 输出与 simplify 的 AST 都小一个数量级。
         flattenRethrowTryChains(programNode as any);
+        // 结构分析结束后统一还原编译器保留的入口参数(p0/p1/p2):
+        // raw 输出不再依赖 simplify 处理这些反编译实现细节,SSA 等消费者也能直接使用。
+        resolveReservedParams(programNode as any);
 
         // exports
         if (pandaClass.pandaClassModuleData) {
@@ -161,6 +166,10 @@ export class PandaDecompiler {
             return "";
         }
         SimplifyExport.simplify(program);
+        // 后流水线修复:simplify 的结构改写可能把 local_* / sendable_* 的声明删掉而
+        // 留下读取/赋值(amcl z421 的 `local_1_0 = p1`)。补声明放在 simplify 之后,
+        // 与结构分析后的 resolveReservedParams 分开:后者必须早于 simplify,前者必须晚于它。
+        declareUndeclaredLexicalTemps(program);
         return NodeFactory.generate(program);
     }
 

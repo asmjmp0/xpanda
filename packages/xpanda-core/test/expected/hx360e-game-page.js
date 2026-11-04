@@ -748,9 +748,9 @@ class GamePage extends ViewPU {
     let local_2_2 = p3;
     let local_2_3 = p4;
     local_2_5.observeComponentCreation2(function (p0, p1) {
-      let acc;
+      let v0;
       if (p1) {
-        acc = new PadButton(local_2_5, {
+        v0 = new PadButton(local_2_5, {
           "label": local_2_0,
           "btnWidth": local_2_1,
           "btnHeight": local_2_1,
@@ -766,8 +766,8 @@ class GamePage extends ViewPU {
           "line": 611,
           "col": 5
         });
-        ViewPU.create(acc);
-        acc.paramsGenerator_ = function () {
+        ViewPU.create(v0);
+        v0.paramsGenerator_ = function () {
           return {
             "label": local_2_0,
             "btnWidth": local_2_1,
@@ -801,9 +801,9 @@ class GamePage extends ViewPU {
     let local_2_1 = p2;
     let local_2_2 = p3;
     local_2_4.observeComponentCreation2(function (p0, p1) {
-      let acc;
+      let v0 /*PadButton*/;
       if (p1) {
-        acc = new PadButton(local_2_4, {
+        v0 = new PadButton(local_2_4, {
           "label": local_2_0,
           "btnWidth": local_2_1,
           "btnHeight": local_2_2,
@@ -819,8 +819,8 @@ class GamePage extends ViewPU {
           "line": 628,
           "col": 5
         });
-        ViewPU.create(acc);
-        acc.paramsGenerator_ = function () {
+        ViewPU.create(v0);
+        v0.paramsGenerator_ = function () {
           return {
             "label": local_2_0,
             "btnWidth": local_2_1,
@@ -1139,9 +1139,9 @@ class GamePage extends ViewPU {
             Row.alignItems(VerticalAlign.Center);
           }, Row);
           local_2_0.observeComponentCreation2(function (p0, p1) {
-            let acc;
+            let v0 /*VirtualStick*/;
             if (p1) {
-              acc = new VirtualStick(local_2_0, {
+              v0 = new VirtualStick(local_2_0, {
                 "diameter": 118,
                 "knobDiameter": 48,
                 "onStick": function (p0, p1) {
@@ -1152,8 +1152,8 @@ class GamePage extends ViewPU {
                 "line": 824,
                 "col": 13
               });
-              ViewPU.create(acc);
-              acc.paramsGenerator_ = function () {
+              ViewPU.create(v0);
+              v0.paramsGenerator_ = function () {
                 return {
                   "diameter": 118,
                   "knobDiameter": 48,
@@ -1174,9 +1174,9 @@ class GamePage extends ViewPU {
           local_2_0.roundBtn.bind(local_2_0)("L3", XPadKey.LThumbPress, 40, "#59000000", "#8C000000");
           Row.pop();
           local_2_0.observeComponentCreation2(function (p0, p1) {
-            let acc;
+            let v0 /*VirtualDpad*/;
             if (p1) {
-              acc = new VirtualDpad(local_2_0, {
+              v0 = new VirtualDpad(local_2_0, {
                 "diameter": 118,
                 "onDir": function (p0, p1, p2, p3) {
                   local_2_0.dpadToKeys(p0, p1, p2, p3);
@@ -1186,8 +1186,8 @@ class GamePage extends ViewPU {
                 "line": 835,
                 "col": 11
               });
-              ViewPU.create(acc);
-              acc.paramsGenerator_ = function () {
+              ViewPU.create(v0);
+              v0.paramsGenerator_ = function () {
                 return {
                   "diameter": 118,
                   "onDir": function (p0, p1, p2, p3) {
@@ -1228,9 +1228,9 @@ class GamePage extends ViewPU {
           }, Row);
           local_2_0.roundBtn.bind(local_2_0)("R3", XPadKey.RThumbPress, 40, "#59000000", "#8C000000");
           local_2_0.observeComponentCreation2(function (p0, p1) {
-            let acc;
+            let v0 /*VirtualStick*/;
             if (p1) {
-              acc = new VirtualStick(local_2_0, {
+              v0 = new VirtualStick(local_2_0, {
                 "diameter": 118,
                 "knobDiameter": 48,
                 "onStick": function (p0, p1) {
@@ -1241,8 +1241,8 @@ class GamePage extends ViewPU {
                 "line": 854,
                 "col": 13
               });
-              ViewPU.create(acc);
-              acc.paramsGenerator_ = function () {
+              ViewPU.create(v0);
+              v0.paramsGenerator_ = function () {
                 return {
                   "diameter": 118,
                   "knobDiameter": 48,

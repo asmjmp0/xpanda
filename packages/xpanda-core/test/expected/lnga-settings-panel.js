@@ -67,7 +67,7 @@ export class SettingsPanel extends ViewPU {
       "systemMaterial": UIMaterialManager.dialogMaterial,
       "maskColor": UIMaterialManager.scrim,
       "builder": function () {
-        let acc = new TipsDialog(local_0_0, {
+        let v0 /*TipsDialog*/ = new TipsDialog(local_0_0, {
           "imageRes": {
             "id": 16777352,
             "type": 20000,
@@ -93,9 +93,9 @@ export class SettingsPanel extends ViewPU {
           "line": 71,
           "col": 14
         });
-        acc.setController(local_0_0.clearCacheDialogController);
-        ViewPU.create(acc);
-        acc.paramsGenerator_ = function () {
+        v0.setController(local_0_0.clearCacheDialogController);
+        ViewPU.create(v0);
+        v0.paramsGenerator_ = function () {
           return {
             "imageRes": {
               "id": 16777352,
@@ -131,7 +131,7 @@ export class SettingsPanel extends ViewPU {
       "systemMaterial": UIMaterialManager.dialogMaterial,
       "maskColor": UIMaterialManager.scrim,
       "builder": function () {
-        let acc = new TipsDialog(local_0_0, {
+        let v0 /*TipsDialog*/ = new TipsDialog(local_0_0, {
           "imageRes": {
             "id": 16777359,
             "type": 20000,
@@ -158,9 +158,9 @@ export class SettingsPanel extends ViewPU {
           "line": 101,
           "col": 14
         });
-        acc.setController(local_0_0.logoutDialogController);
-        ViewPU.create(acc);
-        acc.paramsGenerator_ = function () {
+        v0.setController(local_0_0.logoutDialogController);
+        ViewPU.create(v0);
+        v0.paramsGenerator_ = function () {
           return {
             "imageRes": {
               "id": 16777359,
@@ -2105,9 +2105,9 @@ export class SettingsPanel extends ViewPU {
       });
     }, __Common__);
     local_0_0.observeComponentCreation2(function (p0, p1) {
-      let acc;
+      let v0 /*PanelNavBar*/;
       if (p1) {
-        acc = new PanelNavBar(local_0_0, {
+        v0 = new PanelNavBar(local_0_0, {
           "title": "设置",
           "scrollEffectProgress": local_0_0.titleScrollEffectProgress
         }, undefined, p0, function () {}, {
@@ -2115,8 +2115,8 @@ export class SettingsPanel extends ViewPU {
           "line": 761,
           "col": 7
         });
-        ViewPU.create(acc);
-        acc.paramsGenerator_ = function () {
+        ViewPU.create(v0);
+        v0.paramsGenerator_ = function () {
           return {
             "title": "设置",
             "scrollEffectProgress": local_0_0.titleScrollEffectProgress

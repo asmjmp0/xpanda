@@ -2491,9 +2491,9 @@ class ContentDetailPage extends ViewPU {
               Stack.height("100%");
             }, Stack);
             local_1_0.observeComponentCreation2(function (p0, p1) {
-              let acc;
+              let v0 /*ContentImagePreview*/;
               if (p1) {
-                acc = new ContentImagePreview(local_1_0, {
+                v0 = new ContentImagePreview(local_1_0, {
                   "url": local_1_0.imagePreviewUrl,
                   "onClose": function () {
                     AppStorage.setOrCreate("imagePreviewUrl", "");
@@ -2503,8 +2503,8 @@ class ContentDetailPage extends ViewPU {
                   "line": 867,
                   "col": 11
                 });
-                ViewPU.create(acc);
-                acc.paramsGenerator_ = function () {
+                ViewPU.create(v0);
+                v0.paramsGenerator_ = function () {
                   return {
                     "url": local_1_0.imagePreviewUrl,
                     "onClose": function () {
@@ -2768,7 +2768,7 @@ class ContentDetailPage extends ViewPU {
       __Common__.layoutWeight(1);
     }, __Common__);
     local_1_1.observeComponentCreation2(function (p0, p1) {
-      let acc;
+      let v0 /*FLOATING_TITLE_BAR_OFFSET*/, acc;
       if (p1) {
         acc = {
           "html": contentHtml(local_1_0),
@@ -2842,13 +2842,13 @@ class ContentDetailPage extends ViewPU {
             local_1_1.bodyTextSelectionActive = p0;
           }
         };
-        acc = new NativeContentDocument(local_1_1, acc, undefined, p0, function () {}, {
+        v0 = new NativeContentDocument(local_1_1, acc, undefined, p0, function () {}, {
           "page": "entry/src/main/ets/pages/ContentDetailPages.ets",
           "line": 985,
           "col": 9
         });
-        ViewPU.create(acc);
-        acc.paramsGenerator_ = function () {
+        ViewPU.create(v0);
+        v0.paramsGenerator_ = function () {
           return {
             "html": contentHtml(local_1_0),
             "emptyMessage": contentEmptyMessage(local_1_0),
@@ -4036,7 +4036,24 @@ class ContentDetailPage extends ViewPU {
   answerFabMaxDownY() {
     return Math.max(0, 206 - (this.bottomActionBarHeightVp > 0 ? this.bottomActionBarHeightVp : 48) - 4);
   }
-  snapAnswerFabToEdge() {}
+  snapAnswerFabToEdge() {
+    let local_1_1, local_1_0;
+    local_1_1 = this;
+    if (local_1_1.answerFabOverlayWidthVp <= 0 || local_1_1.answerFabWidthVp <= 0) {
+      return;
+    }
+    local_1_0 = local_1_1.answerFabSnapTargetX();
+    if (Math.abs(local_1_0 - local_1_1.answerFabOffsetX) >= 1) {
+      local_1_1.getUIContext().animateTo({
+        "duration": 300,
+        "curve": Curve.EaseOut
+      }, function () {
+        local_1_1.answerFabOffsetX = local_1_0;
+      });
+    }
+    local_1_1.persistAnswerFabPosition(local_1_0);
+    return;
+  }
   answerFabSnapTargetX() {
     return this.answerFabOverlayWidthVp - this.answerFabWidthVp + this.answerFabOffsetX + this.answerFabWidthVp / 2 < this.answerFabOverlayWidthVp / 2 ? this.answerFabWidthVp + 12 - this.answerFabOverlayWidthVp : 0;
   }
@@ -5060,7 +5077,7 @@ class ContentDetailPage extends ViewPU {
       });
     }, Refresh);
     local_1_1.observeComponentCreation2(function (p0, p1) {
-      let acc;
+      let v0 /*FLOATING_TITLE_BAR_OFFSET*/, acc;
       if (p1) {
         acc = {
           "html": contentHtml(local_1_0),
@@ -5111,13 +5128,13 @@ class ContentDetailPage extends ViewPU {
             }
           }
         };
-        acc = new NativeContentDocument(local_1_1, acc, undefined, p0, function () {}, {
+        v0 = new NativeContentDocument(local_1_1, acc, undefined, p0, function () {}, {
           "page": "entry/src/main/ets/pages/ContentDetailPages.ets",
           "line": 1941,
           "col": 7
         });
-        ViewPU.create(acc);
-        acc.paramsGenerator_ = function () {
+        ViewPU.create(v0);
+        v0.paramsGenerator_ = function () {
           return {
             "html": contentHtml(local_1_0),
             "emptyMessage": contentEmptyMessage(local_1_0),
@@ -5331,9 +5348,9 @@ class ContentDetailPage extends ViewPU {
       __Common__.height(36);
     }, __Common__);
     local_1_1.observeComponentCreation2(function (p0, p1) {
-      let acc;
+      let v0 /*SegmentButton*/;
       if (p1) {
-        acc = new SegmentButton(local_1_1, {
+        v0 = new SegmentButton(local_1_1, {
           "options": local_1_1.answersSortOptions,
           "selectedIndexes": local_1_1.__answersSortIndexes,
           "onItemClicked": function (p0) {
@@ -5344,8 +5361,8 @@ class ContentDetailPage extends ViewPU {
           "line": 2030,
           "col": 9
         });
-        ViewPU.create(acc);
-        acc.paramsGenerator_ = function () {
+        ViewPU.create(v0);
+        v0.paramsGenerator_ = function () {
           return {
             "options": local_1_1.answersSortOptions,
             "selectedIndexes": local_1_1.answersSortIndexes,
@@ -5714,9 +5731,9 @@ class ContentDetailPage extends ViewPU {
                   Row.transition(local_1_0.gripSwapTransition(240));
                 }, Row);
                 local_1_0.observeComponentCreation2(function (p0, p1) {
-                  let acc;
+                  let v0 /*GlassCapsule*/;
                   if (p1) {
-                    acc = new GlassCapsule(local_1_0, {
+                    v0 = new GlassCapsule(local_1_0, {
                       "useMaterial": local_1_0.immersiveMaterialSupported,
                       "content": function () {
                         local_1_0.questionRightActions.bind(local_1_0)();
@@ -5726,8 +5743,8 @@ class ContentDetailPage extends ViewPU {
                       "line": 2162,
                       "col": 15
                     });
-                    ViewPU.create(acc);
-                    acc.paramsGenerator_ = function () {
+                    ViewPU.create(v0);
+                    v0.paramsGenerator_ = function () {
                       return {
                         "useMaterial": local_1_0.immersiveMaterialSupported,
                         "content": function () {
@@ -5863,9 +5880,9 @@ class ContentDetailPage extends ViewPU {
                 }, Blank);
                 Blank.pop();
                 local_1_0.observeComponentCreation2(function (p0, p1) {
-                  let acc;
+                  let v0 /*GlassCapsule*/;
                   if (p1) {
-                    acc = new GlassCapsule(local_1_0, {
+                    v0 = new GlassCapsule(local_1_0, {
                       "useMaterial": local_1_0.immersiveMaterialSupported,
                       "content": function () {
                         local_1_0.questionRightActions.bind(local_1_0)();
@@ -5875,8 +5892,8 @@ class ContentDetailPage extends ViewPU {
                       "line": 2189,
                       "col": 13
                     });
-                    ViewPU.create(acc);
-                    acc.paramsGenerator_ = function () {
+                    ViewPU.create(v0);
+                    v0.paramsGenerator_ = function () {
                       return {
                         "useMaterial": local_1_0.immersiveMaterialSupported,
                         "content": function () {
@@ -5908,9 +5925,9 @@ class ContentDetailPage extends ViewPU {
                   Row.transition(local_1_0.gripSwapTransition(240));
                 }, Row);
                 local_1_0.observeComponentCreation2(function (p0, p1) {
-                  let acc;
+                  let v0 /*GlassCapsule*/;
                   if (p1) {
-                    acc = new GlassCapsule(local_1_0, {
+                    v0 = new GlassCapsule(local_1_0, {
                       "useMaterial": local_1_0.immersiveMaterialSupported,
                       "content": function () {
                         local_1_0.answerRightActions.bind(local_1_0)();
@@ -5920,8 +5937,8 @@ class ContentDetailPage extends ViewPU {
                       "line": 2199,
                       "col": 15
                     });
-                    ViewPU.create(acc);
-                    acc.paramsGenerator_ = function () {
+                    ViewPU.create(v0);
+                    v0.paramsGenerator_ = function () {
                       return {
                         "useMaterial": local_1_0.immersiveMaterialSupported,
                         "content": function () {
@@ -5948,9 +5965,9 @@ class ContentDetailPage extends ViewPU {
                   Row.transition(local_1_0.gripSwapTransition(-240));
                 }, Row);
                 local_1_0.observeComponentCreation2(function (p0, p1) {
-                  let acc;
+                  let v0 /*GlassCapsule*/;
                   if (p1) {
-                    acc = new GlassCapsule(local_1_0, {
+                    v0 = new GlassCapsule(local_1_0, {
                       "useMaterial": local_1_0.immersiveMaterialSupported,
                       "content": function () {
                         local_1_0.answerVoteCapsule.bind(local_1_0)();
@@ -5960,8 +5977,8 @@ class ContentDetailPage extends ViewPU {
                       "line": 2209,
                       "col": 15
                     });
-                    ViewPU.create(acc);
-                    acc.paramsGenerator_ = function () {
+                    ViewPU.create(v0);
+                    v0.paramsGenerator_ = function () {
                       return {
                         "useMaterial": local_1_0.immersiveMaterialSupported,
                         "content": function () {
@@ -5986,9 +6003,9 @@ class ContentDetailPage extends ViewPU {
                   Row.transition(local_1_0.gripSwapTransition(240));
                 }, Row);
                 local_1_0.observeComponentCreation2(function (p0, p1) {
-                  let acc;
+                  let v0 /*GlassCapsule*/;
                   if (p1) {
-                    acc = new GlassCapsule(local_1_0, {
+                    v0 = new GlassCapsule(local_1_0, {
                       "useMaterial": local_1_0.immersiveMaterialSupported,
                       "content": function () {
                         local_1_0.answerVoteCapsule.bind(local_1_0)();
@@ -5998,8 +6015,8 @@ class ContentDetailPage extends ViewPU {
                       "line": 2216,
                       "col": 15
                     });
-                    ViewPU.create(acc);
-                    acc.paramsGenerator_ = function () {
+                    ViewPU.create(v0);
+                    v0.paramsGenerator_ = function () {
                       return {
                         "useMaterial": local_1_0.immersiveMaterialSupported,
                         "content": function () {
@@ -6026,9 +6043,9 @@ class ContentDetailPage extends ViewPU {
                   Row.transition(local_1_0.gripSwapTransition(-240));
                 }, Row);
                 local_1_0.observeComponentCreation2(function (p0, p1) {
-                  let acc;
+                  let v0 /*GlassCapsule*/;
                   if (p1) {
-                    acc = new GlassCapsule(local_1_0, {
+                    v0 = new GlassCapsule(local_1_0, {
                       "useMaterial": local_1_0.immersiveMaterialSupported,
                       "content": function () {
                         local_1_0.answerRightActions.bind(local_1_0)();
@@ -6038,8 +6055,8 @@ class ContentDetailPage extends ViewPU {
                       "line": 2226,
                       "col": 15
                     });
-                    ViewPU.create(acc);
-                    acc.paramsGenerator_ = function () {
+                    ViewPU.create(v0);
+                    v0.paramsGenerator_ = function () {
                       return {
                         "useMaterial": local_1_0.immersiveMaterialSupported,
                         "content": function () {
@@ -6439,9 +6456,9 @@ class ContentDetailPage extends ViewPU {
             if (!local_1_0.authenticated) {
               local_1_0.ifElseBranchUpdateFunction(0, function () {
                 local_1_0.observeComponentCreation2(function (p0, p1) {
-                  let acc;
+                  let v0 /*AppPageStatusPanel*/;
                   if (p1) {
-                    acc = new AppPageStatusPanel(local_1_0, {
+                    v0 = new AppPageStatusPanel(local_1_0, {
                       "kind": AppPageStatusKind.EMPTY,
                       "message": "登录后即可查看全部回答",
                       "testId": "question_answers_login",
@@ -6457,8 +6474,8 @@ class ContentDetailPage extends ViewPU {
                       "line": 2400,
                       "col": 11
                     });
-                    ViewPU.create(acc);
-                    acc.paramsGenerator_ = function () {
+                    ViewPU.create(v0);
+                    v0.paramsGenerator_ = function () {
                       return {
                         "kind": AppPageStatusKind.EMPTY,
                         "message": "登录后即可查看全部回答",
@@ -6568,9 +6585,9 @@ class ContentDetailPage extends ViewPU {
             } else if (local_1_0.answersState.phase === QuestionAnswersPhase.EMPTY) {
               local_1_0.ifElseBranchUpdateFunction(3, function () {
                 local_1_0.observeComponentCreation2(function (p0, p1) {
-                  let acc;
+                  let v0 /*AppPageStatusPanel*/;
                   if (p1) {
-                    acc = new AppPageStatusPanel(local_1_0, {
+                    v0 = new AppPageStatusPanel(local_1_0, {
                       "kind": AppPageStatusKind.EMPTY,
                       "message": "暂无可显示的回答",
                       "testId": "question_answers_empty"
@@ -6579,8 +6596,8 @@ class ContentDetailPage extends ViewPU {
                       "line": 2414,
                       "col": 11
                     });
-                    ViewPU.create(acc);
-                    acc.paramsGenerator_ = function () {
+                    ViewPU.create(v0);
+                    v0.paramsGenerator_ = function () {
                       return {
                         "kind": AppPageStatusKind.EMPTY,
                         "message": "暂无可显示的回答",
@@ -6694,9 +6711,9 @@ class ContentDetailPage extends ViewPU {
       });
     }, Button);
     local_1_1.observeComponentCreation2(function (p0, p1) {
-      let acc;
+      let v0 /*FeedContentSummary*/;
       if (p1) {
-        acc = new FeedContentSummary(local_1_1, {
+        v0 = new FeedContentSummary(local_1_1, {
           "target": local_1_0.feedItem.target,
           "showTitle": false
         }, undefined, p0, function () {}, {
@@ -6704,8 +6721,8 @@ class ContentDetailPage extends ViewPU {
           "line": 2433,
           "col": 7
         });
-        ViewPU.create(acc);
-        acc.paramsGenerator_ = function () {
+        ViewPU.create(v0);
+        v0.paramsGenerator_ = function () {
           return {
             "target": local_1_0.feedItem.target,
             "showTitle": false
@@ -6936,7 +6953,30 @@ class ContentDetailPage extends ViewPU {
     }
     AppStorage.setOrCreate("answerOverscrollOffset", p0);
   }
-  onAnswerOverscrollPanEnd() {}
+  onAnswerOverscrollPanEnd() {
+    let local_1_0;
+    let v2 /*ContentDetailKind*/;
+    local_1_0 = this;
+    if (local_1_0.kind !== ContentDetailKind.ANSWER || local_1_0.answerOverscrollOffset === 0) {
+      local_1_0.overscrollRawDrag = 0;
+      return;
+    }
+    v2 = local_1_0.answerOverscrollTriggered()
+      && !local_1_0.navigatorBusy
+      && (local_1_0.answerOverscrollOffset > 0 ? local_1_0.navigatorHasPrevious() : local_1_0.navigatorHasNext());
+    local_1_0.overscrollRawDrag = 0;
+    if (v2) {
+      local_1_0.resetAnswerOverscroll(false);
+      local_1_0.moveAnswer(local_1_0.answerOverscrollOffset > 0 ? -1 : 1);
+      return;
+    }
+    local_1_0.getUIContext().animateTo({
+      "curve": curves.springMotion(0.32, 0.78)
+    }, function () {
+      local_1_0.applyOverscrollOffset(0);
+    });
+    return;
+  }
   cancelAnswerOverscrollPan() {
     let local_1_0 = this;
     local_1_0.overscrollRawDrag = 0;
@@ -6950,7 +6990,24 @@ class ContentDetailPage extends ViewPU {
     });
     return;
   }
-  resetAnswerOverscroll(p0) {}
+  resetAnswerOverscroll(p0) {
+    let local_1_0;
+    local_1_0 = this;
+    if (local_1_0.answerOverscrollOffset === 0 && local_1_0.overscrollRawDrag === 0) {
+      return;
+    }
+    local_1_0.overscrollRawDrag = 0;
+    if (p0) {
+      local_1_0.getUIContext().animateTo({
+        "curve": curves.springMotion(0.32, 0.78)
+      }, function () {
+        local_1_0.applyOverscrollOffset(0);
+      });
+    } else {
+      local_1_0.applyOverscrollOffset(0);
+    }
+    return;
+  }
   answerOverscrollTriggered() {
     return Math.abs(this.answerOverscrollOffset) >= this.answerOverscrollTriggerThreshold() / Math.min(3, Math.max(0.5, this.answerSwitchSensitivity));
   }
@@ -8452,9 +8509,9 @@ export class QuestionDetailPage extends ViewPU {
   initialRender() {
     let local_1_0 = this;
     local_1_0.observeComponentCreation2(function (p0, p1) {
-      let acc;
+      let v0 /*ContentDetailPage*/;
       if (p1) {
-        acc = new ContentDetailPage(local_1_0, {
+        v0 = new ContentDetailPage(local_1_0, {
           "kind": ContentDetailKind.QUESTION,
           "questionAnswerFeedFactory": local_1_0.questionAnswerFeedFactory,
           "contentId": local_1_0.contentId,
@@ -8477,8 +8534,8 @@ export class QuestionDetailPage extends ViewPU {
           "line": 3372,
           "col": 5
         });
-        ViewPU.create(acc);
-        acc.paramsGenerator_ = function () {
+        ViewPU.create(v0);
+        v0.paramsGenerator_ = function () {
           return {
             "kind": ContentDetailKind.QUESTION,
             "questionAnswerFeedFactory": local_1_0.questionAnswerFeedFactory,
@@ -8604,9 +8661,9 @@ export class AnswerDetailPage extends ViewPU {
   initialRender() {
     let local_1_0 = this;
     local_1_0.observeComponentCreation2(function (p0, p1) {
-      let acc;
+      let v0 /*ContentDetailPage*/;
       if (p1) {
-        acc = new ContentDetailPage(local_1_0, {
+        v0 = new ContentDetailPage(local_1_0, {
           "kind": ContentDetailKind.ANSWER,
           "questionAnswerFeedFactory": local_1_0.questionAnswerFeedFactory,
           "contentId": local_1_0.contentId,
@@ -8629,8 +8686,8 @@ export class AnswerDetailPage extends ViewPU {
           "line": 3419,
           "col": 5
         });
-        ViewPU.create(acc);
-        acc.paramsGenerator_ = function () {
+        ViewPU.create(v0);
+        v0.paramsGenerator_ = function () {
           return {
             "kind": ContentDetailKind.ANSWER,
             "questionAnswerFeedFactory": local_1_0.questionAnswerFeedFactory,
@@ -8750,9 +8807,9 @@ export class ArticleDetailPage extends ViewPU {
   initialRender() {
     let local_1_0 = this;
     local_1_0.observeComponentCreation2(function (p0, p1) {
-      let acc;
+      let v0 /*ContentDetailPage*/;
       if (p1) {
-        acc = new ContentDetailPage(local_1_0, {
+        v0 = new ContentDetailPage(local_1_0, {
           "kind": ContentDetailKind.ARTICLE,
           "contentId": local_1_0.contentId,
           "repository": local_1_0.repository,
@@ -8774,8 +8831,8 @@ export class ArticleDetailPage extends ViewPU {
           "line": 3465,
           "col": 5
         });
-        ViewPU.create(acc);
-        acc.paramsGenerator_ = function () {
+        ViewPU.create(v0);
+        v0.paramsGenerator_ = function () {
           return {
             "kind": ContentDetailKind.ARTICLE,
             "contentId": local_1_0.contentId,

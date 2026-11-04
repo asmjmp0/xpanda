@@ -3000,7 +3000,7 @@ function assertNoUndeclaredLexvars(code: string): void {
  *  3. ArkTS 13 另一个编译器版本把 finally handler 写成 `sta vX`(codeSize 非 0),
  *     `request` 的 finally 要还原成 `try/finally`,不能残留 sentinel 重抛;
  *  4. 词法层级按 pc 线性扫描会把成功分支里的 logger 命名成 `local_-1_3`;
- *  5. 匿名 Promise 执行器的入口自引用被折进 if test 后,ReservedIdentifierSimplifier
+ *  5. 匿名 Promise 执行器的入口自引用被折进 if test 后,ReservedParamResolver
  *     删语句会把整个函数体删掉(postBinaryStreamOnce 曾输出空函数)。
  *
  * 最后与 test/expected/yourpipe-http-downloader.js 整类输出快照比对。
@@ -3077,7 +3077,7 @@ function verifyYourpipeHttpDownloaderRetryTryCatch(clazz: PandaClass, code: stri
     // 声明删掉。这里按 Babel 作用域校验所有 local_X_Y[_Z] 引用都能解析到声明。
     assertNoUndeclaredLexvars(code);
 
-    // 匿名 Promise 执行器曾在 ReservedIdentifierSimplifier 里被整条删掉函数体
+    // 匿名 Promise 执行器曾在 ReservedParamResolver 里被整条删掉函数体
     // (入口自引用被折进 if 的 test 序列,删除语句把整个函数体一起删了)。
     const streamOnceStart = code.indexOf("postBinaryStreamOnce(p0");
     const streamOnceEnd = code.indexOf("processBinaryHeaders(p0", streamOnceStart);
@@ -3279,6 +3279,8 @@ function verifyAmclStructureMemory(clazz: PandaClass, forOfCode: string, ctx: Bi
     if (expandedCode.length > 500_000) {
         throw new Error(`amcl z12: 输出仍异常膨胀 (${expandedCode.length} chars)`);
     }
+    // 结构改写后曾把 `let local_1_0` 删掉,只留下 `local_1_0 = p1` 的隐式全局。
+    assertNoUndeclaredLexvars(expandedCode);
 
     const expandedExpected = fs.readFileSync(path.join(__dirname, "expected", "amcl-z12.js"), "utf-8");
     if (expandedCode !== expandedExpected) {

@@ -625,6 +625,7 @@ export class n1484 {
     }
   }
   async downloadGiteeParallel(p0, p1, p2) {
+    let local_1_4, local_1_2;
     let v0, v4, v5, v6, v7, v9, v10, v11, v12, v13, v14, v18, v21, v22, acc;
     {
       let local_1_0, local_1_1;

@@ -1,6 +1,5 @@
 import * as TYPE from "@babel/types";
 import { ISimplify } from "./ISimplify";
-import { ReservedIdentifierSimplifier } from "./ReservedIdentifierSimplifier";
 import { EnumSimplify } from "./EnumSimplify";
 import { TempVariableSimplify } from "./TempVariableSimplify";
 import { ConditionSimplify } from "./ConditionSimplify";
@@ -19,7 +18,6 @@ import { LoopEnvSimplify } from "./LoopEnvSimplify";
 export class SimplifyExport {
     private static simplifyALL(node: TYPE.Program): boolean {
         const simplifyArr: Array<ISimplify> = [
-            new ReservedIdentifierSimplifier(),
             new TempVariableSimplify(),
             new AccCallSimplify(),
             // 依赖 TempVariableSimplify/AccCallSimplify 先把累加器形态归一化:

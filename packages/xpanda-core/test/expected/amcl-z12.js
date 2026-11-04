@@ -1563,7 +1563,13 @@ export function z420(p0) {
   return local_0_7(v0);
 }
 export function z421(p0, p1, p2) {
+  let local_1_0;
   let v0, v1, v2, v5;
+  local_1_0 = p1;
+  v0 = r301(p0);
+  v1 = v0.controlGroups == null ? undefined : v0.controlGroups.find(function (p0) {
+    return p0.id === local_1_0;
+  });
   if (v1 === undefined) {
     return null;
   }
