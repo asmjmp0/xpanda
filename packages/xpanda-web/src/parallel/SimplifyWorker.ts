@@ -47,7 +47,7 @@ export class SimplifyWorker {
         worker.terminate();
     }
 
-    run(ast: string): Promise<string> {
+    run(ast: any): Promise<string> {
         const worker = this.ensure();
         const id = ++this.seq;
         return new Promise<string>((resolve, reject) => {

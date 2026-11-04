@@ -22,15 +22,18 @@ export class PandaDecompiler {
         this.methodHandler = new PandaDecompilerMethodHandler();
     }
 
-    /** decompileRaw 等价:输出 AST JSON */
-    private decompileRaw(pandaClass: PandaClass): string {
+    /**
+     * 构建单类 AST。返回 null 表示该类没有 func_main_0,或 func_main_0
+     * 反汇编失败(由上层降级为空输出)。
+     */
+    private decompileProgram(pandaClass: PandaClass): any | null {
         // 生成名计数按类复位,保证单类输出不依赖处理顺序(并行反编译的前提)
         this.methodHandler.reset();
         const pandaLexical = new PandaLexical(pandaClass);
         const factory = NodeFactory;
         const utils = NodeUtils;
         const funcMain0Method = pandaClass.pandaMethods.get(ENTRY_FUNCTION_MAIN);
-        if (!funcMain0Method) return "//no function main...";
+        if (!funcMain0Method) return null;
         const programNode = factory.programNode();
 
         // imports
@@ -88,8 +91,8 @@ export class PandaDecompiler {
         factory.addComment(programNode, builder.join(""));
 
         if (!pandaLexical.has(funcMain0Method)) {
-            // func_main_0 反汇编失败(如 jeq/jne 家族指令未实现):输出失败标记,由上层降级为空输出
-            return "//decompile failed: func_main_0 disassembly failed";
+            // func_main_0 反汇编失败(如 jeq/jne 家族指令未实现):由上层降级为空输出
+            return null;
         }
         const pandaIRCFG = pandaLexical.getPandaIRCFG(funcMain0Method);
         this.decompileSingleFunction(pandaIRCFG, pandaLexical, programNode);
@@ -124,7 +127,7 @@ export class PandaDecompiler {
                 if (exportNode) utils.insertNodeToBody(exportNode, programNode);
             }
         }
-        return utils.toJson(programNode);
+        return programNode;
     }
 
     /**
@@ -154,7 +157,16 @@ export class PandaDecompiler {
         });
     }
 
-    /** 进程内 simplify(取代 Java 外部 node cmd.js 进程);解析失败时返回 ""(与 Java 行为对齐) */
+    /** 进程内 simplify:直接处理 AST 对象 */
+    simplifyAst(program: any): string {
+        SimplifyExport.simplify(program);
+        return NodeFactory.generate(program);
+    }
+
+    /**
+     * simplify 的 JSON 兼容入口(旧的进程间协议)。
+     * 新代码应使用 simplifyAst(),避免多余的序列化/反序列化。
+     */
     simplifyInProcess(astJson: string): string {
         let program: any;
         try {
@@ -162,35 +174,30 @@ export class PandaDecompiler {
         } catch (e) {
             return "";
         }
-        SimplifyExport.simplify(program);
-        return NodeFactory.generate(program);
+        return this.simplifyAst(program);
     }
 
     /** 单类反编译 + simplify */
     decompileClass(pandaClass: PandaClass): string {
-        const out = this.decompileRaw(pandaClass);
-        if (out.length === 0) return "";
-        return this.simplifyInProcess(out);
+        const program = this.decompileProgram(pandaClass);
+        if (!program) return "";
+        return this.simplifyAst(program);
     }
 
     /** 单类反编译(不 simplify) */
     decompileClassRaw(pandaClass: PandaClass): string {
-        const out = this.decompileClassAst(pandaClass);
-        if (out.length === 0) return "";
-        const object = JSON.parse(out);
-        return NodeFactory.generate(object);
+        const program = this.decompileProgram(pandaClass);
+        if (!program) return "";
+        return NodeFactory.generate(program);
     }
 
     /**
-     * 单类 AST JSON(不做 simplify)。
-     * 拆出该步骤是为了让 simplify 能在 worker 线程执行:AST JSON 自包含,可跨线程传递。
-     * 无 func_main_0 或反汇编失败时返回 ""。
+     * 单类 AST 对象(不做 simplify)。
+     * 拆出该步骤是为了让 simplify 能在 worker 线程执行:AST 是纯 Babel 节点树,
+     * 通过 structured clone 直接跨线程传递。无 func_main_0 或反汇编失败时返回 null。
      */
-    decompileClassAst(pandaClass: PandaClass): string {
-        const out = this.decompileRaw(pandaClass);
-        if (out.length === 0) return "";
-        if (out === "//no function main..." || out.startsWith("//decompile failed")) return "";
-        return out;
+    decompileClassAst(pandaClass: PandaClass): any | null {
+        return this.decompileProgram(pandaClass);
     }
 
     /** 全文件反编译(带 simplify),返回按类分段的结果 */

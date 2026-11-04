@@ -13,7 +13,7 @@ import type { PandaDecompiler } from "xpanda-core";
  *           以及按类派发 + 结果排序;
  *   worker:只跑 simplify(单类可占 99% 耗时,内存/CPU 密集)。
  *
- * AST JSON 自包含,可跨线程传递,所以 worker 不需要重新解析 .abc。
+ * AST 是纯 Babel 节点树,通过 structured clone 跨线程传递,所以 worker 不需要重新解析 .abc。
  * 单类输出只依赖该类自己(PandaDecompiler.decompileRaw 会按类复位生成名计数器),
  * 因此结果与 jobs 数量、完成顺序无关。
  * @Author: jmp0
@@ -59,10 +59,10 @@ function isSimplifyTimeout(error: unknown): error is SimplifyTimeoutError {
     return error instanceof SimplifyTimeoutError;
 }
 
-/** AST JSON → 未 simplify 的源码,与 decompileClassRaw 同一条生成路径。 */
-function renderRaw(ast: string): string {
+/** AST 对象 → 未 simplify 的源码,与 decompileClassRaw 同一条生成路径。 */
+function renderRaw(ast: any): string {
     try {
-        return NodeFactory.generate(JSON.parse(ast));
+        return NodeFactory.generate(ast);
     } catch {
         return "";
     }
@@ -140,7 +140,7 @@ class SimplifyWorker {
         void worker.terminate().catch(() => {});
     }
 
-    run(ast: string, timeoutMs = 0): Promise<string> {
+    run(ast: any, timeoutMs = 0): Promise<string> {
         const worker = this.ensure();
         const id = ++this.seq;
         return new Promise<string>((resolve, reject) => {
@@ -183,7 +183,7 @@ export async function decompileClassesParallel(
     const warn = options.onWarning ?? (() => {});
     const timeoutMs = options.simplifyTimeoutMs ?? 0;
 
-    const simplifyWithTimeout = async (ast: string, run: () => Promise<string>, className: string): Promise<string> => {
+    const simplifyWithTimeout = async (ast: any, run: () => Promise<string>, className: string): Promise<string> => {
         try {
             return await run();
         } catch (e) {
@@ -201,17 +201,17 @@ export async function decompileClassesParallel(
     const processJob = async (
         job: { clazz: PandaClass; index: number },
         slot: number,
-        simplify: (ast: string) => Promise<string>,
+        simplify: (ast: any) => Promise<string>,
     ): Promise<void> => {
         const name = job.clazz.name.content;
-        let ast = "";
+        let ast: any = null;
         options.onDecompileStart?.(name);
         try {
             ast = decompiler.decompileClassAst(job.clazz);
         } finally {
             options.onDecompileEnd?.();
         }
-        if (ast.length === 0) return;
+        if (!ast) return;
         let content = "";
         options.onSimplifyStart?.(slot, name);
         try {
@@ -232,7 +232,7 @@ export async function decompileClassesParallel(
                 if (results[job.index] !== null) continue;
                 try {
                     await processJob(job, -1, (ast) => {
-                        if (!worker) return Promise.resolve(decompiler.simplifyInProcess(ast));
+                        if (!worker) return Promise.resolve(decompiler.simplifyAst(ast));
                         return simplifyWithTimeout(ast, () => worker.run(ast, timeoutMs), job.clazz.name.content);
                     });
                 } catch (e) {
@@ -264,7 +264,7 @@ export async function decompileClassesParallel(
         const task = (async () => {
             try {
                 await processJob(job, worker.slot, (ast) => {
-                    if (!workersEnabled) return Promise.resolve(decompiler.simplifyInProcess(ast));
+                    if (!workersEnabled) return Promise.resolve(decompiler.simplifyAst(ast));
                     return simplifyWithTimeout(ast, () => worker.run(ast, timeoutMs), job.clazz.name.content).catch((e) => {
                         workerFailures++;
                         warn("simplify worker failed, falling back to main thread: " + job.clazz.name.content + " (" + e + ")");
@@ -272,7 +272,7 @@ export async function decompileClassesParallel(
                             workersEnabled = false;
                             warn("simplify worker failed repeatedly, remaining classes fall back to serial simplify on the main thread");
                         }
-                        return decompiler.simplifyInProcess(ast);
+                        return decompiler.simplifyAst(ast);
                     });
                 });
             } catch (e) {

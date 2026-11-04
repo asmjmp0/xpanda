@@ -1,6 +1,6 @@
 {
   "name": "xpanda-web",
-  "version": "2.6.2",
+  "version": "2.6.3",
   "private": true,
   "description": "xpanda web - browser-based decompiler UI for HarmonyOS .abc / .hap files, pure frontend (React + Vite)",
   "type": "module",

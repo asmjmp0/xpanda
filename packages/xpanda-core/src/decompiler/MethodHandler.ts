@@ -333,15 +333,11 @@ function assignAcc(methodHandler: PandaDecompilerMethodHandler, right: any, node
  * 编译器标记:鸿蒙资源对象($r)的 id 字段是 LiteralTag.ACCESSOR,toString()
  * 为 "accessor:0",直接当标识符输出会生成非法 JS(id 由紧随其后的
  * __defineGetter__("id", ...) 配合 __getResourceId__ 在运行时解析)。
- * 只有 toString() 能按原样构成合法表达式(null/true/false 或合法标识符)时
- * 才输出标识符,否则输出 undefined 占位。
+ * 关键字/字面量走 expressionNodeFromName 的 compat 映射(this / null /
+ * true / false),非法名字用 undefined 占位。
  */
 function fallbackLiteralExpression(factory: typeof NodeFactory, value: Offset): any {
-    const name = value.toString();
-    if (/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name)) {
-        return factory.identifierNode(name);
-    }
-    return factory.identifierNode("undefined");
+    return factory.expressionNodeFromName(value.toString());
 }
 
 // ---------------------------------------------------------------------------
@@ -537,18 +533,20 @@ const HANDLES: Record<string, Handle> = {
     defineGetterSetterByValue: (ins, _b, mh, _l, node) => {
         const factory = NodeFactory;
         const utils = NodeUtils;
-        const objIdentifier = factory.identifierNode(ins.params[0].toString());
-        const propIdentifier = factory.identifierNode(ins.params[1].toString());
-        const getIdentifier = factory.identifierNode(ins.params[2].toString());
-        const setIdentifier = factory.identifierNode(ins.params[3].toString());
-        const getterMember = factory.memberExpressionNode(objIdentifier as any, factory.identifierNode("__defineGetter__") as any);
-        const setterMember = factory.memberExpressionNode(objIdentifier as any, factory.identifierNode("__defineSetter__") as any);
+        // getter/setter 是两棵独立子树:标识符节点不能共用同一个对象,
+        // 否则 simplify 的路径改写会同时影响两条语句(访问器恢复顺序错乱)。
+        const getterMember = factory.memberExpressionNode(
+            factory.identifierNode(ins.params[0].toString()) as any,
+            factory.identifierNode("__defineGetter__") as any);
+        const setterMember = factory.memberExpressionNode(
+            factory.identifierNode(ins.params[0].toString()) as any,
+            factory.identifierNode("__defineSetter__") as any);
         const getArr = [];
-        getArr.push(propIdentifier);
-        getArr.push(getIdentifier);
+        getArr.push(factory.identifierNode(ins.params[1].toString()));
+        getArr.push(factory.identifierNode(ins.params[2].toString()));
         const setArr = [];
-        setArr.push(propIdentifier);
-        setArr.push(setIdentifier);
+        setArr.push(factory.identifierNode(ins.params[1].toString()));
+        setArr.push(factory.identifierNode(ins.params[3].toString()));
         utils.insertNodeToBody(factory.expressionStatementNode(factory.callExpressionNode(getterMember as any, getArr as any) as any) as any, node);
         utils.insertNodeToBody(factory.expressionStatementNode(factory.callExpressionNode(setterMember as any, setArr as any) as any) as any, node);
         return false;
@@ -750,7 +748,7 @@ const HANDLES: Record<string, Handle> = {
     },
     loadGlobal: (ins, _b, mh, _l, node) => {
         const factory = NodeFactory;
-        assignAcc(mh, factory.identifierNode(ins.globalName!.content) as any, node);
+        assignAcc(mh, factory.expressionNodeFromName(ins.globalName!.content) as any, node);
         return false;
     },
     storeModuleVar: (ins, _b, mh, _l, node) => {
@@ -763,12 +761,12 @@ const HANDLES: Record<string, Handle> = {
     },
     loadModuleVar: (ins, _b, mh, _l, node) => {
         const factory = NodeFactory;
-        assignAcc(mh, factory.identifierNode((ins.module as any).localName) as any, node);
+        assignAcc(mh, factory.expressionNodeFromName((ins.module as any).localName) as any, node);
         return false;
     },
     loadExternalModuleVar: (ins, _b, mh, _l, node) => {
         const factory = NodeFactory;
-        assignAcc(mh, factory.identifierNode((ins.module as any).localName) as any, node);
+        assignAcc(mh, factory.expressionNodeFromName((ins.module as any).localName) as any, node);
         return false;
     },
     // ------------------------------------------------ 词法环境

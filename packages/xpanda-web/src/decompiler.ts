@@ -341,7 +341,7 @@ export class DecompileService {
             const started = performance.now();
             try {
                 const ast = this.decompiler.decompileClassAst(ref.clazz);
-                if (ast.length === 0) {
+                if (!ast) {
                     this.store(ref, mode, "", performance.now() - started);
                     options.onClassDone?.(ref);
                     return;
@@ -359,10 +359,10 @@ export class DecompileService {
                             warn("simplify workers failed repeatedly, remaining classes run on the main thread");
                             void this.disposeWorkers();
                         }
-                        content = this.decompiler.simplifyInProcess(ast);
+                        content = this.decompiler.simplifyAst(ast);
                     }
                 } else {
-                    content = this.decompiler.simplifyInProcess(ast);
+                    content = this.decompiler.simplifyAst(ast);
                 }
                 this.store(ref, mode, content, performance.now() - started);
                 options.onClassDone?.(ref);

@@ -39,6 +39,25 @@ export class NodeFactory {
         return id
     }
 
+    /**
+     * 把字节码/字面量池里的名字转成表达式节点。
+     *
+     * `this` / `null` / `true` / `false` 不是 Identifier:分别对应
+     * ThisExpression / NullLiteral / BooleanLiteral。其余名字只有在是合法标识符
+     * 时才用 Identifier,否则退化为 undefined,避免生成 `identifier("this")`
+     * 这类语义错误的 AST。
+     */
+    public static expressionNodeFromName(name:string):TYPE.Expression{
+        switch (name) {
+            case "this": return TYPE.thisExpression();
+            case "null": return TYPE.nullLiteral();
+            case "true": return TYPE.booleanLiteral(true);
+            case "false": return TYPE.booleanLiteral(false);
+            default: break;
+        }
+        return TYPE.isValidIdentifier(name) ? TYPE.identifier(name) : TYPE.identifier("undefined");
+    }
+
     public static variableDeclaratorNode(id:TYPE.LVal,init?: TYPE.Expression | null):TYPE.VariableDeclarator{
         return TYPE.variableDeclarator(id,init ?? null);
     }

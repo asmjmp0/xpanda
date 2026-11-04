@@ -4,7 +4,7 @@ import { PandaDecompiler } from "xpanda-core";
 import type { SimplifyResultMessage, SimplifyTaskMessage } from "./messages";
 
 /**
- * simplify worker:接收单类的 AST JSON,返回优化后的 JS 源码。
+ * simplify worker:接收单类的 AST 对象,返回优化后的 JS 源码。
  *
  * 与 cli 的 worker_threads 版本分工一致:主线程负责解析 .abc、反汇编与 AST 构建
  * (占比很低),worker 只跑最耗时的 simplify。每个 worker 各自持有一个
@@ -24,7 +24,7 @@ const decompiler = new PandaDecompiler();
 scope.onmessage = (event) => {
     const { id, ast } = event.data;
     try {
-        scope.postMessage({ id, text: decompiler.simplifyInProcess(ast) });
+        scope.postMessage({ id, text: decompiler.simplifyAst(ast) });
     } catch (e) {
         scope.postMessage({ id, error: e instanceof Error ? e.message : String(e) });
     }
