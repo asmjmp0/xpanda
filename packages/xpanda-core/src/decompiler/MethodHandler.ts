@@ -48,9 +48,89 @@ export class PandaDecompilerMethodHandler {
     private readonly statementInstructionPC = new WeakMap<object, number>();
     /** 结构化分析产出的 try 语句 → try 表里该 try 保护范围的结束 pc */
     private readonly tryBodyEndPC = new WeakMap<object, number>();
+    /**
+     * 当前正在生成的方法体栈(模块 func_main_0 是 Program,嵌套函数是 BlockStatement)。
+     * 区域归约会把一个基本块直接展开进条件 test 的 SequenceExpression,那里没有语句
+     * 位置;`newLexEnv` 的槽声明等语句必须提升到所属方法体,否则会被静默丢弃,
+     * 输出里留下未声明的 `local_*` 变量。
+     */
+    private readonly functionBodies: any[] = [];
 
     recordTryBodyEnd(tryNode: object, endPC: number): void {
         this.tryBodyEndPC.set(tryNode, endPC);
+    }
+
+    /** 在一个方法体的上下文中运行结构化分析(嵌套函数会压栈/恢复) */
+    withFunctionBody<T>(body: any, run: () => T): T {
+        this.functionBodies.push(body);
+        try {
+            return run();
+        } finally {
+            this.functionBodies.pop();
+        }
+    }
+
+    /**
+     * 插入一条语句。目标已经是 SequenceExpression(条件 test 的求值序列)时,
+     * 只有表达式能进入序列:变量声明提升到方法体顶部,初始化值改写为序列里的
+     * 赋值(保持求值顺序);其它语句仍然沿用原有的块插入路径。
+     */
+    insertStatement(node: any, statement: any): void {
+        if (node?.type === "SequenceExpression" && statement.type !== "ExpressionStatement") {
+            if (statement.type === "VariableDeclaration") {
+                this.hoistVariableDeclaration(node, statement);
+                return;
+            }
+        }
+        NodeUtils.insertNodeToBody(statement, node);
+    }
+
+    private hoistVariableDeclaration(sequence: any, declaration: any): void {
+        const bodyNode = this.functionBodies[this.functionBodies.length - 1];
+        const body: any[] | undefined = Array.isArray(bodyNode?.body) ? bodyNode.body : undefined;
+        if (!body) return;
+        const factory = NodeFactory;
+        const declared = new Set<string>();
+        for (const stmt of body) {
+            if (stmt?.type !== "VariableDeclaration") continue;
+            for (const declarator of stmt.declarations) {
+                if (declarator.id?.type === "Identifier") declared.add(declarator.id.name);
+            }
+        }
+        const hoisted: any[] = [];
+        for (const declarator of declaration.declarations) {
+            if (declarator.id?.type !== "Identifier") continue;
+            const name = declarator.id.name;
+            if (!declared.has(name)) {
+                hoisted.push(factory.variableDeclaratorNode(factory.identifierNode(name) as any, null));
+                declared.add(name);
+            }
+            if (declarator.init && sequence) {
+                // 声明没有语句位置时,初始化留在原求值序列里,避免把它搬到声明处提前/延后求值
+                const assignment = factory.assignmentExpressionNode(
+                    "=",
+                    factory.identifierNode(name) as any,
+                    declarator.init,
+                );
+                NodeUtils.insertNodeToBody(factory.expressionStatementNode(assignment as any) as any, sequence);
+            }
+        }
+        if (hoisted.length === 0) return;
+        const kind = declaration.kind === "var" ? "var" : "let";
+        let index = 0;
+        while (index < body.length) {
+            const stmt = body[index];
+            if (stmt?.type === "ExpressionStatement" && stmt.directive != null) {
+                index++;
+                continue;
+            }
+            if (stmt?.type === "ImportDeclaration") {
+                index++;
+                continue;
+            }
+            break;
+        }
+        body.splice(index, 0, factory.variableDeclarationNode(hoisted as any, kind as any) as any);
     }
 
     getNextID(): number {
@@ -197,26 +277,28 @@ export class PandaDecompilerMethodHandler {
                 guardEndPC: plan.guardEndPC,
             }));
             this.finallyRoles = buildFinallyRoles(plans);
-            let structured = false;
-            try {
-                new StructureAnalysis(pandaIRCFG, pandaIRCFG.getEntryBlock(), pandaIRCFG.getLastBlock()).analysis(this, pandaLexical, block);
-                structured = true;
-            } catch (e) {
-                // 降级路径不再插 finally 标记,保持 SimpleAnalysis 原有输出
-                this.finallyRoles = null;
-                new SimpleAnalysis(pandaIRCFG).analysis(this, pandaLexical, block);
-            } finally {
-                this.finallyRoles = savedRoles;
-            }
-            if (structured) {
-                applyFinallyPlans(block, plans, {
-                    structures,
-                    statementPC: this.statementBlockPC,
-                    statementInstructionPC: this.statementInstructionPC,
-                    tryBodyEndPC: this.tryBodyEndPC,
-                });
-            }
-            else stripFinallyMarkers(block);
+            this.withFunctionBody(block, () => {
+                let structured = false;
+                try {
+                    new StructureAnalysis(pandaIRCFG, pandaIRCFG.getEntryBlock(), pandaIRCFG.getLastBlock()).analysis(this, pandaLexical, block);
+                    structured = true;
+                } catch (e) {
+                    // 降级路径不再插 finally 标记,保持 SimpleAnalysis 原有输出
+                    this.finallyRoles = null;
+                    new SimpleAnalysis(pandaIRCFG).analysis(this, pandaLexical, block);
+                } finally {
+                    this.finallyRoles = savedRoles;
+                }
+                if (structured) {
+                    applyFinallyPlans(block, plans, {
+                        structures,
+                        statementPC: this.statementBlockPC,
+                        statementInstructionPC: this.statementInstructionPC,
+                        tryBodyEndPC: this.tryBodyEndPC,
+                    });
+                }
+                else stripFinallyMarkers(block);
+            });
         }
         const name = inner.name.content;
         if (name.startsWith("#") || this.isNumeric(name)) return factory.functionExpressionNode(null, params as any, block);
@@ -658,13 +740,12 @@ const HANDLES: Record<string, Handle> = {
     // ------------------------------------------------ 全局/模块
     storeObjectRecord: (ins, _b, mh, _l, node) => {
         const factory = NodeFactory;
-        const utils = NodeUtils;
         const kind = ins.recordType;
         const name = (ins.storeKey as PandaInstructionID).obj as PandaString;
         const declarator = factory.variableDeclaratorNode(factory.identifierNode(name.content) as any, factory.identifierNode("acc") as any);
         const array = [];
         array.push(declarator);
-        utils.insertNodeToBody(factory.variableDeclarationNode(array as any, kind as any) as any, node);
+        mh.insertStatement(node, factory.variableDeclarationNode(array as any, kind as any));
         return false;
     },
     loadGlobal: (ins, _b, mh, _l, node) => {
@@ -703,7 +784,7 @@ const HANDLES: Record<string, Handle> = {
         }
         const variableDeclarationNode = factory.variableDeclarationNode(arrayObject as any, "let");
         utils.insertNodeToBody(factory.expressionStatementNode(factory.identifierNode("panda_jmp0_reserved_lex_begin") as any) as any, node);
-        utils.insertNodeToBody(variableDeclarationNode as any, node);
+        mh.insertStatement(node, variableDeclarationNode);
         return false;
     },
     storeLex: (ins, block, mh, l, node) => {

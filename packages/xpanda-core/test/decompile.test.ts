@@ -9,7 +9,7 @@ import { SimplifyExport } from "../src/simplify/SimplifyExport";
 import { NullishCoalescingSimplify } from "../src/simplify/NullishCoalescingSimplify";
 import { SyntaxRewriteSimplify } from "../src/simplify/SyntaxRewriteSimplify";
 import { restoreGotoLoops } from "../src/simplify/GotoLoopRestore";
-import { flattenRethrowTryChains } from "../src/decompiler/RethrowTryFlatten";
+import { flattenRethrowTryChains } from "../src/decompiler/post-pass/RethrowTryFlatten";
 import { HapFile } from "../src/hap/HapFile";
 import type { PandaClass } from "../src/file/clazz/PandaClass";
 import { ResourceIndexFile } from "../src/res/ResourceIndexFile";

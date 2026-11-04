@@ -4,9 +4,7 @@ import { PandaLexical } from "./disasm/PandaLexical";
 import { PandaDecompilerMethodHandler } from "./decompiler/MethodHandler";
 import { StructureAnalysis } from "./decompiler/StructureAnalysis";
 import { SimpleAnalysis } from "./decompiler/SimpleAnalysis";
-import { flattenRethrowTryChains } from "./decompiler/RethrowTryFlatten";
-import { resolveReservedParams } from "./decompiler/ReservedParamResolver";
-import { declareUndeclaredLexicalTemps } from "./decompiler/LexicalTempRepair";
+import { runPostProcessPasses } from "./decompiler/post-pass/PostProcessPass";
 import { NodeFactory } from "./ast/NodeFactory";
 import { NodeUtils } from "./ast/NodeUtils";
 import { SimplifyExport } from "./simplify/SimplifyExport";
@@ -95,12 +93,9 @@ export class PandaDecompiler {
         }
         const pandaIRCFG = pandaLexical.getPandaIRCFG(funcMain0Method);
         this.decompileSingleFunction(pandaIRCFG, pandaLexical, programNode);
-        // 模块级 class 定义的 rethrow try 壳会层层嵌套(每个 class 一层),每层给后面
-        // 所有行加 2 空格缩进;合并成一层,raw 输出与 simplify 的 AST 都小一个数量级。
-        flattenRethrowTryChains(programNode as any);
-        // 结构分析结束后统一还原编译器保留的入口参数(p0/p1/p2):
-        // raw 输出不再依赖 simplify 处理这些反编译实现细节,SSA 等消费者也能直接使用。
-        resolveReservedParams(programNode as any);
+        // 结构分析结束后的后处理流水线(顺序见 PostProcessPass):
+        // rethrow try 壳摊平 → 入口参数还原 → newLexEnv 槽声明作用域归一化。
+        runPostProcessPasses(programNode);
 
         // exports
         if (pandaClass.pandaClassModuleData) {
@@ -149,12 +144,14 @@ export class PandaDecompiler {
 
     private decompileSingleFunction(pandaIRCFG: any, pandaLexical: PandaLexical, programNode: any): void {
         this.methodHandler.insertFunctionPreamble(pandaIRCFG.getPandaMethod(), pandaLexical, programNode);
-        try {
-            new StructureAnalysis(pandaIRCFG, pandaIRCFG.getEntryBlock(), pandaIRCFG.getLastBlock())
-                .analysis(this.methodHandler, pandaLexical, programNode);
-        } catch (e) {
-            new SimpleAnalysis(pandaIRCFG).analysis(this.methodHandler, pandaLexical, programNode);
-        }
+        this.methodHandler.withFunctionBody(programNode, () => {
+            try {
+                new StructureAnalysis(pandaIRCFG, pandaIRCFG.getEntryBlock(), pandaIRCFG.getLastBlock())
+                    .analysis(this.methodHandler, pandaLexical, programNode);
+            } catch (e) {
+                new SimpleAnalysis(pandaIRCFG).analysis(this.methodHandler, pandaLexical, programNode);
+            }
+        });
     }
 
     /** 进程内 simplify(取代 Java 外部 node cmd.js 进程);解析失败时返回 ""(与 Java 行为对齐) */
@@ -166,10 +163,6 @@ export class PandaDecompiler {
             return "";
         }
         SimplifyExport.simplify(program);
-        // 后流水线修复:simplify 的结构改写可能把 local_* / sendable_* 的声明删掉而
-        // 留下读取/赋值(amcl z421 的 `local_1_0 = p1`)。补声明放在 simplify 之后,
-        // 与结构分析后的 resolveReservedParams 分开:后者必须早于 simplify,前者必须晚于它。
-        declareUndeclaredLexicalTemps(program);
         return NodeFactory.generate(program);
     }
 
@@ -222,3 +215,4 @@ export class PandaDecompiler {
         return results;
     }
 }
+

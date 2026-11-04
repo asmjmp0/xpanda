@@ -505,6 +505,19 @@ export function isCapturedBinding(binding: any, functionNode: TYPE.Node): boolea
         if (isProgram ? functionParent != null : (!functionParent || functionParent.node !== functionNode)) {
             return true;
         }
+        // 类字段初始化器/静态块没有函数父节点,但它们仍是嵌套在声明所在函数
+        // (或模块)里的读取:类静态初始化折叠后,原本在初始化函数里的读取会
+        // 变成 `static x = local_0_0`,只按函数父节点判断会把它当成未捕获,
+        // 进而把外层声明删掉(yourpipe AppLogStore.minLevel)。只认字段值和
+        // 静态块,类头(`extends v0`)等位置不算捕获,否则模块类定义无法折叠。
+        if (functionParent == null) {
+            const property = path.findParent((parent) => parent.isClassProperty() || parent.isClassPrivateProperty());
+            if (property) {
+                const value = (property as any).get("value") as NodePath | undefined;
+                if (value && (value.node === path.node || value.isAncestor(path))) return true;
+            }
+            if (path.findParent((parent) => parent.isStaticBlock())) return true;
+        }
     }
     return false;
 }

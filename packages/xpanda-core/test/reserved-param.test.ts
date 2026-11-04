@@ -12,7 +12,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { PandaFile } from "../src/file/PandaFile";
 import { PandaDecompiler } from "../src/PandaDecompiler";
-import { resolveReservedParams } from "../src/decompiler/ReservedParamResolver";
+import { resolveReservedParams } from "../src/decompiler/post-pass/ReservedParamResolver";
 import { NodeFactory } from "../src/ast/NodeFactory";
 
 function assert(condition: boolean, message: string): void {

@@ -4037,8 +4037,8 @@ class ContentDetailPage extends ViewPU {
     return Math.max(0, 206 - (this.bottomActionBarHeightVp > 0 ? this.bottomActionBarHeightVp : 48) - 4);
   }
   snapAnswerFabToEdge() {
-    let local_1_1, local_1_0;
-    local_1_1 = this;
+    let local_1_0;
+    let local_1_1 = this;
     if (local_1_1.answerFabOverlayWidthVp <= 0 || local_1_1.answerFabWidthVp <= 0) {
       return;
     }
@@ -6991,8 +6991,7 @@ class ContentDetailPage extends ViewPU {
     return;
   }
   resetAnswerOverscroll(p0) {
-    let local_1_0;
-    local_1_0 = this;
+    let local_1_0 = this;
     if (local_1_0.answerOverscrollOffset === 0 && local_1_0.overscrollRawDrag === 0) {
       return;
     }

@@ -21,25 +21,29 @@ import { VISITOR_KEYS } from "@babel/types";
  *   - 外层块前面的语句既不重复声明这些名字,也不引用它们(否则遮蔽 / TDZ 语义会变)。
  * 名字冲突时保留原样,继续尝试更内层(内层通常声明的是各自的 lexenv 槽)。
  */
-export function flattenRethrowTryChains(program: TYPE.Program): void {
-    visit(program);
+export function flattenRethrowTryChains(program: TYPE.Program): boolean {
+    return visit(program);
 }
 
-function visit(node: TYPE.Node): void {
-    if (!node || typeof (node as TYPE.Node).type !== "string") return;
+function visit(node: TYPE.Node): boolean {
+    if (!node || typeof (node as TYPE.Node).type !== "string") return false;
+    let changed = false;
     if (TYPE.isTryStatement(node) && !node.finalizer && isRethrowCatch(node.handler)) {
-        mergeTrailingRethrowTries(node);
+        changed = mergeTrailingRethrowTries(node);
     }
     const keys = VISITOR_KEYS[node.type] as string[] | undefined;
-    if (!keys) return;
+    if (!keys) return changed;
     for (const key of keys) {
         const value = (node as any)[key];
         if (Array.isArray(value)) {
-            for (const child of value) if (child && typeof child.type === "string") visit(child);
-        } else if (value && typeof value.type === "string") {
-            visit(value);
+            for (const child of value) {
+                if (child && typeof child.type === "string" && visit(child)) changed = true;
+            }
+        } else if (value && typeof value.type === "string" && visit(value)) {
+            changed = true;
         }
     }
+    return changed;
 }
 
 /** `catch (e) { throw e }` 或 `catch (e) { acc = e; throw acc }`(TryCatchPandaStatement 的搬运前缀) */
@@ -60,14 +64,17 @@ function isRethrowCatch(handler: TYPE.CatchClause | null | undefined): boolean {
         && thrown === "acc";
 }
 
-function mergeTrailingRethrowTries(tryNode: TYPE.TryStatement): void {
+function mergeTrailingRethrowTries(tryNode: TYPE.TryStatement): boolean {
     const statements = tryNode.block.body;
+    let changed = false;
     while (statements.length > 0) {
         const last = statements[statements.length - 1];
-        if (!TYPE.isTryStatement(last) || last.finalizer || !isRethrowCatch(last.handler)) return;
-        if (!canSplice(statements, last)) return;
+        if (!TYPE.isTryStatement(last) || last.finalizer || !isRethrowCatch(last.handler)) break;
+        if (!canSplice(statements, last)) break;
         statements.splice(statements.length - 1, 1, ...last.block.body);
+        changed = true;
     }
+    return changed;
 }
 
 function canSplice(outerStatements: TYPE.Statement[], innerTry: TYPE.TryStatement): boolean {

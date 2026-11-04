@@ -55,16 +55,6 @@ export class PandaLexical {
         return methods;
     }
 
-    private checkAsyncFunctionResolveContain(block: PandaIRBasicBlock): boolean {
-        const isReturn = block.getTerminator().isReturnIns();
-        for (const instruction of block.pandaInstructions) {
-            if (instruction.kind === "async" && instruction.asyncType === "asyncfunctionresolve" && isReturn) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     /**
      * 词法环境实例。名字是编译器预留的 `local_<depth>` / `sendable_<depth>`;
      * 同一层级的多个环境(例如连续定义的多个 class 各自的 self-reference 环境)
@@ -121,6 +111,9 @@ export class PandaLexical {
             // 只在同一条链上解析 sendable 与 regular 的 level 互不相干
             const chain: LexEnvInfo["kind"] = instruction.isSendAble ? "sendable" : "lexical";
             const entries = stack.filter((env) => env.kind === chain);
+            // Runtime semantics: level is the number of parent hops, slot indexes
+            // into exactly that environment. Out-of-range slots mean the incoming
+            // stack is wrong; never redirect the read to another environment.
             const target = entries.length - instruction.lexLevel - 1;
             const env = target >= 0 ? entries[target] : undefined;
             if (env && desc.getName(instruction.pc) === undefined) {
@@ -136,9 +129,9 @@ export class PandaLexical {
         startLevel: number,
         desc: PandaLexicalDescription,
         counters: Map<string, number>,
+        ignorePop: boolean,
     ): LexEnvInfo[] {
         const cur = stack.slice();
-        const ignorePop = this.checkAsyncFunctionResolveContain(block);
         for (const instruction of block.pandaInstructions) {
             this.advanceEnvStack(instruction, ignorePop, cur, startLevel, desc, counters);
         }
@@ -155,10 +148,9 @@ export class PandaLexical {
         counters: Map<string, number>,
     ): LexEnvInfo[] {
         const cur = stack.slice();
-        const ignorePop = this.checkAsyncFunctionResolveContain(block);
         for (const instruction of block.pandaInstructions) {
             if (instruction.pc > pc) break;
-            this.advanceEnvStack(instruction, ignorePop, cur, startLevel, desc, counters);
+            this.advanceEnvStack(instruction, false, cur, startLevel, desc, counters);
         }
         return cur;
     }
@@ -193,13 +185,21 @@ export class PandaLexical {
         const startLevel = inheritedStack.filter((env) => env.kind === "lexical").length;
         const tryBlocks = pandaIRCFG.getPandaMethod().methodCode?.pandaMethodTryBlocks ?? [];
         const seededHandlers = new Set<PandaIRBasicBlock>();
+        const handlerBlocks = new Set<PandaIRBasicBlock>();
+        for (const tryBlock of tryBlocks) {
+            for (const catchBlock of tryBlock.pandaMethodCatchBlocks) {
+                const handler = pandaIRCFG.getBasicBlockByPC(catchBlock.handlerPC);
+                if (handler) handlerBlocks.add(handler);
+            }
+        }
         let progress = true;
         while (progress) {
             progress = false;
             let head = 0;
             while (head < queue.length) {
                 const block = queue[head++];
-                const outStack = this.simulateBlockStack(block, stacks.get(block)!, startLevel, desc, counters);
+                const outStack = this.simulateBlockStack(
+                    block, stacks.get(block)!, startLevel, desc, counters, handlerBlocks.has(block));
                 for (const successor of pandaIRCFG.graph.normalSuccessors(block)) {
                     enqueue(successor, outStack);
                 }
@@ -295,8 +295,7 @@ export class PandaLexical {
 
         let curStack = inheritedStack.slice();
         for (const block of pandaIRCFG.pandaIRBasicBlocks) {
-            let ignorePop = false;
-            if (exceptionHandleBlockSet.has(block) || this.checkAsyncFunctionResolveContain(block)) ignorePop = true;
+            const ignorePop = exceptionHandleBlockSet.has(block);
             const seededStack = blockStacks.get(block);
             if (seededStack !== undefined) curStack = seededStack.slice();
             for (const instruction of block.pandaInstructions) {

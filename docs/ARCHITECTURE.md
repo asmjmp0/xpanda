@@ -129,12 +129,16 @@ A zero-size handler's body can start in the next basic block (blocks are split a
 
 ### 6.4 Lexical analysis (`PandaLexical.ts`)
 
+Runtime environment semantics (`newlexenv` / `poplexenv` / `ld/stlexvar` levels and slots, async `suspendgenerator` save/restore, sendable chains), the current decompiler model and its known deviations are documented in [LEXICAL_ENV.md](./LEXICAL_ENV.md).
+
 Per-class analysis seeded from `func_main_0`, recursing into nested functions (definefunc / defineclasswithbuffer / createobject-with-…) with an inherited lexical-environment stack:
 
 - `computeEnvStacks` propagates the environment stack **along CFG edges from the entry block** (a linear pc-order scan mis-computes loops containing `popLexEnv`). Exception handlers are seeded with the stack at the try start; seeding and propagation alternate until fixpoint (handlers may be nested inside handler subgraphs).
 - Environments are named `local_<depth>` / `sendable_<depth>`; multiple environments at the same depth get `_2` / `_3` suffixes so identical names cannot shadow each other (consecutive classes each get their own lexenv).
 - `throw.undefinedifholewithname` (assert) instructions drive register **type inference** (`typeMap`).
 - If disassembly of one method fails, that method is skipped and later decompiled as a placeholder body.
+
+After structure analysis, `decompiler/post-pass/PostProcessPass.ts` runs the fixed post-structure pipeline over the class AST: rethrow-try flattening (`flatten-rethrow-try-chains`), reserved entry-parameter resolution (`resolve-reserved-params`), and lexical-slot declaration scope normalization (`normalize-lexical-slot-scopes`). These passes run once, before module exports are appended and before `SimplifyExport`; they are deliberately not part of the simplify fixed-point loop.
 
 ## 7. Decompilation Layer — `src/decompiler/`
 
@@ -269,7 +273,7 @@ Why the tail is ordered this way:
 | `ISimplify.ts` | Pass interface: `simplify(node): boolean` |
 | `AstUtils.ts` | No-traverse linear AST utilities (temp-name recognition, purity / copyability predicates, node size, read/write collection). Avoids `scope.crawl()` on large ASTs. |
 | `NormalizeDeclarations.ts` | Dedupes duplicate `let` declarations and import/declaration clashes before any Babel traverse (prevents "Duplicate declaration" crashes). |
-| `decompiler/ReservedParamResolver.ts` | Post-structure AST pass (not a simplify pass): resolves `panda_jmp0_reserved_param_*` (`p0/p1/p2` → `this` / function-or-class name / `new.target` / mutable receiver), `_sendable_class`, `_lex_begin`, and `_export_name_*` before raw output is emitted. Entry self-reference statements are only deleted when the statement *is* the assignment. |
+| `decompiler/post-pass/ReservedParamResolver.ts` | Post-structure AST pass (not a simplify pass): resolves `panda_jmp0_reserved_param_*` (`p0/p1/p2` → `this` / function-or-class name / `new.target` / mutable receiver), `_sendable_class`, `_lex_begin`, and `_export_name_*` before raw output is emitted. Entry self-reference statements are only deleted when the statement *is* the assignment. |
 | `TempVariableSimplify.ts` + `temp/` | The heavy pass: copy propagation + dead-store elimination with per-scope liveness. The public entry point lives here; implementation is split by responsibility under `temp/` (`copy-propagation.ts`, `liveness.ts`, `assignment-folds.ts`, `condition-folds.ts`, `test-folds.ts`, plus `queries.ts` / `context.ts` / `env.ts` / `types.ts` / `base.ts`). Budgets: propagated expression ≤ **24** nodes, clone budget **120000** per run. Handles `finally` live-out reads, moves non-pure expressions only at their true last use, folds loop-test temporaries (`foldLoopTestTemps`, `foldDoWhileTestAssignments`), turns constant-test loops with a leading `if (COND) break` guard back into `while (COND)` (`foldWhileTrueBreakGuards`, after condition folding and skipping for / for-of / for-in lowering shapes), short-circuit materialization chains (`X = E; if (X/!X) { X = B }` and the empty-then `if (X) {} else X = B` form), self-negation chains by parity, accumulator chains (binary, member-call and member-load chains such as `X = E; X = X.trim()`), hub aliases with read redirection (`foldTempAliasAssignments`), and exposes the static entry points used by the pipeline tail (`foldShortCircuitAssignments`, `foldReturnAssignments`, `foldAccumulatorAssignments`, `foldNextReadAssignments`, `foldConditionAssignments`, `removeUnusedLexicalDeclarations`). |
 | `AccCallSimplify.ts` | Restores `recv = acc; acc = acc.m; acc.call(recv, …)` → `recv.m(...)`; `simplifySequences` does the same inside condition sequences. |
 | `EnumSimplify.ts` | Restores ArkTS enum lazy-initialization bytecode patterns into object literals (plus the reverse-mapping object). |
