@@ -25,13 +25,14 @@ function main(): void {
         decompiling: "Lentry/src/main/ets/pages/Index;",
         simplify: null,
         workers: ["Lfeature/Foo;", null],
+        queued: 2,
         showSimplify: true,
         columns: 80,
         color: false,
         spinner: 0,
     });
     assert(parallel[0] === "modules.abc   540 classes", `title: ${parallel[0]}`);
-    assert(parallel[1] === "█░░░░░░░░░░░░░░░░░░░   12/540   2%  1m03s", `bar: ${parallel[1]}`);
+    assert(parallel[1] === "█░░░░░░░░░░░░░░░░░░░   12/540   2%  1m03s  queue 2", `bar: ${parallel[1]}`);
     assert(parallel[2] === "⠋ decompile            Lentry/src/main/ets/pages/Index;", `decompile: ${parallel[2]}`);
     assert(parallel[3] === "⠋ worker 1   simplify  Lfeature/Foo;", `worker 1: ${parallel[3]}`);
     assert(parallel[4] === "  worker 2             idle", `worker 2: ${parallel[4]}`);
@@ -48,6 +49,7 @@ function main(): void {
         decompiling: null,
         simplify: "L_GLOBAL;",
         workers: null,
+        queued: 0,
         showSimplify: true,
         columns: 40,
         color: false,
@@ -65,6 +67,7 @@ function main(): void {
         decompiling: null,
         simplify: null,
         workers: null,
+        queued: 0,
         showSimplify: false,
         columns: 40,
         color: false,
@@ -83,6 +86,7 @@ function main(): void {
         decompiling: longName,
         simplify: null,
         workers: null,
+        queued: 0,
         showSimplify: false,
         columns: 40,
         color: false,
@@ -107,6 +111,7 @@ function main(): void {
     try {
         const progress = new DecompileProgress(true, stream);
         progress.begin("class.abc", 2, 2, true);
+        progress.setQueued(2);
         progress.setDecompiling("L_GLOBAL;");
         progress.setWorker(0, "LFoo;");
         progress.markDone();
@@ -114,6 +119,7 @@ function main(): void {
         const text = chunks.join("");
         assert(text.includes("\x1b[?25l"), "live panel hides the cursor");
         assert(text.includes("L_GLOBAL;"), "panel shows the class being decompiled");
+        assert(text.includes("queue 2"), "panel shows the AST queue depth");
         assert(text.includes("LFoo;"), "panel shows the worker class");
         assert(text.includes("simplify"), "worker line is marked simplify");
         assert(text.includes("1/2"), "panel advances when a class settles");

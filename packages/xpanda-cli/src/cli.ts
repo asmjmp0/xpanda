@@ -247,6 +247,7 @@ async function decompileAbcData(
                 onSimplifyStart: (slot, name) => options.progress.setWorker(slot, name),
                 onSimplifyEnd: (slot) => options.progress.setWorker(slot, null),
                 onClassSettled: () => options.progress.markDone(),
+                onQueueChange: (queued) => options.progress.setQueued(queued),
                 onClassDone: ({ index, content }) => emit(index, content),
                 onSimplifyTimeout: (className) => options.simplifyTimeouts.push({ label, className }),
                 onWarning: (message) => options.progress.note(message),

@@ -282,7 +282,7 @@ normalizeDeclarations
 
 - 入口:`decompileClassesParallel(decompiler, classes, { jobs, onClassDone, onWarning })`;CLI 用 `-j N` 开启(`-j 0` = 自动:`max(1, min(4, cpus - 1))`,见 `resolveJobs`)。
 - **分工**:主线程解析、反汇编、词法分析、构建 AST(`decompileClassAst`);worker 接收自包含的 AST JSON,只跑 `SimplifyExport.simplify` + `NodeFactory.generate`。大样本上该分工约占总时长的 1% vs 99%。
-- **调度**:合格类(含 `func_main_0`)按估算权重 —— 方法 `codeSize` 总和 —— 降序排序,空闲 worker 即派发(大任务优先,减少尾部等待)。结果按类索引回填,输出顺序与完成顺序无关。
+- **调度**:合格类(含 `func_main_0`)按估算权重 —— 方法 `codeSize` 总和 —— 降序排序(大任务优先,减少尾部等待)。主线程持续把 AST 构建进一个有界队列(上限 = worker 数),与 worker simplify 重叠;队列满时生产者背压暂停,worker 一空立刻消费队首。结果按类索引回填,输出顺序与完成顺序无关。
 - **确定性**:`PandaDecompiler.decompileRaw()` 每类复位生成名计数器,因此单类输出是该类的纯函数 —— 串行与并行输出逐字节一致(有回归测试)。
 - **失败处理**:worker 出错时该类降级为主线程 simplify;**连续失败 2 次**后剩余类全部禁用 worker。worker 的 stdout/stderr 被接管,`--quiet` 保持安静。
 - **内存**:worker 默认老生代上限 8 GB(`XPANDA_WORKER_HEAP_MB`);单个超大类的 simplify 峰值约 1.4 GB —— 不建议超过 4 个 worker。

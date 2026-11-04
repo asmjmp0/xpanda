@@ -36,6 +36,8 @@ export interface ParallelDecompileOptions {
     onSimplifyEnd?: (slot: number) => void;
     /** 该类的反编译流程结束(含失败和空输出),进度条据此前进 */
     onClassSettled?: (className: string) => void;
+    /** AST 队列深度变化:已构建、等待空闲 worker 的类数量 */
+    onQueueChange?: (queued: number) => void;
     /**
      * simplify 超过该毫秒数则终止 worker,并改用 raw 输出。
      * 0 或未设置表示不限制。串行路径也会改走 worker,否则主线程里的 simplify 停不下来。
@@ -90,6 +92,17 @@ function estimateWeight(clazz: PandaClass): number {
         bytes += method.methodCode?.codeSize ?? 0;
     }
     return bytes;
+}
+
+/** 主线程已构建、等待空闲 simplify worker 的 AST。 */
+interface QueueItem {
+    job: { clazz: PandaClass; index: number };
+    ast: any;
+}
+
+/** 让出事件循环,让 worker 完成回调与进度重绘有机会执行。 */
+function yieldTurn(): Promise<void> {
+    return new Promise<void>((resolve) => { setImmediate(resolve); });
 }
 
 class SimplifyWorker {
@@ -256,46 +269,129 @@ export async function decompileClassesParallel(
     const idle: SimplifyWorker[] = [...workers].reverse();
     const running = new Set<Promise<void>>();
     const pending = [...todo];
+    /**
+     * 有界 AST 队列:主线程持续构建 AST,队列满时暂停(背压),worker 一空就消费。
+     * 上限与 worker 数一致:既保证每个 worker 后面始终有待处理 AST,又避免
+     * 预构建全部类把主线程堆吃满(单类 simplify 峰值内存约 1.4GB)。
+     */
+    const queue: QueueItem[] = [];
+    const queueLimit = workers.length;
     /** worker 连续崩溃次数上限:超过后剩余类全部主线程处理,避免崩溃循环 */
     let workerFailures = 0;
     let workersEnabled = true;
+    let producerDone = false;
 
-    const dispatch = (worker: SimplifyWorker, job: { clazz: PandaClass; index: number }): void => {
-        const task = (async () => {
-            try {
-                await processJob(job, worker.slot, (ast) => {
-                    if (!workersEnabled) return Promise.resolve(decompiler.simplifyAst(ast));
-                    return simplifyWithTimeout(ast, () => worker.run(ast, timeoutMs), job.clazz.name.content).catch((e) => {
-                        workerFailures++;
-                        warn("simplify worker failed, falling back to main thread: " + job.clazz.name.content + " (" + e + ")");
-                        if (workerFailures >= 2) {
-                            workersEnabled = false;
-                            warn("simplify worker failed repeatedly, remaining classes fall back to serial simplify on the main thread");
-                        }
-                        return decompiler.simplifyAst(ast);
-                    });
-                });
-            } catch (e) {
-                warn("decompile failed: " + job.clazz.name.content + " " + e);
-            } finally {
-                options.onClassSettled?.(job.clazz.name.content);
+    const runJob = async (
+        item: QueueItem,
+        slot: number,
+        simplify: (ast: any) => Promise<string>,
+    ): Promise<void> => {
+        const name = item.job.clazz.name.content;
+        let content = "";
+        options.onSimplifyStart?.(slot, name);
+        try {
+            content = await simplify(item.ast);
+        } finally {
+            options.onSimplifyEnd?.(slot);
+        }
+        if (content.length === 0) return;
+        results[item.job.index] = content;
+        options.onClassDone?.({ index: item.job.index, className: name, content });
+    };
+
+    const runOnWorker = (worker: SimplifyWorker, item: QueueItem): Promise<string> => {
+        const name = item.job.clazz.name.content;
+        if (!workersEnabled) return Promise.resolve(decompiler.simplifyAst(item.ast));
+        return simplifyWithTimeout(item.ast, () => worker.run(item.ast, timeoutMs), name).catch((e) => {
+            workerFailures++;
+            warn("simplify worker failed, falling back to main thread: " + name + " (" + e + ")");
+            if (workerFailures >= 2) {
+                workersEnabled = false;
+                warn("simplify worker failed repeatedly, remaining classes fall back to serial simplify on the main thread");
             }
-        })().finally(() => {
-            idle.push(worker);
-        });
-        running.add(task);
-        task.finally(() => {
-            running.delete(task);
+            return decompiler.simplifyAst(item.ast);
         });
     };
 
-    try {
-        while (pending.length > 0 || running.size > 0) {
-            while (pending.length > 0 && idle.length > 0) {
-                dispatch(idle.pop()!, pending.shift()!);
+    const dispatch = (worker: SimplifyWorker, item: QueueItem): void => {
+        const tracked = (async () => {
+            try {
+                await runJob(item, worker.slot, (ast) => runOnWorker(worker, item));
+            } catch (e) {
+                warn("decompile failed: " + item.job.clazz.name.content + " " + e);
+            } finally {
+                options.onClassSettled?.(item.job.clazz.name.content);
             }
+        })();
+        running.add(tracked);
+        void tracked.finally(() => {
+            idle.push(worker);
+            running.delete(tracked);
+        });
+    };
+
+    /** worker 池全部失败后,队列里的 AST 改回主线程串行 simplify。 */
+    const drainOnMainThread = async (item: QueueItem): Promise<void> => {
+        try {
+            await runJob(item, -1, (ast) => Promise.resolve(decompiler.simplifyAst(ast)));
+        } catch (e) {
+            warn("decompile failed: " + item.job.clazz.name.content + " " + e);
+        } finally {
+            options.onClassSettled?.(item.job.clazz.name.content);
+        }
+    };
+
+    /** 构建下一类 AST 入队;构建失败/空输出的类立即 settle,不占队列。 */
+    const buildNext = async (): Promise<void> => {
+        const job = pending.shift()!;
+        const name = job.clazz.name.content;
+        let ast: any = null;
+        options.onDecompileStart?.(name);
+        try {
+            ast = decompiler.decompileClassAst(job.clazz);
+        } catch (e) {
+            warn("decompile failed: " + name + " " + e);
+        } finally {
+            options.onDecompileEnd?.();
+        }
+        if (ast) {
+            queue.push({ job, ast });
+            options.onQueueChange?.(queue.length);
+        } else {
+            options.onClassSettled?.(name);
+        }
+        await yieldTurn();
+    };
+
+    try {
+        while (true) {
+            // worker 池已禁用:先把队列里已构建的 AST 在主线程跑完,再继续构建
+            if (!workersEnabled && queue.length > 0) {
+                const item = queue.shift()!;
+                options.onQueueChange?.(queue.length);
+                await drainOnMainThread(item);
+                continue;
+            }
+            // 队列里有 AST 且 worker 空闲:立刻派发
+            while (workersEnabled && queue.length > 0 && idle.length > 0) {
+                const worker = idle.pop()!;
+                const item = queue.shift()!;
+                options.onQueueChange?.(queue.length);
+                dispatch(worker, item);
+            }
+            // 队列未满:主线程继续构建下一类 AST(与 worker simplify 重叠)
+            if (!producerDone && queue.length < queueLimit) {
+                await buildNext();
+                if (pending.length === 0) producerDone = true;
+                continue;
+            }
+            if (running.size > 0) {
+                await Promise.race(running);
+                continue;
+            }
+            if (producerDone && queue.length === 0) break;
+            // 理论上不可达(队列空且未构建完时 buildNext 一定会跑);防御性退出避免热循环
             if (running.size === 0) break;
-            await Promise.race(running);
         }
     } finally {
         await Promise.all(workers.map((worker) => worker.terminate()));

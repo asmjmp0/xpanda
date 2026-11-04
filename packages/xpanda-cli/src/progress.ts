@@ -23,6 +23,8 @@ export interface ProgressSnapshot {
     simplify: string | null;
     /** One entry per simplify worker; null means that worker is idle. Null array means serial. */
     workers: Array<string | null> | null;
+    /** ASTs built on the main thread and waiting for a free simplify worker. */
+    queued: number;
     showSimplify: boolean;
     columns: number;
     color: boolean;
@@ -89,7 +91,11 @@ export function renderProgress(state: ProgressSnapshot): string[] {
     const percent = `${Math.floor(ratio * 100)}%`.padStart(4);
     const noun = state.total === 1 ? "class" : "classes";
     const title = truncateName(`${state.title}   ${state.total} ${noun}`, Math.max(8, state.columns));
-    const head = `${bar}  ${paint(state.color, "1", counts)} ${percent}  ${formatElapsed(state.elapsedMs)}`;
+    const queueTone = state.queued > 0 ? "36" : "2";
+    const queueSuffix = state.workers !== null
+        ? `  ${paint(state.color, queueTone, `queue ${state.queued}`)}`
+        : "";
+    const head = `${bar}  ${paint(state.color, "1", counts)} ${percent}  ${formatElapsed(state.elapsedMs)}${queueSuffix}`;
 
     type Row = { label: string; tone: string; name: string | null; worker: boolean };
     const rows: Row[] = [{ label: "decompile", tone: "33", name: state.decompiling, worker: false }];
@@ -135,6 +141,7 @@ export class DecompileProgress {
     private decompiling: string | null = null;
     private simplify: string | null = null;
     private workers: Array<string | null> | null = null;
+    private queued = 0;
     private showSimplify = false;
 
     constructor(private readonly enabled: boolean, private readonly stream: WriteStream = process.stderr) {
@@ -158,6 +165,7 @@ export class DecompileProgress {
         this.decompiling = null;
         this.simplify = null;
         this.workers = workerSlots > 0 ? new Array(workerSlots).fill(null) : null;
+        this.queued = 0;
         this.showSimplify = showSimplify;
         this.frame = 0;
         this.startedAt = Date.now();
@@ -185,6 +193,15 @@ export class DecompileProgress {
         else if (this.workers && slot < this.workers.length) this.workers[slot] = name;
         // Clearing is painted by markDone, which follows in the same turn.
         if (name !== null) this.render();
+    }
+
+    /** ASTs built and waiting for a free simplify worker. */
+    setQueued(queued: number): void {
+        if (!this.active) return;
+        const next = Math.max(0, queued);
+        if (this.queued === next) return;
+        this.queued = next;
+        this.render();
     }
 
     markDone(): void {
@@ -227,6 +244,7 @@ export class DecompileProgress {
             decompiling: this.decompiling,
             simplify: this.simplify,
             workers: this.workers,
+            queued: this.queued,
             showSimplify: this.showSimplify,
             columns,
             color: this.color,
