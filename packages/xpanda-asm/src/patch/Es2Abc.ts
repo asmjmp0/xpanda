@@ -52,7 +52,8 @@ function bundledEs2abcPath(): string | null {
             return null;
     }
     const executable = process.platform === "win32" ? "es2abc.exe" : "es2abc";
-    return path.resolve(__dirname, "..", "..", "..", "assets", "bin", platformDir, executable);
+    // __dirname is <repo>/packages/xpanda-asm/src/patch — four levels down from the repo root.
+    return path.resolve(__dirname, "..", "..", "..", "..", "assets", "bin", platformDir, executable);
 }
 
 /** 定位 es2abc:显式路径 > XPANDA_ES2ABC > 仓库 assets/bin/<os>/es2abc[.exe] > PATH */

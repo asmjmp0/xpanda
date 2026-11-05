@@ -925,6 +925,50 @@ function testPatchInitOnly(): void {
     assert(rejected, "patchInit must reject an empty init source");
 }
 
+/**
+ * 搬运 hook class 时必须保留方法自己的 try/catch 表:
+ * init/hook 源码里的 try { ... } catch { ... } 编译成 code item 的异常表,
+ * 只丢表会把 catch 变成不可达代码,异常直接冒泡。
+ */
+function testMovedHookKeepsTryCatch(): void {
+    const es2abc = bundledEs2abc();
+    if (!es2abc) {
+        console.log("[patch] skip moved hook try/catch (es2abc not found)");
+        return;
+    }
+    const entryClass = "L&entry/src/main/ets/target&;";
+    const fixturePath = path.join(__dirname, "resources", "target-multi.abc");
+    const patchFile = PandaPatchFile.load(new Uint8Array(fs.readFileSync(fixturePath)));
+    const result = patchFile.patchInit(`
+        function init() {
+            try {
+                globalThis.__xpanda_try_entered = 1;
+                throw new Error("boom");
+            } catch (error) {
+                globalThis.__xpanda_catch_hit = (error && error.message) || String(error);
+            }
+        }
+    `, { es2abc, setupClassName: entryClass });
+
+    const pandaFile = new PandaFile(patchFile.toBytes());
+    const hookClass = pandaFile.indexHeaders.flatMap((header) => header.pandaClasses)
+        .find((clazz) => !clazz.classExternal && clazz.getClassName().includes(`xpanda/hook/${result.moduleName}`));
+    assert(hookClass, "moved init module must exist");
+    const initMethod = hookClass.pandaMethods.get(`#*#${DEFAULT_INIT_FUNCTION}`);
+    assert(initMethod?.methodCode, "moved init method must keep code");
+    assert((initMethod.methodCode.pandaMethodTryBlocks ?? []).length === 1,
+        "moving the hook class must keep the method's try/catch table");
+
+    const sandbox: Record<string, unknown> = { console: { log: () => { /* ignore */ } } };
+    sandbox.globalThis = sandbox;
+    vm.runInNewContext(stripModuleSyntax(new PandaDecompiler().decompileClass(hookClass)), sandbox, { timeout: 5000 });
+    const init = sandbox[DEFAULT_INIT_FUNCTION] as () => void;
+    assert(typeof init === "function", "moved init module must expose init");
+    init();
+    assert(sandbox.__xpanda_try_entered === 1, "init must enter the try body");
+    assert(sandbox.__xpanda_catch_hit === "boom", `init catch must receive the thrown error, got ${sandbox.__xpanda_catch_hit}`);
+}
+
 function testHookWithInit(): void {
     const es2abc = bundledEs2abc();
     if (!es2abc) {
@@ -1215,6 +1259,7 @@ async function main(): Promise<void> {
     testDynamicPatchSlot();
     testDynamicSetupEntryClass();
     testPatchInitOnly();
+    testMovedHookKeepsTryCatch();
     testHookWithInit();
     testHookModuleImport();
     testDumpClasses();

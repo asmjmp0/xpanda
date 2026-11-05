@@ -138,7 +138,10 @@ export class PandaPatchFileHookImport extends PandaPatchFileHookSlots {
                 instructions: isSetup
                     ? this.setupInstructions(setup.entries)
                     : this.hookMethodInstructions(entry, setterSlot, sourceRegion, methodIdByOffset, caches),
-                tries: [],
+                // remapHookInstructions preserves the opcode variant, so instruction sizes (and
+                // therefore try/handler PCs) stay unchanged; only the synthesized setter/setup
+                // bodies are flat code without a try table.
+                tries: setterSlot === undefined && !isSetup ? (entry.code.tries ?? []) : [],
             }));
         });
 
