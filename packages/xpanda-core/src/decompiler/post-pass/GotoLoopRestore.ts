@@ -1,5 +1,5 @@
 import * as TYPE from "@babel/types";
-import { isClassLike, isFunctionLike, walkNode } from "./AstUtils";
+import { isClassLike, isFunctionLike, walkNode } from "../../simplify/AstUtils";
 
 const {
     VISITOR_KEYS,
@@ -72,18 +72,21 @@ interface GotoLoopSpan extends LabelSite {
  *   - label 位于外层循环/switch 里时,循环体内不能有裸 break/continue(会被新循环截获);
  *   - goto 不在循环体内的嵌套循环里(continue 会绑到内层循环上)。
  *
- * 放在 simplify 流水线开头:后面的活跃性分析/条件折叠需要看到真实的循环结构,
- * 否则循环体内的死存储会被当成直线代码清掉(计数器 `v11 = 0` 会被常量传播成 `0 + 1`)。
+ * 放在 post-pass 末尾、词法槽声明归位之后、SimplifyExport 之前:后面的
+ * 活跃性分析/条件折叠需要看到真实的循环结构,否则循环体内的死存储会被当成
+ * 直线代码清掉(计数器 `v11 = 0` 会被常量传播成 `0 + 1`)。
  *
  * @Author: jmp0
  */
-export function restoreGotoLoops(program: TYPE.Program): void {
+export function restoreGotoLoops(program: TYPE.Program): boolean {
     // 每轮只改写一处,避免一次替换让其余候选的位置失效
+    let changed = false;
     for (let round = 0; round < 8; round++) {
-        if (restoreLabeledLoopGoto(program)) continue;
-        if (restoreOne(program)) continue;
-        return;
+        if (restoreLabeledLoopGoto(program)) { changed = true; continue; }
+        if (restoreOne(program)) { changed = true; continue; }
+        return changed;
     }
+    return changed;
 }
 
 interface LoopLabelSite {

@@ -138,7 +138,7 @@ Per-class analysis seeded from `func_main_0`, recursing into nested functions (d
 - `throw.undefinedifholewithname` (assert) instructions drive register **type inference** (`typeMap`).
 - If disassembly of one method fails, that method is skipped and later decompiled as a placeholder body.
 
-After structure analysis, `decompiler/post-pass/PostProcessPass.ts` runs the fixed post-structure pipeline over the class AST: rethrow-try flattening (`flatten-rethrow-try-chains`), reserved entry-parameter resolution (`resolve-reserved-params`), and lexical-slot declaration scope normalization (`normalize-lexical-slot-scopes`). These passes run once, before module exports are appended and before `SimplifyExport`; they are deliberately not part of the simplify fixed-point loop.
+After structure analysis, `decompiler/post-pass/PostProcessPass.ts` runs the fixed post-structure pipeline over the class AST: duplicate-declaration normalization (`normalize-declarations`), rethrow-try flattening (`flatten-rethrow-try-chains`), reserved entry-parameter resolution (`resolve-reserved-params`), lexical-slot declaration scope normalization (`normalize-lexical-slot-scopes`), and goto-loop restoration (`restore-goto-loops`). These passes run once, before module exports are appended and before `SimplifyExport`; they are deliberately not part of the simplify fixed-point loop. Goto restoration stays after lexical-slot hoisting so declarations are placed before the loop is wrapped, and before simplify's liveness so loop-body stores are not treated as straight-line code.
 
 ## 7. Decompilation Layer — `src/decompiler/`
 
@@ -225,8 +225,7 @@ Registers are heavily reused (`v6` is both the hole sentinel and a read buffer),
 `SimplifyExport.simplify()` runs a fixed-point core followed by a fixed tail sequence. Every pass returns `boolean` ("did I change the AST?") and the fixed-point loop stops as soon as a full round changes nothing (max **5** rounds).
 
 ```text
-normalizeDeclarations
-  → CallResultSimplify
+CallResultSimplify
   → [ TempVariableSimplify → AccCallSimplify
       → EnumSimplify → ConditionSimplify → SyntaxRewriteSimplify
       → ClassSyntaxSimplify → ObjectLiteralSimplify ] × ≤5 (fixed point)
@@ -272,7 +271,8 @@ Why the tail is ordered this way:
 |---|---|
 | `ISimplify.ts` | Pass interface: `simplify(node): boolean` |
 | `AstUtils.ts` | No-traverse linear AST utilities (temp-name recognition, purity / copyability predicates, node size, read/write collection). Avoids `scope.crawl()` on large ASTs. |
-| `NormalizeDeclarations.ts` | Dedupes duplicate `let` declarations and import/declaration clashes before any Babel traverse (prevents "Duplicate declaration" crashes). |
+| `decompiler/post-pass/NormalizeDeclarations.ts` | Dedupes duplicate `let` declarations and import/declaration clashes before any Babel traverse (prevents "Duplicate declaration" crashes). First post-structure pass. |
+| `decompiler/post-pass/GotoLoopRestore.ts` | Restores `label_x: ;` + `xpanda_goto(label_x)` (and backward pseudo-goto breaks) to `while (true)` after lexical-slot normalization and before simplify, so liveness sees the loop. |
 | `decompiler/post-pass/ReservedParamResolver.ts` | Post-structure AST pass (not a simplify pass): resolves `panda_jmp0_reserved_param_*` (`p0/p1/p2` → `this` / function-or-class name / `new.target` / mutable receiver), `_sendable_class`, `_lex_begin`, and `_export_name_*` before raw output is emitted. Entry self-reference statements are only deleted when the statement *is* the assignment. |
 | `TempVariableSimplify.ts` + `temp/` | The heavy pass: copy propagation + dead-store elimination with per-scope liveness. The public entry point lives here; implementation is split by responsibility under `temp/` (`copy-propagation.ts`, `liveness.ts`, `assignment-folds.ts`, `condition-folds.ts`, `test-folds.ts`, plus `queries.ts` / `context.ts` / `env.ts` / `types.ts` / `base.ts`). Budgets: propagated expression ≤ **24** nodes, clone budget **120000** per run. Handles `finally` live-out reads, moves non-pure expressions only at their true last use, folds loop-test temporaries (`foldLoopTestTemps`, `foldDoWhileTestAssignments`), turns constant-test loops with a leading `if (COND) break` guard back into `while (COND)` (`foldWhileTrueBreakGuards`, after condition folding and skipping for / for-of / for-in lowering shapes), short-circuit materialization chains (`X = E; if (X/!X) { X = B }` and the empty-then `if (X) {} else X = B` form), self-negation chains by parity, accumulator chains (binary, member-call and member-load chains such as `X = E; X = X.trim()`), hub aliases with read redirection (`foldTempAliasAssignments`), and exposes the static entry points used by the pipeline tail (`foldShortCircuitAssignments`, `foldReturnAssignments`, `foldAccumulatorAssignments`, `foldNextReadAssignments`, `foldConditionAssignments`, `removeUnusedLexicalDeclarations`). |
 | `AccCallSimplify.ts` | Restores `recv = acc; acc = acc.m; acc.call(recv, …)` → `recv.m(...)`; `simplifySequences` does the same inside condition sequences. |

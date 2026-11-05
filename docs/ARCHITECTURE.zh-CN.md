@@ -210,11 +210,10 @@ ArkTS 13 把 `finally` 编译成状态机(hole 哨兵、cleanup 块、重抛守�
 
 ## 9. 优化器流水线 —— `src/simplify/`
 
-`SimplifyExport.simplify()` 先跑定点迭代核心,再跑固定的尾部序列。每个 pass 返回 `boolean`("是否修改了 AST"),定点循环在一整轮无修改时立即停止(上限 **5** 轮)。
+`SimplifyExport.simplify()` 先跑定点迭代核心,再跑固定的尾部序列。每个 pass 返回 `boolean`("是否修改了 AST"),定点循环在一整轮无修改时立即停止(上限 **5** 轮)。重复声明归一化与兜底 goto→`while (true)` 在 post-pass 里、export 语句插入之前完成(`normalize-declarations` 在最前,`restore-goto-loops` 在词法槽归一化之后),不进定点迭代。
 
 ```text
-normalizeDeclarations
-  → CallResultSimplify
+CallResultSimplify
   → [ TempVariableSimplify → AccCallSimplify
       → EnumSimplify → ConditionSimplify → SyntaxRewriteSimplify
       → ClassSyntaxSimplify → ObjectLiteralSimplify ] × ≤5(定点)
@@ -254,7 +253,8 @@ normalizeDeclarations
 |---|---|
 | `ISimplify.ts` | Pass 接口:`simplify(node): boolean` |
 | `AstUtils.ts` | 无 traverse 的线性 AST 工具(临时名识别、纯度/可复制判定、节点大小、读写收集)。在大 AST 上避免 `scope.crawl()`。 |
-| `NormalizeDeclarations.ts` | 在任何 Babel traverse 之前去重重复 `let` 声明、处理 import 与声明冲突(防止 "Duplicate declaration" 崩溃)。 |
+| `decompiler/post-pass/NormalizeDeclarations.ts` | post-pass 第一步:在任何 Babel traverse 之前去重重复 `let` 声明、处理 import 与声明冲突(防止 "Duplicate declaration" 崩溃)。 |
+| `decompiler/post-pass/GotoLoopRestore.ts` | 词法槽归一化之后、simplify 之前,把 `label_x: ;` + `xpanda_goto(label_x)`(以及后向伪 goto break)还原成 `while (true)`,让活跃性分析看到真实循环。 |
 | `decompiler/post-pass/ReservedParamResolver.ts` | 结构分析结束后的 AST pass(不属于 simplify):在 raw 输出前还原 `panda_jmp0_reserved_param_*`(`p0/p1/p2` → `this` / 函数或类名 / `new.target` / 可变 receiver)、`_sendable_class`、`_lex_begin`、`_export_name_*`。入口自引用语句只有**整条就是赋值**时才删。 |
 | `TempVariableSimplify.ts` | 最重的 pass:按作用域活跃性做复制传播 + 死存储消除。预算:传播表达式 ≤ **24** 节点、单次运行克隆预算 **120000**。处理 `finally` 出口活跃读取、非纯表达式只在真正最后一次使用时搬移、循环 test 临时变量折叠(`foldLoopTestTemps`、`foldDoWhileTestAssignments`)、把常量 test + 守卫的循环还原成 `while (COND)`(`foldWhileTrueBreakGuards`,在条件折叠之后运行,并跳过 for / for-of / for-in 的 lowering 形态)、短路物化链(`X = E; if (X/!X) { X = B }` 与空 then 的 `if (X) {} else X = B`)、按奇偶性处理自取反链、累加器链(二元/成员调用/成员装载,如 `X = E; X = X.trim()`)、Hub 别名与旧值读取重定向(`foldTempAliasAssignments`);并暴露流水线尾部使用的静态入口(`foldShortCircuitAssignments`、`foldReturnAssignments`、`foldAccumulatorAssignments`、`foldConditionAssignments`、`removeUnusedLexicalDeclarations`)。 |
 | `AccCallSimplify.ts` | 还原 `recv = acc; acc = acc.m; acc.call(recv, …)` → `recv.m(...)`;`simplifySequences` 处理条件序列里的同一形态。 |

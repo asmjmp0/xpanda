@@ -1,5 +1,5 @@
 import * as TYPE from "@babel/types";
-import { addPatternNames, walkNode } from "./AstUtils";
+import { addPatternNames, walkNode } from "../../simplify/AstUtils";
 
 
 const {
@@ -18,7 +18,7 @@ const {
 /**
  * 反编译结果里偶尔会出现同一作用域内重复的 let/import 声明(例如 import constants
  * 与 let constants 同时存在),Babel 建立 scope 时会直接抛
- * "Duplicate declaration"。在进入任何 traverse 之前做一次轻量归一化。
+ * "Duplicate declaration"。作为 post-pass 的第一步,在后续 traverse 之前归一化。
  *
  * 规则:
  *   1. 同一语句列表内重复的 let 声明只保留第一个;带初始化的重复项改写为赋值语句。

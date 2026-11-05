@@ -97,7 +97,8 @@ export class PandaDecompiler {
         const pandaIRCFG = pandaLexical.getPandaIRCFG(funcMain0Method);
         this.decompileSingleFunction(pandaIRCFG, pandaLexical, programNode);
         // 结构分析结束后的后处理流水线(顺序见 PostProcessPass):
-        // rethrow try 壳摊平 → 入口参数还原 → newLexEnv 槽声明作用域归一化。
+        // 声明去重 → rethrow try 壳摊平 → 入口参数还原 → newLexEnv 槽声明作用域归一化
+        // → 兜底 goto 还原成 while (true)。
         runPostProcessPasses(programNode);
 
         // exports

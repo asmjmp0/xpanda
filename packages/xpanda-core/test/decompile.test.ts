@@ -8,7 +8,7 @@ import { NodeFactory } from "../src/ast/NodeFactory";
 import { SimplifyExport } from "../src/simplify/SimplifyExport";
 import { NullishCoalescingSimplify } from "../src/simplify/NullishCoalescingSimplify";
 import { SyntaxRewriteSimplify } from "../src/simplify/SyntaxRewriteSimplify";
-import { restoreGotoLoops } from "../src/simplify/GotoLoopRestore";
+import { restoreGotoLoops } from "../src/decompiler/post-pass/GotoLoopRestore";
 import { flattenRethrowTryChains } from "../src/decompiler/post-pass/RethrowTryFlatten";
 import { HapFile } from "../src/hap/HapFile";
 import type { PandaClass } from "../src/file/clazz/PandaClass";
@@ -2554,7 +2554,7 @@ try {
  * 的两条出边都在循环体内,回边也只回到循环头,所有退出路径都是 return/throw。
  * determineFollowLatch 找不到 follow/latch,只能给回边插 goto,而 goto 落在深层
  * if 分支里,生成 AST 时的 tryFixGoto 只会在同一语句块里找 label,于是输出
- * `xpanda_goto(...)`(不可执行)。GotoLoopRestore 在 simplify 开头把它还原成
+ * `xpanda_goto(...)`(不可执行)。GotoLoopRestore 在 post-pass 末尾把它还原成
  * `while (true)` + `continue`;循环被看见后,停顿计数器也能正好还原
  * (`v11 += 1; if (v11 >= 6)`,否则被常量传播成 `0 + 1 >= 6`)。整类输出有快照。
  */
