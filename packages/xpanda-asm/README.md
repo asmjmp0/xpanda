@@ -1,9 +1,9 @@
 # xpanda-asm
 
-加载 HarmonyOS `.abc`(Panda 字节码)文件,修改/新增实体后重新写回。用于静态 AOP、
-字节码插桩、实验性工具链等场景。
+Load HarmonyOS `.abc` (Panda bytecode) files, modify or add entities and write them back.
+Intended for static AOP, bytecode instrumentation, experimental toolchains, and similar scenarios.
 
-## 用法
+## Usage
 
 ```ts
 import { readFileSync, writeFileSync } from "fs";
@@ -11,59 +11,59 @@ import { PandaPatchFile, assemble } from "xpanda-asm";
 
 const patchFile = PandaPatchFile.load(new Uint8Array(readFileSync("app.abc")));
 
-// 1) 替换方法实现
+// 1) replace a method implementation
 const newCode = { numVregs: 3, numArgs: 2, instructions: Uint8Array.from([...]) };
 patchFile.replaceMethodCode("L_GLOBAL;", "foo", newCode);
 
-// 2) 新增方法(克隆已有方法的 proto/access flags)
+// 2) add a method (clones the proto/access flags of an existing one)
 const { methodId } = patchFile.addMethod("L_GLOBAL;", {
     name: "patched_bar",
     template: "foo",
-    code: newCode, // 可选
+    code: newCode, // optional
 });
 
-// 3) 新增字符串(可用于 lda.str 等指令)
+// 3) add a string (usable by lda.str and other instructions)
 const { id } = patchFile.addStringId("L_GLOBAL;", "patched literal");
 
-// 4) 在方法的任意指令边界插入汇编后的字节码
-//    (自动修正相对跳转、try/catch 的 start/length/handlerPC;片段可以直接写参数寄存器)
+// 4) insert assembled bytecode at any instruction boundary
+//    (fixes relative jumps and try/catch start/length/handlerPC; the fragment may write argument registers directly)
 patchFile.insertInstructions("L_GLOBAL;", "foo", 12, assemble("nop"));
 patchFile.insertInstructions("L_GLOBAL;", "foo", 20, assemble(`
     ldai 1
     sta v7
 `));
 
-// 5) AOP 两段式:prepareMethodHead 返回随机 hook 名,patchMethodHead 内部
-//    编译 hook(es2abc)→ 把 hook(class + module record)搬进目标 abc
-//    → 给目标 module 追加 import 表项 → 插入函数头前导
+// 5) two-phase AOP: prepareMethodHead returns a random hook name; patchMethodHead then
+//    compiles the hook (es2abc) → moves the hook (class + module record) into the target abc
+//    → appends an import entry to the target module → inserts the function prologue
 const hookName = patchFile.prepareMethodHead("L&entry/src/main/ets/target&;", "#*#target");
 patchFile.patchMethodHead(hookName, `import { ohos } from "ohop";
 function ${hookName}(self, args) {
     console.log("recorded this/arguments:", self, args, ohos);
     return {};
 }`, {
-    // es2abc: 可选,缺省按操作系统自动定位 assets/bin/<os>/es2abc[.exe]
-    // hook 里的 import:裸模块名按目标 abc 记录名后缀自动解析,
-    // 也可以显式映射到运行时可解析的请求串
+    // es2abc: optional; by default located automatically as assets/bin/<os>/es2abc[.exe]
+    // imports in the hook: bare module names are resolved by suffix against the target abc's
+    // record names, or map them explicitly to a runtime-resolvable request string
     moduleRequests: { ohop: "@normalized:N&&&entry/src/main/ets/common/ohop&" },
 });
 
-// 同一个 hook 挂多个函数:用同一个 hookGlobalName 多 prepare 几次,
-// 然后 patchMethodHeads 一次编译/搬运、逐个插入
+// One hook on several functions: prepare several times with the same hookGlobalName,
+// then patchMethodHeads compiles/moves once and inserts one by one
 const multiHook = "aop_multi_hook";
 patchFile.prepareMethodHead(className, "#*#targetA", { hookGlobalName: multiHook });
 patchFile.prepareMethodHead(className, "#*#targetB", { hookGlobalName: multiHook });
 const results = patchFile.patchMethodHeads(multiHook, `function ${multiHook}(self, args) { return {}; }`);
 
-// 不同 hook:各自 prepare(随机名)后依次 patch;上一次 patch 的 hook 会保留
+// Different hooks: prepare each (random name), then patch in order; earlier hooks are preserved
 const firstHook = patchFile.prepareMethodHead(className, "#*#targetA");
 const secondHook = patchFile.prepareMethodHead(className, "#*#targetB");
 patchFile.patchMethodHead(firstHook, `function ${firstHook}(self, args) { return { res: 11 }; }`);
 patchFile.patchMethodHead(secondHook, `function ${secondHook}(self, args) { return { res: 22 }; }`);
 
-// 另一种写法:多个 hook 函数写在同一个源文件,一次编译、只搬一个 hook module,
-// 每个 hook 各自 import 后挂到自己的目标方法;同一文件里的其它顶层函数
-// 会作为该 module 的辅助函数一起搬走(与上面的示例二选一)
+// Alternative: put several hook functions in one source file — one compile, one hook module is
+// moved; each hook is imported and attached to its own target, and other top-level functions in
+// the same file move along as helpers of that module (mutually exclusive with the example above)
 const bundledA = patchFile.prepareMethodHead(className, "#*#targetA");
 const bundledB = patchFile.prepareMethodHead(className, "#*#targetB");
 patchFile.patchHookBundle([bundledA, bundledB], `
@@ -75,12 +75,13 @@ function ${bundledB}(self, args) { return {}; }
 writeFileSync("app.patched.abc", patchFile.toBytes());
 ```
 
-## 导出单个/多个 class 到新 abc
+## Exporting one or more classes into a new abc
 
-`PandaPatchFile.dumpClasses()`(或独立函数 `dumpClasses(data, names)`)把选中的类以及它们
-引用到的类/方法复制成一个新的、独立的单 region `.abc`。类索引表、方法/字符串/literal
-array 实体表、prototype 表都会重新生成,type id / method id / literal array 引用同步重映射;
-输出反映当前 patch 会话的最新状态。
+`PandaPatchFile.dumpClasses()` (or the standalone `dumpClasses(data, names)`) copies the selected
+classes plus the classes/methods they reference into a new, standalone single-region `.abc`. The
+class index table, method/string/literal-array entity tables and prototype table are regenerated,
+and type ids / method ids / literal-array references are remapped; the output reflects the latest
+state of the current patch session.
 
 ```ts
 const result = patchFile.dumpClasses(["L&entry/src/main/ets/common/AppLog&;"]);
@@ -88,12 +89,14 @@ writeFileSync("AppLog.abc", result.data);
 console.log(result.classes, result.dependencies);
 ```
 
-限制:目前不支持带 bytecode 级父类/接口表的类(ArkTS 合并后的 abc 通常为 0)、
-非 module 元数据的 VALUE 字段,以及 field-id 指令;遇到时会抛出 `Error`。
+Limitations: classes with a bytecode-level superclass/interface table are not supported yet (ArkTS
+merged abcs usually have 0), nor VALUE fields outside module metadata, nor field-id instructions;
+an `Error` is thrown when encountered.
 
-## AOP 工作流
+## AOP workflow
 
-目标 abc 先由你自己的构建流程产出(es2abc 编译的普通 abc 或 merge 后的应用包),然后:
+The target abc is produced by your own build pipeline (a plain es2abc-compiled abc or a merged
+application package), then:
 
 ```ts
 const patchFile = PandaPatchFile.loadFile("app.abc");
@@ -107,132 +110,160 @@ patchFile.patchMethodHead(hookName, `function ${hookName}(self, args) {
 writeFileSync("app.patched.abc", patchFile.toBytes());
 ```
 
-`patchMethodHead` 的行为(只有一种注入方式:**把 hook 作为 ES module 搬进目标 abc**):
+`patchMethodHead` behavior (there is only one injection mode: **move the hook into the target abc
+as an ES module**):
 
-1. `prepareMethodHead(className, methodName)` 校验目标(存在、非 generator;async 支持)并返回 hook 名;
-   同一个 hook 名可以给多个方法各调用一次(显式传同一个 `hookGlobalName`);
-2. `patchMethodHead(hookName, hookSource)`(单目标)、`patchMethodHeads(...)`(同一个 hook 挂多目标)
-   或 `patchHookBundle([hookA, hookB, ...], hookSource)`(多个 hook 函数写在同一个源文件):
-   - 读取目标 abc 的 bytecode 版本,映射到 es2abc 的 `--target-api-version`,用**相同版本**把 hook 源码
-     编译成带独立 module record 的 abc(12.0.2.0→12、12.0.6.0→13、13.0.1.0→18、24.0.0.0→24;未知版本自动探测);
-   - 把 **hook class 整体搬到目标 abc 的同一 region**:类实体 + 方法 + code + 字符串 + literal array
-     (含嵌套)+ module record(import/export 表)全部重定位,class / method 索引表追加到文件末尾;
-   - hook 源码里的入口函数会被自动改写成 `export function`(已导出/已 `export { name }` 则保持不变);
-     `patchHookBundle` 会对列表里的每个 hook 分别导出,同一个源文件里的其它顶层函数作为辅助函数
-     随 module 一起搬走;
-   - 单 hook 的记录名是 `&xpanda/hook/<hookName>&`;bundle 只搬一个 module,记录名取
-     `&xpanda/hook/<第一个 hook 名>&`,目标 module 为每个 hook 追加一条 import 表项,请求串为
-     `@normalized:N&&&xpanda/hook/<记录名>&`(结果里的 `hookGlobalName` 就是各自的 `<hookName>`);
-   - 给目标类所在 module 的 module record 追加 import 表项(指向 hook record);
-     动态 hook 可以用 `setupClassName` 改成只给指定入口类追加 import;
-   - 在方法头插入 `getunmappedargs → lda this → ldexternalmodulevar <import_idx> → callargs2 → if (res.arg) 写回参数寄存器 → if (res.res) return res.res`;
-   - hook 自己的 `import ... from "x"`:显式 `moduleRequests` 映射优先;否则 `@...`/相对路径原样保留,
-     裸模块名按目标 abc 的记录名后缀唯一匹配(如 `ohop` → `@normalized:N&&&.../ohop&`),
-     匹配不到时原样保留(由运行时/显式映射负责);
-3. 方法没有局部寄存器时自动**扩帧**并把参数寄存器整体后移(同步修正跳转、try/catch);
-4. IC slot 从方法已有 slot 之后分配;
-5. async 方法支持(见下方「异步函数 hook」):前导插在 `asyncfunctionenter; sta vCtx` 之后,
-   早退路径用 `...; asyncfunctionresolve vCtx; return` 正确 resolve Promise;注入代码落在
-   async 的 catch-all try 内,hook 抛异常会走 `asyncfunctionreject`;
-6. generator 方法不支持(函数头在创建/恢复路径上的语义不同)。
+1. `prepareMethodHead(className, methodName)` validates the target (exists, not a generator; async
+   is supported) and returns the hook name; the same hook name may be prepared once per method
+   (pass the same `hookGlobalName` explicitly);
+2. `patchMethodHead(hookName, hookSource)` (single target), `patchMethodHeads(...)` (one hook on
+   several targets) or `patchHookBundle([hookA, hookB, ...], hookSource)` (several hook functions
+   in one source file):
+   - reads the target abc's bytecode version, maps it to es2abc's `--target-api-version`, and
+     compiles the hook source with the **same version** into an abc with its own module record
+     (12.0.2.0→12, 12.0.6.0→13, 13.0.1.0→18, 24.0.0.0→24; unknown versions are probed automatically);
+   - moves the **whole hook class into the same region** of the target abc: class entity + methods +
+     code + strings + literal arrays (including nested ones) + module record (import/export tables)
+     are all relocated, and the class/method index tables are appended to the end of the file;
+   - the entry function in the hook source is rewritten to `export function` automatically
+     (already-exported / `export { name }` forms are kept as-is); `patchHookBundle` exports each
+     hook in the list separately, and other top-level functions in the same source file are moved
+     along with the module as helper functions;
+   - a single hook's record name is `&xpanda/hook/<hookName>&`; a bundle moves one module whose
+     record name is `&xpanda/hook/<first hook name>&`, and the target module gets one import entry
+     per hook with the request string `@normalized:N&&&xpanda/hook/<record name>&`
+     (`hookGlobalName` in the result is each `<hookName>`);
+   - appends an import entry (pointing at the hook record) to the module record of the target
+     class's module; with dynamic hooks, `setupClassName` can restrict the import to a specified
+     entry class;
+   - inserts the prologue `getunmappedargs → lda this → ldexternalmodulevar <import_idx> → callargs2
+     → if (res.arg) write back argument registers → if (res.res) return res.res`;
+   - the hook's own `import ... from "x"`: an explicit `moduleRequests` mapping wins; otherwise
+     `@...`/relative paths are kept verbatim, and bare module names are resolved by unique suffix
+     match against the target abc's record names (e.g. `ohop` → `@normalized:N&&&.../ohop&`);
+     unmatched names are kept verbatim (the runtime or an explicit mapping is responsible);
+3. when a method has no local registers the frame is **grown** automatically and all argument
+   registers are shifted (jumps and try/catch are fixed up);
+4. IC slots are allocated after the method's existing slots;
+5. async methods are supported (see "Async function hooks" below): the prologue is inserted after
+   `asyncfunctionenter; sta vCtx`, early returns use `...; asyncfunctionresolve vCtx; return` to
+   resolve the Promise correctly; injected code sits inside the async catch-all try, so a hook
+   throwing goes through `asyncfunctionreject`;
+6. generator methods are not supported (the function head has different semantics on the
+   create/resume paths).
 
-要求:
+Requirements:
 
-- import 宿主类(缺省是目标类,动态 hook 可用 `setupClassName` 指定入口类)带 module record
-  时直接追加 import;没有 module record(bundle-pack / 未合并 abc)时,
-  会给类实体**硬加** `isCommonjs` + `moduleRecordIdx` 字段和一个空 module record。
-  注意:运行时会因为出现 `moduleRecordIdx` 把整个 abc 当 merged abc 加载, bundle-pack 文件
-  只有在确认加载方式仍成立时才这样用(更稳妥的是先合并/重新编译目标 abc);
-- hook 宿主 region(setupClassName 指定时是入口类,否则是目标类)的 proto index table
-  必须无效(bytecode >= 12.0.1.0);
-- hook 源码必须声明 `function <hookName>(...)`(表达式形式不支持);`patchHookBundle` 里的每个 hook 名都要有同名函数
-  (hook 函数写在固定文件里时,用 `prepareMethodHead(..., { hookGlobalName: "myHook" })` 让文件名与 hook 名一致,
-  再把 `readFileSync(...)` 的内容作为 `hookSource` 传入);
-- 缺省情况下目标类与 hook class 必须落在同一个 index region(`patchHookBundle` 的所有目标类也必须同 region,
-  hook class 只搬一份);动态 hook 指定 `setupClassName` 后 hook class 搬进入口类所在 region,目标类不再受此限制;
-- import 宿主的 module 不能带 namespace import(追加 regular import 会移动它们的环境下标);
-- `localName` 是目标 module record 内的局部名:同一个类从 bundle 导入多个 hook 时不能共用一个自定义名,
-  缺省按各自 hook 名生成。
+- the import host class (the target class by default; with dynamic hooks, the entry class given by
+  `setupClassName`) gets the import appended directly when it has a module record; without one
+  (bundle-pack / unmerged abc) the class entity is **force-extended** with `isCommonjs` +
+  `moduleRecordIdx` fields and an empty module record. Note: the presence of `moduleRecordIdx` makes
+  the runtime load the whole abc as a merged abc; only use this for bundle-pack files when you are
+  sure the loading mode still holds (safer: merge/recompile the target abc first);
+- the proto index table of the hook host region (the target class, or the entry class when
+  `setupClassName` is given) must be invalid (bytecode >= 12.0.1.0);
+- the hook source must declare `function <hookName>(...)` (expression forms are not supported);
+  every hook name in `patchHookBundle` needs a same-named function (when hooks live in a fixed
+  file, use `prepareMethodHead(..., { hookGlobalName: "myHook" })` to align the file name with the
+  hook name, then pass the contents of `readFileSync(...)` as `hookSource`);
+- by default the target class and the hook class must land in the same index region (all target
+  classes of a `patchHookBundle` must also share one region; the hook class is moved only once);
+  with dynamic hooks and `setupClassName`, the hook class moves into the entry class's region and
+  the target classes are no longer constrained;
+- the import host's module must not contain namespace imports (appending a regular import shifts
+  their environment indices);
+- `localName` is the local name inside the target module record: when one class imports several
+  hooks from a bundle they cannot share a custom name; by default it is derived from each hook name.
 
-es2abc 查找顺序:显式 `{ es2abc }` → `XPANDA_ES2ABC` → 仓库 `assets/bin/<os>/es2abc[.exe]` → `PATH`。
+es2abc lookup order: explicit `{ es2abc }` → `XPANDA_ES2ABC` → repository
+`assets/bin/<os>/es2abc[.exe]` → `PATH`.
 
-> 为什么搬整个 module record:hook 里的 `import` 编译成 `ldexternalmodulevar`,它按
-> **当前函数所属 module record** 的 import 表解析。只搬 class 会让 hook 读到目标 module
-> 的 import 表(错值/越界);把 module record 一起搬进目标 abc,并让目标 module 真正
-> import 这个 record,hook 的 import 与顶层变量才能按模块语义求值。
+> Why the whole module record is moved: `import` in the hook compiles to `ldexternalmodulevar`,
+> which resolves against the import table of the **module record the current function belongs to**.
+> Moving only the class would make the hook read the target module's import table (wrong values /
+> out of bounds); moving the module record into the target abc and making the target module
+> actually import that record lets the hook's imports and top-level variables be evaluated with
+> module semantics.
 
-## Hook 返回协议
+## Hook return protocol
 
-hook 的签名是 `hook(this, arguments)`,返回一个对象,可以同时改写参数和提前返回:
+The hook signature is `hook(this, arguments)` and it returns an object that can rewrite arguments
+and return early at the same time:
 
 ```ts
 hook(this, arguments) -> { arg?: any[]; res?: any }
 ```
 
-`this` 是目标方法的接收者(实例方法/组件方法就是实例;模块级函数是 `undefined`)。
+`this` is the target method's receiver (the instance for instance/component methods; `undefined`
+for module-level functions).
 
-| 返回 | 行为 |
+| Return | Behavior |
 |---|---|
-| `{ arg: [...] }` | **改写参数**:按顺序写回目标函数的参数寄存器(等价于 `[p0, p1] = arg`) |
-| `{ res: value }` | **拦截**:目标函数直接返回 `value`,原函数体不执行 |
-| `{ arg, res }` | 先改写参数,再拦截 |
-| `{}` / `undefined` 字段 | **放行**:继续执行原函数 |
+| `{ arg: [...] }` | **Rewrite arguments**: written back to the target function's argument registers in order (equivalent to `[p0, p1] = arg`) |
+| `{ res: value }` | **Intercept**: the target function returns `value` directly; the original body is not executed |
+| `{ arg, res }` | Rewrite arguments first, then intercept |
+| `{}` / `undefined` fields | **Pass through**: continue with the original function |
 
-注入的前导等价于:
+The injected prologue is equivalent to:
 
 ```js
 const res = hook(this, arguments); // lda this → getunmappedargs → ldexternalmodulevar → callargs2
 if (res.arg) {                 // ldobjbyname "arg" → callruntime.isfalse → jnez
     p0 = res.arg[0];           // ldai i → ldobjbyvalue → sta pN
     p1 = res.arg[1];
-    // ... 目标的每个参数
+    // ... every parameter of the target
 }
 if (res.res) {                 // ldobjbyname "res" → callruntime.isfalse → jnez
     return res.res;            // (async: asyncfunctionresolve vCtx; return)
 }
-// 否则落到原函数第一条指令
+// otherwise fall through to the target's first instruction
 ```
 
-示例:
+Examples:
 
 ```ts
-// 只记录,不改变行为
+// record only, do not change behavior
 function hook(self, args) {
     console.log("this:", self, "args:", args);
     return {};
 }
 
-// 拦截:目标函数直接返回 42
+// intercept: the target function returns 42 directly
 function hook(self, args) {
     return { res: 42 };
 }
 
-// 改写参数:目标函数用 p0 = 10 / p1 = 20 执行原函数体
+// rewrite arguments: the target body runs with p0 = 10 / p1 = 20
 function hook(self, args) {
     return { arg: [10, 20] };
 }
 ```
 
-注意:
+Notes:
 
-- hook 是**同步调用**的,不能返回 `Promise`;
-- hook 收到的 `arguments` 是 `getunmappedargs` 的快照对象:有 `length` / 下标,但不是 Array 实例
-  (没有 `join` 等 Array 方法);
-- `this` 是目标函数的真实接收者(直接 `lda` 保留的 this 寄存器);模块级函数的 `this` 是 `undefined`;
-- `arg` 按数组/类数组下标读取(`res.arg[i]`),不做迭代器解构;缺省元素写入 `undefined`;
-  目标函数的每个参数都会被覆盖(参数个数 = `numArgs - 3`);
-- `res.res` 按**真值**判断(`if (res.res)`),所以返回 `0` / `""` / `false` / `null` / `undefined`
-  不会拦截(与源码里的 `if (res.res)` 一致);需要拦截 falsy 返回值时把协议改成
-  `res.res !== undefined` 的判断;
-- 参数改写发生在原函数体的第一条指令之前,函数体的默认参数逻辑会看到新值。
+- hooks are called **synchronously** and must not return a `Promise`;
+- the `arguments` the hook receives is a snapshot object from `getunmappedargs`: it has `length`
+  and indices, but is not an Array instance (no `join` and other Array methods);
+- `this` is the real receiver of the target function (the this register kept by `lda`); for
+  module-level functions `this` is `undefined`;
+- `arg` is read by array/array-like index (`res.arg[i]`), with no iterator destructuring; missing
+  elements are written as `undefined`; every parameter of the target is overwritten (parameter
+  count = `numArgs - 3`);
+- `res.res` is tested by **truthiness** (`if (res.res)`), so returning `0` / `""` / `false` /
+  `null` / `undefined` does not intercept (matching `if (res.res)` in source); to intercept falsy
+  returns, change the protocol to `res.res !== undefined`;
+- argument rewriting happens before the original body's first instruction, so default-parameter
+  logic sees the new values.
 
-## 动态 hook（GlobalPatch 槽）
+## Dynamic hooks (GlobalPatch slots)
 
-`{ dynamic: true }` 把方法头对 hook 函数的查找从写死的 `ldexternalmodulevar` 换成
-`wide.ldpatchvar`。槽是虚拟机进程全局的 `GlobalEnv.GlobalPatch`（`u16` 下标），
-`wide.stpatchvar` 写入、`wide.ldpatchvar` 读出。默认从 `0x1000` 起分配，避开系统热修编译器
-常用的低位；同一个 hook 名复用同一个槽。槽必须落在 `0..0x7fff`：设备上的汇编解释器把这条
-立即数按有符号 16 位送进 runtime，`0x8000` 及以上会被当成巨大的数组长度，`stpatchvar` 直接把进程打 OOM。
+`{ dynamic: true }` replaces the hard-coded `ldexternalmodulevar` lookup in the method prologue
+with `wide.ldpatchvar`. The slot is the VM-process-global `GlobalEnv.GlobalPatch` (`u16` index),
+written by `wide.stpatchvar` and read by `wide.ldpatchvar`. Allocation starts at `0x1000` by
+default to avoid the low slots used by the system hotfix compiler; the same hook name reuses the
+same slot. A slot must stay within `0..0x7fff`: the on-device assembly interpreter passes this
+immediate through as a signed 16-bit value, so `0x8000` and above are treated as a huge array
+length and `stpatchvar` OOMs the process.
 
 ```ts
 const hookName = patchFile.prepareMethodHead(className, methodName);
@@ -241,54 +272,68 @@ const result = patchFile.patchMethodHead(hookName, `function ${hookName}(self, a
 }`, { dynamic: true });
 
 // result.patchSlot === 0x1000
-// 模块初始化之后，任意 JS 可以换实现或关闭:
-//   globalThis[result.setterGlobalName](newFn);  // 名字是 xpanda_set_<hookName>
+// After module initialization any JS code can swap or disable the implementation:
+//   globalThis[result.setterGlobalName](newFn);  // the name is xpanda_set_<hookName>
 //   globalThis[result.setterGlobalName](undefined);
 ```
 
-setup 的触发点在缺省情况下是**目标方法所属的类**:目标 module 会 import hook 模块,
-从而保证目标方法第一次执行前槽已经写好。也可以把 setup 提前到 hap 入口(例如
-`EntryAbility`),这样目标类不参与 hook,槽在应用启动阶段就安装好:
+By default the setup is triggered by the **class owning the target method**: the target module
+imports the hook module, guaranteeing the slot is written before the target method runs for the
+first time. The setup can also be moved earlier to the HAP entry (e.g. `EntryAbility`), so the
+target class is not involved and the slot is installed during app startup:
 
 ```ts
 const result = patchFile.patchMethodHead(hookName, hookSource, {
     dynamic: true,
-    // 通常是 hap 入口类;只给这个类追加 hook import,hook class 也搬进它所在的 region
+    // usually the hap entry class; only this class gets the hook import, and the hook class
+    // moves into its region
     setupClassName: "L&entry/src/main/ets/entryability/EntryAbility&;",
 });
 ```
 
-指定 `setupClassName` 后目标方法所在类**不再追加 import**,因此目标类可以分散在不同的
-index region;代价是 setup 不再跟随目标 module 加载,入口 module 必须先于被 hook 方法的
-调用完成求值(否则 `wide.ldpatchvar` 会读一张还没扩容的 `GlobalPatch` 数组)。
+With `setupClassName` specified, the target method's class **no longer gets the import appended**,
+so target classes may be spread across index regions; the cost is that setup no longer follows the
+target module's load — the entry module must finish evaluating before the hooked methods are called
+(otherwise `wide.ldpatchvar` reads a `GlobalPatch` array that has not been expanded yet).
 
-注入后多出来的字节码:
+Extra bytecode after injection:
 
-1. hook 模块里追加 `export function <hookName>__set(fn)`，方法体被换成
-   `lda v3; wide.stpatchvar <slot>; returnundefined`（`numArgs` 沿用 es2abc 编出来的值，`numVregs` 收成 0）；
-2. hook 模块末尾的 `xpanda_reserved_setup.xpanda_reserved_setup()` 统一安装本模块里的全部槽：
-   `ldlocalmodulevar` 取出函数 → `wide.stpatchvar`，再 `ldglobal; stobjbyname` 把 setter 挂到
-   `globalThis`（`trystglobalbyname` 要求这个名字已经是全局绑定，否则运行时直接 ReferenceError）。
-   缺省由目标 module import 这个 hook 模块触发 setup;指定 `setupClassName` 时改由该入口类 import,
-   从而保证 setup 在目标方法之前执行(入口 module 的求值顺序需要满足,见上方说明)；
-3. 方法头先 `wide.ldpatchvar`。槽值是 hole / `undefined` / 其它 falsy 时跳过整个前导，原方法照常执行；
-   否则仍按 `{ arg, res }` 协议调用。
+1. the hook module gains `export function <hookName>__set(fn)` whose body is replaced with
+   `lda v3; wide.stpatchvar <slot>; returnundefined` (`numArgs` keeps the value es2abc produced,
+   `numVregs` becomes 0);
+2. the hook module ends with `xpanda_reserved_setup.xpanda_reserved_setup()` which installs every
+   slot in the module: `ldlocalmodulevar` fetches the function → `wide.stpatchvar`, then
+   `ldglobal; stobjbyname` puts the setter on `globalThis` (`trystglobalbyname` requires that name
+   to already be a global binding, otherwise the runtime throws ReferenceError). By default the
+   setup runs when the target module imports the hook module; with `setupClassName` the entry class
+   imports it instead, so setup runs before the target methods (the entry module's evaluation order
+   must satisfy this, see above);
+3. the method prologue starts with `wide.ldpatchvar`. If the slot value is hole / `undefined` / any
+   other falsy value the whole prologue is skipped and the original method runs as usual; otherwise
+   it calls with the `{ arg, res }` protocol.
 
-反编译把这两条指令写成 `xpanda_reserved_patch[槽] = acc` / `acc = xpanda_reserved_patch[槽]`。`xpanda_reserved_patch` 就是运行时那张 `GlobalPatch` 数组；在 Node 里执行反编译结果时，给这个名字准备一个数组即可。
+The decompiler renders these two instructions as `xpanda_reserved_patch[slot] = acc` /
+`acc = xpanda_reserved_patch[slot]`. `xpanda_reserved_patch` is the runtime's `GlobalPatch` array;
+when executing decompiled output in Node, provide an array under that name.
 
-限制:
+Limitations:
 
-- import 宿主类(缺省是目标类,指定 `setupClassName` 时是入口类)必须在被 hook 的方法调用前
-  完成模块初始化。安装代码在模块初始化时跑;`GlobalPatch` 还是空数组时执行 `wide.ldpatchvar` 是越界读；
-- 这张表是整个虚拟机一份。系统热修卸载会把 `GlobalPatch` 重新设成空数组，之后的 load 同样越界；
-- 调用点仍然要先写进 abc。这两条指令不能给一个没改过的方法做运行时挂载，也不能代替系统的 `ReplaceMethod`；
-- 换上去的函数要遵守同一个 `(self, args) -> { arg?, res? }` 协议；
-- 已经 AOT 的方法要等重新加载或 deopt 才会执行插入的字节码，和静态 hook 一样。
+- the import host class (the target class by default, the entry class with `setupClassName`) must
+  finish module initialization before the hooked method is called. The installation code runs
+  during module initialization; executing `wide.ldpatchvar` while `GlobalPatch` is still an empty
+  array is an out-of-bounds read;
+- the table is per VM process. Unloading a system hotfix resets `GlobalPatch` to an empty array,
+  and later loads are out-of-bounds again;
+- the call site still has to be written into the abc. These two instructions cannot mount a hook on
+  an unmodified method at runtime, nor replace the system's `ReplaceMethod`;
+- the swapped-in function must follow the same `(self, args) -> { arg?, res? }` protocol;
+- already-AOTed methods only execute the inserted bytecode after a reload or deopt, same as static
+  hooks.
 
-## 初始化回调 init
+## Init callback
 
-init 和 hook 一样,**由用户写函数声明**,xpanda 只负责把它导出并安排调用。
-init 函数必须声明在注入的 module 源码里:
+Like hooks, init is **a user-written function declaration**; xpanda only exports it and schedules
+the call. The init function must be declared in the injected module source:
 
 ```ts
 function init() {
@@ -297,7 +342,7 @@ function init() {
 }
 ```
 
-### 只注入 init(不 hook 任何方法)
+### Injecting init only (no method hooks)
 
 ```ts
 const result = patchFile.patchInit(`
@@ -305,22 +350,24 @@ const result = patchFile.patchInit(`
         globalThis.__patched = true;
     }
 `, {
-    // 必填:入口类负责 import 初始化 module,并在 func_main_0 里调用 init
+    // required: the entry class imports the init module and calls init from func_main_0
     setupClassName: "L&entry/src/main/ets/entryability/EntryAbility&;",
-    // 可选:函数名,缺省 "init"
+    // optional: function name, "init" by default
     // initName: "init",
 });
 
 // result.moduleName / result.initName / result.importIndex / result.codeOffset
 ```
 
-注入内容:把 module(函数声明 + 它用到的 import/顶层变量)搬进入口类所在 region,
-给入口类 module record 追加 init 函数的 import,并在入口类 `func_main_0` 开头插入
-`ldexternalmodulevar <init>; callarg0`。没有 hook、没有 GlobalPatch 槽。
+What is injected: the module (function declarations + the imports/top-level variables it uses) is
+moved into the entry class's region, the init function's import is appended to the entry module
+record, and `ldexternalmodulevar <init>; callarg0` is inserted at the beginning of the entry
+class's `func_main_0`. No hook, no GlobalPatch slot.
 
 ### hook + init
 
-有 hook 时,init 函数和 hook 函数写在**同一份 `hookSource`** 里,用 `init` 选项指定函数名:
+With hooks, the init function is written in the **same `hookSource`** as the hook functions and
+selected via the `init` option:
 
 ```ts
 const hookName = patchFile.prepareMethodHead(className, "#*#target");
@@ -333,103 +380,135 @@ patchFile.patchMethodHead(hookName, `
 `, {
     dynamic: true,
     setupClassName: "L&entry/src/main/ets/entryability/EntryAbility&;",
-    init: "init",   // 必须是 hookSource 里声明的函数
+    init: "init",   // must be a function declared in hookSource
 });
 ```
 
-- **dynamic**:入口 module 先 import hook module(执行 `xpanda_reserved_setup` 写槽),
-  然后 `func_main_0` 调用 init,即 **setup 完成后**再执行 init;
-- **static**:入口 module 直接 import hook module 并在 `func_main_0` 调用 init;
-- `init` 缺省:不注入 init import,也不插入调用;
-- 指定 `init` 时**必须**同时指定 `setupClassName`(入口类),否则报错;
-- init 函数和 hook 函数一样会被改写成 `export function`(已经是导出形式则保持);
-- 静态 hook 也可以配合 `init` 使用 `setupClassName`;不配 `init` 时静态 hook 仍然不允许该选项;
-- 入口类必须有 `func_main_0`;没有 module record 时仍按前面的规则硬加。
+- **dynamic**: the entry module imports the hook module first (running `xpanda_reserved_setup` to
+  write slots), then `func_main_0` calls init — i.e. init runs **after setup**;
+- **static**: the entry module imports the hook module directly and calls init from `func_main_0`;
+- omitting `init`: no init import and no call are injected;
+- specifying `init` **requires** `setupClassName` (the entry class), otherwise an error is raised;
+- the init function is rewritten to `export function` like hook functions (already-exported forms
+  are kept);
+- static hooks may also use `setupClassName` together with `init`; without `init`, static hooks
+  still do not allow that option;
+- the entry class must have `func_main_0`; without a module record one is force-added by the rules
+  above.
 
-## 异步函数 hook
+## Async function hooks
 
-用法与同步函数完全相同(`prepareMethodHead` 会自动识别 async 函数),不需要额外参数:
+Usage is identical to synchronous functions (`prepareMethodHead` detects async automatically); no
+extra options:
 
 ```ts
-// 目标:export async function fetchUser(id: string) { ... }
+// target: export async function fetchUser(id: string) { ... }
 const hookName = patchFile.prepareMethodHead(className, "#*#fetchUser");
 patchFile.patchMethodHead(hookName, `function ${hookName}(self, args) {
     const id = args[0];
     if (id === "test") return { res: { name: "mock" } }; // await fetchUser("test") -> { name: "mock" }
-    return {};                                           // 继续执行原异步函数
+    return {};                                           // continue with the original async function
 }`);
 ```
 
-内部处理:
+Internal handling:
 
-1. async 函数头是 `asyncfunctionenter; sta vCtx`,await 恢复时从 `suspendgenerator` 之后继续,
-   **不会重跑函数头**;前导插在 `sta vCtx` 之后,每次调用只执行一次;
-2. 临时寄存器避开 `vCtx`;
-3. 早退路径会先 `asyncfunctionresolve vCtx` 再 `return`,所以 `{ res: value }` 返回的是
+1. an async function head is `asyncfunctionenter; sta vCtx`; on await resume execution continues
+   after `suspendgenerator` and **does not re-run the function head**; the prologue is inserted
+   after `sta vCtx`, so it runs once per call;
+2. temporary registers avoid `vCtx`;
+3. early returns run `asyncfunctionresolve vCtx` before `return`, so `{ res: value }` returns
    `Promise.resolve(value)`;
-4. 注入代码位于 async 的 catch-all try 内,hook 抛异常会走 `asyncfunctionreject`,
-   表现为 Promise rejection,而不是同步抛出。
+4. injected code lives inside the async catch-all try; a hook throwing goes through
+   `asyncfunctionreject`, i.e. a Promise rejection rather than a synchronous throw.
 
-限制:hook 本身是同步的,不能 `await`;需要异步逻辑时只能在 hook 里同步返回结果。
-generator 函数不支持(函数头在创建/恢复路径上的语义不同)。
+Limitations: the hook itself is synchronous and cannot `await`; async logic must be returned
+synchronously. Generator functions are not supported (the function head has different semantics on
+the create/resume paths).
 
-## 实现方式
+## Implementation
 
 append-only patcher:
 
-- 原始字节不变,新实体追加到文件末尾(4 字节对齐);
-- 定长指针原位改写(方法的 CODE tag、类索引表项);
-- 需要改长度的实体(类实体,用于加方法 / 搬运 hook class)整体复制到末尾,再重定位引用它的索引表;
-- 写回时更新 `file_size` 与 Adler32 checksum。
+- original bytes are untouched; new entities are appended to the end of the file (4-byte aligned);
+- fixed-size pointers are rewritten in place (a method's CODE tag, class index table entries);
+- entities whose length must change (class entities, for adding methods / moving hook classes) are
+  copied to the end and the index tables referencing them are relocated;
+- on write-back, `file_size` and the Adler32 checksum are updated.
 
-## 当前支持范围(v0)
+## Current support (v0)
 
-- ✅ 替换方法代码(`replaceMethodCode`)
-- ✅ 新增方法(`addMethod`,克隆已有方法的 proto/access flags)
-- ✅ 新增字符串 / 字符串 id(`addString` / `addStringId`)
-- ✅ 在任意指令边界插入汇编字节码(`insertInstructions`):自动修正相对跳转、try/catch 范围;片段可以写参数寄存器(`index >= numVregs`),不会改变帧布局
-- ✅ AOP 函数头 hook:`prepareMethodHead` + `patchMethodHead(s)` / `patchHookBundle`,支持一个 hook 挂多个函数、多个 hook、多个 hook 写在同一个源文件、async 函数
-- ✅ 动态 hook(`{ dynamic: true }`):方法头 `wide.ldpatchvar` 读 GlobalPatch 槽,hook 模块的 `xpanda_reserved_setup` 用 `wide.stpatchvar` 装初始函数,`globalThis.xpanda_set_<hook>` 运行时替换;可用 `setupClassName` 把 setup import 提前到 hap 入口类
-- ✅ 初始化回调 init:可单独调用 `patchInit(moduleSource, { setupClassName })`(不 hook 方法),也可在 `patchMethodHead(s)` 里传 `init: "<函数名>"` 把 init 函数和 hook 函数写在同一份源码;dynamic 在 setup 之后、static 直接由入口类 `func_main_0` 调用
-- ✅ AOP hook 统一走 module record 搬运:hook class 的 import/export 表随类整体搬进目标 abc,目标 module 追加 import,前导用 `ldexternalmodulevar` 调用(hook 内部的 import / 顶层变量可正常解析)
-- ✅ 同一次会话里连续新增方法 / 追加字符串 / 替换代码 / 连续插入(代码模型会累积最新版本)
-- ✅ 无修改时字节级 round-trip
-- ✅ 已在 bytecode 11.0.2.0 / 12.0.2.0 / 13.0.1.0 / 24.0.0.0(merged abc)上验证
-- ✅ 产物通过 xpanda 反编译 + es2abc(`--enable-abc-input`)二次解析
+- ✅ Replace method code (`replaceMethodCode`)
+- ✅ Add methods (`addMethod`, cloning an existing method's proto/access flags)
+- ✅ Add strings / string ids (`addString` / `addStringId`)
+- ✅ Insert assembled bytecode at any instruction boundary (`insertInstructions`): fixes relative
+  jumps and try/catch ranges; fragments may write argument registers (`index >= numVregs`) without
+  changing the frame layout
+- ✅ AOP function-head hooks: `prepareMethodHead` + `patchMethodHead(s)` / `patchHookBundle`,
+  supporting one hook on several functions, several hooks, several hooks in one source file, and
+  async functions
+- ✅ Dynamic hooks (`{ dynamic: true }`): the method prologue reads a GlobalPatch slot via
+  `wide.ldpatchvar`, the hook module's `xpanda_reserved_setup` installs the initial function with
+  `wide.stpatchvar`, and `globalThis.xpanda_set_<hook>` swaps it at runtime; `setupClassName` moves
+  the setup import earlier to the hap entry class
+- ✅ Init callback: call `patchInit(moduleSource, { setupClassName })` on its own (no method hooks),
+  or pass `init: "<function name>"` to `patchMethodHead(s)` to write the init function in the same
+  source as the hook functions; dynamic runs it after setup, static calls it directly from the
+  entry class's `func_main_0`
+- ✅ AOP hooks all go through module-record relocation: the hook class's import/export tables move
+  with the class into the target abc, the target module gets an import entry, and the prologue
+  calls it with `ldexternalmodulevar` (the hook's imports / top-level variables resolve normally)
+- ✅ Multiple add-method / add-string / replace-code / insert operations in one session (the code
+  model accumulates the latest version)
+- ✅ Byte-exact round-trip when nothing is modified
+- ✅ Verified on bytecode 11.0.2.0 / 12.0.2.0 / 13.0.1.0 / 24.0.0.0 (merged abc)
+- ✅ Output re-parses through the xpanda decompiler and es2abc (`--enable-abc-input`)
 
-限制:
+Limitations:
 
-- ⏳ 新增任意类 / 新增 proto / 新增 literal array(目前仅 AOP 的 hook class 搬运支持 class/literal array 导入)
-- ⚠️ hook class 搬运要求目标 proto index table 无效(>= 12.0.1.0),且 class 无父类/接口;没有 module record 的目标会被硬加 module 字段(bundle-pack 文件会因此被运行时按 merged 语义加载)
-- ⚠️ hook module 的 import 需要能在目标 abc 的运行时里解析(裸模块名走记录名后缀匹配,或显式 `moduleRequests`)
-- ⚠️ 替换代码/插入代码时保留原 debug info(行号可能过时,不影响执行)
-- ⚠️ 插入的指令会真实执行:片段若改写 `acc`/寄存器,需要自行保证不破坏后续代码的寄存器状态
-- ⚠️ 插入片段内部的相对跳转只能指向片段内部(或片段末尾);引用原有指令的跳转需要自行换算,当前直接拒绝
-- ⚠️ `addMethod` 之后新方法不会出现在 `getMethodNames()` / `getMethodCode()` 里,需要重新 `PandaPatchFile.load(toBytes())`
-- ⚠️ 多 index section 的文件只允许对最后一个 region 内的类 `addMethod`;其它 region 会抛错
-- ⚠️ 依赖 xpanda-core 的只读解析器定位实体;带注解 tag 的类/方法实体暂不支持
+- ⏳ Adding arbitrary classes / protos / literal arrays (only AOP hook-class movement supports
+  class/literal-array imports so far)
+- ⚠️ Hook-class movement requires the target proto index table to be invalid (>= 12.0.1.0) and the
+  class to have no superclass/interfaces; targets without a module record get module fields
+  force-added (bundle-pack files will then be loaded by the runtime with merged semantics)
+- ⚠️ Hook module imports must resolve in the target abc's runtime (bare module names go through
+  record-name suffix matching, or explicit `moduleRequests`)
+- ⚠️ Replacing/inserting code keeps the original debug info (line numbers may be stale, execution
+  is unaffected)
+- ⚠️ Inserted instructions really execute: if a fragment rewrites `acc`/registers, it must preserve
+  the register state needed by the following code
+- ⚠️ Relative jumps inside an inserted fragment may only target the fragment itself (or its end);
+  jumps into existing instructions must be recomputed by hand and are currently rejected
+- ⚠️ After `addMethod` the new method does not appear in `getMethodNames()` / `getMethodCode()`;
+  reload with `PandaPatchFile.load(toBytes())`
+- ⚠️ Files with multiple index sections only allow `addMethod` for classes in the last region;
+  other regions throw
+- ⚠️ Entity locating relies on xpanda-core's read-only parser; class/method entities with
+  annotation tags are not supported yet
 
-## 汇编器(xpanda-asm)
+## Assembler (xpanda-asm)
 
-本库的 `src/Assembler.ts` 由 `xpanda-core` 的 `gen-opcodes.ts` 生成的操作数布局驱动:
+`src/Assembler.ts` in this library is driven by the operand layouts generated from `xpanda-core`'s
+`gen-opcodes.ts`:
 
 ```ts
 import { assemble, assembleInstruction, decodeInstructions } from "xpanda-asm";
 
 assemble("nop");                                  // -> Uint8Array [0xd5]
-assemble("ldai 1");                               // 立即数
+assemble("ldai 1");                               // immediate
 assemble(`
   ldai 1
   sta v0
-`);                                               // 多条指令
-assembleInstruction("mov", [0, 1]);               // 0x44 0x10(自动选最小变体)
+`);                                               // multiple instructions
+assembleInstruction("mov", [0, 1]);               // 0x44 0x10 (smallest variant chosen automatically)
 assembleInstruction("mov", [0, 1], { format: "V8_V8" });
-decodeInstructions(bytes);                        // 结构化解码(用于插入时的跳转修正)
+decodeInstructions(bytes);                        // structured decode (used for jump fixups when inserting)
 ```
 
-汇编器对 md5/class/aes 样本的每条指令做了解码→重汇编的逐字节 round-trip。
+The assembler round-trips every instruction of the md5/class/aes samples byte-for-byte through
+decode → reassemble.
 
-## 测试
+## Tests
 
 ```bash
 yarn workspace xpanda-asm test

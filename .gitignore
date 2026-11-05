@@ -17,3 +17,6 @@ reference/
 # IDE
 .idea/
 .vscode/
+
+# xpanda-gadget legacy build output (artifacts live in assets/<abi>/)
+packages/xpanda-gadget/native/build/

@@ -30,15 +30,16 @@ Supported bytecode versions: `24.0.0.0` (backward compatible with `13.0.1.0`; Ar
 
 ## Monorepo layout
 
-The project is split into five yarn-workspace packages under `packages/`:
+The project is split into six yarn-workspace packages under `packages/`:
 
 | Package | Purpose |
 |---|---|
 | `xpanda-core` | `.abc` / `.hap` parsing, disassembly, decompilation and the optimizer — the library everything else builds on |
-| `xpanda-cli` | command line interface (`decompile` / `unpack-index` / `dump-asm` / `dump`) |
+| `xpanda-cli` | command line interface (`decompile` / `unpack-index` / `dump-asm` / `dump` / `gadget`) |
 | `xpanda-mcp` | MCP server (stdio) for AI client integration |
 | `xpanda-web` | browser UI (React + Vite, pure frontend) |
 | `xpanda-asm` | bytecode assembler plus load, modify (replace method code / add methods, strings), dump classes and re-emit `.abc` files |
+| `xpanda-gadget` | Frida-Gadget-style init injector: bytecode bootstrap + embedded NAPI gadget `.so` (socket messaging + JSVM execution) |
 
 ## Install and use
 
@@ -52,7 +53,16 @@ CLI (run from the repository root):
 yarn tsx packages/xpanda-cli/src/cli.ts decompile <file.abc|file.hap> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N] [--timeout SEC]
 yarn tsx packages/xpanda-cli/src/cli.ts dump-asm <file.abc|file.hap> [-o outDir] [--stdout]
 yarn tsx packages/xpanda-cli/src/cli.ts dump <file.abc|file.hap> -c <class> [-c ...] [-o out.abc|outDir]
+yarn tsx packages/xpanda-cli/src/cli.ts gadget <file.abc|file.hap> [-o outDir] [--port N] [--entry CLASS] [--so PATH] [--no-so]
+yarn tsx packages/xpanda-cli/src/cli.ts gadget shell [-p N] [-t serial]   # interactive JS shell (auto hdc fport)
+yarn tsx packages/xpanda-cli/src/cli.ts gadget file <script.js> [--once]  # run on start + every save
 ```
+
+`gadget` injects an xpanda-gadget init bootstrap into the entry `func_main_0`, embeds
+`libxpanda_gadget.so` into the HAP (`libs/<abi>/`) and rebuilds the package; re-sign before installing.
+`gadget shell` forwards `tcp:<port>` to the gadget's abstract socket over hdc and opens a REPL;
+evaluation runs on the app's JS thread in the gadget's own JSVM (`--jitless`).
+See [packages/xpanda-gadget/README.md](packages/xpanda-gadget/README.md) for the socket protocol and JS runtime.
 
 | Option | Description |
 |---|---|

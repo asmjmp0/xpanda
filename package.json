@@ -8,12 +8,13 @@
     "packages/xpanda-cli",
     "packages/xpanda-mcp",
     "packages/xpanda-web",
-    "packages/xpanda-asm"
+    "packages/xpanda-asm",
+    "packages/xpanda-gadget"
   ],
   "scripts": {
     "gen:opcodes": "yarn workspace xpanda-core gen:opcodes",
-    "typecheck": "yarn workspace xpanda-core typecheck && yarn workspace xpanda-cli typecheck && yarn workspace xpanda-mcp typecheck && yarn workspace xpanda-web typecheck && yarn workspace xpanda-asm typecheck",
-    "test": "yarn workspace xpanda-core test && yarn workspace xpanda-cli test && yarn workspace xpanda-asm test",
+    "typecheck": "yarn workspace xpanda-core typecheck && yarn workspace xpanda-cli typecheck && yarn workspace xpanda-mcp typecheck && yarn workspace xpanda-web typecheck && yarn workspace xpanda-asm typecheck && yarn workspace xpanda-gadget typecheck",
+    "test": "yarn workspace xpanda-core test && yarn workspace xpanda-cli test && yarn workspace xpanda-asm test && yarn workspace xpanda-gadget test",
     "test:mcp": "yarn workspace xpanda-mcp test:mcp",
     "mcp": "yarn workspace xpanda-mcp mcp",
     "xpanda": "yarn workspace xpanda-cli xpanda",
