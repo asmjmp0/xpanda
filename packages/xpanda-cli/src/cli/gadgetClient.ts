@@ -18,8 +18,8 @@ export interface GadgetConnectionOptions {
 }
 
 export const COLOR = process.stdout.isTTY
-    ? { green: "\x1b[32m", red: "\x1b[31m", dim: "\x1b[2m", reset: "\x1b[0m" }
-    : { green: "", red: "", dim: "", reset: "" };
+    ? { green: "\x1b[32m", red: "\x1b[31m", yellow: "\x1b[33m", dim: "\x1b[2m", reset: "\x1b[0m" }
+    : { green: "", red: "", yellow: "", dim: "", reset: "" };
 
 export const CONNECT_TIMEOUT_MS = 5000;
 export const REQUEST_TIMEOUT_MS = 15000;
@@ -33,6 +33,20 @@ export function formatValue(value: unknown): string {
     } catch {
         return String(value);
     }
+}
+
+/** True for a console push emitted by console.* inside the gadget VM. */
+export function isConsolePush(message: any): boolean {
+    return Boolean(message) && message.type === "console";
+}
+
+/** Render a console push for the terminal (warn/error colored, debug dimmed). */
+export function formatConsolePush(message: any): string {
+    const text = typeof message.text === "string" ? message.text : formatValue(message.text);
+    if (message.level === "error") return `${COLOR.red}${text}${COLOR.reset}`;
+    if (message.level === "warn") return `${COLOR.yellow}${text}${COLOR.reset}`;
+    if (message.level === "debug" || message.level === "trace") return `${COLOR.dim}${text}${COLOR.reset}`;
+    return text;
 }
 
 interface PendingRequest {

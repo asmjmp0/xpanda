@@ -38,8 +38,10 @@ yarn xpanda gadget app.abc --entry "L&entry/src/main/ets/entryability/EntryAbili
 yarn xpanda gadget shell
 #     commands: <js> | .info | .ping | .probe | .reset | .msg <json> | .help | .exit
 #     multi-line blocks continue automatically; bare {"a":1} is retried as an expression
+#     console.log / warn / error ... inside evaluated JS is streamed back to the shell
 
 # 3b) Script watch mode: runs on start and again on every save (reconnects on the next save)
+#     watch mode prints console.* output but not the script's return value; --once prints both
 yarn xpanda gadget file script.js
 yarn xpanda gadget file script.js --once        # run once and exit
 
@@ -72,7 +74,10 @@ CLI options: `--port` `--entry` `--abc <entry>` `--all` (patch every abc) `--abi
 | `executeJs(code)` | Evaluates JS in the gadget's JSVM and returns the result (throws on error) |
 
 **Socket protocol** (NDJSON, one JSON per line): `js` (execute JS) / `msg` (bidirectional
-messages) / `info` / `ping` / `probe` (JSVM health check).
+messages) / `info` / `ping` / `probe` (JSVM health check). The gadget also pushes
+`{"type":"console","level":"log","text":"..."}` for every `console.*` call made inside the JSVM
+(`level` is one of `log` / `info` / `debug` / `warn` / `error` / `trace`); the same lines go to
+hilog under the `xpanda-gadget` tag.
 
 ## Why the gadget needs its own JSVM (instead of the host ArkTS runtime)
 
@@ -95,16 +100,30 @@ Measured on the API 26 emulator with `com.example.helloworld`:
 
 ## native/ layout
 
-| File | Responsibility |
+See [native/README.md](native/README.md) for the full module map and call flow.
+
+| Path | Responsibility |
 |---|---|
-| `gadget.cpp` | NAPI module registration + exported functions + TSFN (JS-thread hop) + JSVM runtime (lazily created on the host JS thread, scope management, exception stringification; `libjsvm.so` is a link-time dependency) |
-| `socket_server.cpp/.h` | Abstract unix socket, accept/line reading, NDJSON protocol dispatch, inbox/broadcast |
-| `mini_json.h` | Minimal JSON scanner (top-level key lookup, string escaping) for protocol parsing |
+| `src/gadget.cpp` | NAPI module entry + exported functions (start/stop/info/send/poll/executeJs/reset) |
+| `src/common/` | Process-wide socket instance, hilog helpers, mini JSON scanner |
+| `src/napi/` | Host ArkTS value conversions (string <-> JSON) |
+| `src/js/` | JSVM lifecycle/evaluation (`jsvm`), JSVM value conversions (`jsvm_value`), socket→JS thread bridge (`js_thread`) |
+| `src/js/module/` | Modules injected into the gadget JSVM (`console`) |
+| `src/socket/` | Abstract unix socket, accept/line reading, NDJSON protocol dispatch, inbox/broadcast |
 | `build.sh` | Cross-compiles with `aarch64-unknown-linux-ohos-clang++` from `~/command-line-tools` |
 | `CMakeLists.txt` | DevEco integration (copy into `<module>/src/main/cpp/`) |
 
 All link dependencies are system libraries: `libace_napi.z.so`, `libjsvm.so`, `libhilog_ndk.z.so`
 (libc++ is linked statically).
+
+## TypeScript layout
+
+| Path | Responsibility |
+|---|---|
+| `src/index.ts` | Public API barrel |
+| `src/inject/` | `.abc` bootstrap injection: defaults/types, entry-class discovery, bootstrap source, `injectAbcBytes` |
+| `src/hap/` | HAP repacking: CRC32 + minimal ZIP writer, abc-entry selection, `.so` embedding, `injectHapBytes` |
+| `src/io.ts` | Node-only disk IO helpers for the CLI |
 
 ## Injection details (abc side)
 
@@ -128,6 +147,9 @@ All link dependencies are system libraries: `libace_napi.z.so`, `libjsvm.so`, `l
   injected artifacts after debugging and never ship a gadget-instrumented package to production.
 - The JSVM is isolated from the host ArkTS runtime (a separate VM) and cannot access host objects;
   use a JS bridge or extend the NAPI/ANI bridge if host reflection is needed.
+- `console.*` inside the gadget VM is streamed to `gadget shell` / `gadget file` clients and hilog.
+  The **app's own** `console` output is emitted by the host ArkTS runtime and is not captured by the
+  gadget; read it with `hdc hilog`.
 - `let/const` in `executeJs` are scoped to a single script (same as DevTools; redeclaration errors);
   use `globalThis.xxx = ...` for persistent state.
 - patchInit constraints are inherited from xpanda-asm: the entry class needs `func_main_0`; a

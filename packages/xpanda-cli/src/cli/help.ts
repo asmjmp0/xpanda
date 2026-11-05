@@ -69,12 +69,14 @@ export function printGadgetShellUsage(): void {
     console.log("  --keep-forward    Leave the fport rule in place on exit");
     console.log("");
     console.log("  REPL commands: <js> | .info | .ping | .probe | .reset | .msg <json> | .help | .exit");
+    console.log("  console.log/info/warn/error/... called by evaluated JS is streamed back and printed here");
 }
 
 export function printGadgetFileUsage(): void {
     console.log("Usage: xpanda gadget file <script.js> [options]");
     console.log("  Runs the script in the gadget VM immediately and again on every save (watch mode).");
     console.log("  Each run keeps the VM alive, so `globalThis` state persists between reloads (use .reset in the shell to clear).");
+    console.log("  console.* output from the script is printed with a timestamp; watch mode does not print the script's return value (--once does).");
     console.log("  --once            Execute once and exit (no watch)");
     console.log("  -p, --port N      Gadget socket port (default 27041)");
     console.log("  -t, --serial S    hdc device serial (passed as `hdc -t S`)");

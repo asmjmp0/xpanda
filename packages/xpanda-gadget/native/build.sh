@@ -26,13 +26,24 @@ PKG_DIR="$(dirname "$DIR")"
 OUT_DIR="$PKG_DIR/assets/arm64-v8a"
 mkdir -p "$OUT_DIR"
 
+# Source layout: src/gadget.cpp is the NAPI surface; common/ holds shared state,
+# log and JSON helpers; js/ the JSVM + thread bridge; js/module/ the modules
+# injected into the JSVM (console); socket/ the abstract-unix-socket protocol
+# server; napi/ the host value conversions.
 # libjsvm.so is a link-time dependency (NEEDED); JS runs on the host JS thread.
 "$CXX" --sysroot="$SYSROOT" \
     -std=c++17 -O2 -fPIC -shared \
     -ffunction-sections -fdata-sections \
     -I"$SYSROOT/usr/include" \
-    "$DIR/gadget.cpp" \
-    "$DIR/socket_server.cpp" \
+    -I"$DIR/src" \
+    "$DIR/src/gadget.cpp" \
+    "$DIR/src/common/context.cpp" \
+    "$DIR/src/napi/napi_utils.cpp" \
+    "$DIR/src/js/jsvm_value.cpp" \
+    "$DIR/src/js/module/console.cpp" \
+    "$DIR/src/js/jsvm.cpp" \
+    "$DIR/src/js/js_thread.cpp" \
+    "$DIR/src/socket/socket_server.cpp" \
     -o "$OUT_DIR/libxpanda_gadget.so" \
     -lace_napi.z \
     -ljsvm \

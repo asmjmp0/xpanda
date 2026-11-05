@@ -12,8 +12,10 @@ import { takeValue } from "../args";
 import {
     COLOR,
     createGadgetClient,
+    formatConsolePush,
     formatValue,
     GadgetConnectionOptions,
+    isConsolePush,
     setupGadgetForward,
 } from "../gadgetClient";
 import { fail, printUsage } from "../help";
@@ -123,6 +125,7 @@ function printShellHelp(): void {
     console.log([
         "  <js>            evaluate JavaScript in the gadget VM (multi-line blocks are auto-joined)",
         "                  bare `{...}` input is retried as a parenthesized expression (like Node/DevTools)",
+        "  console.*       log/info/debug/warn/error/trace/dir/assert output is streamed back here",
         "  .info           gadget info (pid / endpoint / version / uptime)",
         "  .ping           liveness check",
         "  .probe          JSVM health check (may boot the VM on first use)",
@@ -140,6 +143,10 @@ export async function runGadgetShell(args: string[]): Promise<void> {
     const cleanupForward = setupGadgetForward(options);
 
     const onPush = (message: any) => {
+        if (isConsolePush(message)) {
+            console.log(formatConsolePush(message));
+            return;
+        }
         console.log(`${COLOR.dim}[push] ${JSON.stringify(message)}${COLOR.reset}`);
     };
     const client = createGadgetClient(options, onPush, (error) => {

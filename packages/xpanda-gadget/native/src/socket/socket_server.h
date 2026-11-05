@@ -13,6 +13,7 @@
  * Gadget -> client:  {"id":1,"type":"result","ok":true,"value":2}
  *                    {"id":2,"type":"ok"}                              (msg accepted -> ArkTS inbox)
  *                    {"type":"msg","payload":<raw>}                    (pushed from ArkTS send())
+ *                    {"type":"console","level":"log","text":"..."}     (console.* inside the JSVM)
  *                    {"id":3,"type":"info","pid":..,"endpoint":"localabstract:..","version":"1.0.0","uptimeMs":..}
  *                    {"type":"pong"}
  * @Author: jmp0

@@ -1,6 +1,6 @@
 {
   "name": "xpanda-cli",
-  "version": "2.7.0",
+  "version": "2.8.0",
   "description": "xpanda CLI - decompile HarmonyOS .abc / .hap files from the command line",
   "scripts": {
     "xpanda": "tsx src/cli.ts",

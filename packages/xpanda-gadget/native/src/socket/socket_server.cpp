@@ -1,8 +1,8 @@
 /**
- * Socket server implementation (see socket_server.h).
+ * Socket server implementation (see socket/socket_server.h).
  * @Author: jmp0
  */
-#include "socket_server.h"
+#include "socket/socket_server.h"
 
 #include <netinet/in.h>
 #include <sys/socket.h>
@@ -11,7 +11,7 @@
 
 #include <cstring>
 
-#include "mini_json.h"
+#include "common/mini_json.h"
 
 namespace xpanda {
 

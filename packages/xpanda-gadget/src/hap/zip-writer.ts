@@ -6,7 +6,7 @@
  * @Author: jmp0
  */
 import { deflateRawSync } from "node:zlib";
-import { crc32 } from "./Crc32";
+import { crc32 } from "./crc32";
 
 const LOC_SIGNATURE = 0x04034b50;
 const CEN_SIGNATURE = 0x02014b50;
@@ -41,17 +41,6 @@ export function writeZip(entries: readonly ZipEntryInput[]): Uint8Array {
     const central: Uint8Array[] = [];
     let offset = 0;
     let count = 0;
-
-    const u16 = (value: number) => {
-        const bytes = new Uint8Array(2);
-        new DataView(bytes.buffer).setUint16(0, value, true);
-        return bytes;
-    };
-    const u32 = (value: number) => {
-        const bytes = new Uint8Array(4);
-        new DataView(bytes.buffer).setUint32(0, value >>> 0, true);
-        return bytes;
-    };
 
     for (const entry of entries) {
         const nameBytes = new TextEncoder().encode(entry.name);

@@ -11,13 +11,9 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { HapFile, ZipEntry } from "xpanda-core";
-import {
-    GADGET_SO_NAME,
-    InjectAbcOptions,
-    InjectAbcResult,
-    injectAbcBytes,
-} from "./Injector";
-import { writeZip, ZipEntryInput } from "./ZipWriter";
+import { GADGET_SO_NAME, injectAbcBytes } from "../inject";
+import type { InjectAbcOptions, InjectAbcResult } from "../inject";
+import { writeZip, ZipEntryInput } from "./zip-writer";
 
 /** Default directory holding prebuilt gadget libraries, relative to the package root. */
 export const PREBUILT_SO_DIR = "assets";
@@ -83,7 +79,7 @@ export function defaultSoPath(packageRoot: string, abi = "arm64-v8a", soName = G
 
 /**
  * Candidate entry classes derived from module.json (mainElement / srcEntry),
- * used before falling back to {@link findEntryClassCandidates} inside the abc.
+ * used before falling back to `findEntryClassCandidates` inside the abc.
  */
 export function entryClassCandidatesFromModuleJson(moduleJson: any): string[] {
     const module = moduleJson?.module ?? moduleJson;
@@ -194,8 +190,8 @@ function readDefaultSo(packageRoot: string | undefined, soPath: string | undefin
     if (soPath) {
         return fs.existsSync(soPath) ? new Uint8Array(fs.readFileSync(soPath)) : null;
     }
-    // __dirname is <repo>/packages/xpanda-gadget/src; the package root is one level up.
-    const root = packageRoot ?? path.resolve(__dirname, "..");
+    // __dirname is <repo>/packages/xpanda-gadget/src/hap; the package root is two levels up.
+    const root = packageRoot ?? path.resolve(__dirname, "..", "..");
     const candidate = defaultSoPath(root, abi, soName);
     return fs.existsSync(candidate) ? new Uint8Array(fs.readFileSync(candidate)) : null;
 }

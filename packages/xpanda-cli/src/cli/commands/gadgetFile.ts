@@ -13,9 +13,11 @@ import { takeValue } from "../args";
 import {
     COLOR,
     createGadgetClient,
+    formatConsolePush,
     formatValue,
     GadgetClient,
     GadgetConnectionOptions,
+    isConsolePush,
     setupGadgetForward,
 } from "../gadgetClient";
 import { fail, printUsage } from "../help";
@@ -126,6 +128,11 @@ export async function runGadgetFile(args: string[]): Promise<void> {
 
         if (client === null) {
             const candidate = createGadgetClient(options.connection, (message) => {
+                if (isConsolePush(message)) {
+                    // keep the timestamp: in watch mode the script runs repeatedly
+                    log("", formatConsolePush(message));
+                    return;
+                }
                 log(COLOR.dim, `[push] ${JSON.stringify(message)}`);
             }, (error) => {
                 if (closed) return;
@@ -148,8 +155,12 @@ export async function runGadgetFile(args: string[]): Promise<void> {
         try {
             const reply = await client.request({ type: "js", code });
             if (reply.type === "result") {
-                if (reply.ok) log(COLOR.green, formatValue(reply.value));
-                else log(COLOR.red, `error: ${formatValue(reply.error)}`);
+                if (reply.ok) {
+                    // Watch mode is console-driven: do not print the script's return value.
+                    if (options.once) log(COLOR.green, formatValue(reply.value));
+                } else {
+                    log(COLOR.red, `error: ${formatValue(reply.error)}`);
+                }
             } else {
                 log(COLOR.dim, JSON.stringify(reply));
             }
