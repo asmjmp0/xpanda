@@ -2,14 +2,25 @@
  * JS thread bridge (see js/js_thread.h).
  *
  * The socket client threads must not touch the JSVM directly: V8 is only safe
- * on the host JS thread. Every request becomes a JsJob handed to a
- * napi_threadsafe_function; the waiting thread blocks until CallJs completes.
+ * on the host JS thread. Every request becomes a JsJob queued for a uv_async
+ * handle on the host event loop; the waiting thread blocks until the job
+ * completes on the host JS thread.
+ *
+ * The host event loop is used instead of a napi_threadsafe_function because
+ * OpenHarmony's module loader is not re-entrant from a TSFN callback:
+ * napi_load_module_with_info() can SIGSEGV when it has to execute a local
+ * module there. A uv_async callback is a normal host-event-loop callback, so
+ * ArkTS module loading works from the gadget VM as well.
  * @Author: jmp0
  */
 #include "js/js_thread.h"
 
+#include <uv.h>
+
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <deque>
 #include <mutex>
 #include <string>
 
@@ -19,7 +30,6 @@
 namespace xpanda {
 
 static constexpr int kJsTimeoutMs = 10000;
-static napi_threadsafe_function g_jsThreadFunction = nullptr;
 
 /** One queued execution; owned by the waiting thread until completion. */
 struct JsJob {
@@ -35,25 +45,20 @@ struct JsJob {
     std::condition_variable cv;
 };
 
-/** Thread-safe-function callback: runs on the host JS thread. */
-static void CallJs(napi_env env, napi_value jsCallback, void* context, void* data) {
-    (void)jsCallback;
-    (void)context;
-    auto* job = static_cast<JsJob*>(data);
-    std::string valueJson;
-    std::string error;
-    bool ok = false;
-    if (job->probe) {
-        ok = runJsvmProbe(&valueJson, &error);
-    } else if (job->reset) {
-        destroyJsvm();
-        valueJson = "null";
-        ok = true;
-    } else if (env != nullptr) {
-        ok = evaluateInJsvm(job->code, &valueJson, &error);
-    } else {
-        error = "js env released";
-    }
+namespace {
+
+struct BridgeState {
+    std::atomic<bool> ready{false};
+    uv_loop_t* loop = nullptr;
+    uv_async_t* async = nullptr;
+    std::mutex mutex;
+    std::deque<JsJob*> jobs;
+};
+
+BridgeState g_bridge;
+
+/** Wake every waiter and let it (or the abandon path) release the job. */
+void completeJob(JsJob* job, bool ok, std::string valueJson, std::string error) {
     bool abandoned = false;
     {
         std::lock_guard<std::mutex> lock(job->mutex);
@@ -67,119 +72,164 @@ static void CallJs(napi_env env, napi_value jsCallback, void* context, void* dat
     if (abandoned) delete job;
 }
 
-bool startJsBridge(napi_env env, std::string* error) {
-    if (g_jsThreadFunction != nullptr) return true;
-    napi_value resourceName = nullptr;
-    napi_create_string_utf8(env, "xpanda-gadget", NAPI_AUTO_LENGTH, &resourceName);
-    napi_status status = napi_create_threadsafe_function(
-        env, nullptr, nullptr, resourceName, 0, 1, nullptr, nullptr, nullptr, CallJs, &g_jsThreadFunction);
-    if (status != napi_ok) {
-        g_jsThreadFunction = nullptr;
-        if (error) {
-            *error = "napi_create_threadsafe_function failed ("
-                + std::to_string(static_cast<int>(status)) + ")";
+/** Run one job on the host JS thread. */
+void runJob(JsJob* job) {
+    std::string valueJson;
+    std::string error;
+    bool ok = false;
+    if (job->probe) {
+        ok = runJsvmProbe(&valueJson, &error);
+    } else if (job->reset) {
+        destroyJsvm();
+        valueJson = "null";
+        ok = true;
+    } else {
+        ok = evaluateInJsvm(job->code, &valueJson, &error);
+    }
+    completeJob(job, ok, std::move(valueJson), std::move(error));
+}
+
+/** uv_async callback: runs on the host event loop (the host JS thread). */
+void DrainJobs(uv_async_t* handle) {
+    (void)handle;
+    std::deque<JsJob*> jobs;
+    {
+        std::lock_guard<std::mutex> lock(g_bridge.mutex);
+        jobs.swap(g_bridge.jobs);
+    }
+    for (JsJob* job : jobs) runJob(job);
+}
+
+/**
+ * Queue a job and wait for it. Returns 1 when the job completed (the caller
+ * reads and deletes it), 0 when it could not be queued (already deleted), and
+ * -1 on timeout (the event loop still owns it and deletes it later).
+ */
+int submitJob(JsJob* job, int timeoutMs, std::string* err) {
+    {
+        std::lock_guard<std::mutex> lock(g_bridge.mutex);
+        if (!g_bridge.ready.load() || g_bridge.async == nullptr) {
+            if (err) *err = "js runtime not attached";
+            delete job;
+            return 0;
         }
-        GADGET_LOG_ERROR("thread-safe function creation failed (%{public}d)", static_cast<int>(status));
-        return false;
-    }
-    return true;
-}
-
-void stopJsBridge() {
-    if (g_jsThreadFunction == nullptr) return;
-    napi_release_threadsafe_function(g_jsThreadFunction, napi_tsfn_release);
-    g_jsThreadFunction = nullptr;
-}
-
-bool isJsBridgeReady() {
-    return g_jsThreadFunction != nullptr;
-}
-
-bool executeOnJsThread(const std::string& code, std::string* valueJson, std::string* error,
-                       int timeoutMs, std::string* err) {
-    if (g_jsThreadFunction == nullptr) {
-        if (err) *err = "js runtime not attached";
-        return false;
-    }
-    auto* job = new JsJob();
-    job->code = code;
-    if (napi_call_threadsafe_function(g_jsThreadFunction, job, napi_tsfn_blocking) != napi_ok) {
-        delete job;
-        if (err) *err = "thread-safe call to the js thread failed";
-        return false;
+        g_bridge.jobs.push_back(job);
+        if (uv_async_send(g_bridge.async) != 0) {
+            // No other thread can enqueue while the mutex is held; the last
+            // element is the job we just pushed.
+            g_bridge.jobs.pop_back();
+            if (err) *err = "failed to post work to the js event loop";
+            delete job;
+            return 0;
+        }
     }
 
     std::unique_lock<std::mutex> lock(job->mutex);
     bool finished = job->cv.wait_for(lock, std::chrono::milliseconds(timeoutMs),
                                      [job]() { return job->done; });
     if (!finished) {
-        // the JS side may still complete and delete this job later
+        // The predicate may have become true exactly at the deadline; the
+        // completion thread only deletes abandoned jobs, so re-check here.
+        if (job->done) {
+            lock.unlock();
+            return 1;
+        }
+        // The event loop may still complete this job; it deletes it then.
         job->abandoned = true;
         if (err) *err = "js execution timed out";
+        return -1;
+    }
+    lock.unlock();
+    return 1;
+}
+
+} // namespace
+
+bool startJsBridge(napi_env env, std::string* error) {
+    if (g_bridge.ready.load()) return true;
+
+    // napi_get_uv_event_loop is deprecated since API 16 but is still the only
+    // exposed way to reach the host loop (napi_send_event is not in the NDK).
+    uv_loop_t* loop = nullptr;
+    if (napi_get_uv_event_loop(env, &loop) != napi_ok || loop == nullptr) {
+        if (error) *error = "napi_get_uv_event_loop failed";
         return false;
     }
+
+    if (g_bridge.async == nullptr) {
+        auto* async = new uv_async_t();
+        if (uv_async_init(loop, async, DrainJobs) != 0) {
+            delete async;
+            if (error) *error = "uv_async_init failed";
+            GADGET_LOG_ERROR("uv_async_init failed");
+            return false;
+        }
+        // The gadget must not keep the application's event loop alive.
+        uv_unref(reinterpret_cast<uv_handle_t*>(async));
+        g_bridge.async = async;
+        g_bridge.loop = loop;
+    } else if (g_bridge.loop != loop) {
+        if (error) *error = "js bridge is attached to a different event loop";
+        return false;
+    }
+
+    g_bridge.ready.store(true);
+    return true;
+}
+
+void stopJsBridge() {
+    g_bridge.ready.store(false);
+
+    std::deque<JsJob*> jobs;
+    {
+        std::lock_guard<std::mutex> lock(g_bridge.mutex);
+        jobs.swap(g_bridge.jobs);
+    }
+    for (JsJob* job : jobs) completeJob(job, false, "", "js bridge stopped");
+}
+
+bool isJsBridgeReady() {
+    return g_bridge.ready.load();
+}
+
+bool executeOnJsThread(const std::string& code, std::string* valueJson, std::string* error,
+                       int timeoutMs, std::string* err) {
+    auto* job = new JsJob();
+    job->code = code;
+    int state = submitJob(job, timeoutMs, err);
+    if (state != 1) return false;
+
     bool ok = job->ok;
     if (ok) {
         if (valueJson) *valueJson = job->valueJson;
     } else {
         if (error) *error = job->error;
     }
-    lock.unlock();
     delete job;
     return ok;
 }
 
 bool probeOnJsThread(std::string* report, std::string* error) {
-    if (g_jsThreadFunction == nullptr) {
-        if (error) *error = "js runtime not attached";
-        return false;
-    }
     auto* job = new JsJob();
     job->probe = true;
-    if (napi_call_threadsafe_function(g_jsThreadFunction, job, napi_tsfn_blocking) != napi_ok) {
-        delete job;
-        if (error) *error = "thread-safe call to the js thread failed";
-        return false;
-    }
-    std::unique_lock<std::mutex> lock(job->mutex);
-    bool finished = job->cv.wait_for(lock, std::chrono::milliseconds(20000),
-                                     [job]() { return job->done; });
-    if (!finished) {
-        job->abandoned = true;
-        if (error) *error = "jsvm probe timed out (process likely died inside CreateVM)";
-        return false;
-    }
+    int state = submitJob(job, 20000, error);
+    if (state != 1) return false;
+
     bool ok = job->ok;
     if (report) *report = job->valueJson;
     if (!ok && error) *error = job->error;
-    lock.unlock();
     delete job;
     return ok;
 }
 
 bool resetOnJsThread(std::string* error) {
-    if (g_jsThreadFunction == nullptr) {
-        if (error) *error = "js runtime not attached";
-        return false;
-    }
     auto* job = new JsJob();
     job->reset = true;
-    if (napi_call_threadsafe_function(g_jsThreadFunction, job, napi_tsfn_blocking) != napi_ok) {
-        delete job;
-        if (error) *error = "thread-safe call to the js thread failed";
-        return false;
-    }
-    std::unique_lock<std::mutex> lock(job->mutex);
-    bool finished = job->cv.wait_for(lock, std::chrono::milliseconds(kJsTimeoutMs),
-                                     [job]() { return job->done; });
-    if (!finished) {
-        job->abandoned = true;
-        if (error) *error = "jsvm reset timed out";
-        return false;
-    }
+    int state = submitJob(job, kJsTimeoutMs, error);
+    if (state != 1) return false;
+
     bool ok = job->ok;
     if (!ok && error) *error = job->error;
-    lock.unlock();
     delete job;
     return ok;
 }

@@ -50,7 +50,11 @@ export interface HostClassProxy {
     (...args: unknown[]): unknown;
     /** Class name on the host. */
     readonly name: string;
-    /** Placeholder prototype object. */
+    /**
+     * Host prototype proxy. Instance methods and accessors can be enumerated
+     * with `Object.getOwnPropertyNames(value.prototype)`. `new value(...)`
+     * still returns a JSON snapshot, so `instanceof` is not reliable.
+     */
     readonly prototype: object;
 }
 
@@ -92,6 +96,11 @@ export type HostGlobalValue = HostPrimitive | HostClassProxy | HostFunctionProxy
  * const plain: Record<string, unknown> = {};
  * for (const name of names) plain[name] = deviceInfo[name];
  * console.log(JSON.stringify(plain, null, 2));
+ *
+ * @example
+ * // Instance methods of an exported class:
+ * const entryAbility = ArkTS.napi.loadModuleWithInfo(...);
+ * console.log(Object.getOwnPropertyNames(entryAbility.default.prototype));
  */
 export interface HostModuleProxy {
     [key: string]: HostGlobalValue;

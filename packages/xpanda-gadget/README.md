@@ -101,6 +101,13 @@ In a **host ArkTS injection script**, the same `napi_load_module` is available a
 `globalThis.ArkTS.napi.loadModule(path)` (or `gadget.loadModule(path)` after
 importing the gadget `.so`); it returns the real host module object.
 
+`ArkTS.napi.loadModuleWithInfo(path, moduleInfo)` also works from the shell for
+app-local modules. The target must be declared under
+`buildOption.arkOptions.runtimeOnly` (`sources` / `packages`) in the module's
+`build-profile.json5`. Socket requests are executed on the host event loop
+(uv_async), so the module loader does not run from a TSFN callback and local
+module execution is safe.
+
 **Socket protocol** (NDJSON, one JSON per line): `js` (execute JS) / `msg` (bidirectional
 messages) / `info` / `ping` / `probe` (JSVM health check). The gadget also pushes
 `{"type":"console","level":"log","text":"..."}` for every `console.*` call made inside the JSVM
@@ -119,8 +126,10 @@ Measured on the API 26 emulator with `com.example.helloworld`:
    symbols present, and `OH_JSVM_GetVMInfo` reports `engine=v8 version=14.4.258.16`.
 3. **The VM must be created on the host JS thread**: calling `OH_JSVM_CreateVM` on a private pthread
    silently kills the process (no crash log). Routing both creation and execution onto the app's own
-   JS thread through `napi_create_threadsafe_function` makes `CreateVM`/`CreateEnv`/`CompileScript`/
-   `RunScript` work normally.
+   JS thread through a `uv_async` handle on the host event loop makes `CreateVM`/`CreateEnv`/
+   `CompileScript`/`RunScript` work normally. A TSFN callback would also work for evaluation, but
+   OpenHarmony's module loader is not re-entrant there: `napi_load_module_with_info` can SIGSEGV
+   when it has to execute a local module, so the bridge uses uv_async instead.
 4. **A new env requires explicit scopes**: `OpenVMScope` → `OpenEnvScope` → `OpenHandleScope`,
    otherwise the first `CreateStringUtf8` crashes.
 5. The VM is initialized with `--jitless` (interpreter mode): the device has no `/dev/xpm` (the

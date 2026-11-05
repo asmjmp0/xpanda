@@ -41,4 +41,5 @@ target_link_libraries(xpanda_gadget PUBLIC
     libace_napi.z.so
     libjsvm.so
     libhilog_ndk.z.so
+    libuv.so
 )

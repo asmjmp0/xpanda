@@ -52,7 +52,10 @@ const char* kBridgeSource = R"JS(
         Object.defineProperty(fn, "name", { value: path });
         var handler = {
             get: function (target, prop) {
-                if (prop === "prototype") return target.prototype;
+                // Expose the real host prototype so class methods can be
+                // enumerated from the VM. `target.prototype` is only the local
+                // placeholder and has no host members.
+                if (prop === "prototype") return objectProxy(path + ".prototype");
                 if (prop === "name") return path;
                 if (typeof prop === "symbol") return undefined;
                 return resolve(path + "." + String(prop));

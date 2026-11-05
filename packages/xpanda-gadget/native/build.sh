@@ -51,6 +51,7 @@ mkdir -p "$OUT_DIR"
     -lace_napi.z \
     -ljsvm \
     -lhilog_ndk.z \
+    -luv \
     -static-libstdc++ \
     -Wl,--gc-sections \
     -Wl,-S \

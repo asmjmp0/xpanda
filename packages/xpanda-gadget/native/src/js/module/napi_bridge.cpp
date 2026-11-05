@@ -274,6 +274,48 @@ JSVM_Value JSVM_CDECL HostInvoke(JSVM_Env env, JSVM_CallbackInfo info) {
     return text;
 }
 
+/** Serialize a JS array of property names as a JSON array. */
+bool serializeKeyArray(napi_env env, napi_value names, std::string* out) {
+    uint32_t length = 0;
+    if (napi_get_array_length(env, names, &length) != napi_ok) return false;
+    out->assign("[");
+    for (uint32_t i = 0; i < length; i++) {
+        napi_value key = nullptr;
+        if (napi_get_element(env, names, i, &key) != napi_ok) continue;
+        if (out->size() > 1) *out += ",";
+        *out += MiniJson::escape(napiValueToText(env, key));
+    }
+    *out += "]";
+    return true;
+}
+
+/**
+ * Object.getOwnPropertyNames / Object.keys fallback.
+ *
+ * napi_get_all_property_names returns an empty list for ArkTS module namespace
+ * objects, even though their exports are readable by name. Calling the host
+ * Object helpers sees the same keys a normal JS caller would.
+ */
+bool jsKeysOf(napi_env env, napi_value target, bool enumerableOnly, std::string* out) {
+    napi_value global = nullptr;
+    napi_value objectCtor = nullptr;
+    napi_value fn = nullptr;
+    if (napi_get_global(env, &global) != napi_ok || global == nullptr
+        || napi_get_named_property(env, global, "Object", &objectCtor) != napi_ok || objectCtor == nullptr
+        || napi_get_named_property(env, objectCtor,
+                                   enumerableOnly ? "keys" : "getOwnPropertyNames", &fn) != napi_ok
+        || fn == nullptr) {
+        takeNapiException(env, "");
+        return false;
+    }
+    napi_value names = nullptr;
+    if (napi_call_function(env, objectCtor, fn, 1, &target, &names) != napi_ok || names == nullptr) {
+        takeNapiException(env, "");
+        return false;
+    }
+    return serializeKeyArray(env, names, out);
+}
+
 /** Read a host object's own keys as {"all":[...],"enumerable":[...]}. */
 bool getHostKeys(const std::string& path, std::string* resultJson, std::string* error) {
     if (g_hostEnv == nullptr) {
@@ -295,23 +337,23 @@ bool getHostKeys(const std::string& path, std::string* resultJson, std::string* 
             *error = takeNapiException(env, "host keys failed: " + path);
             return false;
         }
-        uint32_t length = 0;
-        napi_get_array_length(env, names, &length);
-        out->assign("[");
-        for (uint32_t i = 0; i < length; i++) {
-            napi_value key = nullptr;
-            if (napi_get_element(env, names, i, &key) != napi_ok) continue;
-            if (out->size() > 1) *out += ",";
-            *out += MiniJson::escape(napiValueToText(env, key));
-        }
-        *out += "]";
-        return true;
+        return serializeKeyArray(env, names, out);
     };
 
     std::string all;
     std::string enumerable;
-    if (!keysOf(napi_key_all_properties, &all) || !keysOf(napi_key_enumerable, &enumerable)) {
-        return false;
+    bool napiOk = keysOf(napi_key_all_properties, &all)
+        && keysOf(napi_key_enumerable, &enumerable);
+    if (!napiOk || all == "[]") {
+        std::string jsAll;
+        std::string jsEnumerable;
+        if (jsKeysOf(env, target, false, &jsAll)
+            && jsKeysOf(env, target, true, &jsEnumerable)) {
+            all = std::move(jsAll);
+            enumerable = std::move(jsEnumerable);
+        } else if (!napiOk) {
+            return false;
+        }
     }
     *resultJson = "{\"all\":" + all + ",\"enumerable\":" + enumerable + "}";
     return true;

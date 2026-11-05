@@ -13,7 +13,7 @@ src/
 ├── napi/
 │   └── napi_utils.h/.cpp   host ArkTS value conversions (string <-> JSON)
 ├── js/
-│   ├── js_thread.h/.cpp    napi_threadsafe_function bridge: socket thread -> host JS thread
+│   ├── js_thread.h/.cpp    uv_async bridge: socket thread -> host JS thread
 │   ├── jsvm.h/.cpp         JSVM lifecycle, script evaluation, probe
 │   ├── jsvm_value.h/.cpp   JSVM value/exception conversions
 │   └── module/
@@ -32,7 +32,7 @@ src/
 app bootstrap (func_main_0)
   └─ import libxpanda_gadget.so → start()
        ├─ js/module/host_bridge captures the host globalThis snapshot
-       ├─ js/js_thread       creates the TSFN used by all socket requests
+       ├─ js/js_thread       creates the uv_async handle used by all socket requests
        └─ socket/socket_server binds localabstract:xpanda_gadget_<port>
 
 socket client (gadget shell / gadget file)
@@ -42,6 +42,12 @@ socket client (gadget shell / gadget file)
                  └─ console.* → js/module/console → broadcast {"type":"console"} + hilog
        → {"type":"result"} back to the client
 ```
+
+The hop uses a `uv_async` handle on the host event loop instead of a
+`napi_threadsafe_function`: OpenHarmony's module loader is not re-entrant from a
+TSFN callback, so `napi_load_module_with_info` can SIGSEGV when it needs to
+execute a local module there. The uv_async callback is a normal host event loop
+callback, so `ArkTS.napi.loadModuleWithInfo` works from the gadget VM too.
 
 ## Host globalThis bridge
 

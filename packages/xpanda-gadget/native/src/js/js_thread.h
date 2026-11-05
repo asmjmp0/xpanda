@@ -11,9 +11,9 @@
 
 namespace xpanda {
 
-/** Create the thread-safe function used to hop onto the host JS thread. */
+/** Create the uv_async handle used to hop onto the host JS thread. */
 bool startJsBridge(napi_env env, std::string* error);
-/** Release the thread-safe function. */
+/** Detach the bridge and fail jobs that are still queued. */
 void stopJsBridge();
 bool isJsBridgeReady();
 
