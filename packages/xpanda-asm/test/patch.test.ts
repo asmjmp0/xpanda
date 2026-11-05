@@ -11,8 +11,8 @@ import * as fs from "fs";
 import * as path from "path";
 import * as vm from "vm";
 import * as crypto from "crypto";
-import { PandaDecompiler, PandaFile } from "xpanda-core";
-import { PandaPatchFile, assemble, decodeInstructions, dumpClasses } from "../src";
+import { PATCH_VAR_BINDING, PandaDecompiler, PandaFile } from "xpanda-core";
+import { PandaPatchFile, PATCH_SLOT_BASE, DEFAULT_INIT_FUNCTION, assemble, decodeInstructions, dumpClasses, patchSetterGlobalName } from "../src";
 
 function assert(condition: unknown, message: string): asserts condition {
     if (!condition) throw new Error("ASSERT FAILED: " + message);
@@ -693,6 +693,295 @@ function testHookBundleSingleSource(): void {
         "second hook must run with the shared helper");
 }
 
+// ---------------------------------------------------------------- 11c. dynamic GlobalPatch slot
+function testDynamicPatchSlot(): void {
+    const es2abc = bundledEs2abc();
+    if (!es2abc) {
+        console.log("[patch] skip dynamic patch slot (es2abc not found)");
+        return;
+    }
+    const targetClass = "L&entry/src/main/ets/target&;";
+    const fixturePath = path.join(__dirname, "resources", "target-multi.abc");
+    const patchFile = PandaPatchFile.load(new Uint8Array(fs.readFileSync(fixturePath)));
+    const hookName = patchFile.prepareMethodHead(targetClass, "#*#targetA");
+    patchFile.prepareMethodHead(targetClass, "#*#targetB", { hookGlobalName: hookName });
+    const results = patchFile.patchMethodHeads(hookName,
+        `function ${hookName}(self, args) { return { res: 1 }; }`,
+        { es2abc, dynamic: true });
+    assert(results.length === 2, `shared dynamic hook must patch both methods, got ${results.length}`);
+    assert(results.every((result) => result.patchSlot === PATCH_SLOT_BASE),
+        `shared hook must reuse slot ${PATCH_SLOT_BASE}`);
+    assert(results.every((result) => result.setterGlobalName === patchSetterGlobalName(hookName)),
+        "setter global name must follow xpanda_set_<hook>");
+    assert(results.every((result) => result.setterMethodName === `#*#${hookName}__set`),
+        "setter method must live on the hook class");
+
+    const bytes = patchFile.toBytes();
+    assert(Buffer.from(bytes).includes(Buffer.from(patchSetterGlobalName(hookName))),
+        "setter global name must be stored as a string");
+    const pandaFile = new PandaFile(bytes);
+    const target = findClass(pandaFile, targetClass);
+    assert(target, "dynamic target must survive the hook class move");
+    for (const methodName of ["#*#targetA", "#*#targetB"]) {
+        const decoded = decodeInstructions(target.pandaMethods.get(methodName)!.methodCode!.instructions);
+        assert(decoded[0].opcode.name === "wide.ldpatchvar" && decoded[0].operands[0] === PATCH_SLOT_BASE,
+            `${methodName} must load the shared patch slot`);
+        assert(decoded.slice(1, 5).map((instruction) => instruction.opcode.name).join(",")
+            === "sta,lda,callruntime.isfalse,jnez",
+            `${methodName} must skip the hook when the slot is falsy`);
+    }
+    const targetMain = decodeInstructions(target.pandaMethods.get("func_main_0")!.methodCode!.instructions);
+    assert(!targetMain.some((instruction) => instruction.opcode.name === "wide.stpatchvar"),
+        "the target module must not install patch slots itself");
+    assert(!targetMain.some((instruction) => instruction.opcode.name === "callarg0"),
+        "no init call is injected when init is not requested");
+    const imports = target.pandaClassModuleData!.imports;
+    assert(imports.some((entry) => entry.importName === hookName),
+        "target must import the hook so its module evaluates and runs setup");
+    assert(!imports.some((entry) => entry.importName === `${hookName}__set`),
+        "the setter stays inside the hook module");
+
+    const hookClass = pandaFile.indexHeaders.flatMap((header) => header.pandaClasses)
+        .find((clazz) => !clazz.classExternal && clazz.getClassName().includes(`xpanda/hook/${hookName}`));
+    assert(hookClass, "moved hook class must exist");
+    const setter = hookClass.pandaMethods.get(`#*#${hookName}__set`);
+    assert(setter?.methodCode, "setter method must be on the hook class");
+    assert(setter.methodCode.numVregs === 0, "setter frame must drop compiler temps");
+    assert(setter.methodCode.numArgs >= 4, "setter must keep a user parameter");
+    const setterOps = decodeInstructions(setter.methodCode.instructions);
+    assert(setterOps.map((instruction) => instruction.opcode.name).join(",") === "lda,wide.stpatchvar,returnundefined",
+        `setter body must store its argument, got ${setterOps.map((instruction) => instruction.opcode.name)}`);
+    assert(setterOps[0].operands[0] === 3 && setterOps[1].operands[0] === PATCH_SLOT_BASE,
+        "setter must write v3 into the shared slot");
+    const setupName = [...hookClass.pandaMethods.keys()].find((name) => name.endsWith("<#xpanda_reserved_setup"));
+    assert(setupName, "hook module must define class xpanda_reserved_setup");
+    const setupOps = decodeInstructions(hookClass.pandaMethods.get(setupName)!.methodCode!.instructions);
+    assert(setupOps.map((instruction) => instruction.opcode.name).join(",")
+        === "ldlocalmodulevar,wide.stpatchvar,ldglobal,sta,ldlocalmodulevar,stobjbyname,returnundefined",
+        `setup must install the one shared slot, got ${setupOps.map((instruction) => instruction.opcode.name)}`);
+    assert(setupOps[1].operands[0] === PATCH_SLOT_BASE, "setup must store the shared slot");
+
+    // 反编译后两条指令是同一张 xpanda_reserved_patch 数组的读写,槽可以换、可以关掉
+    const sandbox: Record<string, unknown> = {
+        console: { log: () => { /* ignore */ } },
+        [PATCH_VAR_BINDING]: [] as unknown[],
+    };
+    sandbox.globalThis = sandbox;
+    pandaFile.parseAssembly();
+    runHookModule(pandaFile, hookName, sandbox);
+    vm.runInNewContext(stripModuleSyntax(decompileClassOf(pandaFile, targetClass)), sandbox, { timeout: 5000 });
+    const targetA = sandbox.targetA as (a: number, b: number) => unknown;
+    const targetB = sandbox.targetB as (a: number, b: number) => unknown;
+    assert(targetA(2, 3) === 1 && targetB(2, 3) === 1,
+        "decompiled methods must call the hook stored in the patch slot");
+    const swap = sandbox[patchSetterGlobalName(hookName)];
+    assert(typeof swap === "function", "module init must publish the setter on globalThis");
+    (swap as (fn: unknown) => unknown)((_self: unknown, _args: unknown) => ({ res: 7 }));
+    assert(targetA(2, 3) === 7 && targetB(2, 3) === 7, "replacing the slot must change both methods");
+    (swap as (fn: unknown) => unknown)(undefined);
+    assert(targetA(2, 3) === 5 && targetB(2, 3) === 6, "a falsy slot must run the original bodies");
+
+    // 重新载入后扫描已有槽,下一个 hook 不能复用
+    const again = PandaPatchFile.load(bytes);
+    const nextHook = again.prepareMethodHead(targetClass, "#*#targetA");
+    const next = again.patchMethodHead(nextHook,
+        `function ${nextHook}(self, args) { return {}; }`,
+        { es2abc, dynamic: true });
+    assert(next.patchSlot === PATCH_SLOT_BASE + 1, `next slot must be ${PATCH_SLOT_BASE + 1}, got ${next.patchSlot}`);
+    let collided = false;
+    try {
+        const clash = PandaPatchFile.load(bytes);
+        const clashHook = clash.prepareMethodHead(targetClass, "#*#targetB");
+        clash.patchMethodHead(clashHook,
+            `function ${clashHook}(self, args) { return {}; }`,
+            { es2abc, dynamic: true, patchSlot: PATCH_SLOT_BASE });
+    } catch (error) {
+        collided = error instanceof Error && error.message.includes("already used");
+    }
+    assert(collided, "an explicit slot already present in the abc must be rejected");
+
+    // 同一个源文件里的两个 hook 各占一个槽,由 hook 模块的 setup 类统一安装
+    const bundled = PandaPatchFile.load(new Uint8Array(fs.readFileSync(fixturePath)));
+    const first = bundled.prepareMethodHead(targetClass, "#*#targetA");
+    const second = bundled.prepareMethodHead(targetClass, "#*#targetB");
+    const bundledResults = bundled.patchHookBundle([first, second], `
+        function ${first}(self, args) { return { res: 11 }; }
+        function ${second}(self, args) { return { res: 22 }; }
+    `, { es2abc, dynamic: true });
+    assert(bundledResults[0].patchSlot === PATCH_SLOT_BASE
+        && bundledResults[1].patchSlot === PATCH_SLOT_BASE + 1,
+        "bundled hooks must take consecutive slots");
+    const bundledFile = new PandaFile(bundled.toBytes());
+    const bundledHook = bundledFile.indexHeaders.flatMap((header) => header.pandaClasses)
+        .find((clazz) => !clazz.classExternal && clazz.getClassName().includes(`xpanda/hook/${first}`));
+    assert(bundledHook, "bundled hook module must exist");
+    const bundledSetupName = [...bundledHook.pandaMethods.keys()]
+        .find((name) => name.endsWith("<#xpanda_reserved_setup"));
+    assert(bundledSetupName, "bundled hook module must define one setup class");
+    const bundledSetup = decodeInstructions(bundledHook.pandaMethods.get(bundledSetupName)!.methodCode!.instructions);
+    const stored = bundledSetup.filter((instruction) => instruction.opcode.name === "wide.stpatchvar")
+        .map((instruction) => instruction.operands[0]).sort((a, b) => a - b);
+    assert(stored.length === 2 && stored[0] === PATCH_SLOT_BASE && stored[1] === PATCH_SLOT_BASE + 1,
+        `both slots must be installed by setup, got ${stored.join(",")}`);
+}
+
+// ---------------------------------------------------------------- 11d. dynamic setup on the hap entry
+function testDynamicSetupEntryClass(): void {
+    const es2abc = bundledEs2abc();
+    if (!es2abc) {
+        console.log("[patch] skip dynamic setup entry class (es2abc not found)");
+        return;
+    }
+    const targetClass = "L&entry/src/main/ets/common/RarExtract&;";
+    const setupClass = "L&entry/src/main/ets/entryability/EntryAbility&;";
+    const patchFile = PandaPatchFile.load(loadSample("hx360e1.0.2.abc"));
+    const hookName = patchFile.prepareMethodHead(targetClass, "#*#extractRar");
+    const result = patchFile.patchMethodHead(hookName, `function ${hookName}(self, args) { return {}; }`, {
+        es2abc, dynamic: true, setupClassName: setupClass,
+    });
+
+    const pandaFile = new PandaFile(patchFile.toBytes());
+    const target = findClass(pandaFile, targetClass);
+    const setup = findClass(pandaFile, setupClass);
+    assert(target && setup, "target and setup classes must survive the patch");
+    assert(!target.pandaClassModuleData!.imports.some((entry) => entry.importName === hookName),
+        "setupClassName must keep the hook import off the target class");
+    assert(setup.pandaClassModuleData!.imports.some((entry) => entry.importName === hookName),
+        "setupClassName must import the hook module from the setup class");
+    const hookClass = pandaFile.indexHeaders.flatMap((header) => header.pandaClasses)
+        .find((clazz) => !clazz.classExternal && clazz.getClassName().includes(`xpanda/hook/${hookName}`));
+    assert(hookClass, "moved hook class must exist");
+    assert(hookClass.indexHeader === setup.indexHeader,
+        "hook class must move into the setup class's index region");
+    const decoded = decodeInstructions(target.pandaMethods.get("#*#extractRar")!.methodCode!.instructions);
+    assert(decoded[0].opcode.name === "wide.ldpatchvar" && decoded[0].operands[0] === result.patchSlot,
+        "target prologue must still read the dynamic slot");
+
+    // setupClassName only relocates the setup trigger; the prologue itself is still dynamic
+    let rejected = false;
+    try {
+        const staticFile = PandaPatchFile.load(loadSample("hx360e1.0.2.abc"));
+        const staticHook = staticFile.prepareMethodHead(targetClass, "#*#extractRar");
+        staticFile.patchMethodHead(staticHook, `function ${staticHook}(self, args) { return {}; }`, {
+            es2abc, setupClassName: setupClass,
+        });
+    } catch (error) {
+        rejected = error instanceof Error && error.message.includes("setupClassName requires dynamic");
+    }
+    assert(rejected, "setupClassName must be rejected for static hooks");
+}
+
+// ---------------------------------------------------------------- 11e. init callback
+function testPatchInitOnly(): void {
+    const es2abc = bundledEs2abc();
+    if (!es2abc) {
+        console.log("[patch] skip init-only patch (es2abc not found)");
+        return;
+    }
+    const entryClass = "L&entry/src/main/ets/target&;";
+    const fixturePath = path.join(__dirname, "resources", "target-multi.abc");
+    const patchFile = PandaPatchFile.load(new Uint8Array(fs.readFileSync(fixturePath)));
+    const result = patchFile.patchInit(
+        "function init() { globalThis.__xpanda_init_runs = (globalThis.__xpanda_init_runs || 0) + 1; }",
+        { es2abc, setupClassName: entryClass },
+    );
+    assert(result.className === entryClass && result.methodName === "func_main_0",
+        `patchInit must report the entry func_main_0, got ${result.className}::${result.methodName}`);
+    assert(result.moduleName.startsWith("__xpanda_init_"), "patchInit must generate its own module name");
+    assert(result.initName === DEFAULT_INIT_FUNCTION, "patchInit must default to the init function name");
+    assert(result.importIndex >= 0 && result.atPC === 0, "patchInit must prepend the init call");
+
+    const pandaFile = new PandaFile(patchFile.toBytes());
+    pandaFile.parseAssembly();
+    const entry = findClass(pandaFile, entryClass);
+    assert(entry, "init entry class must survive the patch");
+    assert(entry.pandaClassModuleData!.imports.some((item) => item.importName === DEFAULT_INIT_FUNCTION),
+        "entry module must import the init function");
+    const main = decodeInstructions(entry.pandaMethods.get("func_main_0")!.methodCode!.instructions);
+    assert(main[0].opcode.name === "ldexternalmodulevar" && main[1].opcode.name === "callarg0",
+        `entry func_main_0 must start by calling init, got ${main.slice(0, 2).map((item) => item.opcode.name)}`);
+
+    const hookClass = pandaFile.indexHeaders.flatMap((header) => header.pandaClasses)
+        .find((clazz) => !clazz.classExternal && clazz.getClassName().includes(`xpanda/hook/${result.moduleName}`));
+    assert(hookClass?.pandaMethods.has(`#*#${DEFAULT_INIT_FUNCTION}`),
+        "generated module must define the init function");
+
+    // 模拟模块求值:先跑 init module(定义函数),再跑入口 module(调用 init)
+    const sandbox: Record<string, unknown> = { console: { log: () => { /* ignore */ } } };
+    sandbox.globalThis = sandbox;
+    const hookCode = stripModuleSyntax(new PandaDecompiler().decompileClass(hookClass));
+    vm.runInNewContext(hookCode, sandbox, { timeout: 5000 });
+    sandbox[`${result.moduleName}__init`] = sandbox[DEFAULT_INIT_FUNCTION];
+    const entryCode = stripModuleSyntax(new PandaDecompiler().decompileClass(entry));
+    vm.runInNewContext(entryCode, sandbox, { timeout: 5000 });
+    assert(sandbox.__xpanda_init_runs === 1, "entry func_main_0 must call init exactly once");
+
+    let rejected = false;
+    try {
+        patchFile.patchInit("   ", { es2abc, setupClassName: entryClass });
+    } catch (error) {
+        rejected = error instanceof Error && error.message.includes("init source");
+    }
+    assert(rejected, "patchInit must reject an empty init source");
+}
+
+function testHookWithInit(): void {
+    const es2abc = bundledEs2abc();
+    if (!es2abc) {
+        console.log("[patch] skip hook+init (es2abc not found)");
+        return;
+    }
+    const targetClass = "L&entry/src/main/ets/target&;";
+    const fixturePath = path.join(__dirname, "resources", "target-multi.abc");
+    for (const dynamic of [false, true]) {
+        const patchFile = PandaPatchFile.load(new Uint8Array(fs.readFileSync(fixturePath)));
+        const hookName = patchFile.prepareMethodHead(targetClass, "#*#targetA");
+        const result = patchFile.patchMethodHead(hookName,
+            `function ${hookName}(self, args) { return {}; }
+             function init() { globalThis.__hook_init = (globalThis.__hook_init || 0) + 1; }`,
+            {
+                es2abc,
+                dynamic,
+                setupClassName: targetClass,
+                init: "init",
+            });
+        assert(result?.hookGlobalName === hookName, "hook+init must still patch the target");
+        const pandaFile = new PandaFile(patchFile.toBytes());
+        const entry = findClass(pandaFile, targetClass);
+        assert(entry, "hook+init entry class must exist");
+        const imports = entry.pandaClassModuleData!.imports.map((item) => item.importName);
+        assert(imports.includes(hookName) && imports.includes("init"),
+            `entry must import both hook and init (dynamic=${dynamic}), got ${imports}`);
+        const main = decodeInstructions(entry.pandaMethods.get("func_main_0")!.methodCode!.instructions);
+        assert(main[0].opcode.name === "ldexternalmodulevar" && main[1].opcode.name === "callarg0",
+            "hook+init must prepend the init call");
+        const hookClass = pandaFile.indexHeaders.flatMap((header) => header.pandaClasses)
+            .find((clazz) => !clazz.classExternal && clazz.getClassName().includes(`xpanda/hook/${hookName}`));
+        assert(hookClass?.pandaMethods.has("#*#init"),
+            "hook module must define init when init is requested");
+        if (dynamic) {
+            assert([...hookClass.pandaMethods.keys()].some((name) => name.endsWith("<#xpanda_reserved_setup")),
+                "dynamic hook+init module must still carry the setup class");
+        }
+    }
+
+    // init 必须指定入口
+    let rejected = false;
+    try {
+        const patchFile = PandaPatchFile.load(new Uint8Array(fs.readFileSync(fixturePath)));
+        const hookName = patchFile.prepareMethodHead(targetClass, "#*#targetA");
+        patchFile.patchMethodHead(hookName, `function ${hookName}(self, args) { return {}; }
+            function init() { globalThis.__no_entry = 1; }`, {
+            es2abc,
+            dynamic: true,
+            init: "init",
+        });
+    } catch (error) {
+        rejected = error instanceof Error && error.message.includes("init requires setupClassName");
+    }
+    assert(rejected, "init without setupClassName must be rejected");
+}
+
 // ---------------------------------------------------------------- 12. async function
 async function testHookAsyncFunction(): Promise<void> {
     const es2abc = bundledEs2abc();
@@ -923,6 +1212,10 @@ async function main(): Promise<void> {
     testHookMultipleFunctions();
     testMultipleHooksInOneSession();
     testHookBundleSingleSource();
+    testDynamicPatchSlot();
+    testDynamicSetupEntryClass();
+    testPatchInitOnly();
+    testHookWithInit();
     testHookModuleImport();
     testDumpClasses();
     testHookAddsModuleRecord();

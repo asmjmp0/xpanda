@@ -321,6 +321,17 @@ type Handle = (
     node: any,
 ) => boolean; // true = STOP
 
+/** Decompiled name of `GlobalEnv.GlobalPatch`. One array shared by every method. */
+export const PATCH_VAR_BINDING = "xpanda_reserved_patch";
+
+function patchSlotExpression(index: number): any {
+    const factory = NodeFactory;
+    return factory.memberExpressionNode(
+        factory.identifierNode(PATCH_VAR_BINDING) as any,
+        factory.numberLiteralNode(index) as any,
+        true);
+}
+
 function assignAcc(methodHandler: PandaDecompilerMethodHandler, right: any, node: any, left: any = "acc"): void {
     const factory = NodeFactory;
     const utils = NodeUtils;
@@ -769,6 +780,16 @@ const HANDLES: Record<string, Handle> = {
     loadExternalModuleVar: (ins, _b, mh, _l, node) => {
         const factory = NodeFactory;
         assignAcc(mh, factory.expressionNodeFromName((ins.module as any).localName) as any, node);
+        return false;
+    },
+    // GlobalPatch is one process-wide array. The decompiled binding is the same name
+    // everywhere so a store in func_main_0 and a load in a method see one slot.
+    loadPatchVar: (ins, _b, mh, _l, node) => {
+        assignAcc(mh, patchSlotExpression(ins.patchIndex), node);
+        return false;
+    },
+    storePatchVar: (ins, _b, mh, _l, node) => {
+        assignAcc(mh, NodeFactory.identifierNode("acc") as any, node, patchSlotExpression(ins.patchIndex));
         return false;
     },
     // ------------------------------------------------ 词法环境

@@ -2,7 +2,7 @@
  * xpanda-asm 公共入口。
  * @Author: jmp0
  */
-export { PandaPatchFile, PandaPatchError, generateHookName } from "./PandaPatchFile";
+export { PandaPatchFile, PandaPatchError, generateHookName, patchSetterGlobalName, PATCH_SLOT_BASE, DEFAULT_INIT_FUNCTION } from "./patch";
 export type {
     MethodCode,
     AddMethodOptions,
@@ -14,7 +14,9 @@ export type {
     MethodCodeInput,
     TryBlockInput,
     CatchBlockInput,
-} from "./PandaPatchFile";
+    PatchInitOptions,
+    PatchInitResult,
+} from "./patch";
 export { dumpClasses } from "./ClassDump";
 export type { DumpClassesResult } from "./ClassDump";
 export { encodeMethodCode } from "./MethodCode";

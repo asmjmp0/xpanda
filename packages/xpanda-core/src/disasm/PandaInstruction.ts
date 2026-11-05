@@ -37,6 +37,7 @@ export type InstructionKind =
     | "storeObjectRecord" | "loadGlobal"
     // 模块
     | "storeModuleVar" | "loadModuleVar" | "loadExternalModuleVar"
+    | "loadPatchVar" | "storePatchVar"
     // 词法环境
     | "newLexEnv" | "storeLex" | "loadLex" | "popLexEnv"
     // 迭代器/异步/生成器
@@ -245,6 +246,9 @@ function buildKindMap(): Map<string, InstructionKind> {
         "callruntime.ldsendableexternalmodulevar", "callruntime.wideldsendableexternalmodulevar",
         "callruntime.ldlazysendablemodulevar", "callruntime.wideldlazysendablemodulevar",
         "getmodulenamespace", "wide.getmodulenamespace");
+    // GlobalEnv.GlobalPatch[imm]: the runtime hotfix slot table.
+    put("loadPatchVar", "wide.ldpatchvar");
+    put("storePatchVar", "wide.stpatchvar");
 
     put("newLexEnv", "newlexenv", "newlexenvwithname", "wide.newlexenv", "wide.newlexenvwithname",
         "callruntime.newsendableenv", "callruntime.widenewsendableenv");
@@ -368,6 +372,8 @@ export class PandaInstruction {
     readonly globalName: PandaString | null = null;
     // 模块
     readonly module: PandaClassImportModule | PandaClassExportModule | null = null;
+    /** wide.ldpatchvar / wide.stpatchvar slot in GlobalEnv.GlobalPatch. */
+    readonly patchIndex = 0;
     // 词法
     readonly lexLevel = 0;
     readonly lexIndex = 0;
@@ -504,6 +510,10 @@ export class PandaInstruction {
                 break;
             }
             case "loadExternalModuleVar": this.initLoadExternalModuleVar(opcode, method); break;
+            case "loadPatchVar":
+            case "storePatchVar":
+                (this as any).patchIndex = (this.params[0] as PandaInstructionIMM).imm;
+                break;
             case "loadGlobal": (this as any).globalName = ((this.params[1] as PandaInstructionID).obj as PandaString); break;
             case "newLexEnv": {
                 (this as any).lexImm = (this.params[0] as PandaInstructionIMM).imm;

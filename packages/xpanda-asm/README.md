@@ -124,6 +124,7 @@ writeFileSync("app.patched.abc", patchFile.toBytes());
      `&xpanda/hook/<第一个 hook 名>&`,目标 module 为每个 hook 追加一条 import 表项,请求串为
      `@normalized:N&&&xpanda/hook/<记录名>&`(结果里的 `hookGlobalName` 就是各自的 `<hookName>`);
    - 给目标类所在 module 的 module record 追加 import 表项(指向 hook record);
+     动态 hook 可以用 `setupClassName` 改成只给指定入口类追加 import;
    - 在方法头插入 `getunmappedargs → lda this → ldexternalmodulevar <import_idx> → callargs2 → if (res.arg) 写回参数寄存器 → if (res.res) return res.res`;
    - hook 自己的 `import ... from "x"`:显式 `moduleRequests` 映射优先;否则 `@...`/相对路径原样保留,
      裸模块名按目标 abc 的记录名后缀唯一匹配(如 `ohop` → `@normalized:N&&&.../ohop&`),
@@ -137,16 +138,19 @@ writeFileSync("app.patched.abc", patchFile.toBytes());
 
 要求:
 
-- 目标类带 module record 时直接追加 import;没有 module record(bundle-pack / 未合并 abc)时,
+- import 宿主类(缺省是目标类,动态 hook 可用 `setupClassName` 指定入口类)带 module record
+  时直接追加 import;没有 module record(bundle-pack / 未合并 abc)时,
   会给类实体**硬加** `isCommonjs` + `moduleRecordIdx` 字段和一个空 module record。
   注意:运行时会因为出现 `moduleRecordIdx` 把整个 abc 当 merged abc 加载, bundle-pack 文件
   只有在确认加载方式仍成立时才这样用(更稳妥的是先合并/重新编译目标 abc);
-- 目标 region 的 proto index table 必须无效(bytecode >= 12.0.1.0);
+- hook 宿主 region(setupClassName 指定时是入口类,否则是目标类)的 proto index table
+  必须无效(bytecode >= 12.0.1.0);
 - hook 源码必须声明 `function <hookName>(...)`(表达式形式不支持);`patchHookBundle` 里的每个 hook 名都要有同名函数
   (hook 函数写在固定文件里时,用 `prepareMethodHead(..., { hookGlobalName: "myHook" })` 让文件名与 hook 名一致,
   再把 `readFileSync(...)` 的内容作为 `hookSource` 传入);
-- 目标类与 hook class 必须落在同一个 index region(`patchHookBundle` 的所有目标类也必须同 region,hook class 只搬一份);
-- 目标 module 不能带 namespace import(追加 regular import 会移动它们的环境下标);
+- 缺省情况下目标类与 hook class 必须落在同一个 index region(`patchHookBundle` 的所有目标类也必须同 region,
+  hook class 只搬一份);动态 hook 指定 `setupClassName` 后 hook class 搬进入口类所在 region,目标类不再受此限制;
+- import 宿主的 module 不能带 namespace import(追加 regular import 会移动它们的环境下标);
 - `localName` 是目标 module record 内的局部名:同一个类从 bundle 导入多个 hook 时不能共用一个自定义名,
   缺省按各自 hook 名生成。
 
@@ -222,6 +226,126 @@ function hook(self, args) {
   `res.res !== undefined` 的判断;
 - 参数改写发生在原函数体的第一条指令之前,函数体的默认参数逻辑会看到新值。
 
+## 动态 hook（GlobalPatch 槽）
+
+`{ dynamic: true }` 把方法头对 hook 函数的查找从写死的 `ldexternalmodulevar` 换成
+`wide.ldpatchvar`。槽是虚拟机进程全局的 `GlobalEnv.GlobalPatch`（`u16` 下标），
+`wide.stpatchvar` 写入、`wide.ldpatchvar` 读出。默认从 `0x1000` 起分配，避开系统热修编译器
+常用的低位；同一个 hook 名复用同一个槽。槽必须落在 `0..0x7fff`：设备上的汇编解释器把这条
+立即数按有符号 16 位送进 runtime，`0x8000` 及以上会被当成巨大的数组长度，`stpatchvar` 直接把进程打 OOM。
+
+```ts
+const hookName = patchFile.prepareMethodHead(className, methodName);
+const result = patchFile.patchMethodHead(hookName, `function ${hookName}(self, args) {
+    return {};
+}`, { dynamic: true });
+
+// result.patchSlot === 0x1000
+// 模块初始化之后，任意 JS 可以换实现或关闭:
+//   globalThis[result.setterGlobalName](newFn);  // 名字是 xpanda_set_<hookName>
+//   globalThis[result.setterGlobalName](undefined);
+```
+
+setup 的触发点在缺省情况下是**目标方法所属的类**:目标 module 会 import hook 模块,
+从而保证目标方法第一次执行前槽已经写好。也可以把 setup 提前到 hap 入口(例如
+`EntryAbility`),这样目标类不参与 hook,槽在应用启动阶段就安装好:
+
+```ts
+const result = patchFile.patchMethodHead(hookName, hookSource, {
+    dynamic: true,
+    // 通常是 hap 入口类;只给这个类追加 hook import,hook class 也搬进它所在的 region
+    setupClassName: "L&entry/src/main/ets/entryability/EntryAbility&;",
+});
+```
+
+指定 `setupClassName` 后目标方法所在类**不再追加 import**,因此目标类可以分散在不同的
+index region;代价是 setup 不再跟随目标 module 加载,入口 module 必须先于被 hook 方法的
+调用完成求值(否则 `wide.ldpatchvar` 会读一张还没扩容的 `GlobalPatch` 数组)。
+
+注入后多出来的字节码:
+
+1. hook 模块里追加 `export function <hookName>__set(fn)`，方法体被换成
+   `lda v3; wide.stpatchvar <slot>; returnundefined`（`numArgs` 沿用 es2abc 编出来的值，`numVregs` 收成 0）；
+2. hook 模块末尾的 `xpanda_reserved_setup.xpanda_reserved_setup()` 统一安装本模块里的全部槽：
+   `ldlocalmodulevar` 取出函数 → `wide.stpatchvar`，再 `ldglobal; stobjbyname` 把 setter 挂到
+   `globalThis`（`trystglobalbyname` 要求这个名字已经是全局绑定，否则运行时直接 ReferenceError）。
+   缺省由目标 module import 这个 hook 模块触发 setup;指定 `setupClassName` 时改由该入口类 import,
+   从而保证 setup 在目标方法之前执行(入口 module 的求值顺序需要满足,见上方说明)；
+3. 方法头先 `wide.ldpatchvar`。槽值是 hole / `undefined` / 其它 falsy 时跳过整个前导，原方法照常执行；
+   否则仍按 `{ arg, res }` 协议调用。
+
+反编译把这两条指令写成 `xpanda_reserved_patch[槽] = acc` / `acc = xpanda_reserved_patch[槽]`。`xpanda_reserved_patch` 就是运行时那张 `GlobalPatch` 数组；在 Node 里执行反编译结果时，给这个名字准备一个数组即可。
+
+限制:
+
+- import 宿主类(缺省是目标类,指定 `setupClassName` 时是入口类)必须在被 hook 的方法调用前
+  完成模块初始化。安装代码在模块初始化时跑;`GlobalPatch` 还是空数组时执行 `wide.ldpatchvar` 是越界读；
+- 这张表是整个虚拟机一份。系统热修卸载会把 `GlobalPatch` 重新设成空数组，之后的 load 同样越界；
+- 调用点仍然要先写进 abc。这两条指令不能给一个没改过的方法做运行时挂载，也不能代替系统的 `ReplaceMethod`；
+- 换上去的函数要遵守同一个 `(self, args) -> { arg?, res? }` 协议；
+- 已经 AOT 的方法要等重新加载或 deopt 才会执行插入的字节码，和静态 hook 一样。
+
+## 初始化回调 init
+
+init 和 hook 一样,**由用户写函数声明**,xpanda 只负责把它导出并安排调用。
+init 函数必须声明在注入的 module 源码里:
+
+```ts
+function init() {
+    globalThis.__patched = true;
+    console.log("xpanda init");
+}
+```
+
+### 只注入 init(不 hook 任何方法)
+
+```ts
+const result = patchFile.patchInit(`
+    function init() {
+        globalThis.__patched = true;
+    }
+`, {
+    // 必填:入口类负责 import 初始化 module,并在 func_main_0 里调用 init
+    setupClassName: "L&entry/src/main/ets/entryability/EntryAbility&;",
+    // 可选:函数名,缺省 "init"
+    // initName: "init",
+});
+
+// result.moduleName / result.initName / result.importIndex / result.codeOffset
+```
+
+注入内容:把 module(函数声明 + 它用到的 import/顶层变量)搬进入口类所在 region,
+给入口类 module record 追加 init 函数的 import,并在入口类 `func_main_0` 开头插入
+`ldexternalmodulevar <init>; callarg0`。没有 hook、没有 GlobalPatch 槽。
+
+### hook + init
+
+有 hook 时,init 函数和 hook 函数写在**同一份 `hookSource`** 里,用 `init` 选项指定函数名:
+
+```ts
+const hookName = patchFile.prepareMethodHead(className, "#*#target");
+patchFile.patchMethodHead(hookName, `
+    function ${hookName}(self, args) { return {}; }
+
+    function init() {
+        globalThis.__hookInstalled = true;
+    }
+`, {
+    dynamic: true,
+    setupClassName: "L&entry/src/main/ets/entryability/EntryAbility&;",
+    init: "init",   // 必须是 hookSource 里声明的函数
+});
+```
+
+- **dynamic**:入口 module 先 import hook module(执行 `xpanda_reserved_setup` 写槽),
+  然后 `func_main_0` 调用 init,即 **setup 完成后**再执行 init;
+- **static**:入口 module 直接 import hook module 并在 `func_main_0` 调用 init;
+- `init` 缺省:不注入 init import,也不插入调用;
+- 指定 `init` 时**必须**同时指定 `setupClassName`(入口类),否则报错;
+- init 函数和 hook 函数一样会被改写成 `export function`(已经是导出形式则保持);
+- 静态 hook 也可以配合 `init` 使用 `setupClassName`;不配 `init` 时静态 hook 仍然不允许该选项;
+- 入口类必须有 `func_main_0`;没有 module record 时仍按前面的规则硬加。
+
 ## 异步函数 hook
 
 用法与同步函数完全相同(`prepareMethodHead` 会自动识别 async 函数),不需要额外参数:
@@ -265,6 +389,8 @@ append-only patcher:
 - ✅ 新增字符串 / 字符串 id(`addString` / `addStringId`)
 - ✅ 在任意指令边界插入汇编字节码(`insertInstructions`):自动修正相对跳转、try/catch 范围;片段可以写参数寄存器(`index >= numVregs`),不会改变帧布局
 - ✅ AOP 函数头 hook:`prepareMethodHead` + `patchMethodHead(s)` / `patchHookBundle`,支持一个 hook 挂多个函数、多个 hook、多个 hook 写在同一个源文件、async 函数
+- ✅ 动态 hook(`{ dynamic: true }`):方法头 `wide.ldpatchvar` 读 GlobalPatch 槽,hook 模块的 `xpanda_reserved_setup` 用 `wide.stpatchvar` 装初始函数,`globalThis.xpanda_set_<hook>` 运行时替换;可用 `setupClassName` 把 setup import 提前到 hap 入口类
+- ✅ 初始化回调 init:可单独调用 `patchInit(moduleSource, { setupClassName })`(不 hook 方法),也可在 `patchMethodHead(s)` 里传 `init: "<函数名>"` 把 init 函数和 hook 函数写在同一份源码;dynamic 在 setup 之后、static 直接由入口类 `func_main_0` 调用
 - ✅ AOP hook 统一走 module record 搬运:hook class 的 import/export 表随类整体搬进目标 abc,目标 module 追加 import,前导用 `ldexternalmodulevar` 调用(hook 内部的 import / 顶层变量可正常解析)
 - ✅ 同一次会话里连续新增方法 / 追加字符串 / 替换代码 / 连续插入(代码模型会累积最新版本)
 - ✅ 无修改时字节级 round-trip

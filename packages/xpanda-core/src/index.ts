@@ -8,6 +8,7 @@ export { PandaFile, ENTRY_FUNCTION_MAIN } from "./file/PandaFile";
 export { PandaClass } from "./file/clazz/PandaClass";
 export { PandaMethod } from "./file/method/PandaMethod";
 export { PandaDecompiler } from "./PandaDecompiler";
+export { PATCH_VAR_BINDING } from "./decompiler/MethodHandler";
 export { PandaLexical } from "./disasm/PandaLexical";
 export { PandaDisAssembler } from "./disasm/PandaDisAssembler";
 export { PandaIRCFG, PandaIRBasicBlock } from "./disasm/ir";
