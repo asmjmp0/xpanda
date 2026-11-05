@@ -7,6 +7,8 @@
 
 #include <string>
 
+#include "ark_runtime/jsvm.h"
+
 namespace xpanda {
 
 /**
@@ -23,6 +25,16 @@ bool evaluateInJsvm(const std::string& code, std::string* valueJson, std::string
 
 /** JSVM health probe (`probe` request): ensure the runtime and report VM information. */
 bool runJsvmProbe(std::string* valueJson, std::string* error);
+
+/**
+ * Call a replacement function installed by ArkTS.patch.patchMethod(). The
+ * host-side trampoline passes a temporary host instance id (for `this`) and an
+ * optional bound-original id; argsJson is a JSON array of the original args.
+ * JS thread only.
+ */
+bool callJsvmPatch(JSVM_Ref fnRef, int instanceId, int originalId,
+                   const std::string& argsJson,
+                   std::string* resultJson, std::string* error);
 
 } // namespace xpanda
 

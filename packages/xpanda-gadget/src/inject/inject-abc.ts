@@ -37,7 +37,7 @@ export function injectAbcBytes(data: Uint8Array, options: InjectAbcOptions = {})
         throw new Error(`entry class ${entryClass} has no func_main_0`);
     }
 
-    const bootstrapSource = buildBootstrapSource(port, soName, initName);
+    const bootstrapSource = buildBootstrapSource(port, soName, initName, options.waitMs ?? 0);
     const init = patchFile.patchInit(bootstrapSource, {
         setupClassName: entryClass,
         initName,

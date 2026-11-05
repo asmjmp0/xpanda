@@ -52,6 +52,14 @@ export function runGadget(rawArgs: string[]): void {
             if (!Number.isFinite(value) || value <= 0) fail("option --port requires a positive number", "gadget");
             options.port = value;
             i = parsed.index;
+        } else if (arg === "--wait") {
+            const parsed = takeValue(args, i, arg, "gadget");
+            const value = Number(parsed.value);
+            if (!Number.isFinite(value) || value < 0) {
+                fail("option --wait requires a non-negative number of milliseconds", "gadget");
+            }
+            options.waitMs = Math.floor(value);
+            i = parsed.index;
         } else if (arg === "--entry") {
             const parsed = takeValue(args, i, arg, "gadget");
             options.entryClass = parsed.value;
@@ -103,6 +111,7 @@ export function runGadget(rawArgs: string[]): void {
             result.soEntryName
                 ? `  embedded ${result.soEntryName} (${options.soPath ?? "prebuilt"})`
                 : `  .so NOT embedded: ${result.soSkippedReason}`,
+            `  wait: ${options.waitMs ?? 0} ms for a client`,
             `  size: ${result.inputSize} -> ${result.outputSize}`,
             "  note: the repacked HAP is unsigned; re-sign before installing.",
         ].join("\n");
@@ -112,7 +121,7 @@ export function runGadget(rawArgs: string[]): void {
         suffix = ".gadget.abc";
         summary = [
             "abc gadget injection complete:",
-            `  entry=${result.entryClass} module=${result.moduleName} port=${options.port ?? DEFAULT_GADGET_PORT}`,
+            `  entry=${result.entryClass} module=${result.moduleName} port=${options.port ?? DEFAULT_GADGET_PORT} wait=${options.waitMs ?? 0}ms`,
             `  size: ${data.length} -> ${result.data.length}`,
             `  remember to place ${options.soName ?? GADGET_SO_NAME} in the HAP libs/<abi>/ directory.`,
         ].join("\n");

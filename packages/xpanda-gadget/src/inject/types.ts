@@ -7,6 +7,11 @@ export interface InjectAbcOptions {
     /** TCP port the gadget socket server listens on; baked into the bootstrap. Default 27041. */
     port?: number;
     /**
+     * Block app startup until a client connects, at most this many milliseconds.
+     * Baked into the bootstrap as `gadget.start({ wait: ... })`. Default 0 (do not wait).
+     */
+    waitMs?: number;
+    /**
      * Module request name of the gadget NAPI library; must match the file name embedded
      * under the HAP libs directory (nm_modname strips the lib prefix / .so suffix).
      * Default `libxpanda_gadget.so`.

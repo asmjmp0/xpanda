@@ -4,6 +4,7 @@
  *
  *   xpanda gadget file <script.js> [--once] [--port N] [-t serial]
  *                      [--hdc path] [--host HOST] [--no-forward] [--keep-forward]
+ *                      [--bundle NAME] [--ability NAME] [--wait SEC]
  * @Author: jmp0
  */
 import * as fs from "fs";
@@ -21,6 +22,7 @@ import {
     isConsolePush,
     setupGadgetForward,
 } from "../gadgetClient";
+import { ensureBundleRunning, findHdc, waitForGadgetSocket } from "../hdc";
 import { fail, printUsage } from "../help";
 
 const WATCH_INTERVAL_MS = 200;
@@ -78,6 +80,22 @@ function parseArgs(args: string[]): FileOptions {
             options.connection.noForward = true;
         } else if (arg === "--keep-forward") {
             options.connection.keepForward = true;
+        } else if (arg === "--bundle") {
+            const parsed = takeValue(args, i, arg, "gadget-file");
+            options.connection.bundle = parsed.value;
+            i = parsed.index;
+        } else if (arg === "--ability") {
+            const parsed = takeValue(args, i, arg, "gadget-file");
+            options.connection.ability = parsed.value;
+            i = parsed.index;
+        } else if (arg === "--wait") {
+            const parsed = takeValue(args, i, arg, "gadget-file");
+            const seconds = Number(parsed.value);
+            if (!Number.isFinite(seconds) || seconds < 0) {
+                fail("option --wait requires a non-negative number of seconds", "gadget-file");
+            }
+            options.connection.waitMs = seconds * 1000;
+            i = parsed.index;
         } else {
             fail(`gadget file: unknown option: ${arg}`, "gadget-file");
         }
@@ -101,6 +119,23 @@ export async function runGadgetFile(args: string[]): Promise<void> {
     const cleanupForward = setupGadgetForward(options.connection);
     const log = (color: string, text: string): void => {
         console.log(`[${stamp()}] ${color}${text}${COLOR.reset}`);
+    };
+
+    /** Start the bundle if --bundle was given; returns null on success. */
+    const ensureApp = (): string | null => {
+        if (!options.connection.bundle) return null;
+        const hdc = options.connection.hdc ?? findHdc(options.connection.hdcPath);
+        if (!hdc) return "hdc not found (required for --bundle)";
+        const app = ensureBundleRunning(
+            hdc,
+            options.connection.bundle,
+            options.connection.ability ?? "EntryAbility",
+            options.connection.waitMs ?? 20000,
+            options.connection.serial,
+        );
+        if (!app.running) return app.error ?? "app is not running";
+        if (app.started) log(COLOR.dim, `started ${options.connection.bundle}`);
+        return null;
     };
 
     let client: GadgetClient | null = null;
@@ -128,6 +163,28 @@ export async function runGadgetFile(args: string[]): Promise<void> {
         log(COLOR.dim, `${reason}: ${scriptPath}`);
 
         if (client === null) {
+            const appError = ensureApp();
+            if (appError) {
+                log(COLOR.red, `app start failed: ${appError} (will retry on next save)`);
+                return;
+            }
+            if (options.connection.bundle) {
+                const hdc = options.connection.hdc ?? findHdc(options.connection.hdcPath);
+                if (!hdc) {
+                    log(COLOR.red, "hdc not found (required for --bundle)");
+                    return;
+                }
+                const ready = waitForGadgetSocket(
+                    hdc,
+                    options.connection.port,
+                    options.connection.waitMs ?? 20000,
+                    options.connection.serial,
+                );
+                if (!ready) {
+                    log(COLOR.red, `gadget socket did not become ready on port ${options.connection.port} (will retry on next save)`);
+                    return;
+                }
+            }
             const candidate = createGadgetClient(options.connection, (message) => {
                 if (isConsolePush(message)) {
                     // keep the timestamp: in watch mode the script runs repeatedly

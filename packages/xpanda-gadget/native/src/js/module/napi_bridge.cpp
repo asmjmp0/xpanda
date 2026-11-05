@@ -479,6 +479,41 @@ void releaseHostModules() {
     g_nextModuleId = 1;
 }
 
+napi_env hostBridgeEnv() {
+    return g_hostEnv;
+}
+
+bool resolveHostPathForBridge(const std::string& path, napi_value* receiver,
+                              napi_value* target, std::string* error) {
+    if (g_hostEnv == nullptr) {
+        if (error) *error = "host runtime not attached";
+        return false;
+    }
+    return resolveHostPath(g_hostEnv, path, receiver, target, error);
+}
+
+int retainHostValue(napi_value value) {
+    if (g_hostEnv == nullptr || value == nullptr) return 0;
+    napi_ref ref = nullptr;
+    if (napi_create_reference(g_hostEnv, value, 1, &ref) != napi_ok || ref == nullptr) return 0;
+    int id = g_nextModuleId++;
+    g_hostModules[id] = ref;
+    return id;
+}
+
+void releaseHostValue(int id) {
+    if (g_hostEnv == nullptr || id <= 0) return;
+    auto entry = g_hostModules.find(id);
+    if (entry == g_hostModules.end()) return;
+    napi_delete_reference(g_hostEnv, entry->second);
+    g_hostModules.erase(entry);
+}
+
+std::string takeHostException(const std::string& fallback) {
+    if (g_hostEnv == nullptr) return fallback;
+    return takeNapiException(g_hostEnv, fallback);
+}
+
 void captureHostNapi(napi_env env) {
     releaseHostModules();
     g_hostEnv = env;

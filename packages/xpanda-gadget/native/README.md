@@ -18,9 +18,10 @@ src/
 │   ├── jsvm_value.h/.cpp   JSVM value/exception conversions
 │   └── module/
 │       ├── console.h/.cpp     the console.* module injected into the gadget JSVM
-│       ├── host_bridge.h/.cpp coordinator + JS assembly of ArkTS.hostGlobal/napi
+│       ├── host_bridge.h/.cpp coordinator + JS assembly of ArkTS.hostGlobal/napi/patch
 │       ├── host_global.h/.cpp host globalThis snapshot -> ArkTS.hostGlobal
 │       ├── napi_bridge.h/.cpp ArkTS.napi, napi_load_module and the call proxy
+│       ├── patch_bridge.h/.cpp ArkTS.patch.patchMethod runtime method patching
 │       └── bridge_utils.h     shared JSVM helpers
 └── socket/
     └── socket_server.h/.cpp abstract unix socket + NDJSON protocol dispatch
@@ -42,6 +43,10 @@ socket client (gadget shell / gadget file)
                  └─ console.* → js/module/console → broadcast {"type":"console"} + hilog
        → {"type":"result"} back to the client
 ```
+
+`start({ wait: N })` binds the socket and then blocks the app's JS thread for at
+most N milliseconds until a client connects; `gadget shell` / `gadget file`
+connect and release the app. With no client it times out and startup continues.
 
 The hop uses a `uv_async` handle on the host event loop instead of a
 `napi_threadsafe_function`: OpenHarmony's module loader is not re-entrant from a

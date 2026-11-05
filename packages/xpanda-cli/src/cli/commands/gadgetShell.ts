@@ -4,6 +4,7 @@
  *
  *   xpanda gadget shell [--port N] [-t serial] [--hdc path]
  *                       [--no-forward] [--keep-forward] [--host HOST]
+ *                       [--bundle NAME] [--ability NAME] [--wait SEC]
  * @Author: jmp0
  */
 import * as readline from "readline";
@@ -19,6 +20,7 @@ import {
     isConsolePush,
     setupGadgetForward,
 } from "../gadgetClient";
+import { ensureBundleRunning, findHdc, waitForGadgetSocket } from "../hdc";
 import { fail, printUsage } from "../help";
 
 /** Split a JS snippet into tokens while skipping strings/comments (for brace balance). */
@@ -103,6 +105,22 @@ function parseArgs(args: string[]): GadgetConnectionOptions {
             options.noForward = true;
         } else if (arg === "--keep-forward") {
             options.keepForward = true;
+        } else if (arg === "--bundle") {
+            const parsed = takeValue(args, i, arg, "gadget-shell");
+            options.bundle = parsed.value;
+            i = parsed.index;
+        } else if (arg === "--ability") {
+            const parsed = takeValue(args, i, arg, "gadget-shell");
+            options.ability = parsed.value;
+            i = parsed.index;
+        } else if (arg === "--wait") {
+            const parsed = takeValue(args, i, arg, "gadget-shell");
+            const seconds = Number(parsed.value);
+            if (!Number.isFinite(seconds) || seconds < 0) {
+                fail("option --wait requires a non-negative number of seconds", "gadget-shell");
+            }
+            options.waitMs = seconds * 1000;
+            i = parsed.index;
         } else {
             fail(`gadget shell: unknown option: ${arg}`, "gadget-shell");
         }
@@ -141,7 +159,33 @@ function printShellHelp(): void {
 
 export async function runGadgetShell(args: string[]): Promise<void> {
     const options = parseArgs(args);
+    const hdc = findHdc(options.hdcPath);
+
+    if (options.bundle) {
+        if (!hdc) fail("gadget shell: hdc not found (required for --bundle)", "gadget-shell");
+        const app = ensureBundleRunning(
+            hdc,
+            options.bundle,
+            options.ability ?? "EntryAbility",
+            options.waitMs ?? 20000,
+            options.serial,
+        );
+        if (!app.running) fail(`gadget shell: ${app.error ?? "app is not running"}`, "gadget-shell");
+        if (app.started && process.stdout.isTTY) {
+            console.log(`${COLOR.dim}started ${options.bundle}${COLOR.reset}`);
+        }
+    }
+
     const cleanupForward = setupGadgetForward(options);
+
+    if (options.bundle) {
+        if (!hdc) fail("gadget shell: hdc not found (required for --bundle)", "gadget-shell");
+        const ready = waitForGadgetSocket(hdc, options.port, options.waitMs ?? 20000, options.serial);
+        if (!ready) {
+            cleanupForward();
+            fail("gadget shell: app is running but the gadget socket did not become ready", "gadget-shell");
+        }
+    }
 
     const onPush = (message: any) => {
         if (isConsolePush(message)) {

@@ -8,11 +8,14 @@
  */
 #include "js/module/host_bridge.h"
 
+#include <string>
+
 #include "common/log.h"
 #include "js/jsvm_value.h"
 #include "js/module/bridge_utils.h"
 #include "js/module/host_global.h"
 #include "js/module/napi_bridge.h"
+#include "js/module/patch_bridge.h"
 
 namespace xpanda {
 
@@ -25,6 +28,9 @@ const char* kBridgeSource = R"JS(
     var getHost = arkts.__hostGet;
     var hostKeys = arkts.__hostKeys;
     var proxyCache = Object.create(null);
+    var proxyPaths = new WeakMap();
+    var proxyExtras = new WeakMap();
+    var loadedModules = Object.create(null);
     var loadModule = arkts.__loadModule;
     var loadModuleWithInfo = arkts.__loadModuleWithInfo;
 
@@ -67,6 +73,7 @@ const char* kBridgeSource = R"JS(
         }
         var proxy = new Proxy(fn, handler);
         proxyCache[path] = proxy;
+        proxyPaths.set(proxy, path);
         return proxy;
     }
     function objectProxy(path) {
@@ -74,10 +81,14 @@ const char* kBridgeSource = R"JS(
         var proxy = new Proxy(Object.create(null), {
             get: function (target, prop) {
                 if (typeof prop === "symbol") return undefined;
+                var extras = proxyExtras.get(proxy);
+                if (extras && Object.prototype.hasOwnProperty.call(extras, prop)) return extras[prop];
                 return resolve(path + "." + String(prop));
             },
             has: function (target, prop) {
                 if (typeof prop === "symbol") return false;
+                var extras = proxyExtras.get(proxy);
+                if (extras && Object.prototype.hasOwnProperty.call(extras, prop)) return true;
                 try {
                     return JSON.parse(getHost(path + "." + String(prop))).kind !== "undefined";
                 } catch (e) {
@@ -93,6 +104,10 @@ const char* kBridgeSource = R"JS(
             },
             getOwnPropertyDescriptor: function (target, prop) {
                 if (typeof prop === "symbol") return undefined;
+                var extras = proxyExtras.get(proxy);
+                if (extras && Object.prototype.hasOwnProperty.call(extras, prop)) {
+                    return { value: extras[prop], enumerable: false, configurable: true, writable: false };
+                }
                 var info;
                 try {
                     info = JSON.parse(hostKeys(path));
@@ -114,6 +129,20 @@ const char* kBridgeSource = R"JS(
             }
         });
         proxyCache[path] = proxy;
+        proxyPaths.set(proxy, path);
+        return proxy;
+    }
+    function loadModuleProxy(path) {
+        var id = loadModule(path);
+        var proxy = objectProxy("@" + id);
+        loadedModules[path] = "@" + id;
+        return proxy;
+    }
+    function loadModuleWithInfoProxy(path, moduleInfo) {
+        var id = loadModuleWithInfo(path, moduleInfo);
+        var proxy = objectProxy("@" + id);
+        loadedModules[path] = "@" + id;
+        loadedModules[path + "\n" + moduleInfo] = "@" + id;
         return proxy;
     }
     var hostGlobal = Object.create(null);
@@ -132,11 +161,18 @@ const char* kBridgeSource = R"JS(
     arkts.hostGlobal = hostGlobal;
     arkts.napi = {
         loadModule: function (path) {
-            return objectProxy("@" + loadModule(path));
+            return loadModuleProxy(path);
         },
         loadModuleWithInfo: function (path, moduleInfo) {
-            return objectProxy("@" + loadModuleWithInfo(path, moduleInfo));
+            return loadModuleWithInfoProxy(path, moduleInfo);
         }
+    };
+    arkts.__bridge = {
+        objectProxy: objectProxy,
+        functionProxy: functionProxy,
+        pathOf: function (value) { return proxyPaths.get(value) || null; },
+        modulePath: function (path) { return loadedModules[path] || null; },
+        setExtras: function (proxy, extras) { proxyExtras.set(proxy, extras); }
     };
     delete arkts.__snapshot;
     delete arkts.__invoke;
@@ -191,7 +227,12 @@ bool installHostBridge(JSVM_Env env) {
     JSVM_Value global = nullptr;
     if (OH_JSVM_GetGlobal(env, &global) != JSVM_OK || global == nullptr) return false;
     if (!setNamed(env, global, "ArkTS", arkts)) return false;
-    return runBridgeScript(env);
+    if (!runBridgeScript(env)) return false;
+    if (!installPatchMethod(env, arkts)) {
+        GADGET_LOG_ERROR("host bridge: failed to install patch helpers");
+        return false;
+    }
+    return true;
 }
 
 } // namespace xpanda

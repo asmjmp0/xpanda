@@ -40,12 +40,20 @@ static napi_value Start(napi_env env, napi_callback_info info) {
     napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
 
     int port = kDefaultPort;
+    int waitMs = 0;
     if (argc >= 1 && argv[0] != nullptr) {
         napi_value portValue = nullptr;
         if (napi_get_named_property(env, argv[0], "port", &portValue) == napi_ok && portValue != nullptr) {
             int32_t requested = 0;
             if (napi_get_value_int32(env, portValue, &requested) == napi_ok && requested > 0) {
                 port = requested;
+            }
+        }
+        napi_value waitValue = nullptr;
+        if (napi_get_named_property(env, argv[0], "wait", &waitValue) == napi_ok && waitValue != nullptr) {
+            int32_t requested = 0;
+            if (napi_get_value_int32(env, waitValue, &requested) == napi_ok && requested > 0) {
+                waitMs = requested;
             }
         }
     }
@@ -67,6 +75,11 @@ static napi_value Start(napi_env env, napi_callback_info info) {
         GADGET_LOG_ERROR("start failed: %{public}s", error.c_str());
         napi_throw_error(env, nullptr, ("xpanda-gadget start failed: " + error).c_str());
         return nullptr;
+    }
+    if (waitMs > 0) {
+        GADGET_LOG_INFO("start: waiting up to %{public}d ms for a client", waitMs);
+        bool connected = socketServer().waitForClient(waitMs);
+        GADGET_LOG_INFO("start: %{public}s", connected ? "client connected" : "no client before timeout");
     }
     GADGET_LOG_INFO("started %{public}s js=%{public}d (pid %{public}d)", socketServer().endpoint().c_str(),
         isJsBridgeReady() ? 1 : 0, static_cast<int>(getpid()));

@@ -74,12 +74,24 @@ bool SocketServer::listenAbstract(const std::string& name, int* outFd, std::stri
 
 void SocketServer::stop() {
     if (!running_.exchange(false)) return;
+    clientCv_.notify_all();
     {
         std::lock_guard<std::mutex> lock(clientsMutex_);
         for (int fd : clientFds_) ::shutdown(fd, SHUT_RDWR);
     }
     endpoint_.clear();
     if (acceptThread_.joinable()) acceptThread_.join();
+}
+
+bool SocketServer::waitForClient(int timeoutMs) {
+    std::unique_lock<std::mutex> lock(clientsMutex_);
+    if (!clientFds_.empty()) return true;
+    if (!running_.load()) return false;
+    if (timeoutMs <= 0) return false;
+    clientCv_.wait_for(lock, std::chrono::milliseconds(timeoutMs), [this]() {
+        return !clientFds_.empty() || !running_.load();
+    });
+    return running_.load() && !clientFds_.empty();
 }
 
 uint64_t SocketServer::uptimeMs() const {
@@ -126,8 +138,11 @@ void SocketServer::acceptLoop(int listenFd) {
 }
 
 void SocketServer::addClient(int fd) {
-    std::lock_guard<std::mutex> lock(clientsMutex_);
-    clientFds_.push_back(fd);
+    {
+        std::lock_guard<std::mutex> lock(clientsMutex_);
+        clientFds_.push_back(fd);
+    }
+    clientCv_.notify_all();
 }
 
 void SocketServer::removeClient(int fd) {

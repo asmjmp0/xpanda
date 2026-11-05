@@ -55,6 +55,13 @@ public:
     /** Close the listener and every client socket. */
     void stop();
 
+    /**
+     * Block until at least one client is connected or the timeout expires.
+     * Used by gadget.start({ wait }) to hold app startup until a debugger/client
+     * connects. Returns true when a client is connected.
+     */
+    bool waitForClient(int timeoutMs);
+
     /** Attach the JS executor (host ArkTS runtime). nullptr disables the "js" request type. */
     void setJsExecutor(JsExecutor executor) { jsExecutor_ = std::move(executor); }
     bool hasJsExecutor() const { return static_cast<bool>(jsExecutor_); }
@@ -94,6 +101,7 @@ private:
     std::thread acceptThread_;
 
     std::mutex clientsMutex_;
+    std::condition_variable clientCv_;
     std::vector<int> clientFds_;
 
     std::mutex inboxMutex_;

@@ -32,6 +32,7 @@ yarn workspace xpanda-gadget build:so        # → assets/arm64-v8a/libxpanda_ga
 # 2) Inject
 yarn xpanda gadget <file.abc|file.hap> -o outDir
 yarn xpanda gadget app.hap --port 27041 --abi arm64-v8a
+yarn xpanda gadget app.hap --port 27041 --wait 5000   # hold startup up to 5s for a client
 yarn xpanda gadget app.abc --entry "L&entry/src/main/ets/entryability/EntryAbility&;"
 
 # 3a) Interactive JS shell (sets up hdc fport automatically, cleans it up on exit)
@@ -46,7 +47,13 @@ yarn xpanda gadget shell
 yarn xpanda gadget file script.js
 yarn xpanda gadget file script.js --once        # run once and exit
 
-# 3c) Or connect manually (forward hdc to the abstract socket)
+# 3c) Start the app automatically when it is not running
+yarn xpanda gadget shell --bundle com.example.helloworld -p 27041
+yarn xpanda gadget file script.js --bundle com.example.helloworld -p 27041
+#     --ability NAME   ability to launch (default EntryAbility)
+#     --wait SEC       max wait for the app/gadget socket (default 20)
+
+# 3d) Or connect manually (forward hdc to the abstract socket)
 hdc fport tcp:27041 localabstract:xpanda_gadget_27041
 nc localhost 27041
 > {"id":1,"type":"info"}
@@ -66,7 +73,7 @@ CLI options: `--port` `--entry` `--abc <entry>` `--all` (patch every abc) `--abi
 
 | Method | Description |
 |---|---|
-| `start({ port? })` | Starts the socket (default name `xpanda_gadget_27041`) |
+| `start({ port?, wait? })` | Starts the socket (default name `xpanda_gadget_27041`); `wait` blocks startup until a client connects (ms) |
 | `stop()` | Closes the socket and destroys the JSVM |
 | `info()` | `{ pid, endpoint, running, js, version, uptimeMs }` |
 | `send(value)` | Broadcasts `{"type":"msg","payload":<value>}` to every socket client |
@@ -107,6 +114,54 @@ app-local modules. The target must be declared under
 `build-profile.json5`. Socket requests are executed on the host event loop
 (uv_async), so the module loader does not run from a TSFN callback and local
 module execution is safe.
+
+### Runtime method patching
+
+`ArkTS.patch.patchMethod(module, className, methodName, replacement)` replaces
+a host class method with a function defined in the gadget VM:
+
+```js
+var m = ArkTS.napi.loadModuleWithInfo(
+    "entry/src/main/ets/entryability/EntryAbility",
+    "com.example.helloworld/entry"
+);
+
+ArkTS.patch.patchMethod(m, "EntryAbility", "onDestroy", function () {
+    console.warn("before onDestroy");
+    this.__original();          // call the original with the same `this`
+    console.warn("after onDestroy");
+    return "patched";
+});
+```
+
+- `module`: a module proxy (or a path previously loaded by `loadModule` /
+  `loadModuleWithInfo`);
+- `className`: the export key (`"default"`) or the default class name
+  (`"EntryAbility"`);
+- `methodName`: an instance method on the prototype, or a static method on the
+  class;
+- `replacement`: `this` is a live host object proxy; arguments are JSON
+  snapshots; the return value is marshalled back as JSON;
+- patching the same class/method again replaces the previous replacement
+  instead of stacking; `this.__original` always calls the real original;
+- patches are reverted when the VM is reset/destroyed (`.reset` /
+  `gadget.stop`). Startup methods such as `onCreate` must be patched before they
+  run; use `xpanda-asm` for guaranteed startup hooks.
+
+Pass `null` as `className` to patch a module-level function or a system API:
+
+```js
+var fs = ArkTS.napi.loadModule("@ohos.file.fs");
+
+ArkTS.patch.patchMethod(fs, null, "readTextSync", function (path) {
+    console.warn("readTextSync", path);
+    return this.__original(path);
+});
+```
+
+This replaces the property on the host module object. Callers that already
+captured the function (destructured imports or local aliases) and native-internal
+callers are not intercepted, and the module export must be writable.
 
 **Socket protocol** (NDJSON, one JSON per line): `js` (execute JS) / `msg` (bidirectional
 messages) / `info` / `ping` / `probe` (JSVM health check). The gadget also pushes

@@ -46,6 +46,7 @@ export function printGadgetUsage(): void {
     console.log("  -o, --output DIR  Output directory (default: alongside the input)");
     console.log("  --stdout          Write the patched bytes to standard output");
     console.log("  --port N          Gadget socket port baked into the bootstrap (default 27041)");
+    console.log("  --wait MS         Hold app startup until a client connects (ms; default 0 = no wait)");
     console.log("  --entry CLASS     Entry class whose func_main_0 starts the gadget");
     console.log("  --abc NAME        HAP: abc entry to patch (e.g. ets/modules.abc)");
     console.log("  --all             HAP: patch every abc entry");
@@ -67,6 +68,9 @@ export function printGadgetShellUsage(): void {
     console.log("  --host HOST       TCP host for the forwarded port (default 127.0.0.1)");
     console.log("  --no-forward      Skip the hdc fport step (connect to an existing forward)");
     console.log("  --keep-forward    Leave the fport rule in place on exit");
+    console.log("  --bundle NAME     Start this bundle (if needed) before connecting");
+    console.log("  --ability NAME    Ability used by --bundle (default: EntryAbility)");
+    console.log("  --wait SEC        Max wait for the app/gadget socket (default: 20)");
     console.log("");
     console.log("  REPL commands: <js> | .info | .ping | .probe | .reset | .msg <json> | .help | .exit");
     console.log("  console.log/info/warn/error/... called by evaluated JS is streamed back and printed here");
@@ -85,6 +89,9 @@ export function printGadgetFileUsage(): void {
     console.log("  --host HOST       TCP host for the forwarded port (default 127.0.0.1)");
     console.log("  --no-forward      Skip the hdc fport step (connect to an existing forward)");
     console.log("  --keep-forward    Leave the fport rule in place on exit");
+    console.log("  --bundle NAME     Start this bundle (if needed) before running the script");
+    console.log("  --ability NAME    Ability used by --bundle (default: EntryAbility)");
+    console.log("  --wait SEC        Max wait for the app/gadget socket (default: 20)");
 }
 
 /** Print usage for one command, or all commands when no (known) topic given. */

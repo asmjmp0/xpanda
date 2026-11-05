@@ -15,6 +15,12 @@ export interface GadgetConnectionOptions {
     hdc?: string;
     noForward: boolean;
     keepForward: boolean;
+    /** Optional bundle to launch (or verify running) before connecting. */
+    bundle?: string;
+    /** Ability used with --bundle (default EntryAbility). */
+    ability?: string;
+    /** How long to wait for the app process/gadget socket (default 20000 ms). */
+    waitMs?: number;
 }
 
 export const COLOR = process.stdout.isTTY

@@ -158,6 +158,46 @@ export interface ArkTSNapi {
 }
 
 /**
+ * Runtime method patching for classes loaded from the host runtime.
+ */
+export interface ArkTSPatch {
+    /**
+     * Replace a host method with a function defined in the gadget VM.
+     *
+     * `module` is the proxy returned by `ArkTS.napi.loadModule` /
+     * `loadModuleWithInfo` (or a path previously loaded with either helper).
+     * `className` is the export key (`"default"` for a default export) or the
+     * default class name (`"EntryAbility"`). Pass `null` to patch a module-level
+     * export/function (for example `@ohos.file.fs.readTextSync`). `methodName`
+     * is an instance method on the prototype, a static method on the class, or
+     * the export name when `className` is `null`.
+     *
+     * Patching a module-level function changes the module object property;
+     * callers that captured the function earlier (destructured imports, local
+     * aliases) and native-internal callers are not affected.
+     *
+     * Inside `replacement`, `this` is a live host object proxy and arguments
+     * are JSON snapshots. `this.__original(...)` calls the original method with
+     * the same `this`. The replacement's return value is marshalled back to the
+     * host caller as JSON.
+     *
+     * Patching the same class/method again replaces the previous replacement;
+     * it does not wrap another layer. `this.__original` always calls the real
+     * original method.
+     *
+     * Patches are reverted when the VM is reset/destroyed (`.reset` /
+     * `gadget.stop`). Startup methods such as `onCreate` must be patched before
+     * they run; use `xpanda-asm` for guaranteed startup hooks.
+     */
+    patchMethod(
+        module: HostModuleProxy | string,
+        className: string | null,
+        methodName: string,
+        replacement: (this: unknown, ...args: unknown[]) => unknown,
+    ): boolean;
+}
+
+/**
  * The `ArkTS` object available in the gadget JSVM.
  */
 export interface ArkTS {
@@ -193,6 +233,9 @@ export interface ArkTS {
 
     /** Host module loading helpers. */
     readonly napi: ArkTSNapi;
+
+    /** Runtime method patching helpers. */
+    readonly patch: ArkTSPatch;
 }
 
 /**
@@ -253,10 +296,14 @@ export interface GadgetModule {
     /**
      * Start the socket server and the JS-thread bridge.
      *
+     * `wait` blocks app startup until a client connects or the timeout (ms)
+     * expires. It is normally baked in by `xpanda gadget --wait MS`.
+     *
      * @example
      * gadget.start({ port: 27041 });
+     * gadget.start({ port: 27041, wait: 5000 });
      */
-    start(options?: { port?: number }): void;
+    start(options?: { port?: number; wait?: number }): void;
 
     /** Stop the socket server and release the JSVM / module references. */
     stop(): void;
