@@ -30,12 +30,82 @@ const char* kBridgeSource = R"JS(
     var proxyCache = Object.create(null);
     var proxyPaths = new WeakMap();
     var proxyExtras = new WeakMap();
+    var promiseIds = new WeakMap();
+    var promiseCache = Object.create(null);
     var loadedModules = Object.create(null);
     var loadModule = arkts.__loadModule;
     var loadModuleWithInfo = arkts.__loadModuleWithInfo;
 
-    function callHost(path, args, isNew) {
-        return JSON.parse(invoke(path, JSON.stringify(args), isNew));
+    function hostPromise(id) {
+        if (promiseCache[id]) return promiseCache[id];
+        var thenable = {
+            __xpandaPromiseId: id,
+            then: function (onFulfilled, onRejected) {
+                if (typeof arkts.__patchThen !== "function") {
+                    throw new Error("Promise bridge is not installed");
+                }
+                arkts.__patchThen(id, onFulfilled, onRejected);
+                return thenable;
+            },
+            catch: function (onRejected) {
+                return thenable.then(undefined, onRejected);
+            }
+        };
+        promiseIds.set(thenable, id);
+        promiseCache[id] = thenable;
+        return thenable;
+    }
+    function decodeTagged(tag) {
+        if (tag.t === "r") return resolve(tag.path ? tag.path : "@" + tag.id);
+        if (tag.t === "p") return hostPromise(tag.id);
+        if (tag.t === "b") {
+            var bytes = tag.bytes || [];
+            var buffer = new ArrayBuffer(bytes.length);
+            var view = new Uint8Array(buffer);
+            for (var i = 0; i < bytes.length; i++) view[i] = bytes[i];
+            return buffer;
+        }
+        return tag.v;
+    }
+    function encodeValue(value) {
+        if (value === undefined) return { t: "v" };
+        if (value === null || typeof value !== "object") return { t: "v", v: value };
+        var path = proxyPaths.get(value);
+        if (path) return { t: "r", path: path };
+        var pid = promiseIds.get(value);
+        if (pid) return { t: "p", id: pid };
+        if (value instanceof ArrayBuffer) {
+            var view = new Uint8Array(value);
+            var bytes = [];
+            for (var i = 0; i < view.length; i++) bytes.push(view[i]);
+            return { t: "b", bytes: bytes };
+        }
+        return { t: "v", v: value };
+    }
+    function encodeArgs(args) {
+        var out = [];
+        for (var i = 0; i < args.length; i++) out.push(encodeValue(args[i]));
+        return JSON.stringify(out);
+    }
+    function tagResult(value) {
+        if (value === undefined) return JSON.stringify({ t: "v" });
+        if (value === null || typeof value !== "object") return JSON.stringify({ t: "v", v: value });
+        var path = proxyPaths.get(value);
+        if (path) {
+            if (typeof arkts.__retainHostPath === "function") {
+                return JSON.stringify({ t: "r", id: arkts.__retainHostPath(path) });
+            }
+            return JSON.stringify({ t: "v", v: value });
+        }
+        var pid = promiseIds.get(value);
+        if (pid) return JSON.stringify({ t: "p", id: pid });
+        if (value instanceof ArrayBuffer) {
+            var view = new Uint8Array(value);
+            var bytes = [];
+            for (var i = 0; i < view.length; i++) bytes.push(view[i]);
+            return JSON.stringify({ t: "b", bytes: bytes });
+        }
+        return JSON.stringify({ t: "v", v: value });
     }
     function resolve(path) {
         var info;
@@ -52,9 +122,14 @@ const char* kBridgeSource = R"JS(
     }
     function functionProxy(path, isClass) {
         if (proxyCache[path]) return proxyCache[path];
+        var bound = JSON.parse(arkts.__retainHostFunction(path));
+        function invoke(args, isNew) {
+            return decodeTagged(JSON.parse(arkts.__invokeHostRef(
+                bound.fn, bound.recv, encodeArgs(args), isNew)));
+        }
         var fn = isClass
-            ? function (...args) { return callHost(path, args, new.target !== undefined); }
-            : (...args) => callHost(path, args, false);
+            ? function (...args) { return invoke(args, new.target !== undefined); }
+            : (...args) => invoke(args, false);
         Object.defineProperty(fn, "name", { value: path });
         var handler = {
             get: function (target, prop) {
@@ -66,10 +141,10 @@ const char* kBridgeSource = R"JS(
                 if (typeof prop === "symbol") return undefined;
                 return resolve(path + "." + String(prop));
             },
-            apply: function (target, thisArg, args) { return callHost(path, args, false); }
+            apply: function (target, thisArg, args) { return invoke(args, false); }
         };
         if (isClass) {
-            handler.construct = function (target, args) { return callHost(path, args, true); };
+            handler.construct = function (target, args) { return invoke(args, true); };
         }
         var proxy = new Proxy(fn, handler);
         proxyCache[path] = proxy;
@@ -84,6 +159,15 @@ const char* kBridgeSource = R"JS(
                 var extras = proxyExtras.get(proxy);
                 if (extras && Object.prototype.hasOwnProperty.call(extras, prop)) return extras[prop];
                 return resolve(path + "." + String(prop));
+            },
+            set: function (target, prop, value) {
+                if (typeof prop === "symbol") return false;
+                if (typeof arkts.__setHostProperty !== "function") return false;
+                try {
+                    return Boolean(arkts.__setHostProperty(path, String(prop), value));
+                } catch (e) {
+                    return false;
+                }
             },
             has: function (target, prop) {
                 if (typeof prop === "symbol") return false;
@@ -170,10 +254,15 @@ const char* kBridgeSource = R"JS(
     arkts.__bridge = {
         objectProxy: objectProxy,
         functionProxy: functionProxy,
+        resolve: resolve,
         pathOf: function (value) { return proxyPaths.get(value) || null; },
         modulePath: function (path) { return loadedModules[path] || null; },
+        promiseId: function (value) { return promiseIds.get(value) || 0; },
+        hostPromise: hostPromise,
         setExtras: function (proxy, extras) { proxyExtras.set(proxy, extras); }
     };
+    arkts.__decodeTags = function (json) { return JSON.parse(json).map(decodeTagged); };
+    arkts.__tagResult = tagResult;
     delete arkts.__snapshot;
     delete arkts.__invoke;
     delete arkts.__hostGet;

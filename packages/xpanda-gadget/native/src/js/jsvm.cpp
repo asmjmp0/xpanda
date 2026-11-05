@@ -192,8 +192,8 @@ bool evaluateInJsvm(const std::string& code, std::string* valueJson, std::string
 }
 
 bool callJsvmPatch(JSVM_Ref fnRef, int instanceId, int originalId,
-                   const std::string& argsJson,
-                   std::string* resultJson, std::string* error) {
+                   const std::string& taggedArgs,
+                   std::string* taggedResult, std::string* error) {
     if (!g_jsvm.ready || g_jsvm.env == nullptr || g_jsvm.vm == nullptr) {
         if (error) *error = "jsvm runtime is not ready";
         return false;
@@ -214,47 +214,60 @@ bool callJsvmPatch(JSVM_Ref fnRef, int instanceId, int originalId,
     JSVM_Value global = nullptr;
     JSVM_Value arkts = nullptr;
     JSVM_Value patchThis = nullptr;
+    JSVM_Value decodeTags = nullptr;
+    JSVM_Value tagResult = nullptr;
     if (OH_JSVM_GetGlobal(env, &global) != JSVM_OK || global == nullptr
         || OH_JSVM_GetNamedProperty(env, global, "ArkTS", &arkts) != JSVM_OK || arkts == nullptr
-        || OH_JSVM_GetNamedProperty(env, arkts, "__patchThis", &patchThis) != JSVM_OK
-        || patchThis == nullptr) {
-        if (error) *error = "patch: ArkTS.__patchThis is unavailable";
+        || OH_JSVM_GetNamedProperty(env, arkts, "__decodeTags", &decodeTags) != JSVM_OK
+        || decodeTags == nullptr
+        || OH_JSVM_GetNamedProperty(env, arkts, "__tagResult", &tagResult) != JSVM_OK
+        || tagResult == nullptr) {
+        if (error) *error = "patch: tagged value helpers are unavailable";
         return false;
     }
 
-    JSVM_Value idValue = nullptr;
-    JSVM_Value originalValue = nullptr;
-    if (OH_JSVM_CreateInt32(env, instanceId, &idValue) != JSVM_OK
-        || OH_JSVM_CreateInt32(env, originalId, &originalValue) != JSVM_OK) {
-        if (error) *error = "patch: failed to create instance ids";
-        return false;
-    }
-    JSVM_Value thisArgs[2] = {idValue, originalValue};
     JSVM_Value thisProxy = nullptr;
-    if (OH_JSVM_CallFunction(env, arkts, patchThis, 2, thisArgs, &thisProxy) != JSVM_OK
-        || thisProxy == nullptr) {
-        clearJsvmException(env, error);
-        if (error && error->empty()) *error = "patch: failed to create this proxy";
-        return false;
+    if (instanceId > 0) {
+        if (OH_JSVM_GetNamedProperty(env, arkts, "__patchThis", &patchThis) != JSVM_OK
+            || patchThis == nullptr) {
+            if (error) *error = "patch: ArkTS.__patchThis is unavailable";
+            return false;
+        }
+        JSVM_Value idValue = nullptr;
+        JSVM_Value originalValue = nullptr;
+        if (OH_JSVM_CreateInt32(env, instanceId, &idValue) != JSVM_OK
+            || OH_JSVM_CreateInt32(env, originalId, &originalValue) != JSVM_OK) {
+            if (error) *error = "patch: failed to create instance ids";
+            return false;
+        }
+        JSVM_Value thisArgs[2] = {idValue, originalValue};
+        if (OH_JSVM_CallFunction(env, arkts, patchThis, 2, thisArgs, &thisProxy) != JSVM_OK
+            || thisProxy == nullptr) {
+            clearJsvmException(env, error);
+            if (error && error->empty()) *error = "patch: failed to create this proxy";
+            return false;
+        }
+    } else {
+        OH_JSVM_GetUndefined(env, &thisProxy);
     }
 
-    JSVM_Value argsSource = createString(env, argsJson);
-    JSVM_Value argsArray = nullptr;
+    JSVM_Value argsSource = createString(env, taggedArgs);
+    JSVM_Value decodedArgs = nullptr;
     if (argsSource == nullptr
-        || OH_JSVM_JsonParse(env, argsSource, &argsArray) != JSVM_OK
-        || argsArray == nullptr) {
+        || OH_JSVM_CallFunction(env, arkts, decodeTags, 1, &argsSource, &decodedArgs) != JSVM_OK
+        || decodedArgs == nullptr) {
         clearJsvmException(env, error);
-        if (error && error->empty()) *error = "patch: failed to parse arguments";
+        if (error && error->empty()) *error = "patch: failed to decode arguments";
         return false;
     }
     uint32_t argc = 0;
-    if (OH_JSVM_GetArrayLength(env, argsArray, &argc) != JSVM_OK) {
+    if (OH_JSVM_GetArrayLength(env, decodedArgs, &argc) != JSVM_OK) {
         if (error) *error = "patch: failed to read argument count";
         return false;
     }
     std::vector<JSVM_Value> argv(argc);
     for (uint32_t i = 0; i < argc; i++) {
-        if (OH_JSVM_GetElement(env, argsArray, i, &argv[i]) != JSVM_OK) argv[i] = nullptr;
+        if (OH_JSVM_GetElement(env, decodedArgs, i, &argv[i]) != JSVM_OK) argv[i] = nullptr;
     }
 
     JSVM_Value result = nullptr;
@@ -264,7 +277,18 @@ bool callJsvmPatch(JSVM_Ref fnRef, int instanceId, int originalId,
         if (error && error->empty()) *error = "patch: replacement threw";
         return false;
     }
-    jsvmValueToJson(env, result, resultJson);
+
+    JSVM_Value tagged = nullptr;
+    if (OH_JSVM_CallFunction(env, arkts, tagResult, 1, &result, &tagged) != JSVM_OK
+        || tagged == nullptr) {
+        clearJsvmException(env, error);
+        if (error && error->empty()) *error = "patch: failed to encode result";
+        return false;
+    }
+    if (!jsvmValueToText(env, tagged, taggedResult)) {
+        if (error) *error = "patch: failed to read tagged result";
+        return false;
+    }
     return true;
 }
 

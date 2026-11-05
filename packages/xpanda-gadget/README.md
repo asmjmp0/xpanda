@@ -140,8 +140,10 @@ ArkTS.patch.patchMethod(m, "EntryAbility", "onDestroy", function () {
   (`"EntryAbility"`);
 - `methodName`: an instance method on the prototype, or a static method on the
   class;
-- `replacement`: `this` is a live host object proxy; arguments are JSON
-  snapshots; the return value is marshalled back as JSON;
+- `replacement`: `this` is a live host object proxy; object/function arguments
+  are live proxies, primitives are passed as-is; host Promises are thenables
+  (`.then`/`await`) and are forwarded back as real host Promises; ArrayBuffers
+  are copied;
 - patching the same class/method again replaces the previous replacement
   instead of stacking; `this.__original` always calls the real original;
 - patches are reverted when the VM is reset/destroyed (`.reset` /
@@ -162,6 +164,25 @@ ArkTS.patch.patchMethod(fs, null, "readTextSync", function (path) {
 This replaces the property on the host module object. Callers that already
 captured the function (destructured imports or local aliases) and native-internal
 callers are not intercepted, and the module export must be writable.
+
+System APIs returning live objects or Promises are supported too. For example,
+this wraps `@ohos.net.http` from the shell while preserving the real
+`HttpRequest` and its Promise:
+
+```js
+var http = ArkTS.napi.loadModule("@ohos.net.http");
+
+ArkTS.patch.patchMethod(http, null, "createHttp", function () {
+    var req = this.__original();                 // live HttpRequest
+    var originalRequest = req.request;           // stable after reassignment
+    req.request = function () {
+        var args = Array.prototype.slice.call(arguments);
+        console.warn("[NET]", args[0]);
+        return originalRequest(...args);         // real Promise/callback form
+    };
+    return req;
+});
+```
 
 **Socket protocol** (NDJSON, one JSON per line): `js` (execute JS) / `msg` (bidirectional
 messages) / `info` / `ping` / `probe` (JSVM health check). The gadget also pushes

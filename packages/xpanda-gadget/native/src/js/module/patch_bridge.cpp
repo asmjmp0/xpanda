@@ -39,6 +39,392 @@ struct PatchCall {
     napi_ref original = nullptr;
 };
 
+/** A VM function installed as a host property (for example req.request = fn). */
+struct VmHostFunction {
+    JSVM_Ref fn = nullptr;
+    napi_ref target = nullptr;
+    napi_ref previous = nullptr;
+    std::string prop;
+    bool active = true;
+};
+
+/** A VM function used as a host Promise callback. */
+struct VmCallback {
+    JSVM_Ref fn = nullptr;
+    bool active = true;
+};
+
+std::vector<VmHostFunction*> g_vmFunctions;
+std::vector<VmCallback*> g_vmCallbacks;
+
+napi_value HostVmFunctionTrampoline(napi_env env, napi_callback_info info) {
+    size_t argc = 32;
+    napi_value argv[32] = {nullptr};
+    napi_value thisArg = nullptr;
+    VmHostFunction* vm = nullptr;
+    if (napi_get_cb_info(env, info, &argc, argv, &thisArg,
+                         reinterpret_cast<void**>(&vm)) != napi_ok
+        || vm == nullptr) {
+        napi_throw_error(env, nullptr, "host VM function: missing context");
+        return nullptr;
+    }
+    if (!vm->active) {
+        napi_value previous = nullptr;
+        if (vm->previous != nullptr
+            && napi_get_reference_value(env, vm->previous, &previous) == napi_ok
+            && previous != nullptr) {
+            napi_value result = nullptr;
+            napi_call_function(env, thisArg, previous, argc, argv, &result);
+            return result;
+        }
+        napi_value undefined = nullptr;
+        napi_get_undefined(env, &undefined);
+        return undefined;
+    }
+
+    int instanceId = retainHostValue(thisArg);
+    if (instanceId == 0) {
+        napi_throw_error(env, nullptr, "host VM function: cannot reference this");
+        return nullptr;
+    }
+    std::string error;
+    std::string taggedArgs = "[";
+    bool tagsOk = true;
+    for (size_t i = 0; i < argc; i++) {
+        std::string item;
+        if (!tagHostValue(argv[i], &item, &error)) {
+            tagsOk = false;
+            break;
+        }
+        if (i > 0) taggedArgs += ",";
+        taggedArgs += item;
+    }
+    taggedArgs += "]";
+    if (!tagsOk) {
+        releaseHostValue(instanceId);
+        napi_throw_error(env, nullptr, error.c_str());
+        return nullptr;
+    }
+
+    std::string taggedResult;
+    bool ok = callJsvmPatch(vm->fn, instanceId, 0, taggedArgs, &taggedResult, &error);
+    releaseHostValue(instanceId);
+    if (!ok) {
+        napi_throw_error(env, nullptr, error.c_str());
+        return nullptr;
+    }
+    napi_value result = nullptr;
+    if (!decodeTaggedValue(taggedResult, &result, &error) || result == nullptr) {
+        napi_throw_error(env, nullptr, error.empty() ? "host VM function: invalid result" : error.c_str());
+        return nullptr;
+    }
+    return result;
+}
+
+napi_value HostThenCallback(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value argv[1] = {nullptr};
+    napi_value thisArg = nullptr;
+    VmCallback* callback = nullptr;
+    if (napi_get_cb_info(env, info, &argc, argv, &thisArg,
+                         reinterpret_cast<void**>(&callback)) != napi_ok
+        || callback == nullptr) {
+        return nullptr;
+    }
+    napi_value undefined = nullptr;
+    napi_get_undefined(env, &undefined);
+    if (!callback->active || callback->fn == nullptr) return undefined;
+
+    std::string error;
+    std::string taggedArgs = "[";
+    if (argc > 0) {
+        std::string item;
+        if (!tagHostValue(argv[0], &item, &error)) return undefined;
+        taggedArgs += item;
+    }
+    taggedArgs += "]";
+    std::string taggedResult;
+    callJsvmPatch(callback->fn, 0, 0, taggedArgs, &taggedResult, &error);
+    return undefined;
+}
+
+/** req.request = function (...) { ... } — install a VM function as a host property. */
+JSVM_Value JSVM_CDECL HostSetFunction(JSVM_Env env, JSVM_CallbackInfo info) {
+    JSVM_Value argv[3] = {nullptr, nullptr, nullptr};
+    size_t argc = 3;
+    if (OH_JSVM_GetCbInfo(env, info, &argc, argv, nullptr, nullptr) != JSVM_OK || argc < 3) {
+        OH_JSVM_ThrowError(env, nullptr, "hostSetFunction: missing arguments");
+        return nullptr;
+    }
+    std::string path;
+    std::string prop;
+    jsvmValueToText(env, argv[0], &path);
+    jsvmValueToText(env, argv[1], &prop);
+    JSVM_ValueType type = JSVM_UNDEFINED;
+    OH_JSVM_Typeof(env, argv[2], &type);
+    if (type != JSVM_FUNCTION || path.empty() || prop.empty()) {
+        OH_JSVM_ThrowError(env, nullptr, "hostSetFunction: invalid arguments");
+        return nullptr;
+    }
+    napi_env host = hostBridgeEnv();
+    napi_value receiver = nullptr;
+    napi_value target = nullptr;
+    std::string error;
+    if (host == nullptr || !resolveHostPathForBridge(path, &receiver, &target, &error)) {
+        OH_JSVM_ThrowError(env, nullptr, error.empty() ? "host runtime not attached" : error.c_str());
+        return nullptr;
+    }
+
+    auto* vm = new VmHostFunction();
+    vm->prop = prop;
+    if (napi_create_reference(host, target, 1, &vm->target) != napi_ok
+        || vm->target == nullptr) {
+        delete vm;
+        OH_JSVM_ThrowError(env, nullptr, "hostSetFunction: cannot reference target");
+        return nullptr;
+    }
+    napi_value previous = nullptr;
+    if (napi_get_named_property(host, target, prop.c_str(), &previous) == napi_ok
+        && previous != nullptr) {
+        napi_valuetype previousType = napi_undefined;
+        napi_typeof(host, previous, &previousType);
+        if (previousType == napi_function) {
+            napi_create_reference(host, previous, 1, &vm->previous);
+        }
+    }
+    if (OH_JSVM_CreateReference(env, argv[2], 1, &vm->fn) != JSVM_OK || vm->fn == nullptr) {
+        napi_delete_reference(host, vm->target);
+        if (vm->previous != nullptr) napi_delete_reference(host, vm->previous);
+        delete vm;
+        OH_JSVM_ThrowError(env, nullptr, "hostSetFunction: cannot reference function");
+        return nullptr;
+    }
+
+    napi_value hostFn = nullptr;
+    if (napi_create_function(host, prop.c_str(), NAPI_AUTO_LENGTH,
+                             HostVmFunctionTrampoline, vm, &hostFn) != napi_ok
+        || hostFn == nullptr
+        || napi_set_named_property(host, target, prop.c_str(), hostFn) != napi_ok) {
+        OH_JSVM_DeleteReference(env, vm->fn);
+        napi_delete_reference(host, vm->target);
+        if (vm->previous != nullptr) napi_delete_reference(host, vm->previous);
+        delete vm;
+        OH_JSVM_ThrowError(env, nullptr, "hostSetFunction: install failed");
+        return nullptr;
+    }
+    g_vmFunctions.push_back(vm);
+    JSVM_Value result = nullptr;
+    OH_JSVM_GetBoolean(env, true, &result);
+    return result;
+}
+
+/** req.someProp = someHostProxy — assign a live host value. */
+JSVM_Value JSVM_CDECL HostSetRef(JSVM_Env env, JSVM_CallbackInfo info) {
+    JSVM_Value argv[3] = {nullptr, nullptr, nullptr};
+    size_t argc = 3;
+    if (OH_JSVM_GetCbInfo(env, info, &argc, argv, nullptr, nullptr) != JSVM_OK || argc < 3) {
+        OH_JSVM_ThrowError(env, nullptr, "hostSetRef: missing arguments");
+        return nullptr;
+    }
+    std::string path, prop, refPath;
+    jsvmValueToText(env, argv[0], &path);
+    jsvmValueToText(env, argv[1], &prop);
+    jsvmValueToText(env, argv[2], &refPath);
+    napi_env host = hostBridgeEnv();
+    napi_value receiver = nullptr, target = nullptr, refReceiver = nullptr, refTarget = nullptr;
+    std::string error;
+    if (host == nullptr
+        || !resolveHostPathForBridge(path, &receiver, &target, &error)
+        || !resolveHostPathForBridge(refPath, &refReceiver, &refTarget, &error)) {
+        OH_JSVM_ThrowError(env, nullptr, error.empty() ? "host runtime not attached" : error.c_str());
+        return nullptr;
+    }
+    if (napi_set_named_property(host, target, prop.c_str(), refTarget) != napi_ok) {
+        OH_JSVM_ThrowError(env, nullptr, "hostSetRef: set failed");
+        return nullptr;
+    }
+    JSVM_Value result = nullptr;
+    OH_JSVM_GetBoolean(env, true, &result);
+    return result;
+}
+
+/** req.somePromise = hostPromiseProxy */
+JSVM_Value JSVM_CDECL HostSetPromise(JSVM_Env env, JSVM_CallbackInfo info) {
+    JSVM_Value argv[3] = {nullptr, nullptr, nullptr};
+    size_t argc = 3;
+    if (OH_JSVM_GetCbInfo(env, info, &argc, argv, nullptr, nullptr) != JSVM_OK || argc < 3) {
+        OH_JSVM_ThrowError(env, nullptr, "hostSetPromise: missing arguments");
+        return nullptr;
+    }
+    std::string path, prop;
+    jsvmValueToText(env, argv[0], &path);
+    jsvmValueToText(env, argv[1], &prop);
+    int32_t id = 0;
+    if (OH_JSVM_GetValueInt32(env, argv[2], &id) != JSVM_OK) {
+        OH_JSVM_ThrowError(env, nullptr, "hostSetPromise: invalid id");
+        return nullptr;
+    }
+    napi_env host = hostBridgeEnv();
+    napi_value receiver = nullptr, target = nullptr, promise = nullptr;
+    std::string error;
+    if (host == nullptr || !resolveHostPathForBridge(path, &receiver, &target, &error)) {
+        OH_JSVM_ThrowError(env, nullptr, error.empty() ? "host runtime not attached" : error.c_str());
+        return nullptr;
+    }
+    if (!getHostReferenceValue(id, &promise)) {
+        OH_JSVM_ThrowError(env, nullptr, "hostSetPromise: dead reference");
+        return nullptr;
+    }
+    if (napi_set_named_property(host, target, prop.c_str(), promise) != napi_ok) {
+        OH_JSVM_ThrowError(env, nullptr, "hostSetPromise: set failed");
+        return nullptr;
+    }
+    JSVM_Value result = nullptr;
+    OH_JSVM_GetBoolean(env, true, &result);
+    return result;
+}
+
+/** req.someProp = "value" / 123 / null */
+JSVM_Value JSVM_CDECL HostSetJson(JSVM_Env env, JSVM_CallbackInfo info) {
+    JSVM_Value argv[3] = {nullptr, nullptr, nullptr};
+    size_t argc = 3;
+    if (OH_JSVM_GetCbInfo(env, info, &argc, argv, nullptr, nullptr) != JSVM_OK || argc < 3) {
+        OH_JSVM_ThrowError(env, nullptr, "hostSetJson: missing arguments");
+        return nullptr;
+    }
+    std::string path, prop, json;
+    jsvmValueToText(env, argv[0], &path);
+    jsvmValueToText(env, argv[1], &prop);
+    jsvmValueToText(env, argv[2], &json);
+    napi_env host = hostBridgeEnv();
+    napi_value receiver = nullptr, target = nullptr, value = nullptr;
+    std::string error;
+    if (host == nullptr || !resolveHostPathForBridge(path, &receiver, &target, &error)) {
+        OH_JSVM_ThrowError(env, nullptr, error.empty() ? "host runtime not attached" : error.c_str());
+        return nullptr;
+    }
+    if (json == "undefined") {
+        napi_get_undefined(host, &value);
+    } else {
+        value = napiValueFromJson(host, json);
+        if (value == nullptr) {
+            OH_JSVM_ThrowError(env, nullptr, "hostSetJson: invalid JSON");
+            return nullptr;
+        }
+    }
+    if (napi_set_named_property(host, target, prop.c_str(), value) != napi_ok) {
+        OH_JSVM_ThrowError(env, nullptr, "hostSetJson: set failed");
+        return nullptr;
+    }
+    JSVM_Value result = nullptr;
+    OH_JSVM_GetBoolean(env, true, &result);
+    return result;
+}
+
+/** Retain a resolved host path and return its temporary reference id. */
+JSVM_Value JSVM_CDECL HostRetainPath(JSVM_Env env, JSVM_CallbackInfo info) {
+    JSVM_Value arg = nullptr;
+    size_t argc = 1;
+    if (OH_JSVM_GetCbInfo(env, info, &argc, &arg, nullptr, nullptr) != JSVM_OK || argc < 1) {
+        OH_JSVM_ThrowError(env, nullptr, "hostRetainPath: missing path");
+        return nullptr;
+    }
+    std::string path;
+    jsvmValueToText(env, arg, &path);
+    napi_value receiver = nullptr, target = nullptr;
+    std::string error;
+    if (!resolveHostPathForBridge(path, &receiver, &target, &error)) {
+        OH_JSVM_ThrowError(env, nullptr, error.c_str());
+        return nullptr;
+    }
+    int id = retainHostValue(target);
+    if (id == 0) {
+        OH_JSVM_ThrowError(env, nullptr, "hostRetainPath: reference failed");
+        return nullptr;
+    }
+    JSVM_Value result = nullptr;
+    OH_JSVM_CreateInt32(env, id, &result);
+    return result;
+}
+
+/** hostPromise.then(onFulfilled, onRejected) */
+JSVM_Value JSVM_CDECL HostPatchThen(JSVM_Env env, JSVM_CallbackInfo info) {
+    JSVM_Value argv[3] = {nullptr, nullptr, nullptr};
+    size_t argc = 3;
+    if (OH_JSVM_GetCbInfo(env, info, &argc, argv, nullptr, nullptr) != JSVM_OK || argc < 1) {
+        OH_JSVM_ThrowError(env, nullptr, "patchThen: missing promise id");
+        return nullptr;
+    }
+    int32_t id = 0;
+    if (OH_JSVM_GetValueInt32(env, argv[0], &id) != JSVM_OK) {
+        OH_JSVM_ThrowError(env, nullptr, "patchThen: invalid promise id");
+        return nullptr;
+    }
+    napi_env host = hostBridgeEnv();
+    napi_value promise = nullptr;
+    if (host == nullptr || !getHostReferenceValue(id, &promise)) {
+        OH_JSVM_ThrowError(env, nullptr, "patchThen: dead promise reference");
+        return nullptr;
+    }
+
+    auto makeCallback = [&](JSVM_Value fnValue) -> napi_value {
+        JSVM_ValueType type = JSVM_UNDEFINED;
+        if (fnValue != nullptr) OH_JSVM_Typeof(env, fnValue, &type);
+        if (type != JSVM_FUNCTION) {
+            napi_value undefined = nullptr;
+            napi_get_undefined(host, &undefined);
+            return undefined;
+        }
+        auto* callback = new VmCallback();
+        if (OH_JSVM_CreateReference(env, fnValue, 1, &callback->fn) != JSVM_OK
+            || callback->fn == nullptr) {
+            delete callback;
+            napi_value undefined = nullptr;
+            napi_get_undefined(host, &undefined);
+            return undefined;
+        }
+        g_vmCallbacks.push_back(callback);
+        napi_value hostFn = nullptr;
+        if (napi_create_function(host, "then", NAPI_AUTO_LENGTH,
+                                 HostThenCallback, callback, &hostFn) != napi_ok
+            || hostFn == nullptr) {
+            callback->active = false;
+            OH_JSVM_DeleteReference(env, callback->fn);
+            callback->fn = nullptr;
+            napi_value undefined = nullptr;
+            napi_get_undefined(host, &undefined);
+            return undefined;
+        }
+        return hostFn;
+    };
+
+    napi_value onFulfilled = makeCallback(argc >= 2 ? argv[1] : nullptr);
+    napi_value onRejected = makeCallback(argc >= 3 ? argv[2] : nullptr);
+    napi_value thenFn = nullptr;
+    if (napi_get_named_property(host, promise, "then", &thenFn) != napi_ok
+        || thenFn == nullptr) {
+        OH_JSVM_ThrowError(env, nullptr, "patchThen: promise has no then");
+        return nullptr;
+    }
+    napi_value args[2] = {onFulfilled, onRejected};
+    napi_value ignored = nullptr;
+    if (napi_call_function(host, promise, thenFn, 2, args, &ignored) != napi_ok) {
+        std::string error = takeHostException("patchThen: then call failed");
+        OH_JSVM_ThrowError(env, nullptr, error.c_str());
+        return nullptr;
+    }
+    JSVM_Value result = nullptr;
+    OH_JSVM_GetBoolean(env, true, &result);
+    return result;
+}
+
+JSVM_CallbackStruct g_hostSetFunctionCallback{HostSetFunction, nullptr};
+JSVM_CallbackStruct g_hostSetRefCallback{HostSetRef, nullptr};
+JSVM_CallbackStruct g_hostSetPromiseCallback{HostSetPromise, nullptr};
+JSVM_CallbackStruct g_hostSetJsonCallback{HostSetJson, nullptr};
+JSVM_CallbackStruct g_hostRetainPathCallback{HostRetainPath, nullptr};
+JSVM_CallbackStruct g_hostPatchThenCallback{HostPatchThen, nullptr};
+
 /** Find an existing hook for the same target object + method name. */
 PatchHook* findPatchHook(napi_env env, napi_value target, const std::string& methodName) {
     for (PatchHook* hook : g_patchHooks) {
@@ -126,18 +512,34 @@ napi_value HostPatchTrampoline(napi_env env, napi_callback_info info) {
         call = nullptr;
     }
 
-    std::string argsJson = "[";
+    std::string error;
+    std::string taggedArgs = "[";
+    bool tagsOk = true;
     for (size_t i = 0; i < argc; i++) {
         std::string item;
-        napiValueToJson(env, argv[i], &item);
-        if (i > 0) argsJson += ",";
-        argsJson += item;
+        if (!tagHostValue(argv[i], &item, &error)) {
+            tagsOk = false;
+            break;
+        }
+        if (i > 0) taggedArgs += ",";
+        taggedArgs += item;
     }
-    argsJson += "]";
+    taggedArgs += "]";
 
-    std::string resultJson;
-    std::string error;
-    bool ok = callJsvmPatch(hook->replacement, instanceId, originalId, argsJson, &resultJson, &error);
+    if (!tagsOk) {
+        releaseHostValue(instanceId);
+        if (originalId != 0) {
+            releaseHostValue(originalId);
+            napi_delete_reference(env, call->instance);
+            napi_delete_reference(env, call->original);
+            delete call;
+        }
+        napi_throw_error(env, nullptr, error.c_str());
+        return nullptr;
+    }
+
+    std::string taggedResult;
+    bool ok = callJsvmPatch(hook->replacement, instanceId, originalId, taggedArgs, &taggedResult, &error);
 
     releaseHostValue(instanceId);
     if (originalId != 0) {
@@ -151,8 +553,11 @@ napi_value HostPatchTrampoline(napi_env env, napi_callback_info info) {
         napi_throw_error(env, nullptr, error.c_str());
         return nullptr;
     }
-    napi_value result = napiValueFromJson(env, resultJson);
-    if (result == nullptr) napi_get_undefined(env, &result);
+    napi_value result = nullptr;
+    if (!decodeTaggedValue(taggedResult, &result, &error) || result == nullptr) {
+        napi_throw_error(env, nullptr, error.empty() ? "patched method: invalid result" : error.c_str());
+        return nullptr;
+    }
     return result;
 }
 
@@ -331,6 +736,24 @@ const char* kPatchBridgeSource = R"JS(
 (function (arkts) {
     var bridge = arkts.__bridge;
     var patchMethodNative = arkts.__patchMethod;
+    var hostSetFunction = arkts.__hostSetFunction;
+    var hostSetRef = arkts.__hostSetRef;
+    var hostSetPromise = arkts.__hostSetPromise;
+    var hostSetJson = arkts.__hostSetJson;
+    function setHostProperty(path, prop, value) {
+        var proxyPath = bridge.pathOf(value);
+        if (proxyPath) return hostSetRef(path, prop, proxyPath);
+        if (typeof value === "function") return hostSetFunction(path, prop, value);
+        var promiseId = bridge.promiseId(value);
+        if (promiseId) return hostSetPromise(path, prop, promiseId);
+        var json;
+        try {
+            json = value === undefined ? "undefined" : JSON.stringify(value);
+        } catch (e) {
+            return false;
+        }
+        return hostSetJson(path, prop, json);
+    }
     function patchThis(instanceId, originalId) {
         var proxy = bridge.objectProxy("@" + instanceId);
         var extras = Object.create(null);
@@ -367,6 +790,7 @@ const char* kPatchBridgeSource = R"JS(
         patchMethod: patchMethod
     };
     arkts.__patchThis = patchThis;
+    arkts.__setHostProperty = setHostProperty;
     delete arkts.__patchMethod;
     delete arkts.__bridge;
 })(globalThis.ArkTS);
@@ -387,7 +811,41 @@ bool installPatchMethod(JSVM_Env env, JSVM_Value arkts) {
         || patchMethod == nullptr) {
         return false;
     }
-    if (!setNamed(env, arkts, "__patchMethod", patchMethod)) return false;
+    JSVM_Value hostSetFunction = nullptr;
+    JSVM_Value hostSetRef = nullptr;
+    JSVM_Value hostSetPromise = nullptr;
+    JSVM_Value hostSetJson = nullptr;
+    JSVM_Value retainPath = nullptr;
+    JSVM_Value patchThen = nullptr;
+    if (OH_JSVM_CreateFunction(env, "__hostSetFunction", JSVM_AUTO_LENGTH,
+                               &g_hostSetFunctionCallback, &hostSetFunction) != JSVM_OK
+        || hostSetFunction == nullptr
+        || OH_JSVM_CreateFunction(env, "__hostSetRef", JSVM_AUTO_LENGTH,
+                                  &g_hostSetRefCallback, &hostSetRef) != JSVM_OK
+        || hostSetRef == nullptr
+        || OH_JSVM_CreateFunction(env, "__hostSetPromise", JSVM_AUTO_LENGTH,
+                                  &g_hostSetPromiseCallback, &hostSetPromise) != JSVM_OK
+        || hostSetPromise == nullptr
+        || OH_JSVM_CreateFunction(env, "__hostSetJson", JSVM_AUTO_LENGTH,
+                                  &g_hostSetJsonCallback, &hostSetJson) != JSVM_OK
+        || hostSetJson == nullptr
+        || OH_JSVM_CreateFunction(env, "__retainHostPath", JSVM_AUTO_LENGTH,
+                                  &g_hostRetainPathCallback, &retainPath) != JSVM_OK
+        || retainPath == nullptr
+        || OH_JSVM_CreateFunction(env, "__patchThen", JSVM_AUTO_LENGTH,
+                                  &g_hostPatchThenCallback, &patchThen) != JSVM_OK
+        || patchThen == nullptr) {
+        return false;
+    }
+    if (!setNamed(env, arkts, "__patchMethod", patchMethod)
+        || !setNamed(env, arkts, "__hostSetFunction", hostSetFunction)
+        || !setNamed(env, arkts, "__hostSetRef", hostSetRef)
+        || !setNamed(env, arkts, "__hostSetPromise", hostSetPromise)
+        || !setNamed(env, arkts, "__hostSetJson", hostSetJson)
+        || !setNamed(env, arkts, "__retainHostPath", retainPath)
+        || !setNamed(env, arkts, "__patchThen", patchThen)) {
+        return false;
+    }
 
     JSVM_Value source = nullptr;
     if (OH_JSVM_CreateStringUtf8(env, kPatchBridgeSource, JSVM_AUTO_LENGTH, &source) != JSVM_OK
@@ -413,11 +871,11 @@ bool installPatchMethod(JSVM_Env env, JSVM_Value arkts) {
 }
 
 void releasePatchHooks(JSVM_Env env) {
+    napi_env hostEnv = hostBridgeEnv();
     // Restore in reverse patch order so stacked patches unwind correctly.
     for (auto it = g_patchHooks.rbegin(); it != g_patchHooks.rend(); ++it) {
         PatchHook* hook = *it;
         if (hook == nullptr) continue;
-        napi_env hostEnv = hostBridgeEnv();
         if (hostEnv != nullptr) {
             napi_value target = nullptr;
             napi_value original = nullptr;
@@ -436,6 +894,39 @@ void releasePatchHooks(JSVM_Env env) {
         delete hook;
     }
     g_patchHooks.clear();
+
+    // Assigned VM functions: restore the old host property and keep the data
+    // struct alive so a captured host function can fall back safely.
+    for (VmHostFunction* vm : g_vmFunctions) {
+        if (vm == nullptr || !vm->active) continue;
+        vm->active = false;
+        if (hostEnv != nullptr && vm->target != nullptr) {
+            napi_value target = nullptr;
+            if (napi_get_reference_value(hostEnv, vm->target, &target) == napi_ok
+                && target != nullptr && vm->previous != nullptr) {
+                napi_value previous = nullptr;
+                if (napi_get_reference_value(hostEnv, vm->previous, &previous) == napi_ok
+                    && previous != nullptr) {
+                    napi_set_named_property(hostEnv, target, vm->prop.c_str(), previous);
+                }
+            }
+            napi_delete_reference(hostEnv, vm->target);
+            vm->target = nullptr;
+        }
+        if (env != nullptr && vm->fn != nullptr) {
+            OH_JSVM_DeleteReference(env, vm->fn);
+            vm->fn = nullptr;
+        }
+    }
+    // Promise callbacks: mark inactive; the host Promise may still fire later.
+    for (VmCallback* callback : g_vmCallbacks) {
+        if (callback == nullptr || !callback->active) continue;
+        callback->active = false;
+        if (env != nullptr && callback->fn != nullptr) {
+            OH_JSVM_DeleteReference(env, callback->fn);
+            callback->fn = nullptr;
+        }
+    }
 }
 
 } // namespace xpanda

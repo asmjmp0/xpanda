@@ -176,10 +176,12 @@ export interface ArkTSPatch {
      * callers that captured the function earlier (destructured imports, local
      * aliases) and native-internal callers are not affected.
      *
-     * Inside `replacement`, `this` is a live host object proxy and arguments
-     * are JSON snapshots. `this.__original(...)` calls the original method with
-     * the same `this`. The replacement's return value is marshalled back to the
-     * host caller as JSON.
+     * Inside `replacement`, `this` is a live host object proxy. Object/function
+     * arguments are live proxies too; primitives are passed as-is. Host Promises
+     * are exposed as thenables (`.then`/`await` work) and are forwarded back as
+     * real host Promises when returned. ArrayBuffers are copied.
+     * `this.__original(...)` calls the original method with the same `this` and
+     * returns its live value (object/function/Promise).
      *
      * Patching the same class/method again replaces the previous replacement;
      * it does not wrap another layer. `this.__original` always calls the real

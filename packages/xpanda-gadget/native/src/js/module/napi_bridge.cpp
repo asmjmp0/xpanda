@@ -163,8 +163,8 @@ bool resolveHostPath(napi_env env, const std::string& path, napi_value* receiver
     return true;
 }
 
-/** Call or construct a host path with JSON arguments. */
-bool invokeHost(const std::string& path, const std::string& argsJson, bool isNew,
+/** Call or construct a host path with tagged arguments. */
+bool invokeHost(const std::string& path, const std::string& taggedArgs, bool isNew,
                 std::string* resultJson, std::string* error) {
     if (g_hostEnv == nullptr) {
         *error = "host runtime not attached";
@@ -176,15 +176,7 @@ bool invokeHost(const std::string& path, const std::string& argsJson, bool isNew
     if (!resolveHostPath(env, path, &receiver, &target, error)) return false;
 
     std::vector<napi_value> argv;
-    napi_value argsValue = napiValueFromJson(env, argsJson);
-    if (argsValue != nullptr) {
-        uint32_t argc = 0;
-        napi_get_array_length(env, argsValue, &argc);
-        argv.resize(argc);
-        for (uint32_t i = 0; i < argc; i++) {
-            napi_get_element(env, argsValue, i, &argv[i]);
-        }
-    }
+    if (!decodeTaggedArguments(taggedArgs, &argv, error)) return false;
 
     napi_value result = nullptr;
     napi_status status;
@@ -199,14 +191,7 @@ bool invokeHost(const std::string& path, const std::string& argsJson, bool isNew
         *error = takeNapiException(env, "host call failed");
         return false;
     }
-    napi_valuetype resultType = napi_undefined;
-    napi_typeof(env, result, &resultType);
-    if (resultType == napi_undefined || resultType == napi_null) {
-        *resultJson = "null";
-    } else {
-        napiValueToJson(env, result, resultJson);
-    }
-    return true;
+    return tagHostValue(result, resultJson, error);
 }
 
 /** Read a host path and describe it as {"kind":"class|function|object|value|undefined"}. */
@@ -461,7 +446,57 @@ JSVM_Value JSVM_CDECL HostLoadModuleWithInfo(JSVM_Env env, JSVM_CallbackInfo inf
     return loadHostModule(env, info, true);
 }
 
+/** Retain a function proxy target + receiver for stable method calls. */
+JSVM_Value JSVM_CDECL HostRetainFunction(JSVM_Env env, JSVM_CallbackInfo info) {
+    JSVM_Value arg = nullptr;
+    size_t argc = 1;
+    if (OH_JSVM_GetCbInfo(env, info, &argc, &arg, nullptr, nullptr) != JSVM_OK || argc < 1) {
+        OH_JSVM_ThrowError(env, nullptr, "retainHostFunction: missing path");
+        return nullptr;
+    }
+    std::string path;
+    jsvmValueToText(env, arg, &path);
+    int fnId = 0;
+    int recvId = 0;
+    std::string error;
+    if (!retainHostFunction(path, &fnId, &recvId, &error)) {
+        OH_JSVM_ThrowError(env, nullptr, error.c_str());
+        return nullptr;
+    }
+    return createString(env, "{\"fn\":" + std::to_string(fnId) + ",\"recv\":" + std::to_string(recvId) + "}");
+}
+
+/** Invoke a retained host function with tagged arguments. */
+JSVM_Value JSVM_CDECL HostInvokeRef(JSVM_Env env, JSVM_CallbackInfo info) {
+    JSVM_Value argv[4] = {nullptr, nullptr, nullptr, nullptr};
+    size_t argc = 4;
+    if (OH_JSVM_GetCbInfo(env, info, &argc, argv, nullptr, nullptr) != JSVM_OK || argc < 3) {
+        OH_JSVM_ThrowError(env, nullptr, "invokeHostRef: missing arguments");
+        return nullptr;
+    }
+    int32_t fnId = 0;
+    int32_t recvId = 0;
+    if (OH_JSVM_GetValueInt32(env, argv[0], &fnId) != JSVM_OK
+        || OH_JSVM_GetValueInt32(env, argv[1], &recvId) != JSVM_OK) {
+        OH_JSVM_ThrowError(env, nullptr, "invokeHostRef: invalid ids");
+        return nullptr;
+    }
+    std::string taggedArgs = "[]";
+    if (argv[2] != nullptr) jsvmValueToText(env, argv[2], &taggedArgs);
+    bool isNew = false;
+    if (argc >= 4 && argv[3] != nullptr) OH_JSVM_GetValueBool(env, argv[3], &isNew);
+    std::string result;
+    std::string error;
+    if (!invokeHostRef(fnId, recvId, taggedArgs, isNew, &result, &error)) {
+        OH_JSVM_ThrowError(env, nullptr, error.c_str());
+        return nullptr;
+    }
+    return createString(env, result);
+}
+
 JSVM_CallbackStruct g_hostInvokeCallback{HostInvoke, nullptr};
+JSVM_CallbackStruct g_hostRetainFunctionCallback{HostRetainFunction, nullptr};
+JSVM_CallbackStruct g_hostInvokeRefCallback{HostInvokeRef, nullptr};
 JSVM_CallbackStruct g_hostGetCallback{HostGet, nullptr};
 JSVM_CallbackStruct g_hostKeysCallback{HostKeys, nullptr};
 JSVM_CallbackStruct g_hostLoadModuleCallback{HostLoadModule, nullptr};
@@ -509,9 +544,251 @@ void releaseHostValue(int id) {
     g_hostModules.erase(entry);
 }
 
+bool getHostReferenceValue(int id, napi_value* out) {
+    if (g_hostEnv == nullptr || out == nullptr) return false;
+    auto entry = g_hostModules.find(id);
+    if (entry == g_hostModules.end()) return false;
+    return napi_get_reference_value(g_hostEnv, entry->second, out) == napi_ok && *out != nullptr;
+}
+
+bool retainHostFunction(const std::string& path, int* fnId, int* recvId, std::string* error) {
+    if (g_hostEnv == nullptr) {
+        *error = "host runtime not attached";
+        return false;
+    }
+    napi_value receiver = nullptr;
+    napi_value target = nullptr;
+    if (!resolveHostPath(g_hostEnv, path, &receiver, &target, error)) return false;
+    int fn = retainHostValue(target);
+    int recv = retainHostValue(receiver);
+    if (fn == 0 || recv == 0) {
+        releaseHostValue(fn);
+        releaseHostValue(recv);
+        *error = "retainHostFunction: reference failed";
+        return false;
+    }
+    *fnId = fn;
+    *recvId = recv;
+    return true;
+}
+
+bool invokeHostRef(int fnId, int recvId, const std::string& taggedArgs, bool isNew,
+                   std::string* resultJson, std::string* error) {
+    napi_env env = g_hostEnv;
+    napi_value fn = nullptr;
+    napi_value receiver = nullptr;
+    if (env == nullptr
+        || !getHostReferenceValue(fnId, &fn)
+        || !getHostReferenceValue(recvId, &receiver)) {
+        *error = "invokeHostRef: dead reference";
+        return false;
+    }
+    std::vector<napi_value> argv;
+    if (!decodeTaggedArguments(taggedArgs, &argv, error)) return false;
+    napi_value result = nullptr;
+    napi_status status = isNew
+        ? napi_new_instance(env, fn, static_cast<size_t>(argv.size()),
+                            argv.empty() ? nullptr : argv.data(), &result)
+        : napi_call_function(env, receiver, fn, static_cast<size_t>(argv.size()),
+                             argv.empty() ? nullptr : argv.data(), &result);
+    if (status != napi_ok) {
+        *error = takeNapiException(env, "host call failed");
+        return false;
+    }
+    return tagHostValue(result, resultJson, error);
+}
+
 std::string takeHostException(const std::string& fallback) {
     if (g_hostEnv == nullptr) return fallback;
     return takeNapiException(g_hostEnv, fallback);
+}
+
+static bool decodeTagObject(napi_env env, napi_value tag, napi_value* out, std::string* error) {
+    napi_value typeValue = nullptr;
+    std::string type;
+    if (napi_get_named_property(env, tag, "t", &typeValue) == napi_ok && typeValue != nullptr) {
+        type = napiValueToText(env, typeValue);
+    }
+    if (type == "r") {
+        napi_value pathValue = nullptr;
+        std::string path;
+        if (napi_get_named_property(env, tag, "path", &pathValue) == napi_ok && pathValue != nullptr) {
+            path = napiValueToText(env, pathValue);
+        }
+        if (!path.empty()) {
+            napi_value receiver = nullptr;
+            napi_value target = nullptr;
+            return resolveHostPath(env, path, &receiver, &target, error) ? (*out = target, true) : false;
+        }
+        napi_value idValue = nullptr;
+        int32_t id = 0;
+        if (napi_get_named_property(env, tag, "id", &idValue) != napi_ok
+            || napi_get_value_int32(env, idValue, &id) != napi_ok) {
+            *error = "tagged ref: missing id";
+            return false;
+        }
+        auto entry = g_hostModules.find(id);
+        if (entry == g_hostModules.end()) {
+            *error = "tagged ref: unknown id";
+            return false;
+        }
+        return napi_get_reference_value(env, entry->second, out) == napi_ok && *out != nullptr;
+    }
+    if (type == "p") {
+        napi_value idValue = nullptr;
+        int32_t id = 0;
+        if (napi_get_named_property(env, tag, "id", &idValue) != napi_ok
+            || napi_get_value_int32(env, idValue, &id) != napi_ok) {
+            *error = "tagged promise: missing id";
+            return false;
+        }
+        auto entry = g_hostModules.find(id);
+        if (entry == g_hostModules.end()) {
+            *error = "tagged promise: unknown id";
+            return false;
+        }
+        return napi_get_reference_value(env, entry->second, out) == napi_ok && *out != nullptr;
+    }
+    if (type == "b") {
+        napi_value bytesValue = nullptr;
+        if (napi_get_named_property(env, tag, "bytes", &bytesValue) != napi_ok
+            || bytesValue == nullptr) {
+            *error = "tagged buffer: missing bytes";
+            return false;
+        }
+        uint32_t length = 0;
+        napi_get_array_length(env, bytesValue, &length);
+        void* data = nullptr;
+        napi_value buffer = nullptr;
+        if (napi_create_arraybuffer(env, length, &data, &buffer) != napi_ok || buffer == nullptr) {
+            *error = "tagged buffer: create failed";
+            return false;
+        }
+        unsigned char* bytes = static_cast<unsigned char*>(data);
+        for (uint32_t i = 0; i < length; i++) {
+            napi_value element = nullptr;
+            uint32_t value = 0;
+            if (napi_get_element(env, bytesValue, i, &element) == napi_ok
+                && napi_get_value_uint32(env, element, &value) == napi_ok) {
+                bytes[i] = static_cast<unsigned char>(value);
+            }
+        }
+        *out = buffer;
+        return true;
+    }
+    // "v" and unknown tags fall back to their JSON value (undefined when absent).
+    if (napi_get_named_property(env, tag, "v", out) != napi_ok || *out == nullptr) {
+        napi_get_undefined(env, out);
+    }
+    return true;
+}
+
+bool tagHostValue(napi_value value, std::string* out, std::string* error) {
+    napi_env env = g_hostEnv;
+    if (env == nullptr) {
+        *error = "host runtime not attached";
+        return false;
+    }
+    napi_valuetype type = napi_undefined;
+    if (napi_typeof(env, value, &type) != napi_ok) {
+        *error = "tagged value: typeof failed";
+        return false;
+    }
+    if (type == napi_undefined) {
+        *out = "{\"t\":\"v\"}";
+        return true;
+    }
+    if (type == napi_null || type == napi_boolean || type == napi_number || type == napi_string) {
+        std::string json;
+        napiValueToJson(env, value, &json);
+        *out = "{\"t\":\"v\",\"v\":" + json + "}";
+        return true;
+    }
+    if (type == napi_bigint) {
+        napi_value text = nullptr;
+        std::string textValue;
+        if (napi_coerce_to_string(env, value, &text) == napi_ok && text != nullptr) {
+            textValue = napiValueToText(env, text);
+        }
+        *out = "{\"t\":\"v\",\"v\":" + MiniJson::escape(textValue) + "}";
+        return true;
+    }
+    if (type == napi_object) {
+        bool isPromise = false;
+        if (napi_is_promise(env, value, &isPromise) == napi_ok && isPromise) {
+            int id = retainHostValue(value);
+            if (id == 0) {
+                *error = "tagged promise: reference failed";
+                return false;
+            }
+            *out = "{\"t\":\"p\",\"id\":" + std::to_string(id) + "}";
+            return true;
+        }
+        bool isBuffer = false;
+        if (napi_is_arraybuffer(env, value, &isBuffer) == napi_ok && isBuffer) {
+            void* data = nullptr;
+            size_t length = 0;
+            if (napi_get_arraybuffer_info(env, value, &data, &length) == napi_ok) {
+                const unsigned char* bytes = static_cast<const unsigned char*>(data);
+                *out = "{\"t\":\"b\",\"bytes\":[";
+                for (size_t i = 0; i < length; i++) {
+                    if (i > 0) *out += ",";
+                    *out += std::to_string(bytes[i]);
+                }
+                *out += "]}";
+                return true;
+            }
+        }
+    }
+    int id = retainHostValue(value);
+    if (id == 0) {
+        *error = "tagged value: reference failed";
+        return false;
+    }
+    *out = "{\"t\":\"r\",\"id\":" + std::to_string(id) + "}";
+    return true;
+}
+
+bool decodeTaggedArguments(const std::string& taggedJson, std::vector<napi_value>* args,
+                           std::string* error) {
+    napi_env env = g_hostEnv;
+    if (env == nullptr) {
+        *error = "host runtime not attached";
+        return false;
+    }
+    napi_value array = napiValueFromJson(env, taggedJson);
+    if (array == nullptr) {
+        *error = "tagged arguments: invalid JSON";
+        return false;
+    }
+    uint32_t length = 0;
+    napi_get_array_length(env, array, &length);
+    args->clear();
+    args->reserve(length);
+    for (uint32_t i = 0; i < length; i++) {
+        napi_value tag = nullptr;
+        napi_value value = nullptr;
+        if (napi_get_element(env, array, i, &tag) != napi_ok || tag == nullptr
+            || !decodeTagObject(env, tag, &value, error)) {
+            return false;
+        }
+        args->push_back(value);
+    }
+    return true;
+}
+
+bool decodeTaggedValue(const std::string& taggedJson, napi_value* out, std::string* error) {
+    napi_env env = g_hostEnv;
+    if (env == nullptr) {
+        *error = "host runtime not attached";
+        return false;
+    }
+    napi_value tag = napiValueFromJson(env, taggedJson);
+    if (tag == nullptr) {
+        *error = "tagged value: invalid JSON";
+        return false;
+    }
+    return decodeTagObject(env, tag, out, error);
 }
 
 void captureHostNapi(napi_env env) {
@@ -539,6 +816,18 @@ bool installNapiBridge(JSVM_Env env, JSVM_Value arkts) {
         || keys == nullptr) {
         return false;
     }
+    JSVM_Value retainFunction = nullptr;
+    if (OH_JSVM_CreateFunction(env, "__retainHostFunction", JSVM_AUTO_LENGTH,
+                               &g_hostRetainFunctionCallback, &retainFunction) != JSVM_OK
+        || retainFunction == nullptr) {
+        return false;
+    }
+    JSVM_Value invokeRef = nullptr;
+    if (OH_JSVM_CreateFunction(env, "__invokeHostRef", JSVM_AUTO_LENGTH,
+                               &g_hostInvokeRefCallback, &invokeRef) != JSVM_OK
+        || invokeRef == nullptr) {
+        return false;
+    }
     JSVM_Value loadModule = nullptr;
     if (OH_JSVM_CreateFunction(env, "__loadModule", JSVM_AUTO_LENGTH,
                                &g_hostLoadModuleCallback, &loadModule) != JSVM_OK
@@ -554,6 +843,8 @@ bool installNapiBridge(JSVM_Env env, JSVM_Value arkts) {
     return setNamed(env, arkts, "__invoke", invoke)
         && setNamed(env, arkts, "__hostGet", get)
         && setNamed(env, arkts, "__hostKeys", keys)
+        && setNamed(env, arkts, "__retainHostFunction", retainFunction)
+        && setNamed(env, arkts, "__invokeHostRef", invokeRef)
         && setNamed(env, arkts, "__loadModule", loadModule)
         && setNamed(env, arkts, "__loadModuleWithInfo", loadModuleWithInfo);
 }
