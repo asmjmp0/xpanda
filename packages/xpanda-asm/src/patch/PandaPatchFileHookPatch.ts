@@ -152,6 +152,37 @@ export class PandaPatchFileHookPatch extends PandaPatchFileHookImport {
         });
     }
 
+    /** First patched host class, used as a fallback when no setup class is given. */
+    private firstTargetClass(targetsByHook: Map<string, PreparedTarget[]>): PandaClass | undefined {
+        for (const targets of targetsByHook.values()) {
+            if (targets.length > 0) return this.requireClass(targets[0].className);
+        }
+        return undefined;
+    }
+
+    /**
+     * Injected module records must follow the target abc's record-name convention.
+     *
+     * The runtime's `JSPandaFile::CheckIsRecordWithBundleName` samples one record from
+     * the merged abc: when that record lacks the bundle prefix, it strips the
+     * `bundleName/moduleName` prefix from the entry point (`AdaptOldIsaRecord`) and
+     * the entry module can no longer be found. `&name&` records are module-relative
+     * (the historical hook shape); plain `Lpath/...;` class names mean the abc stores
+     * bundle-prefixed records, so the injected record must carry the same first path
+     * segment (e.g. `&com.example.app/xpanda/hook/...&`).
+     */
+    private injectedRecordName(moduleName: string, sourceClass: PandaClass | undefined): string {
+        const className = sourceClass?.getClassName();
+        if (className && className.startsWith("L") && className.endsWith(";")) {
+            const body = className.slice(1, -1);
+            if (!body.startsWith("&")) {
+                const slash = body.indexOf("/");
+                if (slash > 0) return `&${body.slice(0, slash)}/xpanda/hook/${moduleName}&`;
+            }
+        }
+        return `&xpanda/hook/${moduleName}&`;
+    }
+
     private withTempDir<T>(
         es2abcOption: string | undefined,
         targetApiVersionOption: number | undefined,
@@ -239,7 +270,8 @@ export class PandaPatchFileHookPatch extends PandaPatchFileHookImport {
             buildHookClassSource(hookGlobalNames, hookSource, [...setterNameByHook.values()], initName),
         );
         const hookAbcPath = path.join(tempDir, "hook-class.abc");
-        const hookRecordName = `&xpanda/hook/${hookModuleName}&`;
+        const hookRecordName = this.injectedRecordName(hookModuleName, setupClass
+            ?? this.firstTargetClass(targetsByHook));
         runEs2abc(es2abc, [
             "--module", "--merge-abc", ...apiVersionArgs,
             "--record-name", hookRecordName,
