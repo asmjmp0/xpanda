@@ -1,21 +1,32 @@
 import { PandaDisAssembler } from "./PandaDisAssembler";
 import type { PandaIRCFG } from "./PandaIRCFG";
-import type { PandaInstruction } from "./PandaInstruction";
+import { PandaInstructionIMM, type PandaInstruction } from "./PandaInstruction";
 import { PandaIRBasicBlock } from "./PandaIRBasicBlock";
 import { ENTRY_FUNCTION_MAIN } from "../file/PandaFile";
 import { PandaMethod } from "../file/method/PandaMethod";
 import type { PandaClass } from "../file/clazz/PandaClass";
+import { resolveSourceClassName } from "./ClassNaming";
 
 /**
- * 词法环境实例:name 是变量前缀(如 `local_1` / `local_1_2` / `sendable_0`),占位变量名为 `name + "_" + index`。
- * kind 区分两条运行时独立的链:regular lexenv(newLexEnv/popLexEnv/ld·stlexvar)与
- * sendable env(newsendableenv/ld·stsendablevar)。ldsendablevar/stsendablevar 的
- * level 相对 sendable 链,不能和 regular 链混在一个栈里解析(否则 stlexvar 会落到
- * sendable 环境上,两个类共用同一个槽名)。
+ * Lexical environment instance. `name` is the variable prefix
+ * (`local_1` / `local_1_2` / `sendable_0`); slot variables are `name + "_" + index`.
+ * `kind` separates the two independent runtime chains: regular lexenv
+ * (newLexEnv/popLexEnv/ld·stlexvar) and the sendable module env
+ * (newsendableenv/ld·stsendablevar). Sendable levels are resolved only on the
+ * sendable chain, never mixed with regular slots.
+ *
+ * `sfunction` models the `SFunctionEnv` at the entry of a sendable method. It is
+ * not a LexicalEnv: `ldsendableclass level` walks `level` regular environments
+ * and lands on it to read the constructor. Sendable methods do not inherit the
+ * defining frame's regular environments (RuntimeDefinefunc /
+ * SendableClassDefiner), so analysis starts the regular chain at depth 0 and
+ * puts one sfunction marker at the bottom.
  */
 interface LexEnvInfo {
     name: string;
-    kind: "lexical" | "sendable";
+    kind: "lexical" | "sendable" | "sfunction";
+    /** Source class name of the sfunction (absent when the nearest AST class is the fallback) */
+    className?: string;
 }
 
 /**
@@ -53,6 +64,27 @@ export class PandaLexical {
             pushIfMethod(instruction.func);
         }
         return methods;
+    }
+
+    /**
+     * Entry environment for methods of a sendable class.
+     *
+     * `RuntimeCreateSharedClass` / `SendableClassDefiner` give every sendable
+     * instance and static method a fresh constructor-only `SFunctionEnv`; the
+     * frame.env of the defining instruction is not on that chain. The sendable
+     * module chain (newsendableenv) is copied through the module record and
+     * stays valid for ldsendablevar/stsendablevar. Drop the inherited regular
+     * environments, keep the sendable chain, and put an sfunction marker at the
+     * bottom of the regular chain.
+     */
+    private sendableClassStack(inheritedStack: LexEnvInfo[], instruction: PandaInstruction): LexEnvInfo[] {
+        const sendableChain = inheritedStack.filter((env) => env.kind === "sendable");
+        const recordName = instruction.constructorMethod?.name?.content ?? "";
+        const className = resolveSourceClassName(recordName) ?? undefined;
+        return [
+            ...sendableChain,
+            { name: className ?? "panda_jmp0_reserved_sfunction", kind: "sfunction", className },
+        ];
     }
 
     /**
@@ -101,7 +133,26 @@ export class PandaLexical {
                 for (let i = stack.length - 1; i >= 0; i--) {
                     if (stack[i].kind === "lexical") { last = i; break; }
                 }
-                if (last >= 0) stack.splice(last, 1);
+                if (last >= 0) {
+                    // Remember which environment was popped so the AST pass can close its marker.
+                    desc.recordName(instruction.pc, stack[last].name);
+                    stack.splice(last, 1);
+                }
+            }
+            return;
+        }
+        if (instruction.opcode.name === "callruntime.ldsendableclass") {
+            // Runtime: hop `level` LexicalEnv parents from frame.env and land on an
+            // SFunctionEnv to read its constructor. `level` is a chain depth, not a
+            // slot index and not "the nearest source class". Resolve only when it
+            // lands exactly on this method's SFunctionEnv; otherwise keep the marker
+            // for the post-pass fallback.
+            desc.recordLevel(instruction.pc, stack.length);
+            const level = (instruction.params[0] as PandaInstructionIMM).imm;
+            const lexicalCount = stack.filter((env) => env.kind === "lexical").length;
+            const sfunction = stack.find((env) => env.kind === "sfunction");
+            if (sfunction && level === lexicalCount && sfunction.className !== undefined) {
+                desc.recordName(instruction.pc, sfunction.className);
             }
             return;
         }
@@ -304,8 +355,12 @@ export class PandaLexical {
                 }
                 this.advanceEnvStack(instruction, ignorePop, curStack, startLevel, desc, counters);
                 const declaredMethods = this.getInnerDeclaredMethods(instruction);
+                // Methods of a sendable class do not inherit the defining frame's regular lexenv.
+                const inheritedForMethods = instruction.kind === "defineClassWithBuffer" && instruction.isSendClass
+                    ? this.sendableClassStack(curStack, instruction)
+                    : curStack;
                 for (const method of declaredMethods) {
-                    this.analyzeWithPandaMethod(method, curStack);
+                    this.analyzeWithPandaMethod(method, inheritedForMethods);
                 }
             }
         }

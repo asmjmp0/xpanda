@@ -11,8 +11,8 @@ import * as fs from "fs";
 import * as path from "path";
 import * as vm from "vm";
 import * as crypto from "crypto";
-import { assemble, decodeInstructions, PandaDecompiler, PandaFile } from "xpanda-core";
-import { PandaPatchFile, dumpClasses } from "../src";
+import { PandaDecompiler, PandaFile } from "xpanda-core";
+import { PandaPatchFile, assemble, decodeInstructions, dumpClasses } from "../src";
 
 function assert(condition: unknown, message: string): asserts condition {
     if (!condition) throw new Error("ASSERT FAILED: " + message);

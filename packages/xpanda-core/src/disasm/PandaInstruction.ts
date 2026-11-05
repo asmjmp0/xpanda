@@ -248,9 +248,10 @@ function buildKindMap(): Map<string, InstructionKind> {
 
     put("newLexEnv", "newlexenv", "newlexenvwithname", "wide.newlexenv", "wide.newlexenvwithname",
         "callruntime.newsendableenv", "callruntime.widenewsendableenv");
-    put("storeLex", "stlexvar", "wide.stlexvar", "callruntime.stsendablevar", "callruntime.widestsendablevar");
+    put("storeLex", "stlexvar", "wide.stlexvar", "deprecated.stlexvar",
+        "callruntime.stsendablevar", "callruntime.widestsendablevar");
     put("loadLex", "ldlexvar", "wide.ldlexvar", "callruntime.ldsendablevar", "callruntime.wideldsendablevar");
-    put("popLexEnv", "poplexenv");
+    put("popLexEnv", "poplexenv", "deprecated.poplexenv");
 
     put("getIterator", "getiterator", "getpropiterator");
     put("getNextPropName", "getnextpropname");
@@ -516,6 +517,10 @@ export class PandaInstruction {
                 (this as any).lexLevel = (this.params[0] as PandaInstructionIMM).imm;
                 (this as any).lexIndex = (this.params[1] as PandaInstructionIMM).imm;
                 (this as any).isSendAble = opcode.name.startsWith("callruntime.");
+                // deprecated.stlexvar writes the value of its third operand, not acc.
+                if (opcode.name === "deprecated.stlexvar") {
+                    (this as any).srcObj = this.params[2] as PandaInstructionVReg;
+                }
                 break;
             }
             case "popLexEnv": break;

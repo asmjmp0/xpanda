@@ -86,11 +86,43 @@ export class NodeUtils{
         return TYPE.isSequenceExpression(node);
     }
 
-    public static covert2SingleBlock(node:TYPE.BlockStatement){
+    /**
+     * Close the lexical block opened by `newLexEnv`.
+     *
+     * Markers carry the environment instance
+     * (`panda_jmp0_reserved_lex_begin_local_1_2`); a pop matches the environment it
+     * actually popped. When that marker is not in the current list (the pop was
+     * structured into a branch or the handler seed cannot name it), fall back to the
+     * historical "close the last marker in this list" behavior. Generated names are
+     * unique per instance, so widening a declaration's block is safe.
+     */
+    public static covert2SingleBlock(node:TYPE.BlockStatement, envName?:string){
         const sts = node.body;
+        const marker = (st:TYPE.Statement):string|null => {
+            if (TYPE.isExpressionStatement(st) && TYPE.isIdentifier(st.expression)
+                && st.expression.name.startsWith("panda_jmp0_reserved_lex_begin")) {
+                return st.expression.name;
+            }
+            return null;
+        };
+        if (envName !== undefined) {
+            const wanted = "panda_jmp0_reserved_lex_begin_" + envName;
+            for (let i = sts.length - 1 ; i >= 0; --i) {
+                if (marker(sts[i]) === wanted) {
+                    const new_block = sts.splice(i+1,sts.length);
+                    const block = TYPE.blockStatement(new_block)
+                    node.body = [...sts.splice(0,i),block]
+                    return;
+                }
+            }
+            // The popped environment's marker is not in this statement list (it was
+            // structured into a branch/nested block, or the handler seed cannot name
+            // it). Fall back to closing the last marker in this list to preserve the
+            // historical block shape; generated names are unique, so widening scope
+            // is safe.
+        }
         for (let i = sts.length - 1 ; i >= 0; --i) {
-            const st = sts[i];
-            if (TYPE.isExpressionStatement(st) && TYPE.isIdentifier(st.expression) && st.expression.name === "panda_jmp0_reserved_lex_begin"){
+            if (marker(sts[i]) !== null){
                 const new_block = sts.splice(i+1,sts.length);
                 const block = TYPE.blockStatement(new_block)
                 node.body = [...sts.splice(0,i),block]

@@ -7,8 +7,8 @@
  */
 import * as fs from "fs";
 import * as path from "path";
-import { assemble, assembleInstruction, decodeInstructions, instructionSize, PandaFile } from "../src";
-import { OPCODE_BY_CODE } from "../src/disasm/opcodes";
+import { PandaFile, OPCODE_BY_CODE } from "xpanda-core";
+import { assemble, assembleInstruction, decodeInstructions, instructionSize } from "../src";
 
 function assert(condition: unknown, message: string): asserts condition {
     if (!condition) throw new Error("ASSERT FAILED: " + message);
@@ -25,7 +25,7 @@ function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
 }
 
 function loadSample(fileName: string): PandaFile {
-    const file = path.join(__dirname, "resources", fileName);
+    const file = path.join(__dirname, "..", "..", "xpanda-core", "test", "resources", fileName);
     return new PandaFile(new Uint8Array(fs.readFileSync(file)));
 }
 

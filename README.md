@@ -38,7 +38,7 @@ The project is split into five yarn-workspace packages under `packages/`:
 | `xpanda-cli` | command line interface (`decompile` / `unpack-index` / `dump-asm` / `dump`) |
 | `xpanda-mcp` | MCP server (stdio) for AI client integration |
 | `xpanda-web` | browser UI (React + Vite, pure frontend) |
-| `xpanda-asm` | load, modify (replace method code / add methods, strings), dump classes and re-emit `.abc` files |
+| `xpanda-asm` | bytecode assembler plus load, modify (replace method code / add methods, strings), dump classes and re-emit `.abc` files |
 
 ## Install and use
 

@@ -877,6 +877,64 @@ interface NameUsage {
     exportSpecs: number;
 }
 
+const NAMED_FUNCTION_TYPES = new Set([
+    "FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression",
+    "ObjectMethod", "ClassMethod", "ClassPrivateMethod",
+]);
+
+/** Whether a parameter/name pattern binds `name` (destructuring included). */
+function patternBindsName(pattern: TYPE.Node | null | undefined, name: string): boolean {
+    if (!pattern) return false;
+    if (isIdentifier(pattern)) return pattern.name === name;
+    if (pattern.type === "RestElement") return patternBindsName(pattern.argument, name);
+    if (pattern.type === "AssignmentPattern") return patternBindsName(pattern.left, name);
+    if (pattern.type === "ArrayPattern") {
+        return pattern.elements.some((item) => patternBindsName(item as TYPE.Node | null, name));
+    }
+    if (pattern.type === "ObjectPattern") {
+        return pattern.properties.some((prop) => {
+            if (prop.type === "RestElement") return patternBindsName(prop.argument, name);
+            return patternBindsName(prop.value as TYPE.Node, name);
+        });
+    }
+    return false;
+}
+
+/** Whether a top-level statement of a list declares `name` (var/let/const/function/class). */
+function statementDeclaresName(stmt: TYPE.Statement, name: string): boolean {
+    if (isVariableDeclaration(stmt)) {
+        return stmt.declarations.some((decl) => patternBindsName(decl.id as TYPE.Node, name));
+    }
+    if ((stmt.type === "FunctionDeclaration" || stmt.type === "ClassDeclaration")
+        && stmt.id && stmt.id.name === name) {
+        return true;
+    }
+    return false;
+}
+
+/**
+ * Whether a nested function shadows `name` with its own binding. Generated names
+ * (local_* / sendable_*) are unique per environment instance, but different
+ * functions may legitimately reuse `local_0_0`. Name scans must treat such a
+ * range as a different binding; otherwise a sibling method's slot is counted as
+ * a use of the module-level slot and class folding gives up on the extra
+ * declaration/write.
+ */
+function functionShadowsName(fn: TYPE.Node, name: string): boolean {
+    const fnNode = fn as TYPE.FunctionDeclaration | TYPE.FunctionExpression
+        | TYPE.ArrowFunctionExpression | TYPE.ObjectMethod | TYPE.ClassMethod | TYPE.ClassPrivateMethod;
+    if (fnNode.type === "FunctionDeclaration" || fnNode.type === "FunctionExpression") {
+        if (fnNode.id && fnNode.id.name === name) return true;
+    }
+    const params = (fnNode as any).params as (TYPE.Node | null)[] | undefined;
+    if (params && params.some((param) => patternBindsName(param, name))) return true;
+    const body = (fnNode as any).body as TYPE.Node | undefined;
+    if (body && body.type === "BlockStatement") {
+        return body.body.some((stmt) => statementDeclaresName(stmt, name));
+    }
+    return false;
+}
+
 function scanNameUsage(program: TYPE.Program, name: string, skipNode: TYPE.Node): NameUsage {
     const usage: NameUsage = {
         total: 0, declaratorsNoInit: [], declaratorsWithInit: 0,
@@ -884,6 +942,8 @@ function scanNameUsage(program: TYPE.Program, name: string, skipNode: TYPE.Node)
     };
     walkNode(program, (node, parent, key) => {
         if (node === skipNode) return false;
+        // Same name but a nested function's own binding: unrelated to the folded slot/class name.
+        if (NAMED_FUNCTION_TYPES.has(node.type) && functionShadowsName(node, name)) return false;
         if (!isIdentifier(node) || node.name !== name) return true;
         usage.total++;
         const p = parent as TYPE.Node | null;
@@ -943,29 +1003,54 @@ function countPlainWrites(stmts: TYPE.Statement[], name: string): number {
  */
 function statementWritesAnyHolder(stmt: TYPE.Statement, holders: Set<string>): boolean {
     let writes = false;
-    walkNode(stmt, (node) => {
-        if (writes) return false;
-        if (isAssignmentExpression(node) && isIdentifier(node.left)
-            && holders.has(node.left.name)) {
-            writes = true;
-            return false;
+    const visit = (node: TYPE.Node | null | undefined, shadowed: Set<string> | null): void => {
+        if (!node || writes) return;
+        let localShadowed = shadowed;
+        if (NAMED_FUNCTION_TYPES.has(node.type)) {
+            let added: Set<string> | null = null;
+            for (const holder of holders) {
+                if (localShadowed?.has(holder)) continue;
+                if (!functionShadowsName(node, holder)) continue;
+                added ??= new Set(localShadowed);
+                added.add(holder);
+            }
+            if (added) localShadowed = added;
         }
-        if (isUpdateExpression(node) && isIdentifier(node.argument) && holders.has(node.argument.name)) {
+        const isShadowed = (name: string): boolean => localShadowed?.has(name) === true;
+        if (isAssignmentExpression(node) && isIdentifier(node.left)
+            && holders.has(node.left.name) && !isShadowed(node.left.name)) {
             writes = true;
-            return false;
+            return;
+        }
+        if (isUpdateExpression(node) && isIdentifier(node.argument)
+            && holders.has(node.argument.name) && !isShadowed(node.argument.name)) {
+            writes = true;
+            return;
         }
         if ((isForInStatement(node) || isForOfStatement(node)) && isIdentifier(node.left)
-            && holders.has(node.left.name)) {
+            && holders.has(node.left.name) && !isShadowed(node.left.name)) {
             writes = true;
-            return false;
+            return;
         }
         if (isVariableDeclarator(node) && isIdentifier(node.id)
-            && node.init != null && holders.has(node.id.name)) {
+            && node.init != null && holders.has(node.id.name) && !isShadowed(node.id.name)) {
             writes = true;
-            return false;
+            return;
         }
-        return true;
-    });
+        const keys = (VISITOR_KEYS as any)[node.type] as string[] | undefined;
+        if (!keys) return;
+        for (const key of keys) {
+            const value = (node as any)[key];
+            if (Array.isArray(value)) {
+                for (const child of value) {
+                    if (child && typeof child.type === "string") visit(child, localShadowed);
+                }
+            } else if (value && typeof value.type === "string") {
+                visit(value, localShadowed);
+            }
+        }
+    };
+    visit(stmt, null);
     return writes;
 }
 
@@ -1218,6 +1303,8 @@ function replaceNameRefs(node: TYPE.Node, name: string, replacement: TYPE.Identi
                     value[i] = identifier(replacement.name);
                     continue;
                 }
+                // The nested function declares the same name; it shadows the outer slot and must not be renamed.
+                if (NAMED_FUNCTION_TYPES.has(child.type) && functionShadowsName(child, name)) continue;
                 replaceNameRefs(child, name, replacement);
             }
         } else if (value && typeof value.type === "string") {
@@ -1225,6 +1312,7 @@ function replaceNameRefs(node: TYPE.Node, name: string, replacement: TYPE.Identi
                 (node as any)[k] = identifier(replacement.name);
                 continue;
             }
+            if (NAMED_FUNCTION_TYPES.has(value.type) && functionShadowsName(value, name)) continue;
             replaceNameRefs(value, name, replacement);
         }
     }

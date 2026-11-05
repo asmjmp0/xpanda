@@ -97,7 +97,7 @@ export function resolveReservedParams(program: t.Program): boolean {
       changed = true;
     },
     ExpressionStatement(path) {
-      if (t.isIdentifier(path.node.expression, {name: LEX_BEGIN})) {
+      if (t.isIdentifier(path.node.expression) && path.node.expression.name.startsWith(LEX_BEGIN)) {
         path.remove();
         path.skip();
         changed = true;
@@ -141,7 +141,7 @@ export function resolveReservedParams(program: t.Program): boolean {
         }
       } else if (name === SENDABLE_CLASS) {
         if (resolveSendableClass(path)) changed = true;
-      } else if (name === LEX_BEGIN) {
+      } else if (name.startsWith(LEX_BEGIN)) {
         // A marker that ended up inside an expression (e.g. a condition
         // sequence) has no statement to delete; replace it with a no-op value.
         path.replaceWith(t.identifier('undefined'));

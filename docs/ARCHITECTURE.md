@@ -54,7 +54,7 @@ The main thread always performs parsing, disassembly, lexical analysis, and AST 
 | `resources/isa.yaml` | ArkCompiler instruction set description (v24.0.0.0) |
 | `test/` | Integration tests, samples (`*.abc`, `*.hap`), snapshots (`test/expected/*.js`) |
 
-Dependency direction: `cli / PandaDecompiler → decompiler → disasm → file → codec`; `decompiler → ast`; `SimplifyExport → simplify`; `parallel → PandaDecompiler / file`; `mcp / hap → res`; `web → PandaDecompiler / hap`.
+Dependency direction: `cli / PandaDecompiler → decompiler → disasm → file → codec`; `decompiler → ast`; `SimplifyExport → simplify`; `parallel → PandaDecompiler / file`; `mcp / hap → res`; `web → PandaDecompiler / hap`. The bytecode assembler lives in `packages/xpanda-asm/src/Assembler.ts`; `xpanda-asm` depends on core for the generated opcode table, never the other way around.
 
 ## 3. File Format Layer — `src/file/`
 

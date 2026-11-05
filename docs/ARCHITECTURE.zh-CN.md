@@ -54,7 +54,7 @@ JavaScript 源码(落盘 / stdout / 编程 API)
 | `resources/isa.yaml` | ArkCompiler 指令集描述(v24.0.0.0) |
 | `test/` | 集成测试、样本(`*.abc`、`*.hap`)与快照(`test/expected/*.js`) |
 
-依赖方向:`cli / PandaDecompiler → decompiler → disasm → file → codec`;`decompiler → ast`;`SimplifyExport → simplify`;`parallel → PandaDecompiler / file`;`mcp / hap → res`;`web → PandaDecompiler / hap`。
+依赖方向:`cli / PandaDecompiler → decompiler → disasm → file → codec`;`decompiler → ast`;`SimplifyExport → simplify`;`parallel → PandaDecompiler / file`;`mcp / hap → res`;`web → PandaDecompiler / hap`。字节码汇编器位于 `packages/xpanda-asm/src/Assembler.ts`;`xpanda-asm` 依赖 core 生成的 opcode 表,反向依赖不存在。
 
 ## 3. 文件格式层 —— `src/file/`
 

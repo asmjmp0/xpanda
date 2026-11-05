@@ -19,3 +19,15 @@ export { dumpClasses } from "./ClassDump";
 export type { DumpClassesResult } from "./ClassDump";
 export { encodeMethodCode } from "./MethodCode";
 export { encodeStringEntity, encodeMutf8, readUleb128, writeUleb128 } from "./codec";
+export {
+    assemble,
+    assembleInstruction,
+    decodeInstructions,
+    encodeInstructionWithOpcode,
+    instructionSize,
+} from "./Assembler";
+export type {
+    AssembleOptions,
+    DecodedInstruction,
+    OperandInput,
+} from "./Assembler";

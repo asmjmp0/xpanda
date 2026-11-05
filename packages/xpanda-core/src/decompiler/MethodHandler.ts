@@ -17,7 +17,7 @@ import {
     stripFinallyMarkers,
 } from "./TryFinally";
 import { PandaDecompileException } from "../PandaParseException";
-import { isTempName } from "../simplify/AstUtils";
+import { resolveSourceClassName } from "../disasm/ClassNaming";
 import { ENTRY_FUNCTION_MAIN } from "../file/PandaFile";
 import type { PandaMethod } from "../file/method/PandaMethod";
 import { PandaString } from "../file/desc/PandaString";
@@ -356,11 +356,16 @@ const HANDLES: Record<string, Handle> = {
         assignAcc(mh, factory.identifierNode("acc") as any, node, factory.identifierNode(ins.destObj!.toString()) as any);
         return false;
     },
-    load: (ins, _b, mh, _l, node) => {
+    load: (ins, b, mh, l, node) => {
         const factory = NodeFactory;
         let loadNode: any;
-        if (ins.isSendAble && ins.opcode.name === "callruntime.ldsendableclass") {
-            loadNode = factory.identifierNode("panda_jmp0_reserved_sendable_class");
+        if (ins.opcode.name === "callruntime.ldsendableclass") {
+            // `ldsendableclass level` hops `level` regular lexenv frames and reads the
+            // constructor from the defining sendable class's SFunctionEnv. PandaLexical
+            // resolves the target class name from that chain; keep the marker when it
+            // cannot, and let the post-pass fall back to the nearest AST class.
+            const resolved = l.getLexPrefix(b.getParent(), ins.pc);
+            loadNode = factory.identifierNode(resolved ?? "panda_jmp0_reserved_sendable_class");
         } else if (ins.loadType === "STRING") {
             loadNode = factory.stringLiteralNode(ins.loadSelfToString());
         } else if (ins.loadType === "FALSE") {
@@ -488,12 +493,9 @@ const HANDLES: Record<string, Handle> = {
         // 赋值、只靠闭包读 lexenv 槽"的页面类都需要这个可读名字。取不到合法标识符
         // (含 acc/vN/local_* 等临时名)时退回保留名。部分工具链的记录名不带 '#'
         // 前缀(如 `newWindowWebViewClient`),名字本身是合法标识符时同样直接使用。
-        const sharp = className.lastIndexOf("#");
-        const sourceName = sharp >= 0 ? className.slice(sharp + 1) : "";
-        if (sourceName.length > 0 && /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(sourceName) && !isTempName(sourceName)) {
+        const sourceName = resolveSourceClassName(className);
+        if (sourceName !== null) {
             className = sourceName;
-        } else if (sharp < 0 && /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(className) && !isTempName(className)) {
-            // 记录名整体就是合法源码标识符:保持原样
         } else if (className.startsWith("#")) {
             className = "panda_jmp0_reserved_anonymous_" + mh.getNextID();
         } else {
@@ -781,7 +783,12 @@ const HANDLES: Record<string, Handle> = {
             arrayObject.push(factory.variableDeclaratorNode(factory.identifierNode(prefix + "_" + i) as any, null));
         }
         const variableDeclarationNode = factory.variableDeclarationNode(arrayObject as any, "let");
-        utils.insertNodeToBody(factory.expressionStatementNode(factory.identifierNode("panda_jmp0_reserved_lex_begin") as any) as any, node);
+        // Tag the marker with the environment instance so `poplexenv` can close the
+        // block of the environment it actually pops instead of always closing the
+        // last marker in the current statement list (which is wrong when sendable and
+        // regular environments are interleaved).
+        utils.insertNodeToBody(factory.expressionStatementNode(
+            factory.identifierNode("panda_jmp0_reserved_lex_begin_" + prefix) as any) as any, node);
         mh.insertStatement(node, variableDeclarationNode);
         return false;
     },
@@ -791,7 +798,11 @@ const HANDLES: Record<string, Handle> = {
         const prefix = l.getLexPrefix(method, ins.pc)
             ?? (ins.isSendAble ? "sendable" : "local") + "_" + (l.getLevel(method, ins.pc) - ins.lexLevel - 1);
         const name = prefix + "_" + ins.lexIndex;
-        const assignment = factory.assignmentExpressionNode("=", factory.identifierNode(name) as any, factory.identifierNode("acc") as any);
+        // deprecated.stlexvar reads its value from a vreg; regular stlexvar uses acc.
+        const value = ins.srcObj
+            ? factory.identifierNode(ins.srcObj.toString())
+            : factory.identifierNode("acc");
+        const assignment = factory.assignmentExpressionNode("=", factory.identifierNode(name) as any, value as any);
         NodeUtils.insertNodeToBody(factory.expressionStatementNode(assignment as any) as any, node);
         return false;
     },
@@ -806,13 +817,15 @@ const HANDLES: Record<string, Handle> = {
         NodeUtils.insertNodeToBody(factory.expressionStatementNode(assignment as any) as any, node);
         return false;
     },
-    popLexEnv: (_ins, _b, mh, _l, node) => {
-        // poplexenv 只负责关闭词法作用域(把块里后续语句收进嵌套块)。
-        // 结构化归约也可能把它放进条件 test 的 SequenceExpression,那里没有语句块
-        // 可切;环境名本身按实例唯一,跳过即可,否则 node.body 未定义会抛
-        // TypeError 让整个方法降级 SimpleAnalysis。
+    popLexEnv: (ins, block, mh, l, node) => {
+        // poplexenv only closes the lexical block (moves the following statements of
+        // the list into a nested block). Structured reduction can also place it inside
+        // a condition test's SequenceExpression, where there is no statement list to
+        // split; environment names are unique per instance, so skipping is safe (and
+        // avoids a TypeError that would degrade the whole method to SimpleAnalysis).
         if (node.type === "BlockStatement" || node.type === "Program") {
-            NodeUtils.covert2SingleBlock(node);
+            const popped = l.getLexPrefix(block.getParent(), ins.pc);
+            NodeUtils.covert2SingleBlock(node, popped);
         }
         return false;
     },

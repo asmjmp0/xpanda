@@ -4793,7 +4793,8 @@ function verifyInstallSendableClass(clazz: PandaClass, code: string): void {
             throw new Error(`SendableStandardMessageCodec: 缺少 ${JSON.stringify(fragment)}\n${code}`);
         }
     }
-    for (const residue of ["sendable_", "export default acc", "}).call(", "export default @"]) {
+    for (const residue of ["sendable_", "export default acc", "}).call(", "export default @",
+        "panda_jmp0_reserved_sendable_class"]) {
         if (code.includes(residue)) {
             throw new Error(`SendableStandardMessageCodec: 仍是 sendable 槽名/未折叠形态(残留 ${JSON.stringify(residue)})\n${code}`);
         }
@@ -4813,6 +4814,10 @@ function verifyInstallSendableClass(clazz: PandaClass, code: string): void {
  * sendable env(stsendablevar)。PandaLexical 曾把两条链混成一个栈,两个类都解析到
  * `sendable_1_0`,后一个类的定义覆盖了前一个,`new` 会构造错类。现在两条链独立解析,
  * 两个类都应折叠回带正确名字的类声明。
+ *
+ * sendable 方法不继承定义处的 regular lexenv(运行时入口是只含构造器的
+ * SFunctionEnv),所以 onMessage 自己的 newlexenv 从深度 0 开始,输出 `local_0_*`。
+ * 它与模块作用域里同名槽属于不同函数绑定,不能因为名字相同就判成混用。
  * 另外 sendable class 字面量尾部的字段类型掩码(SharedFieldType.GENERIC = 32)
  * 不能渲染成初始值(`handler = 32`)。
  */
@@ -4828,6 +4833,9 @@ function verifyInstallSendableClassBinding(clazz: PandaClass, code: string): voi
         "new IncomingSendableMessageHandler(p0, this.codec)",
         "class IncomingReplyHandler {",
         "@Sendable\nclass IncomingSendableMessageHandler {",
+        // sendable 方法的入口环境从深度 0 开始(SFunctionEnv 之上没有继承的 regular env)
+        "let local_0_1 = this;",
+        "let local_0_0 = p1;",
         // 字段类型掩码不渲染成初始值,保留为无初始化的字段声明
         "  handler;\n  codec;",
     ]) {
@@ -4835,7 +4843,7 @@ function verifyInstallSendableClassBinding(clazz: PandaClass, code: string): voi
             throw new Error(`BackgroundBasicMessageChannel: 缺少 ${JSON.stringify(fragment)}\n${code}`);
         }
     }
-    for (const residue of ["sendable_", "local_0_0", "handler = 32", "codec = 32", "sendable_1_0"]) {
+    for (const residue of ["sendable_", "handler = 32", "codec = 32", "sendable_1_0"]) {
         if (code.includes(residue)) {
             throw new Error(`BackgroundBasicMessageChannel: 槽位/字段渲染未还原(残留 ${JSON.stringify(residue)})\n${code}`);
         }

@@ -53,17 +53,17 @@ class IncomingSendableMessageHandler {
     this.codec = p1;
   }
   onMessage(p0, p1) {
-    let local_1_1 = this;
-    let local_1_0 = p1;
+    let local_0_1 = this;
+    let local_0_0 = p1;
     try {
-      local_1_1.handler.onMessage(local_1_1.codec.decodeMessage(p0), {
+      local_0_1.handler.onMessage(local_0_1.codec.decodeMessage(p0), {
         "reply": function (p0) {
-          local_1_0.reply(local_1_1.codec.encodeMessage(p0));
+          local_0_0.reply(local_0_1.codec.encodeMessage(p0));
         }
       });
     } catch (catchAcc) {
       Log.e("WARNNING", "Failed to handle message: ", catchAcc);
-      local_1_0.reply(StringUtils.stringToArrayBuffer(""));
+      local_0_0.reply(StringUtils.stringToArrayBuffer(""));
     }
   }
 }

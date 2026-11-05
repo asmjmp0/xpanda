@@ -7,8 +7,7 @@
 
 ```ts
 import { readFileSync, writeFileSync } from "fs";
-import { assemble } from "xpanda-core";
-import { PandaPatchFile } from "xpanda-asm";
+import { PandaPatchFile, assemble } from "xpanda-asm";
 
 const patchFile = PandaPatchFile.load(new Uint8Array(readFileSync("app.abc")));
 
@@ -284,12 +283,12 @@ append-only patcher:
 - ⚠️ 多 index section 的文件只允许对最后一个 region 内的类 `addMethod`;其它 region 会抛错
 - ⚠️ 依赖 xpanda-core 的只读解析器定位实体;带注解 tag 的类/方法实体暂不支持
 
-## 汇编器(xpanda-core)
+## 汇编器(xpanda-asm)
 
-`panda-core` 的 `src/asm/Assembler.ts` 由 `gen-opcodes.ts` 生成的操作数布局驱动:
+本库的 `src/Assembler.ts` 由 `xpanda-core` 的 `gen-opcodes.ts` 生成的操作数布局驱动:
 
 ```ts
-import { assemble, assembleInstruction, decodeInstructions } from "xpanda-core";
+import { assemble, assembleInstruction, decodeInstructions } from "xpanda-asm";
 
 assemble("nop");                                  // -> Uint8Array [0xd5]
 assemble("ldai 1");                               // 立即数

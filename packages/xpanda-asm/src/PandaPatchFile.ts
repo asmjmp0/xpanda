@@ -16,9 +16,12 @@ import * as path from "path";
 import { execFileSync } from "child_process";
 import {
     Adler32, OPCODE_FLAG, PandaClass, PandaFile, PandaMethod,
-    assemble, assembleInstruction, decodeInstructions, encodeInstructionWithOpcode,
 } from "xpanda-core";
-import type { DecodedInstruction, OpcodeInfo } from "xpanda-core";
+import type { OpcodeInfo } from "xpanda-core";
+import {
+    assemble, assembleInstruction, decodeInstructions, encodeInstructionWithOpcode,
+    type DecodedInstruction,
+} from "./Assembler";
 import { concatBytes, encodeStringEntity, readStringEntity, readUleb128, writeSleb128, writeUleb128 } from "./codec";
 import { dumpClasses, type DumpClassesResult } from "./ClassDump";
 import { encodeMethodCode, type CatchBlockInput, type MethodCodeInput, type TryBlockInput } from "./MethodCode";

@@ -98,6 +98,28 @@ therefore receive the environment stack at the point where the class was
 defined, including the class's own environment when one was pushed with
 `newlexenv` around the class definition.
 
+Sendable functions and sendable classes are the exception. `RuntimeDefinefunc`
+branches on `methodHandle->IsSendableMethod()`: the sendable branch creates the
+function with the module's sendable env and sets its lexical env to
+`emptySFunctionEnv` (`runtime_stubs-inl.h`). `RuntimeCreateSharedClass` takes no
+lexical-env argument; `SendableClassDefiner::DefineSendableClassFromExtractor`
+builds a fresh `SFunctionEnv`, stores the constructor in it, and
+`CreateSFunctionFromTemplate` does the same for every instance and static method
+(`class_info_extractor.cpp`). An `SFunctionEnv` is not a `LexicalEnv`
+(`lexical_env.h`), so the defining frame's regular environment chain is not
+reachable from a sendable method. `ldsendablevar` / `stsendablevar` still work:
+the sendable module chain is copied through the module record at define time.
+
+### `callruntime.ldsendableclass level`
+
+`CALLRUNTIME_LDSENDABLECLASS` starts at `frame.env`, hops `level` parents that
+must all be `LexicalEnv`s, then requires the landing object to be an
+`SFunctionEnv` and returns its constructor (`interpreter-inl.cpp:7747`,
+`RuntimeLdSendableClass` in `runtime_stubs-inl.h`). `level` is the number of
+regular environments between the current frame environment and the sendable
+function's `SFunctionEnv`, not a slot index and not "the nearest class in the
+source text".
+
 ### Async functions and generators
 
 `suspendgenerator` saves the whole frame, including the current lexical
@@ -132,14 +154,23 @@ Consequences for decompilation:
 `PandaLexical.analyzeWithPandaMethod` runs a forward dataflow over the CFG:
 
 - Each method starts with the `inheritedStack` captured at its definition
-  point (for class methods this includes the module and class environments).
+  point (for ordinary class methods this includes the module and class
+  environments).
+- Methods of a sendable class start from an `sfunction` marker plus the
+  inherited *sendable* chain: their regular chain starts at depth 0 because the
+  defining frame's regular environments are not reachable from `SFunctionEnv`.
 - `newLexEnv` pushes a `LexEnvInfo { name, kind }`.
 - `popLexEnv` removes the top regular environment unless the stack is already
-  at the method's entry level (`startLevel`).
+  at the method's entry level (`startLevel`), and records the popped
+  environment's name for the AST pass.
 - `loadLex` / `storeLex` resolve `level` by walking the regular or sendable
   chain and record the target environment's `name`; the emitted identifier is
   `name + "_" + slot`. No out-of-range fallback is applied: a slot is only
   valid inside the environment the `level` points at.
+- `callruntime.ldsendableclass` resolves `level` against the regular chain. It
+  names the class only when the hop lands exactly on the method's `sfunction`
+  marker; otherwise the marker is left for the post-structure fallback (the
+  nearest AST class). The immediate is no longer discarded.
 
 Environment names are generated per method with a counter
 (`local_<depth>`, `local_<depth>_<instance>`), so two environments created by
@@ -191,21 +222,24 @@ not recomputed from a depth number.
 `MethodHandler` lowers the instructions as follows:
 
 - `newlexenv` emits
-  `panda_jmp0_reserved_lex_begin;` and `let local_...;` into the current AST
-  node.
-- `poplexenv` calls `NodeUtils.covert2SingleBlock(node)`: it finds the last
-  `panda_jmp0_reserved_lex_begin` in the current statement list and moves the
-  statements after it into a new `BlockStatement`, so the JavaScript block
-  approximately represents the environment's lifetime.
-- `ldlexvar` / `stlexvar` become reads/writes of the generated name.
+  `panda_jmp0_reserved_lex_begin_<environment>;` and `let local_...;` into the
+  current AST node. The marker is tagged with the environment instance name.
+- `poplexenv` calls `NodeUtils.covert2SingleBlock(node, poppedEnvironment)`:
+  it finds the marker of the environment that was actually popped and moves
+  the statements after it into a new `BlockStatement`, so the JavaScript block
+  approximately represents that environment's lifetime.
+- `ldlexvar` / `stlexvar` become reads/writes of the generated name, and
+  `ldsendableclass` becomes the resolved class binding when `level` lands on
+  the sendable `SFunctionEnv`.
 
 Problems with this approximation:
 
-- `covert2SingleBlock` matches the **last marker in the current list**, not
-  necessarily the environment named by the `poplexenv` instruction. When
-  environments are nested or the pop is in a branch, the wrong block is
-  closed. Tagging the marker with the environment identity and passing the
-  popped environment is the proper fix; it is not implemented yet.
+- When the popped environment's marker is not in the current statement list
+  (the pop was structured into a branch or nested block, or an exception
+  handler seed cannot name it), `covert2SingleBlock` falls back to closing the
+  last marker in the list to preserve the historical block shape. Generated
+  names are unique per instance, so the post-pass scope normalization keeps
+  this safe, but the block boundary is then only approximate.
 - A `newlexenv` inside a condition-test region is decompiled into a
   `SequenceExpression`. `NodeUtils.insertNodeToBody` has no statement slot
   there, so a `let local_...;` declaration used to be dropped silently while
@@ -287,17 +321,29 @@ keys) do not count — counting those would block module-level class folding.
      block. Generated names are unique per instance, so this does not capture
      unrelated variables, and per-iteration declarations stay in their loop
      body for `LoopEnvSimplify`.
-   - The proper structural fix is still to tag each
-     `panda_jmp0_reserved_lex_begin` marker with the environment identity and
-     make `poplexenv` close the matching marker instead of the last one. The
-     fallback exists because the structured block shape does not always match
-     the runtime environment lifetime.
+   - Markers are now tagged with the environment identity and `poplexenv`
+     closes the matching marker. The last-marker fallback remains only for pops
+     whose marker is not in the current statement list, because the structured
+     block shape does not always match the runtime environment lifetime.
 
 5. **Never drop a statement silently (implemented).**
    - `MethodHandler.insertStatement` hoists a `VariableDeclaration` that is
      written into a `SequenceExpression` to the owning function body and keeps
      its initializer in the sequence as an assignment, preserving evaluation
      order.
+
+6. **Sendable function/class entry and `ldsendableclass` (implemented).**
+   - Methods of a `callruntime.definesendableclass` class are analyzed with a
+     fresh `SFunctionEnv` marker at the bottom of their regular chain; the
+     inherited regular environment names are not visible to them.
+   - `ldsendableclass level` is resolved by hopping the regular chain and
+     reading the class name recorded on that `SFunctionEnv`. The immediate is
+     no longer discarded.
+
+7. **Deprecated lexical opcodes (implemented).**
+   - `deprecated.poplexenv` pops like `poplexenv`.
+   - `deprecated.stlexvar` stores its vreg operand (not `acc`) into the
+     resolved slot.
 
 ## 5. Verification checklist
 
@@ -318,5 +364,9 @@ keys) do not count — counting those would block module-level class folding.
     environment must stay inside the loop.
   - `yourpipe0.7.0.abc` `AppLogStore` — generated slot used in a nested
     function.
+  - `install1.3.0.abc` `SendableStandardMessageCodec` — `ldsendableclass`
+    levels 0/1 resolve to the class; `BackgroundBasicMessageChannel` —
+    `IncomingSendableMessageHandler.onMessage` starts its regular environment
+    at depth 0 (`local_0_*`), independent of the module-level `local_0_0`.
 - Decompile `lnga1.2.6.abc`, `hx360e1.0.2.abc`, `yourpipe0.7.0.abc` and the
   zhihu HAP; scan for unbound generated identifiers.
