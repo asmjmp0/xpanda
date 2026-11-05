@@ -39,6 +39,7 @@ yarn xpanda gadget shell
 #     commands: <js> | .info | .ping | .probe | .reset | .msg <json> | .help | .exit
 #     multi-line blocks continue automatically; bare {"a":1} is retried as an expression
 #     console.log / warn / error ... inside evaluated JS is streamed back to the shell
+#     `ArkTS.hostGlobal` exposes the host globalThis snapshot; functions/objects call through
 
 # 3b) Script watch mode: runs on start and again on every save (reconnects on the next save)
 #     watch mode prints console.* output but not the script's return value; --once prints both
@@ -72,6 +73,33 @@ CLI options: `--port` `--entry` `--abc <entry>` `--all` (patch every abc) `--abi
 | `poll()` | Pops one client message (`undefined` when empty) |
 | `reset()` | Destroys the JSVM (recreated on the next evaluation, clearing all global state) |
 | `executeJs(code)` | Evaluates JS in the gadget's JSVM and returns the result (throws on error) |
+| `loadModule(path)` | Host-side `napi_load_module` wrapper (e.g. `@ohos.promptAction`) |
+| `loadModuleWithInfo(path, info)` | Host-side `napi_load_module_with_info` wrapper |
+
+Inside the shell, `ArkTS.hostGlobal` is a snapshot of the host ArkTS `globalThis`:
+one property per host global (`ArkTS.hostGlobal.Text`, `ArkTS.hostGlobal.Object`,
+...). Property reads are snapshotted; function/constructor calls are forwarded to
+the host with JSON-serializable arguments. Classes are the function-valued
+entries with a `prototype`:
+
+```js
+Object.keys(ArkTS.hostGlobal).filter(function (name) {
+    var v = ArkTS.hostGlobal[name];
+    return typeof v === "function" && v.prototype;
+});
+```
+
+```js
+ArkTS.hostGlobal.console.info("hello")  // forward to the host console
+ArkTS.hostGlobal.Math.max(4, 7)         // 7
+
+var promptAction = ArkTS.napi.loadModule("@ohos.promptAction");
+promptAction.showToast({ message: "hello", duration: 3000 });
+```
+
+In a **host ArkTS injection script**, the same `napi_load_module` is available as
+`globalThis.ArkTS.napi.loadModule(path)` (or `gadget.loadModule(path)` after
+importing the gadget `.so`); it returns the real host module object.
 
 **Socket protocol** (NDJSON, one JSON per line): `js` (execute JS) / `msg` (bidirectional
 messages) / `info` / `ping` / `probe` (JSVM health check). The gadget also pushes
@@ -108,7 +136,7 @@ See [native/README.md](native/README.md) for the full module map and call flow.
 | `src/common/` | Process-wide socket instance, hilog helpers, mini JSON scanner |
 | `src/napi/` | Host ArkTS value conversions (string <-> JSON) |
 | `src/js/` | JSVM lifecycle/evaluation (`jsvm`), JSVM value conversions (`jsvm_value`), socket→JS thread bridge (`js_thread`) |
-| `src/js/module/` | Modules injected into the gadget JSVM (`console`) |
+| `src/js/module/` | Modules injected into the gadget JSVM (`console`, host `globalThis` bridge) |
 | `src/socket/` | Abstract unix socket, accept/line reading, NDJSON protocol dispatch, inbox/broadcast |
 | `build.sh` | Cross-compiles with `aarch64-unknown-linux-ohos-clang++` from `~/command-line-tools` |
 | `CMakeLists.txt` | DevEco integration (copy into `<module>/src/main/cpp/`) |
@@ -124,6 +152,13 @@ All link dependencies are system libraries: `libace_napi.z.so`, `libjsvm.so`, `l
 | `src/inject/` | `.abc` bootstrap injection: defaults/types, entry-class discovery, bootstrap source, `injectAbcBytes` |
 | `src/hap/` | HAP repacking: CRC32 + minimal ZIP writer, abc-entry selection, `.so` embedding, `injectHapBytes` |
 | `src/io.ts` | Node-only disk IO helpers for the CLI |
+| `interface/ArkTS.ts` | Type reference for `ArkTS.hostGlobal` / `ArkTS.napi` and the host-side `ArkTS` / `gadget` API (documentation only) |
+
+## ArkTS interface reference
+
+[`interface/ArkTS.ts`](interface/ArkTS.ts) documents the JSVM `ArkTS.hostGlobal` /
+`ArkTS.napi` surface and the host-side `globalThis.ArkTS` / `gadget.loadModule`
+helpers, including call/conversion rules and limitations.
 
 ## Injection details (abc side)
 

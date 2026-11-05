@@ -8,6 +8,8 @@
  *   - send(value)                           push a message to every socket client
  *   - poll()                                drain messages sent by socket clients
  *   - executeJs(code)                       evaluate JavaScript
+ *   - loadModule(path)                      host napi_load_module wrapper
+ *   - loadModuleWithInfo(path, info)        host napi_load_module_with_info wrapper
  *
  * JS execution runs in a dedicated JSVM created on the host JS thread (the host
  * ArkTS runtime forbids dynamic evaluation). The socket thread hops onto the JS
@@ -23,6 +25,7 @@
 #include "common/log.h"
 #include "js/js_thread.h"
 #include "js/jsvm.h"
+#include "js/module/host_bridge.h"
 #include "napi/native_api.h"
 #include "napi/napi_utils.h"
 #include "socket/socket_server.h"
@@ -46,6 +49,8 @@ static napi_value Start(napi_env env, napi_callback_info info) {
             }
         }
     }
+
+    captureHostGlobal(env);
 
     std::string bridgeError;
     if (!startJsBridge(env, &bridgeError)) {
@@ -171,6 +176,44 @@ static napi_value Reset(napi_env env, napi_callback_info info) {
     return undefined;
 }
 
+/** Host-side napi_load_module wrapper: gadget.loadModule("@ohos.promptAction"). */
+static napi_value LoadModule(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value argv[1] = {nullptr};
+    napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+    if (argc < 1 || argv[0] == nullptr) {
+        napi_throw_error(env, nullptr, "loadModule requires a module path");
+        return nullptr;
+    }
+    std::string path = napiValueToText(env, argv[0]);
+    napi_value module = nullptr;
+    if (napi_load_module(env, path.c_str(), &module) != napi_ok || module == nullptr) {
+        napi_throw_error(env, nullptr, ("loadModule failed: " + path).c_str());
+        return nullptr;
+    }
+    return module;
+}
+
+/** Host-side napi_load_module_with_info wrapper. */
+static napi_value LoadModuleWithInfo(napi_env env, napi_callback_info info) {
+    size_t argc = 2;
+    napi_value argv[2] = {nullptr, nullptr};
+    napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+    if (argc < 2 || argv[0] == nullptr || argv[1] == nullptr) {
+        napi_throw_error(env, nullptr, "loadModuleWithInfo requires path and module info");
+        return nullptr;
+    }
+    std::string path = napiValueToText(env, argv[0]);
+    std::string moduleInfo = napiValueToText(env, argv[1]);
+    napi_value module = nullptr;
+    if (napi_load_module_with_info(env, path.c_str(), moduleInfo.c_str(), &module) != napi_ok
+        || module == nullptr) {
+        napi_throw_error(env, nullptr, ("loadModuleWithInfo failed: " + path).c_str());
+        return nullptr;
+    }
+    return module;
+}
+
 static napi_value Init(napi_env env, napi_value exports) {
     const napi_property_attributes attrs
         = static_cast<napi_property_attributes>(napi_writable | napi_enumerable | napi_configurable);
@@ -182,6 +225,8 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"send", nullptr, Send, nullptr, nullptr, nullptr, attrs, nullptr},
         {"poll", nullptr, Poll, nullptr, nullptr, nullptr, attrs, nullptr},
         {"executeJs", nullptr, ExecuteJs, nullptr, nullptr, nullptr, attrs, nullptr},
+        {"loadModule", nullptr, LoadModule, nullptr, nullptr, nullptr, attrs, nullptr},
+        {"loadModuleWithInfo", nullptr, LoadModuleWithInfo, nullptr, nullptr, nullptr, attrs, nullptr},
     };
     napi_define_properties(env, exports, sizeof(properties) / sizeof(properties[0]), properties);
     return exports;

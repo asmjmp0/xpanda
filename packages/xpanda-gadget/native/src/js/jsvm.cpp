@@ -12,6 +12,7 @@
 
 #include "ark_runtime/jsvm.h"
 #include "js/module/console.h"
+#include "js/module/host_bridge.h"
 #include "common/log.h"
 #include "js/jsvm_value.h"
 #include "common/mini_json.h"
@@ -106,6 +107,9 @@ bool ensureJsvm(std::string* error) {
         } else if (!installConsole(g_jsvm.env)) {
             GADGET_LOG_ERROR("failed to install the console bridge (console.* will be unavailable)");
         }
+        if (scopes.ok && !installHostBridge(g_jsvm.env)) {
+            GADGET_LOG_ERROR("failed to install the host globalThis bridge");
+        }
     }
     g_jsvm.ready = true;
     GADGET_LOG_INFO("jsvm runtime ready (v8 on the host JS thread)");
@@ -114,6 +118,7 @@ bool ensureJsvm(std::string* error) {
 
 void destroyJsvm() {
     if (!g_jsvm.ready) return;
+    releaseHostModules();
     OH_JSVM_DestroyEnv(g_jsvm.env);
     OH_JSVM_DestroyVM(g_jsvm.vm);
     g_jsvm.env = nullptr;

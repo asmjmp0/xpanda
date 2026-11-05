@@ -16,5 +16,5 @@
     "rootDir": ".",
     "lib": ["ES2020"]
   },
-  "include": ["src/**/*", "test/**/*"]
+  "include": ["src/**/*", "test/**/*", "interface/**/*"]
 }

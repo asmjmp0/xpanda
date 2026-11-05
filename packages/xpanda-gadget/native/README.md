@@ -17,7 +17,11 @@ src/
 │   ├── jsvm.h/.cpp         JSVM lifecycle, script evaluation, probe
 │   ├── jsvm_value.h/.cpp   JSVM value/exception conversions
 │   └── module/
-│       └── console.h/.cpp  the console.* module injected into the gadget JSVM
+│       ├── console.h/.cpp     the console.* module injected into the gadget JSVM
+│       ├── host_bridge.h/.cpp coordinator + JS assembly of ArkTS.hostGlobal/napi
+│       ├── host_global.h/.cpp host globalThis snapshot -> ArkTS.hostGlobal
+│       ├── napi_bridge.h/.cpp ArkTS.napi, napi_load_module and the call proxy
+│       └── bridge_utils.h     shared JSVM helpers
 └── socket/
     └── socket_server.h/.cpp abstract unix socket + NDJSON protocol dispatch
 ```
@@ -27,6 +31,7 @@ src/
 ```
 app bootstrap (func_main_0)
   └─ import libxpanda_gadget.so → start()
+       ├─ js/module/host_bridge captures the host globalThis snapshot
        ├─ js/js_thread       creates the TSFN used by all socket requests
        └─ socket/socket_server binds localabstract:xpanda_gadget_<port>
 
@@ -37,6 +42,61 @@ socket client (gadget shell / gadget file)
                  └─ console.* → js/module/console → broadcast {"type":"console"} + hilog
        → {"type":"result"} back to the client
 ```
+
+## Host globalThis bridge
+
+The host ArkTS runtime and the gadget JSVM are separate runtimes, so `globalThis`
+cannot be shared as a live object. `start()` captures the host `globalThis`
+(`captureHostGlobal`) and `ensureJsvm()` installs it into the JSVM
+(`installHostBridge`). Property reads come from the snapshot; function and
+constructor calls are forwarded to the host runtime through NAPI with
+JSON-serializable arguments and results.
+
+```js
+ArkTS.hostGlobal              // plain snapshot object of the host globalThis
+Object.keys(ArkTS.hostGlobal) // all host global names (740 incl. ArkTS on test_app)
+ArkTS.hostGlobal.Text         // constructible proxy: typeof "function", has prototype
+ArkTS.hostGlobal.parseInt     // callable proxy: arrow function, no prototype
+ArkTS.hostGlobal.Math         // object member proxy: Math.max(4, 7) -> 7
+ArkTS.hostGlobal.Infinity     // primitive copied as-is
+
+ArkTS.hostGlobal.console.info("hello")   // forwarded to the host console
+
+var promptAction = ArkTS.napi.loadModule("@ohos.promptAction");
+promptAction.showToast({ message: "hello", duration: 3000 });
+```
+
+There are no helper methods. To list classes:
+
+```js
+Object.keys(ArkTS.hostGlobal).filter(function (name) {
+    var v = ArkTS.hostGlobal[name];
+    return typeof v === "function" && v.prototype;
+});
+```
+
+There are two sides of `ArkTS.napi.loadModule`:
+
+- **host ArkTS (injected script)**: `globalThis.ArkTS.napi.loadModule(path)` calls
+  `napi_load_module` directly and returns the real module object, so the script
+  can compose the toast itself:
+
+  ```js
+  var promptAction = globalThis.ArkTS.napi.loadModule("@ohos.promptAction");
+  promptAction.showToast({ message: "hello", duration: 3000 });
+  ```
+
+  The gadget NAPI module also exports `loadModule(path)` /
+  `loadModuleWithInfo(path, moduleInfo)` for `import gadget from "libxpanda_gadget.so"`.
+
+- **gadget JSVM**: `ArkTS.napi.loadModule(path)` loads the host module and returns
+  a live call proxy (`promptAction.showToast(...)`), routed through the same NAPI
+  call bridge as `ArkTS.hostGlobal`.
+
+Function/constructor arguments and results must be JSON-serializable; live host
+objects, functions, `undefined` and circular values are not preserved.
+
+Full API reference: [`../interface/ArkTS.ts`](../interface/ArkTS.ts).
 
 ## Adding a new JS module
 

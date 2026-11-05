@@ -29,6 +29,9 @@ add_library(xpanda_gadget SHARED
     src/napi/napi_utils.cpp
     src/js/jsvm_value.cpp
     src/js/module/console.cpp
+    src/js/module/host_bridge.cpp
+    src/js/module/host_global.cpp
+    src/js/module/napi_bridge.cpp
     src/js/jsvm.cpp
     src/js/js_thread.cpp
     src/socket/socket_server.cpp

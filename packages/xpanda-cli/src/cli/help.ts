@@ -70,6 +70,7 @@ export function printGadgetShellUsage(): void {
     console.log("");
     console.log("  REPL commands: <js> | .info | .ping | .probe | .reset | .msg <json> | .help | .exit");
     console.log("  console.log/info/warn/error/... called by evaluated JS is streamed back and printed here");
+    console.log("  ArkTS.hostGlobal  host globalThis snapshot; functions/objects call through; ArkTS.napi.loadModule(path)");
 }
 
 export function printGadgetFileUsage(): void {
