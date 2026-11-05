@@ -69,7 +69,11 @@ const char* kBridgeSource = R"JS(
     }
     function encodeValue(value) {
         if (value === undefined) return { t: "v" };
-        if (value === null || typeof value !== "object") return { t: "v", v: value };
+        // Host function proxies are callable objects: keep them by reference so
+        // they can be passed back to host APIs (request(url, options, callback)).
+        if (value === null || (typeof value !== "object" && typeof value !== "function")) {
+            return { t: "v", v: value };
+        }
         var path = proxyPaths.get(value);
         if (path) return { t: "r", path: path };
         var pid = promiseIds.get(value);
@@ -89,7 +93,9 @@ const char* kBridgeSource = R"JS(
     }
     function tagResult(value) {
         if (value === undefined) return JSON.stringify({ t: "v" });
-        if (value === null || typeof value !== "object") return JSON.stringify({ t: "v", v: value });
+        if (value === null || (typeof value !== "object" && typeof value !== "function")) {
+            return JSON.stringify({ t: "v", v: value });
+        }
         var path = proxyPaths.get(value);
         if (path) {
             if (typeof arkts.__retainHostPath === "function") {
