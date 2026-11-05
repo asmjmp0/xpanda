@@ -24,14 +24,81 @@ export const COLOR = process.stdout.isTTY
 export const CONNECT_TIMEOUT_MS = 5000;
 export const REQUEST_TIMEOUT_MS = 15000;
 
-/** Render a reply value for the terminal (strings unquoted, objects as JSON). */
+/**
+ * Render a reply value for the terminal: strings unquoted, short objects as
+ * compact JSON, long objects/arrays as indented JSON (a returned object used to
+ * be one unreadable line in the shell).
+ */
 export function formatValue(value: unknown): string {
     if (value === undefined) return "undefined";
     if (typeof value === "string") return value;
+    if (value === null || typeof value !== "object") return String(value);
     try {
-        return JSON.stringify(value);
+        const compact = JSON.stringify(value);
+        if (compact === undefined) return String(value);
+        if (compact.length <= 80) return compact;
+        return JSON.stringify(value, null, 2);
     } catch {
         return String(value);
+    }
+}
+
+/**
+ * Console wrapper installed into the gadget VM by `gadget shell` / `gadget file`.
+ *
+ * The native console bridge stringifies object arguments with a compact
+ * `JSON.stringify`, so `console.log(bigObject)` arrives as one very long line.
+ * This prelude replaces the console methods with wrappers that render long
+ * object arguments as indented JSON before they reach the native console.
+ * It is idempotent and stays active in the VM between evaluations.
+ */
+const CONSOLE_FORMAT_PRELUDE = `(function () {
+    if (globalThis.__xpandaConsoleFormat) return;
+    globalThis.__xpandaConsoleFormat = true;
+
+    function format(value) {
+        if (value === null || typeof value !== "object") return value;
+        try {
+            if (value instanceof Error) return value;
+        } catch (e) {
+            // ignore proxy prototype failures
+        }
+        var compact;
+        try {
+            compact = JSON.stringify(value);
+        } catch (e) {
+            return value;
+        }
+        if (typeof compact !== "string") return value;
+        if (compact.length <= 80) return compact;
+        try {
+            return JSON.stringify(value, null, 2);
+        } catch (e) {
+            return compact;
+        }
+    }
+
+    var methods = ["log", "info", "debug", "warn", "error", "trace", "dir"];
+    for (var i = 0; i < methods.length; i++) {
+        var name = methods[i];
+        var original = globalThis.console[name];
+        if (typeof original !== "function") continue;
+        globalThis.console[name] = (function (fn) {
+            return function () {
+                var args = [];
+                for (var j = 0; j < arguments.length; j++) args.push(format(arguments[j]));
+                return fn.apply(globalThis.console, args);
+            };
+        })(original);
+    }
+})();`;
+
+/** Install the console object-formatting prelude in the connected gadget VM. */
+export async function installConsoleFormatting(client: GadgetClient): Promise<void> {
+    try {
+        await client.request({ type: "js", code: CONSOLE_FORMAT_PRELUDE });
+    } catch {
+        // Formatting is best-effort: never block the shell/file workflow on it.
     }
 }
 

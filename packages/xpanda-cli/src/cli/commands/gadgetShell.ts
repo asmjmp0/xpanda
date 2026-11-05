@@ -15,6 +15,7 @@ import {
     formatConsolePush,
     formatValue,
     GadgetConnectionOptions,
+    installConsoleFormatting,
     isConsolePush,
     setupGadgetForward,
 } from "../gadgetClient";
@@ -178,6 +179,14 @@ export async function runGadgetShell(args: string[]): Promise<void> {
         console.log(`xpanda gadget shell — ${options.host}:${options.port}  ${COLOR.dim}(.help for commands)${COLOR.reset}`);
     }
 
+    // Install the console formatter lazily: .info/.ping/.msg do not need the VM.
+    let consoleFormattingInstalled = false;
+    const ensureConsoleFormatting = async (): Promise<void> => {
+        if (consoleFormattingInstalled) return;
+        consoleFormattingInstalled = true;
+        await installConsoleFormatting(client);
+    };
+
     const isTTY = Boolean(process.stdin.isTTY);
     const rl = readline.createInterface({
         input: process.stdin,
@@ -204,6 +213,7 @@ export async function runGadgetShell(args: string[]): Promise<void> {
                 return;
             }
             buffer = [];
+            await ensureConsoleFormatting();
             printReply(await client.request({ type: "js", code }));
             return;
         }
@@ -227,6 +237,7 @@ export async function runGadgetShell(args: string[]): Promise<void> {
         if (trimmed === ".reset") {
             const reply = await client.request({ type: "reset" });
             console.log(JSON.stringify(reply));
+            consoleFormattingInstalled = false;
             return;
         }
         if (trimmed.startsWith(".msg")) {
@@ -252,6 +263,7 @@ export async function runGadgetShell(args: string[]): Promise<void> {
             return;
         }
         buffer = [];
+        await ensureConsoleFormatting();
         printReply(await client.request({ type: "js", code: line }));
     };
 

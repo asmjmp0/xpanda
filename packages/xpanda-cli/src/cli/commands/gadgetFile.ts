@@ -17,6 +17,7 @@ import {
     formatValue,
     GadgetClient,
     GadgetConnectionOptions,
+    installConsoleFormatting,
     isConsolePush,
     setupGadgetForward,
 } from "../gadgetClient";
@@ -142,6 +143,7 @@ export async function runGadgetFile(args: string[]): Promise<void> {
             try {
                 await candidate.connected;
                 client = candidate;
+                await installConsoleFormatting(client);
             } catch (error: any) {
                 candidate.close();
                 const reasonText = error?.code === "ECONNREFUSED"
