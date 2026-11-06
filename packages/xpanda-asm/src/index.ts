@@ -16,6 +16,10 @@ export type {
     CatchBlockInput,
     PatchInitOptions,
     PatchInitResult,
+    PatchModuleLoadOptions,
+    PatchModuleLoadResult,
+    PatchedModuleLoad,
+    SkippedModuleLoad,
 } from "./patch";
 export { dumpClasses } from "./ClassDump";
 export type { DumpClassesResult } from "./ClassDump";

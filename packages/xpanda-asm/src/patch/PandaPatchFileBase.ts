@@ -57,6 +57,12 @@ export class PandaPatchFileBase {
     protected patchSlotsScanned = false;
     /** 每个 IndexHeader 的实体索引表当前状态(多次扩展后 parsed 对象里的 size 已过时) */
     protected readonly entityTableState = new Map<PandaClass["indexHeader"], { offset: number; size: number }>();
+    /**
+     * 本次会话待写入索引表的实体偏移(按 id 顺序)。
+     * 追加单个实体时只登记、不复制整张表;toBytes() 时每个 region 一次性展开,
+     * 避免 N 次追加产生 O(N × tableSize) 的文件膨胀(500 个模块约 100MB)。
+     */
+    protected readonly pendingEntityEntries = new Map<PandaClass["indexHeader"], number[]>();
 
     protected constructor(data: Uint8Array) {
         this.reset(data);
@@ -76,6 +82,7 @@ export class PandaPatchFileBase {
         this.classTableState.clear();
         this.headerClassTableState = null;
         this.entityTableState.clear();
+        this.pendingEntityEntries.clear();
         this.preparedMethodHeads.clear();
         this.moduleRecordOverrides.clear();
         this.moduleRecordValueOffsets.clear();
@@ -219,6 +226,7 @@ export class PandaPatchFileBase {
      */
 
     toBytes(): Uint8Array {
+        this.flushEntityTables();
         for (const [indexHeader, end] of this.indexHeaderEnds) {
             if (end !== indexHeader.end) {
                 this.patchU32(this.indexHeaderRecordOffset(indexHeader) + 4, end);
@@ -235,7 +243,8 @@ export class PandaPatchFileBase {
 
     /** 当前 region 实体(method/string/literal array)索引表大小(含本次会话已追加的条目) */
     protected currentEntityTableSize(region: PandaClass["indexHeader"]): number {
-        return this.entityTableState.get(region)?.size ?? region.methodIdxSize;
+        return (this.entityTableState.get(region)?.size ?? region.methodIdxSize)
+            + (this.pendingEntityEntries.get(region)?.length ?? 0);
     }
 
     /** 当前 region 类索引表大小(含本次会话已追加的条目) */
@@ -277,20 +286,42 @@ export class PandaPatchFileBase {
             state = { offset: indexHeader.methodIdxOff, size: indexHeader.methodIdxSize };
             this.entityTableState.set(indexHeader, state);
         }
-        const count = state.size;
-        const table = new Uint8Array((count + 1) * 4);
-        for (let i = 0; i < count; i++) {
-            writeU32(table, i * 4, this.readU32(state.offset + i * 4));
+        let pending = this.pendingEntityEntries.get(indexHeader);
+        if (!pending) {
+            pending = [];
+            this.pendingEntityEntries.set(indexHeader, pending);
         }
-        writeU32(table, count * 4, entityOffset);
-        const newTableOffset = this.append(table);
+        const id = state.size + pending.length;
+        pending.push(entityOffset);
+        return id;
+    }
 
-        const recordOffset = this.indexHeaderRecordOffset(indexHeader);
-        this.patchU32(recordOffset + INDEX_HEADER_METHOD_IDX_SIZE_OFF, count + 1);
-        this.patchU32(recordOffset + INDEX_HEADER_METHOD_IDX_OFF_OFF, newTableOffset);
-        state.offset = newTableOffset;
-        state.size = count + 1;
-        return count;
+    /**
+     * 把每个 region 的待追加实体一次性写入索引表。
+     * 旧实现每次追加都复制整张表,大 abc 上注入几百个模块会产生上百 MB 的中间表。
+     */
+    protected flushEntityTables(): void {
+        for (const [indexHeader, pending] of this.pendingEntityEntries) {
+            if (pending.length === 0) continue;
+            const state = this.entityTableState.get(indexHeader);
+            if (!state) continue;
+            const count = state.size;
+            const table = new Uint8Array((count + pending.length) * 4);
+            for (let i = 0; i < count; i++) {
+                writeU32(table, i * 4, this.readU32(state.offset + i * 4));
+            }
+            for (let i = 0; i < pending.length; i++) {
+                writeU32(table, (count + i) * 4, pending[i]);
+            }
+            const newTableOffset = this.append(table);
+            const recordOffset = this.indexHeaderRecordOffset(indexHeader);
+            this.patchU32(recordOffset + INDEX_HEADER_METHOD_IDX_SIZE_OFF, count + pending.length);
+            this.patchU32(recordOffset + INDEX_HEADER_METHOD_IDX_OFF_OFF, newTableOffset);
+            this.extendRegion(indexHeader, newTableOffset + table.length);
+            state.offset = newTableOffset;
+            state.size = count + pending.length;
+            pending.length = 0;
+        }
     }
 
     protected indexHeaderRecordOffset(indexHeader: PandaClass["indexHeader"]): number {

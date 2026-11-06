@@ -21,5 +21,9 @@ export type {
     InsertInstructionsOptions,
     PatchInitOptions,
     PatchInitResult,
+    PatchModuleLoadOptions,
+    PatchModuleLoadResult,
+    PatchedModuleLoad,
+    SkippedModuleLoad,
 } from "./PatchTypes";
 export type { CatchBlockInput, MethodCodeInput, TryBlockInput } from "../MethodCode";

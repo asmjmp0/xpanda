@@ -22,9 +22,9 @@
  * @Author: jmp0
  */
 import * as fs from "fs";
-import { PandaPatchFileHookPatch } from "./PandaPatchFileHookPatch";
+import { PandaPatchFileModuleLoad } from "./PandaPatchFileModuleLoad";
 
-export class PandaPatchFile extends PandaPatchFileHookPatch {
+export class PandaPatchFile extends PandaPatchFileModuleLoad {
     private constructor(data: Uint8Array) {
         super(data);
     }
@@ -54,6 +54,12 @@ export type {
     AddStringIdResult,
     InsertInstructionsResult,
     PatchMethodHeadSourceOptions,
+    PatchInitOptions,
+    PatchInitResult,
+    PatchModuleLoadOptions,
+    PatchModuleLoadResult,
+    PatchedModuleLoad,
+    SkippedModuleLoad,
     PrepareMethodHeadOptions,
     InsertInstructionsOptions,
 } from "./PatchTypes";

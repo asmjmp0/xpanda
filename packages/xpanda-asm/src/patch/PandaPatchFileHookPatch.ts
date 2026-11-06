@@ -236,6 +236,9 @@ export class PandaPatchFileHookPatch extends PandaPatchFileHookImport {
         }
         const dynamic = options.dynamic === true;
         const initName = options.init !== undefined && options.init.trim() !== "" ? options.init.trim() : undefined;
+        const extraExports = (options.exportFunctions ?? [])
+            .map((name) => name.trim())
+            .filter((name) => name.length > 0);
         if (options.patchSlot !== undefined && !dynamic) {
             throw new PandaPatchError("patchSlot requires dynamic: true");
         }
@@ -267,7 +270,7 @@ export class PandaPatchFileHookPatch extends PandaPatchFileHookImport {
         const hookSourcePath = path.join(tempDir, "hook-class.js");
         fs.writeFileSync(
             hookSourcePath,
-            buildHookClassSource(hookGlobalNames, hookSource, [...setterNameByHook.values()], initName),
+            buildHookClassSource(hookGlobalNames, hookSource, [...setterNameByHook.values()], initName, extraExports),
         );
         const hookAbcPath = path.join(tempDir, "hook-class.abc");
         const hookRecordName = this.injectedRecordName(hookModuleName, setupClass
@@ -324,6 +327,19 @@ export class PandaPatchFileHookPatch extends PandaPatchFileHookImport {
             if (!exported) {
                 throw new PandaPatchError(
                     `the init module must export '${initName}' (use 'export function ${initName}(...)')`);
+            }
+        }
+        for (const name of extraExports) {
+            if (!hookClass.pandaMethods.has(`#*#${name}`)) {
+                throw new PandaPatchError(
+                    "moving the hook class requires the hook/init source to declare "
+                    + `'function ${name}(...)'; method '${hookClassName}::#*#${name}' was not compiled`);
+            }
+            const exported = hookModuleData.exports.some((exp) =>
+                exp.path === null && exp.exportName === name);
+            if (!exported) {
+                throw new PandaPatchError(
+                    `the module must export '${name}' (use 'export function ${name}(...)')`);
             }
         }
 
@@ -436,6 +452,8 @@ export class PandaPatchFileHookPatch extends PandaPatchFileHookImport {
                 methodName: "func_main_0",
                 moduleName: hookModuleName,
                 initName,
+                moduleClassName: hookClassName,
+                moduleRecordName: hookRecordName,
                 importIndex: initImportIndex,
                 atPC: insertion.atPC,
                 insertedLength: insertion.insertedLength,

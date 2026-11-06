@@ -396,6 +396,51 @@ patchFile.patchMethodHead(hookName, `
 - the entry class must have `func_main_0`; without a module record one is force-added by the rules
   above.
 
+## Module-load callbacks
+
+Every module record executes its top-level code in `func_main_0`, which ends in a single
+`returnundefined`. `patchModuleLoadCallbacks` appends an import of an already-injected listener
+function to each module record and inserts a call before that final return:
+
+```ts
+const init = patchFile.patchInit(`
+    function init() { /* startup */ }
+    function moduleLoaded(record) { globalThis.__loaded.push(record); }
+`, {
+    setupClassName: entryClass,
+    exportFunctions: ["moduleLoaded"],   // export it from the moved module
+});
+
+const patched = patchFile.patchModuleLoadCallbacks({
+    listenerRecordName: init.moduleRecordName, // from PatchInitResult
+    listenerName: "moduleLoaded",
+    // records: ["&entry/src/main/ets/pages/Index&"], // optional filter
+});
+// patched.patched: [{ className, record, importIndex, stringId, atPC, insertedLength }]
+// patched.skipped: modules left alone (no func_main_0, namespace imports, ...)
+```
+
+Injected tail (before `returnundefined`):
+
+```
+lda.str "<record>"
+sta v0
+ldexternalmodulevar <listener import>
+callarg1 <ic slot>, v0
+```
+
+Notes:
+
+- the callback fires **inside** module evaluation, before the runtime marks the module evaluated.
+  Queue the event and dispatch it on a later turn when "after load" semantics are needed;
+- modules with multiple `returnundefined` sites are skipped (the tail must be unique);
+- modules with namespace imports are skipped (appending a regular import would shift their
+  environment indices);
+- modules without locals get a one-register frame growth so `v0` is a real local;
+- entity-table extensions are batched and flushed in `toBytes()`: instrumenting hundreds of modules
+  no longer copies the whole index table per module (amcl: ~206MB → ~7.3MB for the bootstrap alone,
+  ~7.6MB with 488 instrumented modules).
+
 ## Async function hooks
 
 Usage is identical to synchronous functions (`prepareMethodHead` detects async automatically); no

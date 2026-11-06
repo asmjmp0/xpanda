@@ -44,6 +44,7 @@ export function buildHookClassSource(
     source: string,
     setterNames: string[] = [],
     initName?: string,
+    extraExports: string[] = [],
 ): string {
     let result = source.trim();
     if (initName !== undefined && hookNames.includes(initName)) {
@@ -54,6 +55,12 @@ export function buildHookClassSource(
     }
     if (initName !== undefined) {
         result = ensureExportedFunction(result, initName, "init");
+    }
+    for (const name of extraExports) {
+        if (name === initName || hookNames.includes(name)) {
+            throw new PandaPatchError(`exported function '${name}' collides with a hook/init function`);
+        }
+        result = ensureExportedFunction(result, name, "exported");
     }
     const setters: string[] = [];
     for (const name of setterNames) {

@@ -211,6 +211,15 @@ export class PandaPatchFileEntities extends PandaPatchFileBase {
             const target = moved.get(this.readU32(entry));
             if (target !== undefined) this.patchU32(entry, target);
         }
+        // Entities appended in this session are not in the table yet; they may
+        // still reference a method that just moved with the class.
+        const pending = this.pendingEntityEntries.get(clazz.indexHeader);
+        if (pending) {
+            for (let i = 0; i < pending.length; i++) {
+                const target = moved.get(pending[i]);
+                if (target !== undefined) pending[i] = target;
+            }
+        }
 
         // 字面量数组里的 METHOD tag 存的是方法实体绝对偏移(不是 id),也要跟着搬
         this.patchMethodLiteralOffsets(moved);

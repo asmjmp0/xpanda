@@ -925,6 +925,70 @@ function testPatchInitOnly(): void {
     assert(rejected, "patchInit must reject an empty init source");
 }
 
+// ---------------------------------------------------------------- 11f. module-load callbacks
+function testModuleLoadCallbacks(): void {
+    const es2abc = bundledEs2abc();
+    if (!es2abc) {
+        console.log("[patch] skip module-load callbacks (es2abc not found)");
+        return;
+    }
+    const entryClass = "L&entry/src/main/ets/target&;";
+    const record = "&entry/src/main/ets/target&";
+    const listener = "moduleLoaded";
+    const fixturePath = path.join(__dirname, "resources", "target-multi.abc");
+    const patchFile = PandaPatchFile.load(new Uint8Array(fs.readFileSync(fixturePath)));
+    const init = patchFile.patchInit(`
+        function init() { globalThis.__xpanda_init_runs = true; }
+        function ${listener}(name) {
+            (globalThis.__xpanda_loaded || (globalThis.__xpanda_loaded = [])).push(name);
+        }
+    `, { es2abc, setupClassName: entryClass, exportFunctions: [listener] });
+
+    assert(init.moduleRecordName && init.moduleClassName,
+        "patchInit must report the moved module record/class");
+    assert(init.moduleClassName === `L${init.moduleRecordName};`, "module class name must mirror the record");
+
+    const patched = patchFile.patchModuleLoadCallbacks({
+        listenerRecordName: init.moduleRecordName,
+        listenerName: listener,
+    });
+    assert(patched.patched.length === 1 && patched.patched[0].record === record,
+        `every module must be instrumented, got ${JSON.stringify(patched)}`);
+    assert(patched.skipped.length === 0, `no module should be skipped, got ${JSON.stringify(patched.skipped)}`);
+
+    const pandaFile = new PandaFile(patchFile.toBytes());
+    pandaFile.parseAssembly();
+    const entry = findClass(pandaFile, entryClass);
+    assert(entry, "instrumented entry class must survive the patch");
+    assert(entry.pandaClassModuleData!.imports.some((item) => item.importName === listener),
+        "entry module must import the module-load listener");
+    const main = decodeInstructions(entry.pandaMethods.get("func_main_0")!.methodCode!.instructions);
+    const tail = main.slice(-5).map((instruction) => instruction.opcode.name);
+    assert(tail.join(",") === "lda.str,sta,ldexternalmodulevar,callarg1,returnundefined",
+        `func_main_0 must call the listener before its final return, got ${tail.join(",")}`);
+    assert(main[main.length - 2].operands[1] === 0,
+        "the record string must be passed in v0");
+
+    const hookClass = pandaFile.indexHeaders.flatMap((header) => header.pandaClasses)
+        .find((clazz) => !clazz.classExternal && clazz.getClassName() === init.moduleClassName);
+    assert(hookClass, "moved listener module must exist");
+    assert(hookClass.pandaMethods.has(`#*#${listener}`), "listener module must define the exported listener");
+    assert(hookClass.pandaClassModuleData!.exports.some((item) => item.exportName === listener),
+        "listener module must export the listener");
+
+    // 模拟模块求值:listener 模块先定义函数,入口模块的 init 头部与 listener 尾部各跑一次
+    const sandbox: Record<string, unknown> = { console: { log: () => { /* ignore */ } } };
+    sandbox.globalThis = sandbox;
+    vm.runInNewContext(stripModuleSyntax(new PandaDecompiler().decompileClass(hookClass)), sandbox, { timeout: 5000 });
+    sandbox[`${init.moduleName}__init`] = sandbox[DEFAULT_INIT_FUNCTION];
+    sandbox[`${init.moduleName}__${listener}`] = sandbox[listener];
+    vm.runInNewContext(stripModuleSyntax(new PandaDecompiler().decompileClass(entry)), sandbox, { timeout: 5000 });
+    const loaded = sandbox.__xpanda_loaded as string[];
+    assert(loaded?.length === 1 && loaded[0] === record,
+        `listener must receive the module record exactly once, got ${JSON.stringify(loaded)}`);
+    assert(sandbox.__xpanda_init_runs === true, "init must still run from the module head");
+}
+
 /**
  * 搬运 hook class 时必须保留方法自己的 try/catch 表:
  * init/hook 源码里的 try { ... } catch { ... } 编译成 code item 的异常表,
@@ -1259,6 +1323,7 @@ async function main(): Promise<void> {
     testDynamicPatchSlot();
     testDynamicSetupEntryClass();
     testPatchInitOnly();
+    testModuleLoadCallbacks();
     testMovedHookKeepsTryCatch();
     testHookWithInit();
     testHookModuleImport();

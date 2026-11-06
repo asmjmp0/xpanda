@@ -182,6 +182,12 @@ export interface PatchMethodHeadSourceOptions {
      * 不指定则不注入 init。指定时必须同时给出 `setupClassName`。
      */
     init?: string;
+    /**
+     * Additional top-level functions declared in the hook/init source that must be
+     * exported from the moved module. Used by module-load instrumentation: other
+     * module records import these functions and call them from `func_main_0`.
+     */
+    exportFunctions?: string[];
 }
 
 export interface PatchInitOptions {
@@ -201,6 +207,12 @@ export interface PatchInitOptions {
     moduleRequests?: Record<string, string>;
     /** 未显式映射时是否按目标 abc 的记录名后缀自动解析 import;默认 true */
     resolveModuleRequests?: boolean;
+    /**
+     * Additional top-level functions declared in the init source that must be
+     * exported from the moved module (see
+     * {@link PatchMethodHeadSourceOptions.exportFunctions}).
+     */
+    exportFunctions?: string[];
 }
 
 export interface PatchInitResult {
@@ -212,6 +224,10 @@ export interface PatchInitResult {
     moduleName: string;
     /** 被导出的 init 函数名 */
     initName: string;
+    /** 初始化函数的类名(`L<record>;`) */
+    moduleClassName: string;
+    /** 初始化模块的记录名(可传给 `patchModuleLoadCallbacks`) */
+    moduleRecordName: string;
     /** 初始化函数在入口 module import 表里的下标 */
     importIndex: number;
     /** 插入位置(固定 0) */
@@ -220,6 +236,54 @@ export interface PatchInitResult {
     insertedLength: number;
     /** 新代码项偏移 */
     codeOffset: number;
+}
+
+/** Options for {@link PandaPatchFileModuleLoad.patchModuleLoadCallbacks}. */
+export interface PatchModuleLoadOptions {
+    /**
+     * Module record name of the listener module (returned as
+     * `PatchInitResult.moduleRecordName`). Instrumented modules import
+     * `listenerName` from this record.
+     */
+    listenerRecordName: string;
+    /** Exported function to call before each module's final `returnundefined`. */
+    listenerName: string;
+    /**
+     * Restrict instrumentation to these module records (class names `L...;` or
+     * bare record names are accepted). Default: every module record in the abc.
+     */
+    records?: string[];
+    /** Local import name written into each module record; defaults to `listenerName`. */
+    localName?: string;
+    /** Throw on the first module that cannot be instrumented instead of skipping it. */
+    strict?: boolean;
+}
+
+/** One module whose `func_main_0` received the module-load callback. */
+export interface PatchedModuleLoad {
+    className: string;
+    /** Record name without the `L...;` wrapper (e.g. `&entry/src/main/ets/Index&`). */
+    record: string;
+    /** Listener import index in this module record (for `ldexternalmodulevar`). */
+    importIndex: number;
+    /** String id used by the injected `lda.str`. */
+    stringId: number;
+    /** Original PC of the final `returnundefined`. */
+    atPC: number;
+    /** Number of inserted bytes. */
+    insertedLength: number;
+}
+
+/** A module record that was intentionally left uninstrumented. */
+export interface SkippedModuleLoad {
+    className: string;
+    record?: string;
+    reason: string;
+}
+
+export interface PatchModuleLoadResult {
+    patched: PatchedModuleLoad[];
+    skipped: SkippedModuleLoad[];
 }
 
 export interface PrepareMethodHeadOptions {
