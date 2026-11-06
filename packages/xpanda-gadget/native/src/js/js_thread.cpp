@@ -41,6 +41,11 @@ struct JsJob {
     bool abandoned = false;
     bool probe = false;
     bool reset = false;
+    /** Module-load dispatch: fire-and-forget job, deleted by the drain loop. */
+    bool moduleLoad = false;
+    bool detached = false;
+    std::size_t sequence = 0;
+    std::string record;
     std::mutex mutex;
     std::condition_variable cv;
 };
@@ -83,8 +88,17 @@ void runJob(JsJob* job) {
         destroyJsvm();
         valueJson = "null";
         ok = true;
+    } else if (job->moduleLoad) {
+        ok = dispatchModuleLoadInJsvm(job->sequence, job->record, &error);
     } else {
         ok = evaluateInJsvm(job->code, &valueJson, &error);
+    }
+    if (job->detached) {
+        if (!ok && !error.empty()) {
+            GADGET_LOG_ERROR("module-load dispatch failed: %{public}s", error.c_str());
+        }
+        delete job;
+        return;
     }
     completeJob(job, ok, std::move(valueJson), std::move(error));
 }
@@ -185,7 +199,13 @@ void stopJsBridge() {
         std::lock_guard<std::mutex> lock(g_bridge.mutex);
         jobs.swap(g_bridge.jobs);
     }
-    for (JsJob* job : jobs) completeJob(job, false, "", "js bridge stopped");
+    for (JsJob* job : jobs) {
+        if (job->detached) {
+            delete job;
+            continue;
+        }
+        completeJob(job, false, "", "js bridge stopped");
+    }
 }
 
 bool isJsBridgeReady() {
@@ -232,6 +252,29 @@ bool resetOnJsThread(std::string* error) {
     if (!ok && error) *error = job->error;
     delete job;
     return ok;
+}
+
+bool postModuleLoadEvent(const std::string& record, std::size_t sequence) {
+    if (!g_bridge.ready.load() || g_bridge.async == nullptr) return false;
+    auto* job = new JsJob();
+    job->moduleLoad = true;
+    job->detached = true;
+    job->sequence = sequence;
+    job->record = record;
+    {
+        std::lock_guard<std::mutex> lock(g_bridge.mutex);
+        if (!g_bridge.ready.load() || g_bridge.async == nullptr) {
+            delete job;
+            return false;
+        }
+        g_bridge.jobs.push_back(job);
+        if (uv_async_send(g_bridge.async) != 0) {
+            g_bridge.jobs.pop_back();
+            delete job;
+            return false;
+        }
+    }
+    return true;
 }
 
 } // namespace xpanda

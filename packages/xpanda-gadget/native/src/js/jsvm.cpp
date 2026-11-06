@@ -292,6 +292,45 @@ bool callJsvmPatch(JSVM_Ref fnRef, int instanceId, int originalId,
     return true;
 }
 
+bool dispatchModuleLoadInJsvm(std::size_t sequence, const std::string& record, std::string* error) {
+    if (!g_jsvm.ready || g_jsvm.env == nullptr || g_jsvm.vm == nullptr) return true;
+    JSVM_Env env = g_jsvm.env;
+    JsvmScopes scopes(g_jsvm.vm, env);
+    if (!scopes.ok) {
+        if (error) *error = "failed to open jsvm scopes";
+        return false;
+    }
+    JSVM_Value global = nullptr;
+    JSVM_Value arkts = nullptr;
+    JSVM_Value dispatch = nullptr;
+    if (OH_JSVM_GetGlobal(env, &global) != JSVM_OK || global == nullptr
+        || OH_JSVM_GetNamedProperty(env, global, "ArkTS", &arkts) != JSVM_OK || arkts == nullptr
+        || OH_JSVM_GetNamedProperty(env, arkts, "__moduleLoadEvent", &dispatch) != JSVM_OK
+        || dispatch == nullptr) {
+        // The bridge has not installed the dispatcher yet (or the VM was reset
+        // between recording and draining). The native history still has it.
+        return true;
+    }
+    JSVM_ValueType type = JSVM_UNDEFINED;
+    if (OH_JSVM_Typeof(env, dispatch, &type) != JSVM_OK || type != JSVM_FUNCTION) return true;
+    JSVM_Value sequenceValue = nullptr;
+    JSVM_Value argument = createString(env, record);
+    if (argument == nullptr
+        || OH_JSVM_CreateInt32(env, static_cast<int32_t>(sequence), &sequenceValue) != JSVM_OK
+        || sequenceValue == nullptr) {
+        if (error) *error = "failed to create the module-load event arguments";
+        return false;
+    }
+    JSVM_Value argv[2] = {sequenceValue, argument};
+    JSVM_Value result = nullptr;
+    if (OH_JSVM_CallFunction(env, arkts, dispatch, 2, argv, &result) != JSVM_OK) {
+        clearJsvmException(env, error);
+        if (error && error->empty()) *error = "module-load callback threw";
+        return false;
+    }
+    return true;
+}
+
 bool runJsvmProbe(std::string* valueJson, std::string* error) {
     std::string runtimeError;
     bool ok = ensureJsvm(&runtimeError);

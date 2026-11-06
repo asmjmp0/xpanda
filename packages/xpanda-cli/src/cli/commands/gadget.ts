@@ -84,6 +84,8 @@ export function runGadget(rawArgs: string[]): void {
             i = parsed.index;
         } else if (arg === "--no-so") {
             options.noSo = true;
+        } else if (arg === "--no-module-load") {
+            options.moduleLoad = false;
         } else if (arg === "--keep-temp") {
             options.keepTemp = true;
         } else if (arg.startsWith("-")) {
@@ -107,7 +109,7 @@ export function runGadget(rawArgs: string[]): void {
         summary = [
             "HAP gadget injection complete:",
             ...result.patched.map((p) =>
-                `  patched ${p.entryName}: entry=${p.entryClass} module=${p.moduleName} modules=${p.userModuleCount}`),
+                `  patched ${p.entryName}: entry=${p.entryClass} module=${p.moduleName} modules=${p.userModuleCount} instrumented=${p.moduleLoadCount}`),
             result.soEntryName
                 ? `  embedded ${result.soEntryName} (${options.soPath ?? "prebuilt"})`
                 : `  .so NOT embedded: ${result.soSkippedReason}`,
@@ -121,7 +123,7 @@ export function runGadget(rawArgs: string[]): void {
         suffix = ".gadget.abc";
         summary = [
             "abc gadget injection complete:",
-            `  entry=${result.entryClass} module=${result.moduleName} port=${options.port ?? DEFAULT_GADGET_PORT} wait=${options.waitMs ?? 0}ms modules=${result.userModules.length}`,
+            `  entry=${result.entryClass} module=${result.moduleName} port=${options.port ?? DEFAULT_GADGET_PORT} wait=${options.waitMs ?? 0}ms modules=${result.userModules.length} instrumented=${result.moduleLoad.patched}`,
             `  size: ${data.length} -> ${result.data.length}`,
             `  remember to place ${options.soName ?? GADGET_SO_NAME} in the HAP libs/<abi>/ directory.`,
         ].join("\n");

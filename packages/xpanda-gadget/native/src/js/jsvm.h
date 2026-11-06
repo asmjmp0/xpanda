@@ -5,6 +5,7 @@
 #ifndef XPANDA_GADGET_JSVM_H
 #define XPANDA_GADGET_JSVM_H
 
+#include <cstddef>
 #include <string>
 
 #include "ark_runtime/jsvm.h"
@@ -35,6 +36,15 @@ bool runJsvmProbe(std::string* valueJson, std::string* error);
 bool callJsvmPatch(JSVM_Ref fnRef, int instanceId, int originalId,
                    const std::string& argsJson,
                    std::string* resultJson, std::string* error);
+
+/**
+ * Dispatch one module-load event to `ArkTS.__moduleLoadEvent(sequence, record)`
+ * in the gadget VM. JS thread only; a no-op when the VM has not been created yet
+ * (the event remains in the native history and is replayed by onModuleLoaded).
+ * `sequence` is 1-based and lets callbacks skip events already replayed from the
+ * history at registration time.
+ */
+bool dispatchModuleLoadInJsvm(std::size_t sequence, const std::string& record, std::string* error);
 
 } // namespace xpanda
 

@@ -37,6 +37,22 @@ export interface InjectAbcOptions {
      * automatically for HAP input from pack.info + module.json.
      */
     moduleInfo?: string;
+    /**
+     * Instrument every module's `func_main_0` tail so the gadget reports
+     * `ArkTS.onModuleLoaded` events. Default true. Disable when a module's
+     * frame layout cannot be adjusted or to keep the injected bytecode minimal.
+     */
+    moduleLoad?: boolean;
+}
+
+/** Module-load instrumentation summary for one patched abc. */
+export interface ModuleLoadReport {
+    /** Exported listener called at the end of each instrumented module. */
+    listenerName: string;
+    /** Number of module records that received the callback. */
+    patched: number;
+    /** Modules that were intentionally left uninstrumented. */
+    skipped: Array<{ className: string; record?: string; reason: string }>;
 }
 
 export interface InjectAbcResult {
@@ -56,6 +72,8 @@ export interface InjectAbcResult {
     candidates: string[];
     /** User module records baked into the bootstrap's `getAllUserModule`. */
     userModules: UserModuleInfo[];
+    /** Module-load instrumentation summary (`ArkTS.onModuleLoaded`). */
+    moduleLoad: ModuleLoadReport;
     /** The bootstrap source that was compiled and moved into the abc. */
     bootstrapSource: string;
 }

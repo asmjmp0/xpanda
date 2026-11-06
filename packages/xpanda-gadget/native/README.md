@@ -20,6 +20,8 @@ src/
 │       ├── console.h/.cpp     the console.* module injected into the gadget JSVM
 │       ├── host_bridge.h/.cpp coordinator + JS assembly of ArkTS.hostGlobal/napi/patch
 │       ├── host_global.h/.cpp host globalThis snapshot -> ArkTS.hostGlobal
+│       ├── metadata_bridge.h/.cpp ArkTS.metadata (baked user-module list / moduleInfo)
+│       ├── module_events.h/.cpp module-load history + ArkTS.onModuleLoaded bridge
 │       ├── napi_bridge.h/.cpp ArkTS.napi, napi_load_module and the call proxy
 │       ├── patch_bridge.h/.cpp ArkTS.patch.patchMethod runtime method patching
 │       └── bridge_utils.h     shared JSVM helpers

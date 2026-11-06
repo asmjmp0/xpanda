@@ -2,6 +2,7 @@
  * Bootstrap module source emitted into the target abc.
  * @Author: jmp0
  */
+import { MODULE_LOAD_LISTENER } from "./constants";
 import { buildGetAllUserModuleSource, type UserModuleInfo } from "./user-module";
 
 /**
@@ -43,6 +44,17 @@ function ${initName}() {
     } catch (e) {
         console.error("[xpanda-gadget] start failed:", e);
     }
+}
+
+/**
+ * Called at the end of every instrumented module's func_main_0 (the module-load
+ * callback import added by xpanda-asm). The injector embeds a matching
+ * libxpanda_gadget.so, so the native reporter is always present. The call is
+ * deliberately unwrapped: a try/catch in this moved function hits an
+ * ArkCompiler interpreter stub bug on the tested 13.0.1.0 runtime.
+ */
+function ${MODULE_LOAD_LISTENER}(record) {
+    gadget.moduleLoaded(record);
 }`;
 }
 

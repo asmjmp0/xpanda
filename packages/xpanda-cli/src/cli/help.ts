@@ -54,6 +54,7 @@ export function printGadgetUsage(): void {
     console.log("  --so PATH         HAP: explicit gadget .so to embed");
     console.log("  --so-name NAME    Module request name for the .so (default libxpanda_gadget.so)");
     console.log("  --no-so           HAP: patch bytecode only, do not embed a .so");
+    console.log("  --no-module-load  Do not instrument module func_main_0 tails for ArkTS.onModuleLoaded");
     console.log("  --keep-temp       Keep es2abc temp files (debug)");
     console.log("  -q, --quiet       Suppress the summary output");
 }

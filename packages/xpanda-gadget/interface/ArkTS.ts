@@ -268,6 +268,30 @@ export interface ArkTS {
          */
         loadUserModule(record: string): HostModuleProxy;
     };
+
+    /**
+     * Register the global module-load callback. There is only one listener:
+     * registering again replaces the previous callback, so reloading a script
+     * does not stack listeners and no manual unsubscribe is required.
+     *
+     * Only modules that load **after registration** are reported: already-loaded
+     * modules are not replayed.
+     *
+     * `module.record` is the module record name as stored in the abc, e.g.
+     * `"&entry/src/main/ets/pages/Index&"`. The callback runs on the host event
+     * loop, after the module was marked evaluated, so its exports can be loaded
+     * safely with `ArkTS.metadata.loadUserModule(module.record)`.
+     *
+     * Only modules of the patched abc are observable. Modules that throw during
+     * evaluation do not produce an event. The returned function clears the
+     * listener if it is still the active one (optional; replacement is enough).
+     *
+     * @example
+     * ArkTS.onModuleLoaded(function (module) {
+     *     console.log("loaded", module.record);
+     * });
+     */
+    onModuleLoaded(callback: (module: { record: string }) => void): () => void;
 }
 
 /**
@@ -364,6 +388,13 @@ export interface GadgetModule {
 
     /** Evaluate JavaScript in the gadget JSVM and return the result. */
     executeJs(code: string): unknown;
+
+    /**
+     * Internal: called by the injected bootstrap at the end of every
+     * instrumented module's `func_main_0`. Users register for these events with
+     * `ArkTS.onModuleLoaded` in the gadget JSVM instead.
+     */
+    moduleLoaded(record: string): void;
 
     /**
      * Host-side `napi_load_module` wrapper.

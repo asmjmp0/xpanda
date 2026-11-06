@@ -44,6 +44,7 @@ mkdir -p "$OUT_DIR"
     "$DIR/src/js/module/metadata_bridge.cpp" \
     "$DIR/src/js/module/host_bridge.cpp" \
     "$DIR/src/js/module/host_global.cpp" \
+    "$DIR/src/js/module/module_events.cpp" \
     "$DIR/src/js/module/napi_bridge.cpp" \
     "$DIR/src/js/module/patch_bridge.cpp" \
     "$DIR/src/js/jsvm.cpp" \

@@ -5,6 +5,7 @@
 #ifndef XPANDA_GADGET_JS_THREAD_H
 #define XPANDA_GADGET_JS_THREAD_H
 
+#include <cstddef>
 #include <string>
 
 #include "napi/native_api.h"
@@ -26,6 +27,14 @@ bool probeOnJsThread(std::string* report, std::string* error);
 
 /** Socket-thread entry for the `reset` request: destroy the VM on the JS thread. */
 bool resetOnJsThread(std::string* error);
+
+/**
+ * Host-JS-thread entry: queue one module-load event for the gadget JSVM.
+ * Fire-and-forget: the job runs on the next event-loop turn so callbacks observe
+ * the module after `func_main_0` returned. Returns false when the bridge is not
+ * attached (the event stays in the native history for later replay).
+ */
+bool postModuleLoadEvent(const std::string& record, std::size_t sequence);
 
 } // namespace xpanda
 

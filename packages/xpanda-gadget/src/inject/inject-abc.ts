@@ -11,7 +11,7 @@
 import { PandaPatchFile } from "xpanda-asm";
 import { PandaFile } from "xpanda-core";
 import { buildBootstrapSource, normalizedSoRequest } from "./bootstrap";
-import { DEFAULT_GADGET_PORT, DEFAULT_INIT_NAME, GADGET_SO_NAME } from "./constants";
+import { DEFAULT_GADGET_PORT, DEFAULT_INIT_NAME, GADGET_SO_NAME, MODULE_LOAD_LISTENER } from "./constants";
 import { findEntryClassCandidates } from "./entry-class";
 import type { InjectAbcOptions, InjectAbcResult } from "./types";
 import { collectUserModules } from "./user-module";
@@ -45,6 +45,7 @@ export function injectAbcBytes(data: Uint8Array, options: InjectAbcOptions = {})
     const userModules = collectUserModules(new PandaFile(data));
 
     const bootstrapSource = buildBootstrapSource(port, soName, initName, options.waitMs ?? 0, userModules, options.moduleInfo);
+    const instrumentModules = options.moduleLoad !== false;
     const init = patchFile.patchInit(bootstrapSource, {
         setupClassName: entryClass,
         initName,
@@ -54,7 +55,25 @@ export function injectAbcBytes(data: Uint8Array, options: InjectAbcOptions = {})
         // rewrite the raw specifier to the runtime's native-module request form
         moduleRequests: { [soName]: normalizedSoRequest(soName) },
         resolveModuleRequests: false,
+        exportFunctions: instrumentModules ? [MODULE_LOAD_LISTENER] : undefined,
     });
+
+    let moduleLoad: InjectAbcResult["moduleLoad"] = {
+        listenerName: MODULE_LOAD_LISTENER,
+        patched: 0,
+        skipped: [],
+    };
+    if (instrumentModules) {
+        const hookResult = patchFile.patchModuleLoadCallbacks({
+            listenerRecordName: init.moduleRecordName,
+            listenerName: MODULE_LOAD_LISTENER,
+        });
+        moduleLoad = {
+            listenerName: MODULE_LOAD_LISTENER,
+            patched: hookResult.patched.length,
+            skipped: hookResult.skipped,
+        };
+    }
 
     return {
         data: patchFile.toBytes(),
@@ -65,6 +84,7 @@ export function injectAbcBytes(data: Uint8Array, options: InjectAbcOptions = {})
         importIndex: init.importIndex,
         candidates,
         userModules,
+        moduleLoad,
         bootstrapSource,
     };
 }

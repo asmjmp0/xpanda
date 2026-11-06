@@ -8,6 +8,7 @@
  *   - send(value)                           push a message to every socket client
  *   - poll()                                drain messages sent by socket clients
  *   - executeJs(code)                       evaluate JavaScript
+ *   - moduleLoaded(record)                  internal: module-load event reporter
  *   - loadModule(path)                      host napi_load_module wrapper
  *   - loadModuleWithInfo(path, info)        host napi_load_module_with_info wrapper
  *   (start({userModules}) installs the bootstrap-baked module list as
@@ -29,6 +30,7 @@
 #include "js/jsvm.h"
 #include "js/module/host_bridge.h"
 #include "js/module/metadata_bridge.h"
+#include "js/module/module_events.h"
 #include "napi/native_api.h"
 #include "napi/napi_utils.h"
 #include "socket/socket_server.h"
@@ -237,6 +239,24 @@ static napi_value Reset(napi_env env, napi_callback_info info) {
     return undefined;
 }
 
+/**
+ * Internal host-side reporter called by the injected bootstrap at the end of
+ * every instrumented module's func_main_0. The record is queued; the gadget
+ * JSVM dispatches ArkTS.onModuleLoaded callbacks on the next event-loop turn.
+ */
+static napi_value ModuleLoaded(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value argv[1] = {nullptr};
+    napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+    if (argc >= 1 && argv[0] != nullptr) {
+        std::string record = napiValueToText(env, argv[0]);
+        if (!record.empty()) recordModuleLoad(record);
+    }
+    napi_value undefined = nullptr;
+    napi_get_undefined(env, &undefined);
+    return undefined;
+}
+
 /** Host-side napi_load_module wrapper: gadget.loadModule("@ohos.promptAction"). */
 static napi_value LoadModule(napi_env env, napi_callback_info info) {
     size_t argc = 1;
@@ -286,6 +306,7 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"send", nullptr, Send, nullptr, nullptr, nullptr, attrs, nullptr},
         {"poll", nullptr, Poll, nullptr, nullptr, nullptr, attrs, nullptr},
         {"executeJs", nullptr, ExecuteJs, nullptr, nullptr, nullptr, attrs, nullptr},
+        {"moduleLoaded", nullptr, ModuleLoaded, nullptr, nullptr, nullptr, attrs, nullptr},
         {"loadModule", nullptr, LoadModule, nullptr, nullptr, nullptr, attrs, nullptr},
         {"loadModuleWithInfo", nullptr, LoadModuleWithInfo, nullptr, nullptr, nullptr, attrs, nullptr},
     };

@@ -65,6 +65,11 @@ function testInjectAbc(es2abc: string): void {
         "start options must carry the baked module list (installed into the JSVM ArkTS.metadata)");
     assert(result.bootstrapSource.includes(`moduleInfo: "com.example.helloworld/entry"`),
         "start options must carry the baked moduleInfo");
+    assert(result.bootstrapSource.includes("function xpandaModuleLoaded(record)"),
+        "bootstrap must declare the module-load listener");
+    assert(result.moduleLoad.listenerName === "xpandaModuleLoaded"
+        && result.moduleLoad.patched === 1 && result.moduleLoad.skipped.length === 0,
+        `every target module must receive the load callback, got ${JSON.stringify(result.moduleLoad)}`);
 
     const patched = result.data;
     const pandaFile = new PandaFile(patched);
@@ -73,18 +78,24 @@ function testInjectAbc(es2abc: string): void {
     assert(entry, "entry class must survive the patch");
     assert(entry.pandaClassModuleData!.imports.some((item) => item.importName === result.initName),
         "entry module must import the injected init function");
+    assert(entry.pandaClassModuleData!.imports.some((item) => item.importName === "xpandaModuleLoaded"),
+        "entry module must import the module-load listener");
 
     const main = entry.pandaMethods.get("func_main_0")!;
     assert(main?.methodCode, "entry func_main_0 must keep its code");
-    // decompiled entry must reference the injected init call
+    // decompiled entry must reference both injected calls
     const decompiledMain = new PandaDecompiler().decompileClass(entry);
     assert(decompiledMain.includes(result.initName), "decompiled entry must reference the init function");
+    assert(decompiledMain.includes(`xpandaModuleLoaded("&entry/src/main/ets/target&")`),
+        "decompiled entry must call the module-load listener with its record");
 
     // the injected bootstrap module must exist and keep the raw .so module request
     const hookClass = pandaFile.indexHeaders.flatMap((header) => header.pandaClasses)
         .find((clazz) => !clazz.classExternal && clazz.getClassName().includes(`xpanda/hook/${result.moduleName}`));
     assert(hookClass, "injected bootstrap module class must exist");
     assert(hookClass.pandaMethods.has(`#*#${result.initName}`), "bootstrap module must define the init function");
+    assert(hookClass.pandaMethods.has("#*#xpandaModuleLoaded"),
+        "bootstrap module must define the module-load listener");
     const imports = hookClass.pandaClassModuleData!.imports;
     const gadgetImport = imports.find((item) => item.path.includes(GADGET_SO_NAME));
     assert(gadgetImport, "bootstrap module record must keep the .so module request");
@@ -103,6 +114,18 @@ function testInjectAbc(es2abc: string): void {
     assert(source.includes("&entry/src/main/ets/target&"), "decompiled bootstrap must carry the baked record name");
     assert(source.includes("targetA") && source.includes("targetB"), "decompiled bootstrap must carry the baked export names");
     assert(source.includes("userModules"), "decompiled bootstrap must pass userModules to gadget.start");
+
+    // opt-out: no listener export, no listener import, no tail call
+    const plain = injectAbcBytes(original, { es2abc, port: 27043, moduleLoad: false });
+    assert(plain.moduleLoad.patched === 0, "moduleLoad: false must skip instrumentation");
+    const plainFile = new PandaFile(plain.data);
+    plainFile.parseAssembly();
+    const plainEntry = findClass(plainFile, plain.entryClass);
+    assert(plainEntry, "plain entry class must survive the patch");
+    assert(!plainEntry.pandaClassModuleData!.imports.some((item) => item.importName === "xpandaModuleLoaded"),
+        "moduleLoad: false must not import the listener");
+    const plainSource = new PandaDecompiler().decompileClass(plainEntry);
+    assert(!plainSource.includes("xpandaModuleLoaded"), "moduleLoad: false must not call the listener");
 }
 
 // ---------------------------------------------------------------- 2. hap inject
@@ -125,6 +148,7 @@ function testInjectHap(es2abc: string): void {
     assert(result.patched.length === 1, "single-abc HAP must patch exactly one entry");
     assert(result.patched[0].entryName === "ets/modules.abc", "patched entry name");
     assert(result.patched[0].userModuleCount === 1, "patched report must carry the user module count");
+    assert(result.patched[0].moduleLoadCount === 1, "patched report must carry the instrumented module count");
     if (so) {
         assert(result.soEntryName === `libs/arm64-v8a/${GADGET_SO_NAME}`, ".so must embed under libs/<abi>/");
     } else {

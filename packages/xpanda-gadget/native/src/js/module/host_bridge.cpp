@@ -15,6 +15,7 @@
 #include "js/module/bridge_utils.h"
 #include "js/module/host_global.h"
 #include "js/module/metadata_bridge.h"
+#include "js/module/module_events.h"
 #include "js/module/napi_bridge.h"
 #include "js/module/patch_bridge.h"
 
@@ -282,6 +283,44 @@ const char* kBridgeSource = R"JS(
             return proxy;
         };
     }
+    // Module-load callback. There is one global listener: registering again
+    // replaces the previous callback, so script reloads do not stack listeners.
+    // The host reports each module record at the end of its func_main_0; native
+    // calls __moduleLoadEvent on the next host event-loop turn. Registration
+    // only subscribes to future loads: the sequence baseline suppresses modules
+    // that already loaded (and any event job recorded before this point).
+    var moduleLoadCallback = null;
+    var moduleLoadCallbackSeq = 0;
+    arkts.onModuleLoaded = function (callback) {
+        if (typeof callback !== "function") {
+            throw new TypeError("ArkTS.onModuleLoaded requires a function");
+        }
+        var sequence = 0;
+        try {
+            sequence = typeof arkts.__moduleLoadSeq === "function"
+                ? arkts.__moduleLoadSeq()
+                : 0;
+        } catch (e) {
+            sequence = 0;
+        }
+        moduleLoadCallback = callback;
+        moduleLoadCallbackSeq = sequence;
+        return function () {
+            if (moduleLoadCallback === callback) {
+                moduleLoadCallback = null;
+            }
+        };
+    };
+    arkts.__moduleLoadEvent = function (sequence, record) {
+        if (moduleLoadCallback === null) return;
+        if (moduleLoadCallbackSeq >= sequence) return;
+        moduleLoadCallbackSeq = sequence;
+        try {
+            moduleLoadCallback({ record: record });
+        } catch (e) {
+            console.error("[xpanda-gadget] onModuleLoaded callback failed:", e);
+        }
+    };
     arkts.__decodeTags = function (json) { return JSON.parse(json).map(decodeTagged); };
     arkts.__tagResult = tagResult;
     delete arkts.__snapshot;
@@ -340,6 +379,8 @@ bool installHostBridge(JSVM_Env env) {
     // Install the baked metadata before the bridge script so the script can
     // augment it with the loadUserModule helper below.
     installUserModuleMetadata(env);
+    // Module-load history must exist before the script defines onModuleLoaded.
+    installModuleLoadHistory(env, arkts);
     if (!runBridgeScript(env)) return false;
     if (!installPatchMethod(env, arkts)) {
         GADGET_LOG_ERROR("host bridge: failed to install patch helpers");

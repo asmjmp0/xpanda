@@ -53,6 +53,8 @@ export interface PatchedAbcReport {
     candidates: string[];
     /** User module records baked into that abc's bootstrap (`getAllUserModule`). */
     userModuleCount: number;
+    /** Module records that received the `ArkTS.onModuleLoaded` callback. */
+    moduleLoadCount: number;
 }
 
 export interface InjectHapResult {
@@ -177,6 +179,7 @@ export function injectHapBytes(data: Uint8Array, options: InjectHapOptions & { p
             importIndex: injected.importIndex,
             candidates: injected.candidates,
             userModuleCount: injected.userModules.length,
+            moduleLoadCount: injected.moduleLoad.patched,
         });
     }
 

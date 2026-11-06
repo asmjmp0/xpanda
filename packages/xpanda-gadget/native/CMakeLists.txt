@@ -31,6 +31,8 @@ add_library(xpanda_gadget SHARED
     src/js/module/console.cpp
     src/js/module/host_bridge.cpp
     src/js/module/host_global.cpp
+    src/js/module/metadata_bridge.cpp
+    src/js/module/module_events.cpp
     src/js/module/napi_bridge.cpp
     src/js/module/patch_bridge.cpp
     src/js/jsvm.cpp

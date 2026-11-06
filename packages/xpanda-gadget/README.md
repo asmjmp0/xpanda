@@ -184,6 +184,32 @@ ArkTS.patch.patchMethod(http, null, "createHttp", function () {
 });
 ```
 
+### Module-load events
+
+Injection instruments every module record's `func_main_0` tail (`xpanda-asm`
+`patchModuleLoadCallbacks`) and calls a bootstrap listener with the module record name.
+The gadget JSVM exposes the events:
+
+```js
+var off = ArkTS.onModuleLoaded(function (module) {
+    console.log("loaded", module.record); // e.g. "&entry/src/main/ets/pages/Index&"
+});
+
+off(); // unsubscribe
+```
+
+- callbacks run on the host event loop after `func_main_0` returned, so the module is
+  fully evaluated and `ArkTS.metadata.loadUserModule(module.record)` is safe;
+- only modules that load **after registration** are reported; already-loaded modules
+  are not replayed;
+- there is one global listener: registering again replaces the previous callback, so
+  watch-mode script reloads do not stack listeners;
+- only modules in the patched abc are observable; a module that throws during
+  evaluation produces no event;
+- pass `--no-module-load` to `xpanda gadget` (or `moduleLoad: false`) to skip the
+  instrumentation; modules with namespace imports or multiple `returnundefined`
+  sites are reported in `InjectAbcResult.moduleLoad.skipped`.
+
 **Socket protocol** (NDJSON, one JSON per line): `js` (execute JS) / `msg` (bidirectional
 messages) / `info` / `ping` / `probe` (JSVM health check). The gadget also pushes
 `{"type":"console","level":"log","text":"..."}` for every `console.*` call made inside the JSVM
@@ -268,6 +294,10 @@ helpers, including call/conversion rules and limitations.
 
   The list is compile-time data from the patched abc, not the runtime module cache; `export *`
   re-exports have no name and contribute no entries.
+- **Module-load instrumentation** (default): `patchModuleLoadCallbacks` imports
+  `xpandaModuleLoaded` into every module record and calls it right before the final
+  `returnundefined`; the bootstrap forwards each record to `gadget.moduleLoaded`, and the
+  native layer queues it for `ArkTS.onModuleLoaded`. `--no-module-load` disables this.
 - The `.so` module request is rewritten to the runtime's native-module form
   `@normalized:Y&&&lib<name>.so&` (what DevEco/ets-loader produces for `import x from "libxxx.so"`).
 - **HAP entries are packaged with STORE** (matching DevEco): the installer was observed to skip
@@ -299,10 +329,11 @@ helpers, including call/conversion rules and limitations.
 yarn workspace xpanda-gadget test
 ```
 
-Coverage: structural checks after abc injection (entry `func_main_0` calls init, the bootstrap
-module record keeps the `@normalized:Y&&&...&` native module request), synthetic HAP injection
-(abc written back + `.so` embedded + `module.json` byte-identical + ELF header checks), and aarch64
-ELF checks for the prebuilt `.so`.
+Coverage: structural checks after abc injection (entry `func_main_0` calls init, every module
+`func_main_0` ends with the `ArkTS.onModuleLoaded` listener call, the bootstrap module record keeps
+the `@normalized:Y&&&...&` native module request), synthetic HAP injection (abc written back +
+`.so` embedded + `module.json` byte-identical + ELF header checks), and aarch64 ELF checks for the
+prebuilt `.so`.
 
 End-to-end (emulator/device): inject → re-sign → install → `aa start` → `hdc fport` → NDJSON client
 (ping/info/js/msg/probe).
