@@ -791,7 +791,15 @@ export class ConditionSimplify implements ISimplify {
      */
     private branchReadsBeforeWrite(stmts: TYPE.Statement[], name: string): boolean {
         for (const stmt of stmts) {
-            if (this.definitelyWrites(stmt, name)) return false;
+            if (this.definitelyWrites(stmt, name)) {
+                // 自引用赋值(`v2 = v2.result`)的右值在写入生效之前读的是旧值,
+                // "确定写入"不能证明分支不依赖旧值:按求值顺序看写入前是否已有读取
+                // (DlpManager DataUtils#r47:`acc = r48(); v2 = acc; if (...) {
+                //   acc = !acc.result; if (acc) {return} else {v2 = v2.result; ...} }`
+                // 删掉 `v2 = acc` 会留下读未初始化 v2 的自引用赋值)。
+                if (collectReadsBeforeDefiniteWrite(stmt).reads.has(name)) return true;
+                return false;
+            }
             if (isIfStatement(stmt)) {
                 if (collectReadNames(stmt.test).has(name)) return true;
                 if (this.branchReadsBeforeWrite(this.branchStatements(stmt.consequent), name)) return true;

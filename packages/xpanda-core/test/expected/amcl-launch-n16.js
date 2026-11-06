@@ -615,7 +615,7 @@ export class c1114 {
       }
     }
     v5 = this.admissionJobs_.get(p0);
-    if (v5 !== undefined && this.admissionTokens_.get(p0) === p1) {
+    if (v5 !== undefined && (this.admissionTokens_.get(p0) === p1)) {
       return v5;
     }
     if (this.admittedLaunches_.size > v4) {

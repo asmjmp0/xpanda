@@ -59,7 +59,7 @@ export class g771 {
         v10 = v7.next();
         if (v10.done) break;
         v10 = v10.value;
-        if (v5.data[v10] && v5.data[v10].client !== undefined && v5.data[v10].client !== null) {
+        if (v5.data[v10] && (v15 = v5.data[v10].client, v5.data[v10].client !== undefined) && v5.data[v10].client !== null) {
           v15 = g771.resolveDataValue(v15, p1, p3);
           acc = v4.set(v10, v15);
         }
