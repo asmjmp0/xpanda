@@ -94,6 +94,36 @@ bool SocketServer::waitForClient(int timeoutMs) {
     return running_.load() && !clientFds_.empty();
 }
 
+SocketServer::HeldRequestPtr SocketServer::takeHeldRequest(int timeoutMs) {
+    std::unique_lock<std::mutex> lock(heldMutex_);
+    bool parked = heldCv_.wait_for(lock, std::chrono::milliseconds(timeoutMs),
+                                   [this]() { return heldRequest_ != nullptr; });
+    if (!parked) return nullptr;
+    HeldRequestPtr request = heldRequest_;
+    heldRequest_ = nullptr;
+    return request;
+}
+
+void SocketServer::completeHeldRequest(const HeldRequestPtr& request, bool ok, const std::string& payload) {
+    {
+        std::lock_guard<std::mutex> lock(request->mutex);
+        request->done = true;
+        request->ok = ok;
+        request->payload = payload;
+    }
+    request->cv.notify_all();
+}
+
+void SocketServer::failHeldRequest(const std::string& error) {
+    HeldRequestPtr request;
+    {
+        std::lock_guard<std::mutex> lock(heldMutex_);
+        request = heldRequest_;
+        heldRequest_ = nullptr;
+    }
+    if (request) completeHeldRequest(request, false, error);
+}
+
 uint64_t SocketServer::uptimeMs() const {
     return static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -220,6 +250,39 @@ void SocketServer::handleLine(int fd, const std::string& line) {
         std::string error;
         std::string transport;
         bool ok = false;
+        if (holdRequests_.load()) {
+            // Startup hold: park the request for the JS thread (which is busy
+            // holding app startup). One at a time; a second request while one
+            // is parked falls through to the normal executor path.
+            HeldRequestPtr held;
+            {
+                std::lock_guard<std::mutex> lock(heldMutex_);
+                if (!heldRequest_) {
+                    held = std::make_shared<HeldRequest>();
+                    held->code = code;
+                    heldRequest_ = held;
+                }
+            }
+            if (held) {
+                heldCv_.notify_all();
+                std::unique_lock<std::mutex> lock(held->mutex);
+                bool done = held->cv.wait_for(lock, std::chrono::milliseconds(120000),
+                                              [&held]() { return held->done; });
+                if (done) {
+                    std::string text = "{\"id\":" + idRaw + ",\"type\":\"result\",\"ok\":";
+                    if (held->ok) {
+                        text += "true,\"value\":" + held->payload + "}";
+                    } else {
+                        text += "false,\"error\":" + mini::escape(held->payload) + "}";
+                    }
+                    reply(fd, text);
+                    return;
+                }
+                reply(fd, "{\"id\":" + idRaw
+                    + ",\"type\":\"result\",\"ok\":false,\"error\":\"startup hold timed out\"}");
+                return;
+            }
+        }
         if (hasJsExecutor()) {
             ok = jsExecutor_(code, &valueJson, &error, 10000, &transport);
         } else {

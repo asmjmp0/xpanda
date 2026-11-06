@@ -47,13 +47,24 @@ function prebuiltSo(): Uint8Array | null {
 // ---------------------------------------------------------------- 1. abc inject
 function testInjectAbc(es2abc: string): void {
     const original = loadTargetAbc();
-    const result = injectAbcBytes(original, { es2abc, port: 27043 });
+    const result = injectAbcBytes(original, { es2abc, port: 27043, moduleInfo: "com.example.helloworld/entry" });
     assert(result.entryClass === "L&entry/src/main/ets/target&;",
         `entry discovery must pick the target entry class, got ${result.entryClass}`);
     assert(result.candidates.length >= 1, "candidates must be reported");
     assert(result.soName === GADGET_SO_NAME, "default so name");
     assert(result.bootstrapSource.includes(`import gadget from "${GADGET_SO_NAME}"`),
         "bootstrap must import the gadget .so by module request");
+    // user module records are baked into the bootstrap and bound at startup
+    assert(result.userModules.length === 1, `target abc has exactly one module record, got ${result.userModules.length}`);
+    assert(result.userModules[0].record === "&entry/src/main/ets/target&", "baked record name");
+    assert(result.userModules[0].exports.join(",") === "targetA,targetB", "baked export names");
+    assert(result.bootstrapSource.includes("function getAllUserModule"), "bootstrap must declare getAllUserModule");
+    assert(result.bootstrapSource.includes("{record:\"&entry/src/main/ets/target&\",exports:[\"targetA\",\"targetB\"]},"),
+        "getAllUserModule must carry the baked record list");
+    assert(result.bootstrapSource.includes("userModules: getAllUserModule()"),
+        "start options must carry the baked module list (installed into the JSVM ArkTS.metadata)");
+    assert(result.bootstrapSource.includes(`moduleInfo: "com.example.helloworld/entry"`),
+        "start options must carry the baked moduleInfo");
 
     const patched = result.data;
     const pandaFile = new PandaFile(patched);
@@ -86,6 +97,12 @@ function testInjectAbc(es2abc: string): void {
 
     const source = new PandaDecompiler().decompileClass(hookClass);
     assert(source.includes("27043"), "decompiled bootstrap must carry the baked port");
+    // the baked module list must survive compilation; the single-use
+    // getAllUserModule function may be renamed by the optimizer, so only the
+    // record/export data and the `userModules` start option are asserted here
+    assert(source.includes("&entry/src/main/ets/target&"), "decompiled bootstrap must carry the baked record name");
+    assert(source.includes("targetA") && source.includes("targetB"), "decompiled bootstrap must carry the baked export names");
+    assert(source.includes("userModules"), "decompiled bootstrap must pass userModules to gadget.start");
 }
 
 // ---------------------------------------------------------------- 2. hap inject
@@ -107,6 +124,7 @@ function testInjectHap(es2abc: string): void {
     const result = injectHapBytes(hapBytes, { es2abc, port: 27044, soData: so ?? undefined });
     assert(result.patched.length === 1, "single-abc HAP must patch exactly one entry");
     assert(result.patched[0].entryName === "ets/modules.abc", "patched entry name");
+    assert(result.patched[0].userModuleCount === 1, "patched report must carry the user module count");
     if (so) {
         assert(result.soEntryName === `libs/arm64-v8a/${GADGET_SO_NAME}`, ".so must embed under libs/<abi>/");
     } else {

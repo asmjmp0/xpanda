@@ -51,6 +51,8 @@ export interface PatchedAbcReport {
     initName: string;
     importIndex: number;
     candidates: string[];
+    /** User module records baked into that abc's bootstrap (`getAllUserModule`). */
+    userModuleCount: number;
 }
 
 export interface InjectHapResult {
@@ -129,10 +131,38 @@ export function resolveAbcEntries(hap: HapFile, options: InjectHapOptions): ZipE
     );
 }
 
+/**
+ * Derive "<bundleName>/<moduleName>" from the HAP's pack.info (bundleName) and
+ * module.json (moduleName). Baked into the bootstrap as ArkTS.metadata.moduleInfo
+ * so `loadUserModule` / `loadModuleWithInfo` need no manual context.
+ */
+export function deriveModuleInfo(hap: HapFile): string | null {
+    const pack = hap.readEntry("pack.info");
+    if (!pack) return null;
+    try {
+        const parsed = JSON.parse(new TextDecoder().decode(pack)) as any;
+        const bundleName: unknown = parsed?.summary?.app?.bundleName;
+        const moduleName: unknown
+            = parsed?.summary?.modules?.find((m: any) => typeof m?.distro?.moduleName === "string")?.distro?.moduleName
+            ?? hap.getModuleJson()?.module?.name;
+        if (typeof bundleName === "string" && bundleName
+            && typeof moduleName === "string" && moduleName) {
+            return `${bundleName}/${moduleName}`;
+        }
+    } catch {
+        // malformed pack.info: no module info
+    }
+    return null;
+}
+
 /** Patch a HAP byte stream: bytecode init inject + .so embedding + ZIP rebuild. */
 export function injectHapBytes(data: Uint8Array, options: InjectHapOptions & { packageRoot?: string } = {}): InjectHapResult {
     const hap = new HapFile(data);
     const abcEntries = resolveAbcEntries(hap, options);
+    if (!options.moduleInfo) {
+        const derived = deriveModuleInfo(hap);
+        if (derived) options.moduleInfo = derived;
+    }
 
     const patchedReports: PatchedAbcReport[] = [];
     const patchedByName = new Map<string, InjectAbcResult>();
@@ -146,6 +176,7 @@ export function injectHapBytes(data: Uint8Array, options: InjectHapOptions & { p
             initName: injected.initName,
             importIndex: injected.importIndex,
             candidates: injected.candidates,
+            userModuleCount: injected.userModules.length,
         });
     }
 

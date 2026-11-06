@@ -406,13 +406,22 @@ JSVM_Value loadHostModule(JSVM_Env env, JSVM_CallbackInfo info, bool withInfo) {
     }
     std::string path;
     jsvmValueToText(env, argv[0], &path);
+    // Metadata records use the merged-abc record form (&entry/src/main/...&);
+    // the host loader expects the plain project path, so strip the wrappers.
+    if (path.size() >= 2 && path.front() == '&' && path.back() == '&') {
+        path = path.substr(1, path.size() - 2);
+    }
     std::string moduleInfo;
     if (withInfo) {
-        if (argc < 2) {
-            OH_JSVM_ThrowError(env, nullptr, "loadModuleWithInfo: missing module info");
+        // Never reach the host loader with an empty moduleInfo: the module
+        // manager is native code and fails hard on that input.
+        if (argc < 2 || argv[1] == nullptr || !jsvmValueToText(env, argv[1], &moduleInfo)
+            || moduleInfo.empty() || moduleInfo == "undefined") {
+            OH_JSVM_ThrowError(env, nullptr,
+                "loadModuleWithInfo requires (path, \"bundleName/moduleName\") "
+                "(ArkTS.metadata.moduleInfo carries the baked value)");
             return nullptr;
         }
-        jsvmValueToText(env, argv[1], &moduleInfo);
     }
     if (path.empty()) {
         OH_JSVM_ThrowError(env, nullptr, "loadModule: empty path");

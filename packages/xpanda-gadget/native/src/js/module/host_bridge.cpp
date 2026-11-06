@@ -14,6 +14,7 @@
 #include "js/jsvm_value.h"
 #include "js/module/bridge_utils.h"
 #include "js/module/host_global.h"
+#include "js/module/metadata_bridge.h"
 #include "js/module/napi_bridge.h"
 #include "js/module/patch_bridge.h"
 
@@ -267,6 +268,20 @@ const char* kBridgeSource = R"JS(
         hostPromise: hostPromise,
         setExtras: function (proxy, extras) { proxyExtras.set(proxy, extras); }
     };
+    // One-arg module loader for the baked metadata records: strips the
+    // &entry/src/main/...& record wrappers and uses the baked moduleInfo, so
+    // no bad arguments can reach the host module loader.
+    if (arkts.metadata) {
+        arkts.metadata.loadUserModule = function (record) {
+            var path = String(record).replace(/^&/, "").replace(/&$/, "");
+            var id = arkts.metadata.moduleInfo
+                ? loadModuleWithInfo(path, arkts.metadata.moduleInfo)
+                : loadModule(path);
+            var proxy = objectProxy("@" + id);
+            loadedModules[path] = "@" + id;
+            return proxy;
+        };
+    }
     arkts.__decodeTags = function (json) { return JSON.parse(json).map(decodeTagged); };
     arkts.__tagResult = tagResult;
     delete arkts.__snapshot;
@@ -322,6 +337,9 @@ bool installHostBridge(JSVM_Env env) {
     JSVM_Value global = nullptr;
     if (OH_JSVM_GetGlobal(env, &global) != JSVM_OK || global == nullptr) return false;
     if (!setNamed(env, global, "ArkTS", arkts)) return false;
+    // Install the baked metadata before the bridge script so the script can
+    // augment it with the loadUserModule helper below.
+    installUserModuleMetadata(env);
     if (!runBridgeScript(env)) return false;
     if (!installPatchMethod(env, arkts)) {
         GADGET_LOG_ERROR("host bridge: failed to install patch helpers");

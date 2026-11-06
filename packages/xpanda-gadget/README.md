@@ -73,7 +73,7 @@ CLI options: `--port` `--entry` `--abc <entry>` `--all` (patch every abc) `--abi
 
 | Method | Description |
 |---|---|
-| `start({ port?, wait? })` | Starts the socket (default name `xpanda_gadget_27041`); `wait` blocks startup until a client connects (ms) |
+| `start({ port?, wait?, userModules?, moduleInfo? })` | Starts the socket (default name `xpanda_gadget_27041`); `wait` blocks startup until a client connects **and its first scripts have finished executing** (idle grace 500 ms) |
 | `stop()` | Closes the socket and destroys the JSVM |
 | `info()` | `{ pid, endpoint, running, js, version, uptimeMs }` |
 | `send(value)` | Broadcasts `{"type":"msg","payload":<value>}` to every socket client |
@@ -234,7 +234,7 @@ All link dependencies are system libraries: `libace_napi.z.so`, `libjsvm.so`, `l
 | Path | Responsibility |
 |---|---|
 | `src/index.ts` | Public API barrel |
-| `src/inject/` | `.abc` bootstrap injection: defaults/types, entry-class discovery, bootstrap source, `injectAbcBytes` |
+| `src/inject/` | `.abc` bootstrap injection: defaults/types, entry-class discovery, user-module record enumeration, bootstrap source, `injectAbcBytes` |
 | `src/hap/` | HAP repacking: CRC32 + minimal ZIP writer, abc-entry selection, `.so` embedding, `injectHapBytes` |
 | `src/io.ts` | Node-only disk IO helpers for the CLI |
 | `interface/ArkTS.ts` | Type reference for `ArkTS.hostGlobal` / `ArkTS.napi` and the host-side `ArkTS` / `gadget` API (documentation only) |
@@ -251,6 +251,23 @@ helpers, including call/conversion rules and limitations.
   the abc with `func_main_0` (EntryAbility / pages/Index preferred).
 - Bootstrap source (see `buildBootstrapSource`): `import gadget from "<soName>"; init()` with
   `try { gadget.start({port}) } catch` — a module-load failure does not break app startup.
+- **User module metadata**: at patch time the injector enumerates every module record in the abc
+  (record name + exported object names) and bakes it into the bootstrap as `getAllUserModule()`;
+  the bootstrap passes the list to `gadget.start({ userModules })`, which installs
+  `ArkTS.metadata.getAllUserModule()` **in the gadget JSVM** through the JSVM C API
+  (nothing is assigned through `globalThis`, and `.reset` re-installs it). Shell / `gadget file`
+  scripts call it directly:
+
+  ```js
+  var modules = ArkTS.metadata.getAllUserModule();
+  // [{ record: "&entry/src/main/ets/pages/Index&", exports: ["Index", "default"] }, ...]
+
+  // then load a record's live exports:
+  var m = ArkTS.napi.loadModuleWithInfo("entry/src/main/ets/pages/Index", "com.example.app/entry");
+  ```
+
+  The list is compile-time data from the patched abc, not the runtime module cache; `export *`
+  re-exports have no name and contribute no entries.
 - The `.so` module request is rewritten to the runtime's native-module form
   `@normalized:Y&&&lib<name>.so&` (what DevEco/ets-loader produces for `import x from "libxxx.so"`).
 - **HAP entries are packaged with STORE** (matching DevEco): the installer was observed to skip

@@ -10,6 +10,8 @@
  *   - executeJs(code)                       evaluate JavaScript
  *   - loadModule(path)                      host napi_load_module wrapper
  *   - loadModuleWithInfo(path, info)        host napi_load_module_with_info wrapper
+ *   (start({userModules}) installs the bootstrap-baked module list as
+ *    ArkTS.metadata in the gadget JSVM)
  *
  * JS execution runs in a dedicated JSVM created on the host JS thread (the host
  * ArkTS runtime forbids dynamic evaluation). The socket thread hops onto the JS
@@ -26,6 +28,7 @@
 #include "js/js_thread.h"
 #include "js/jsvm.h"
 #include "js/module/host_bridge.h"
+#include "js/module/metadata_bridge.h"
 #include "napi/native_api.h"
 #include "napi/napi_utils.h"
 #include "socket/socket_server.h"
@@ -34,6 +37,11 @@ namespace xpanda {
 
 // ------------------------------------------------------------------ exported functions
 
+/**
+ * gadget.start({port?, wait?, userModules?, moduleInfo?}): start the socket
+ * server; the optional bootstrap-baked userModules list + bundle/module context
+ * are installed as ArkTS.metadata in the gadget JSVM (see metadata_bridge.h).
+ */
 static napi_value Start(napi_env env, napi_callback_info info) {
     size_t argc = 1;
     napi_value argv[1] = {nullptr};
@@ -54,6 +62,26 @@ static napi_value Start(napi_env env, napi_callback_info info) {
             int32_t requested = 0;
             if (napi_get_value_int32(env, waitValue, &requested) == napi_ok && requested > 0) {
                 waitMs = requested;
+            }
+        }
+        // Bootstrap-baked user module list: stored here and installed as
+        // ArkTS.metadata.getAllUserModule() on every gadget JSVM creation.
+        napi_value userModules = nullptr;
+        if (napi_get_named_property(env, argv[0], "userModules", &userModules) == napi_ok
+            && userModules != nullptr) {
+            std::string json = "[]";
+            if (napiValueToJson(env, userModules, &json)) {
+                storeUserModuleMetadata(json);
+            }
+        }
+        // Bundle/module context ("<bundleName>/<moduleName>") used by the
+        // metadata loadUserModule helper / loadModuleWithInfo calls.
+        napi_value moduleInfoValue = nullptr;
+        if (napi_get_named_property(env, argv[0], "moduleInfo", &moduleInfoValue) == napi_ok
+            && moduleInfoValue != nullptr) {
+            std::string moduleInfo = napiValueToText(env, moduleInfoValue);
+            if (!moduleInfo.empty()) {
+                storeModuleInfo(moduleInfo);
             }
         }
     }
@@ -78,8 +106,28 @@ static napi_value Start(napi_env env, napi_callback_info info) {
     }
     if (waitMs > 0) {
         GADGET_LOG_INFO("start: waiting up to %{public}d ms for a client", waitMs);
+        // Startup hold: park incoming "js" requests so the first scripts run
+        // inline on this (JS) thread — app startup continues only after they
+        // finished, not right after the client connects. The hold loop ends
+        // once no new script arrives within the idle grace.
+        socketServer().setHoldRequests(true);
         bool connected = socketServer().waitForClient(waitMs);
         GADGET_LOG_INFO("start: %{public}s", connected ? "client connected" : "no client before timeout");
+        if (connected) {
+            constexpr int kHoldIdleGraceMs = 500;
+            while (true) {
+                SocketServer::HeldRequestPtr held = socketServer().takeHeldRequest(kHoldIdleGraceMs);
+                if (!held) break;
+                std::string valueJson;
+                std::string error;
+                bool ok = evaluateInJsvm(held->code, &valueJson, &error);
+                std::string status = ok ? "ok" : "failed: " + error;
+                GADGET_LOG_INFO("start: held script %{public}s", status.c_str());
+                socketServer().completeHeldRequest(held, ok, ok ? valueJson : error);
+            }
+        }
+        socketServer().setHoldRequests(false);
+        socketServer().failHeldRequest("startup hold ended before this request was executed");
     }
     GADGET_LOG_INFO("started %{public}s js=%{public}d (pid %{public}d)", socketServer().endpoint().c_str(),
         isJsBridgeReady() ? 1 : 0, static_cast<int>(getpid()));

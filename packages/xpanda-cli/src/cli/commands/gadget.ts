@@ -107,7 +107,7 @@ export function runGadget(rawArgs: string[]): void {
         summary = [
             "HAP gadget injection complete:",
             ...result.patched.map((p) =>
-                `  patched ${p.entryName}: entry=${p.entryClass} module=${p.moduleName}`),
+                `  patched ${p.entryName}: entry=${p.entryClass} module=${p.moduleName} modules=${p.userModuleCount}`),
             result.soEntryName
                 ? `  embedded ${result.soEntryName} (${options.soPath ?? "prebuilt"})`
                 : `  .so NOT embedded: ${result.soSkippedReason}`,
@@ -121,7 +121,7 @@ export function runGadget(rawArgs: string[]): void {
         suffix = ".gadget.abc";
         summary = [
             "abc gadget injection complete:",
-            `  entry=${result.entryClass} module=${result.moduleName} port=${options.port ?? DEFAULT_GADGET_PORT} wait=${options.waitMs ?? 0}ms`,
+            `  entry=${result.entryClass} module=${result.moduleName} port=${options.port ?? DEFAULT_GADGET_PORT} wait=${options.waitMs ?? 0}ms modules=${result.userModules.length}`,
             `  size: ${data.length} -> ${result.data.length}`,
             `  remember to place ${options.soName ?? GADGET_SO_NAME} in the HAP libs/<abi>/ directory.`,
         ].join("\n");

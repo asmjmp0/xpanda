@@ -2,6 +2,7 @@
  * Options/results for .abc-level bootstrap injection.
  * @Author: jmp0
  */
+import type { UserModuleInfo } from "./user-module";
 
 export interface InjectAbcOptions {
     /** TCP port the gadget socket server listens on; baked into the bootstrap. Default 27041. */
@@ -29,6 +30,13 @@ export interface InjectAbcOptions {
     targetApiVersion?: number;
     /** Keep xpanda-asm's compile temp directory (debugging). */
     keepTemp?: boolean;
+    /**
+     * Bundle/module context `"<bundleName>/<moduleName>"` baked into the
+     * bootstrap and exposed as `ArkTS.metadata.moduleInfo` (used by
+     * `ArkTS.metadata.loadUserModule` / `loadModuleWithInfo`). Derived
+     * automatically for HAP input from pack.info + module.json.
+     */
+    moduleInfo?: string;
 }
 
 export interface InjectAbcResult {
@@ -46,6 +54,8 @@ export interface InjectAbcResult {
     importIndex: number;
     /** Entry class candidates considered during discovery (most preferred first). */
     candidates: string[];
+    /** User module records baked into the bootstrap's `getAllUserModule`. */
+    userModules: UserModuleInfo[];
     /** The bootstrap source that was compiled and moved into the abc. */
     bootstrapSource: string;
 }

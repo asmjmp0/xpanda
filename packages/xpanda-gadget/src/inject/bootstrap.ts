@@ -2,6 +2,7 @@
  * Bootstrap module source emitted into the target abc.
  * @Author: jmp0
  */
+import { buildGetAllUserModuleSource, type UserModuleInfo } from "./user-module";
 
 /**
  * Build the bootstrap module source. The default import of the gadget .so is mapped
@@ -9,18 +10,31 @@
  * `@normalized:Y&&&lib<name>.so&` — the form DevEco/ets-loader emits for
  * `import x from "libxxx.so"`; the runtime resolves it through the app's dlopen
  * namespaces (ndk -> default -> moduleNs_default).
+ *
+ * `userModules` (collected by {@link collectUserModules} at patch time) is baked in
+ * as a static `getAllUserModule()` function and passed to `gadget.start()` as the
+ * `userModules` option; `moduleInfo` (`"<bundleName>/<moduleName>"`) is baked as
+ * the `moduleInfo` option. The native side installs both as `ArkTS.metadata`
+ * (`getAllUserModule()` / `moduleInfo` / `loadUserModule()`) in the gadget JSVM,
+ * available to `gadget shell` / `gadget file` scripts; re-installed after `.reset`.
  */
 export function buildBootstrapSource(
     port: number,
     soName: string,
     initName: string,
     waitMs = 0,
+    userModules: UserModuleInfo[] = [],
+    moduleInfo?: string,
 ): string {
     const wait = Number.isFinite(waitMs) && waitMs > 0 ? Math.floor(waitMs) : 0;
-    const startOptions = wait > 0
-        ? `{ port: ${port}, wait: ${wait} }`
-        : `{ port: ${port} }`;
+    const options = [`port: ${port}`];
+    if (wait > 0) options.push(`wait: ${wait}`);
+    options.push(`userModules: getAllUserModule()`);
+    if (moduleInfo) options.push(`moduleInfo: ${JSON.stringify(moduleInfo)}`);
+    const startOptions = `{ ${options.join(", ")} }`;
     return `import gadget from "${soName}";
+
+${buildGetAllUserModuleSource(userModules)}
 
 function ${initName}() {
     try {

@@ -238,6 +238,36 @@ export interface ArkTS {
 
     /** Runtime method patching helpers. */
     readonly patch: ArkTSPatch;
+
+    /**
+     * Static user-module metadata, installed into this JSVM by `gadget.start()`
+     * (xpanda gadget >= 1.1): the injected bootstrap bakes a compile-time module
+     * list at patch time and passes it as the `userModules` start option; the
+     * native side attaches `metadata` directly to this `ArkTS` object (no
+     * globalThis assignment; re-installed after `.reset`).
+     *
+     * @example
+     * for (const m of ArkTS.metadata.getAllUserModule()) {
+     *     console.log(m.record, "->", m.exports.join(", "));
+     * }
+     *
+     * @example
+     * // Load a baked record's live exports (wrappers + moduleInfo handled):
+     * const entry = ArkTS.metadata.loadUserModule(ArkTS.metadata.getAllUserModule()[0].record);
+     */
+    readonly metadata?: {
+        /** `"<bundleName>/<moduleName>"` of the patched HAP (when baked). */
+        readonly moduleInfo?: string;
+        /** Every module record of the patched abc and its exported object names. */
+        getAllUserModule(): Array<{ record: string; exports: string[] }>;
+        /**
+         * Load a baked record's live exports. Accepts the record as returned by
+         * `getAllUserModule()` — the `&...&` record wrappers are stripped and
+         * the baked `moduleInfo` is used automatically. Falls back to
+         * `napi_load_module` when no moduleInfo was baked.
+         */
+        loadUserModule(record: string): HostModuleProxy;
+    };
 }
 
 /**
@@ -298,14 +328,24 @@ export interface GadgetModule {
     /**
      * Start the socket server and the JS-thread bridge.
      *
-     * `wait` blocks app startup until a client connects or the timeout (ms)
-     * expires. It is normally baked in by `xpanda gadget --wait MS`.
+     * `wait` holds app startup until a client connects, and then keeps holding
+     * until the scripts the client sends first have finished executing (idle
+     * grace 500ms) or the timeout expires. It is normally baked in by
+     * `xpanda gadget --wait MS`. `userModules` is the bootstrap-baked module
+     * list; it is installed as `ArkTS.metadata.getAllUserModule()` in the
+     * gadget JSVM.
      *
      * @example
      * gadget.start({ port: 27041 });
      * gadget.start({ port: 27041, wait: 5000 });
      */
-    start(options?: { port?: number; wait?: number }): void;
+    start(options?: {
+        port?: number;
+        wait?: number;
+        userModules?: Array<{ record: string; exports: string[] }>;
+        /** `"<bundleName>/<moduleName>"`, exposed as `ArkTS.metadata.moduleInfo`. */
+        moduleInfo?: string;
+    }): void;
 
     /** Stop the socket server and release the JSVM / module references. */
     stop(): void;

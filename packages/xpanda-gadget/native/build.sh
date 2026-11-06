@@ -41,6 +41,7 @@ mkdir -p "$OUT_DIR"
     "$DIR/src/napi/napi_utils.cpp" \
     "$DIR/src/js/jsvm_value.cpp" \
     "$DIR/src/js/module/console.cpp" \
+    "$DIR/src/js/module/metadata_bridge.cpp" \
     "$DIR/src/js/module/host_bridge.cpp" \
     "$DIR/src/js/module/host_global.cpp" \
     "$DIR/src/js/module/napi_bridge.cpp" \

@@ -9,10 +9,12 @@
  * @Author: jmp0
  */
 import { PandaPatchFile } from "xpanda-asm";
+import { PandaFile } from "xpanda-core";
 import { buildBootstrapSource, normalizedSoRequest } from "./bootstrap";
 import { DEFAULT_GADGET_PORT, DEFAULT_INIT_NAME, GADGET_SO_NAME } from "./constants";
 import { findEntryClassCandidates } from "./entry-class";
 import type { InjectAbcOptions, InjectAbcResult } from "./types";
+import { collectUserModules } from "./user-module";
 
 /** Patch an abc byte stream so app startup loads and starts the gadget. */
 export function injectAbcBytes(data: Uint8Array, options: InjectAbcOptions = {}): InjectAbcResult {
@@ -37,7 +39,12 @@ export function injectAbcBytes(data: Uint8Array, options: InjectAbcOptions = {})
         throw new Error(`entry class ${entryClass} has no func_main_0`);
     }
 
-    const bootstrapSource = buildBootstrapSource(port, soName, initName, options.waitMs ?? 0);
+    // User module records are baked into the bootstrap before patching; the patch
+    // itself only appends, so a read-only view of the original bytes is enough
+    // (module metadata is already resolved by the PandaFile constructor).
+    const userModules = collectUserModules(new PandaFile(data));
+
+    const bootstrapSource = buildBootstrapSource(port, soName, initName, options.waitMs ?? 0, userModules, options.moduleInfo);
     const init = patchFile.patchInit(bootstrapSource, {
         setupClassName: entryClass,
         initName,
@@ -57,6 +64,7 @@ export function injectAbcBytes(data: Uint8Array, options: InjectAbcOptions = {})
         initName,
         importIndex: init.importIndex,
         candidates,
+        userModules,
         bootstrapSource,
     };
 }
