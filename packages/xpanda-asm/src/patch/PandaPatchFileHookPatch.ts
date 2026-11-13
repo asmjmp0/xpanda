@@ -5,7 +5,7 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { PandaClass, PandaFile } from "@asm-xpanda/core";
+import { PandaClass, PandaFile, PandaMethod } from "@asm-xpanda/core";
 import { assembleInstruction, decodeInstructions } from "../Assembler";
 import { resolveEs2abc, resolveTargetApiVersion, runEs2abc } from "./Es2Abc";
 import { concatBytes } from "../codec";
@@ -14,7 +14,8 @@ import { buildHookClassSource } from "./HookSource";
 import { normalizedRequestForRecord } from "./EntityCodec";
 import { DEFAULT_INIT_FUNCTION, generateHookName, patchSetterGlobalName, PandaPatchError } from "./PatchTypes";
 import type {
-    InsertInstructionsResult, PatchInitOptions, PatchInitResult,
+    ClassImportCaches, InsertInstructionsResult, MethodCode, PatchInitInPlaceOptions, PatchInitInPlaceResult,
+    PatchInitOptions, PatchInitResult,
     PatchMethodHeadSourceOptions, PrepareMethodHeadOptions, PreparedTarget,
 } from "./PatchTypes";
 import { PandaPatchFileEntities } from "./PandaPatchFileEntities";
@@ -149,6 +150,186 @@ export class PandaPatchFileHookPatch extends PandaPatchFileHookImport {
                 throw new PandaPatchError("internal error: init was not injected");
             }
             return result.initResult;
+        });
+    }
+
+    /**
+     * 原地初始化:把 init(及其嵌套闭包)作为**新方法追加到已有类**上,
+     * 再在该类的一个已有实例方法开头调用它。
+     *
+     * 和 {@link patchInit} 的区别:
+     *   - 不搬 module record / import 表;
+     *   - 不新增 class 实体、不追加 class index;
+     *   - 因此不会破坏卡片类字面量/`ViewPU` 继承链。
+     *
+     * 限制:init 不能引用编译后 hook module 的模块级变量/函数(它们只存在于
+     * hook module 的 module record/词法环境里,不会被搬过来)。init 内部声明的
+     * 嵌套函数表达式会作为新方法一起追加并重映射,可以正常使用。
+     */
+    patchInitInPlace(initSource: string, options: PatchInitInPlaceOptions): PatchInitInPlaceResult {
+        const init = initSource?.trim();
+        if (!init) {
+            throw new PandaPatchError("patchInitInPlace requires init source");
+        }
+        if (!options.setupClassName) {
+            throw new PandaPatchError("patchInitInPlace requires setupClassName (the class that hosts the new method)");
+        }
+        if (!options.hostMethod) {
+            throw new PandaPatchError("patchInitInPlace requires hostMethod (an existing instance method that calls init)");
+        }
+        const initName = options.initName?.trim() || DEFAULT_INIT_FUNCTION;
+        const hostClass = this.requireClass(options.setupClassName);
+        const methodHostClassName = options.methodHostClassName ?? options.setupClassName;
+        const methodHost = this.requireClass(methodHostClassName);
+        if (methodHost.indexHeader !== hostClass.indexHeader) {
+            throw new PandaPatchError(
+                "patchInitInPlace requires setupClassName and methodHostClassName to be in the same index region");
+        }
+        if (hostClass.indexHeader.protoIdxSize !== 0xffffffff) {
+            throw new PandaPatchError(
+                "patchInitInPlace is not supported: the target has a proto index table");
+        }
+        if (!this.getMethodCode(options.setupClassName, options.hostMethod)) {
+            throw new PandaPatchError(
+                `patchInitInPlace requires '${options.setupClassName}::${options.hostMethod}' to have a code item`);
+        }
+
+        return this.withTempDir(options.es2abc, options.targetApiVersion, options.keepTemp, (es2abc, apiVersionArgs, targetBcVersion, tempDir) => {
+            const moduleName = generateHookName("__xpanda_init");
+            const hookSourcePath = path.join(tempDir, "hook-class.js");
+            fs.writeFileSync(
+                hookSourcePath,
+                buildHookClassSource([], init, [], initName),
+            );
+            const hookAbcPath = path.join(tempDir, "hook-class.abc");
+            const hookRecordName = this.injectedRecordName(moduleName, hostClass);
+            runEs2abc(es2abc, [
+                "--module", "--merge-abc", ...apiVersionArgs,
+                "--record-name", hookRecordName,
+                "--output", hookAbcPath,
+                hookSourcePath,
+            ]);
+
+            const hookBytes = new Uint8Array(fs.readFileSync(hookAbcPath));
+            const hookVersion = `${hookBytes[12]}.${hookBytes[13]}.${hookBytes[14]}.${hookBytes[15]}`;
+            if (hookVersion !== targetBcVersion) {
+                throw new PandaPatchError(
+                    `in-place init bytecode version ${hookVersion} does not match target ${targetBcVersion}; `
+                    + "pass targetApiVersion explicitly");
+            }
+            const hookFile = new PandaFile(hookBytes);
+            const hookPatch = PandaPatchFileEntities.createForImport(hookBytes);
+            const hookClassName = `L${hookRecordName};`;
+            const hookClass = hookFile.getAllClasses()
+                .find((clazz) => clazz.getClassName() === hookClassName);
+            if (!hookClass) {
+                throw new PandaPatchError(
+                    `in-place init requires the init source to declare 'function ${initName}(...)'; `
+                    + `class '${hookClassName}' was not compiled`);
+            }
+            const initMethodName = `#*#${initName}`;
+            if (!hookClass.pandaMethods.has(initMethodName)) {
+                throw new PandaPatchError(
+                    `in-place init requires the init source to declare 'function ${initName}(...)'; `
+                    + `method '${hookClass.getClassName()}::${initMethodName}' was not compiled`);
+            }
+
+            // 收集所有可搬的方法。func_main_0 是模块入口:它只负责把模块级函数
+            // 放进 hook module 的词法环境,原地注入用不到,也不能搬。
+            const methods: Array<{ name: string; method: PandaMethod; code: MethodCode }> = [];
+            for (const [name, method] of hookClass.pandaMethods) {
+                if (name === "func_main_0" || method.methodExternal || !method.methodCode) continue;
+                const code = hookPatch.getMethodCode(hookClass.getClassName(), name);
+                if (!code) {
+                    throw new PandaPatchError(
+                        `in-place init: method '${hookClass.getClassName()}::${name}' has no readable code`);
+                }
+                methods.push({ name, method, code });
+            }
+
+            const sourceRegion = hookClass.indexHeader;
+            const targetRegion = methodHost.indexHeader;
+            const caches: ClassImportCaches = {
+                stringEntities: new Map(),
+                stringIds: new Map(),
+                stringContentIds: new Map(),
+                literalEntities: new Map(),
+                literalIds: new Map(),
+                moduleRecords: new Map(),
+            };
+
+            // 第一遍:导入所有字符串/literal array 实体。它们会占用目标 region
+            // 的实体表，因此必须在计算方法 id 基址之前完成。
+            for (const { code } of methods) {
+                for (const instruction of decodeInstructions(code.instructions)) {
+                    for (const ref of this.hookIdOperands(instruction, sourceRegion)) {
+                        if (ref.kind === "string") {
+                            this.importStringId(hookFile, ref.sourceOffset, methodHostClassName, caches);
+                        } else if (ref.kind === "literal-array") {
+                            this.importLiteralArrayId(hookFile, ref.sourceOffset, methodHostClassName, caches);
+                        }
+                    }
+                }
+            }
+
+            // 每个 addRawMethod 追加一个实体表项，id 从当前位置开始连续递增。
+            const methodIdBase = this.currentEntityTableSize(targetRegion);
+            const methodIdByOffset = new Map<number, number>();
+            methods.forEach((entry, index) => methodIdByOffset.set(entry.method.getOffset(), methodIdBase + index));
+
+            const appended: Array<{ name: string; methodId: number }> = [];
+            const addedMethods = this.addRawMethods(methodHostClassName, methods.map((entry) => ({
+                name: entry.name,
+                accessFlags: entry.method.accessFlag & 0xffff,
+                code: {
+                    numVregs: entry.code.numVregs,
+                    numArgs: entry.code.numArgs,
+                    instructions: this.remapHookInstructions(entry.code, sourceRegion, methodIdByOffset, caches),
+                    tries: entry.code.tries ?? [],
+                },
+            })));
+            let initMethodId: number | undefined;
+            addedMethods.forEach((added, index) => {
+                if (added.methodId !== methodIdBase + index) {
+                    throw new PandaPatchError("internal error: in-place init method id mismatch");
+                }
+                appended.push({ name: added.methodName, methodId: added.methodId });
+                if (added.methodName === initMethodName) {
+                    initMethodId = added.methodId;
+                }
+            });
+            if (initMethodId === undefined) {
+                throw new PandaPatchError("internal error: in-place init method was not appended");
+            }
+
+            // 在宿主方法开头 definefunc + callarg0。宿主必须是类方法而不是
+            // func_main_0：模块级 definefunc 被运行时以 eval/SharedFunction
+            // 限制拒绝。
+            const hostCode = this.getMethodCode(options.setupClassName, options.hostMethod);
+            if (!hostCode) {
+                throw new PandaPatchError(
+                    `patchInitInPlace requires '${options.setupClassName}::${options.hostMethod}' to have a code item`);
+            }
+            let icSlot = maxIcSlot(hostCode.instructions) + 2;
+            if (icSlot > 250) icSlot = 0;
+            const snippet = concatBytes([
+                assembleInstruction("definefunc", [0, initMethodId, 0]),
+                assembleInstruction("callarg0", [icSlot]),
+            ]);
+            const insertion = this.insertInstructions(options.setupClassName, options.hostMethod, 0, snippet);
+            return {
+                className: options.setupClassName,
+                hostMethod: options.hostMethod,
+                methodHostClassName,
+                moduleName,
+                initName,
+                initMethodName,
+                initMethodId,
+                methods: appended,
+                atPC: insertion.atPC,
+                insertedLength: insertion.insertedLength,
+                codeOffset: insertion.codeOffset,
+            };
         });
     }
 
@@ -441,6 +622,10 @@ export class PandaPatchFileHookPatch extends PandaPatchFileHookImport {
         let initResult: PatchInitResult | undefined;
         if (initName !== undefined) {
             const entryClassName = setupClass.getClassName();
+            // Direct definefunc is rejected by the form runtime
+            // ("Not support eval / SharedFunction"); use a normal module import.
+            // addModuleImport is now byte-level append-only, so the card's
+            // existing import indices / ViewPU lookup stay intact.
             const initImportIndex = this.addModuleImport(
                 entryClassName,
                 `${options.localName ?? hookModuleName}__init`,
@@ -504,6 +689,25 @@ export class PandaPatchFileHookPatch extends PandaPatchFileHookImport {
         if (icSlot > 250) icSlot = 0;
         const snippet = concatBytes([
             assembleInstruction("ldexternalmodulevar", [importIndex]),
+            assembleInstruction("callarg0", [icSlot]),
+        ]);
+        return this.insertInstructions(className, methodName, 0, snippet);
+    }
+
+    /** 直接 definefunc 导入后的 init 方法并调用,不触碰目标类的 module record。 */
+    protected injectInitCallDirect(
+        className: string,
+        info: { id: number; funcIndex: number; funcKind: number },
+    ): InsertInstructionsResult {
+        const methodName = "func_main_0";
+        const code = this.getMethodCode(className, methodName);
+        if (!code) {
+            throw new PandaPatchError(`init requires class '${className}' to have a func_main_0 method`);
+        }
+        let icSlot = maxIcSlot(code.instructions) + 2;
+        if (icSlot > 250) icSlot = 0;
+        const snippet = concatBytes([
+            assembleInstruction("definefunc", [info.funcIndex, info.id, info.funcKind]),
             assembleInstruction("callarg0", [icSlot]),
         ]);
         return this.insertInstructions(className, methodName, 0, snippet);

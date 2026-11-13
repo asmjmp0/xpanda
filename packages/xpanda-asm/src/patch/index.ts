@@ -21,6 +21,8 @@ export type {
     InsertInstructionsOptions,
     PatchInitOptions,
     PatchInitResult,
+    PatchInitInPlaceOptions,
+    PatchInitInPlaceResult,
     PatchModuleLoadOptions,
     PatchModuleLoadResult,
     PatchedModuleLoad,

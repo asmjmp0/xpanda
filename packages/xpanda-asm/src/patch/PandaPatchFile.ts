@@ -56,6 +56,8 @@ export type {
     PatchMethodHeadSourceOptions,
     PatchInitOptions,
     PatchInitResult,
+    PatchInitInPlaceOptions,
+    PatchInitInPlaceResult,
     PatchModuleLoadOptions,
     PatchModuleLoadResult,
     PatchedModuleLoad,

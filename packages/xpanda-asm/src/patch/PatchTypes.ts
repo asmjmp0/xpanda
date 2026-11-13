@@ -215,6 +215,67 @@ export interface PatchInitOptions {
     exportFunctions?: string[];
 }
 
+/**
+ * In-place init: append the compiled init function (and its nested closures)
+ * as new methods of an existing class, then call it from one of that class's
+ * own methods. No new class entity / class index is created, so class literal
+ * tables and module import tables of the target stay untouched.
+ *
+ * The init method must not read module-scope variables/functions of the
+ * compiled hook module: those live in the hook module's lexical environment,
+ * which is not moved. Nested function expressions declared inside init() are
+ * fine (they are compiled as methods and remapped).
+ */
+export interface PatchInitInPlaceOptions {
+    /** 已经存在、用来承载新方法的类 */
+    setupClassName: string;
+    /**
+     * 调用 init 的已有实例方法(必须属于 setupClassName 且有代码项)。
+     * 不能是 `func_main_0`:模块级 `definefunc` 会被 ArkTS 运行时以
+     * "Not support eval / SharedFunction" 拒绝。
+     */
+    hostMethod: string;
+    /**
+     * 新方法实体追加到哪个已有类,缺省 setupClassName。建议指定一个同 region、
+     * 不会被实例化的类(例如编译器生成的注解类):追加方法会重定位该类实体,
+     * 若重定位真正的卡片类,类字面量里记录的方法 offset 会失效。
+     */
+    methodHostClassName?: string;
+    /** init 函数名,必须出现在 initSource 里;缺省 "init" */
+    initName?: string;
+    /** es2abc 可执行文件路径;缺省读 XPANDA_ES2ABC,再回退到仓库 assets/bin/<os>/es2abc[.exe] / PATH */
+    es2abc?: string;
+    /** 目标 bytecode 版本对应的 es2abc `--target-api-version`;缺省按目标 abc 版本自动映射 */
+    targetApiVersion?: number;
+    /** 保留临时目录(调试用) */
+    keepTemp?: boolean;
+}
+
+export interface PatchInitInPlaceResult {
+    /** 承载新方法的类 */
+    className: string;
+    /** 调用 init 的已有方法 */
+    hostMethod: string;
+    /** 新方法实体追加到的类 */
+    methodHostClassName: string;
+    /** 生成的初始化 module 名(仅用于编译;该 module record 不会被搬入目标) */
+    moduleName: string;
+    /** 被导出的 init 函数名 */
+    initName: string;
+    /** init 方法在目标类里的名字(`#*#<initName>`) */
+    initMethodName: string;
+    /** init 方法的类索引表 id(可传给 definefunc) */
+    initMethodId: number;
+    /** 追加的其它方法(嵌套闭包),按追加顺序 */
+    methods: Array<{ name: string; methodId: number }>;
+    /** 插入调用的位置(固定 0) */
+    atPC: number;
+    /** 插入的字节数 */
+    insertedLength: number;
+    /** 调用桩所在代码项偏移 */
+    codeOffset: number;
+}
+
 export interface PatchInitResult {
     /** 入口类 */
     className: string;
@@ -341,6 +402,8 @@ export interface DynamicSetup {
 export interface ClassImportCaches {
     stringEntities: Map<number, number>;
     stringIds: Map<number, number>;
+    /** 字符串内容 → 目标 region 实体 id,避免同名 global/字面量重复追加 */
+    stringContentIds: Map<string, number>;
     literalEntities: Map<number, number>;
     literalIds: Map<number, number>;
     /** hook 源 module record 偏移 → 目标 module record 偏移 */

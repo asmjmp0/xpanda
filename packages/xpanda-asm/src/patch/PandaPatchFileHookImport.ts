@@ -26,6 +26,9 @@ import { PandaPatchFileEntities } from "./PandaPatchFileEntities";
 import { PandaPatchFileHookSlots } from "./PandaPatchFileHookSlots";
 
 export class PandaPatchFileHookImport extends PandaPatchFileHookSlots {
+    /** 导入后的方法名 → 目标 region 方法 id + 原 definefunc 的 funcIndex/kind */
+    protected importedFuncInfo = new Map<string, { id: number; funcIndex: number; funcKind: number }>();
+
     protected hookMethodInstructions(
         entry: { name: string; code: MethodCode },
         setterSlot: number | undefined,
@@ -88,6 +91,7 @@ export class PandaPatchFileHookImport extends PandaPatchFileHookSlots {
         const caches: ClassImportCaches = {
             stringEntities: new Map(),
             stringIds: new Map(),
+            stringContentIds: new Map(),
             literalEntities: new Map(),
             literalIds: new Map(),
             moduleRecords: new Map(),
@@ -196,6 +200,29 @@ export class PandaPatchFileHookImport extends PandaPatchFileHookSlots {
         }
         // 追加的实体/索引表都落在文件末尾,region end 覆盖到文件尾
         this.extendRegion(targetRegion, this.size);
+        // 记录原 hook 模块 func_main_0 里 definefunc 的 funcIndex/kind,
+        // 供直接 definefunc 调用导入后的方法,避免给目标类加 module import。
+        this.importedFuncInfo.clear();
+        const mainMethod = hookClass.pandaMethods.get("func_main_0");
+        if (mainMethod?.methodCode) {
+            const offsetToName = new Map<number, string>();
+            for (const [name, method] of hookClass.pandaMethods) {
+                offsetToName.set(method.getOffset(), name);
+            }
+            for (const insn of decodeInstructions(mainMethod.methodCode.instructions)) {
+                if (insn.opcode.name !== "definefunc") continue;
+                const entity = hookClass.indexHeader.pandaMethods[insn.operands[1]];
+                const name = entity ? offsetToName.get(entity.getOffset()) : undefined;
+                const id = name === undefined ? undefined : methodIds.get(name);
+                if (id !== undefined) {
+                    this.importedFuncInfo.set(name!, {
+                        id,
+                        funcIndex: insn.operands[0],
+                        funcKind: insn.operands[2],
+                    });
+                }
+            }
+        }
         return methodIds;
     }
 
@@ -208,7 +235,6 @@ export class PandaPatchFileHookImport extends PandaPatchFileHookSlots {
         const indexes = new Map<string, number>();
         for (const field of hookClass.pandaFields ?? []) {
             const fieldName = field.getName();
-            if (fieldName === "scopeNames") continue;
             const sourceType = sourceRegion.pandaClasses[field.typeIdx];
             if (!sourceType) {
                 throw new PandaPatchError(`hook module field '${fieldName}' has an unknown type index`);
@@ -227,7 +253,7 @@ export class PandaPatchFileHookImport extends PandaPatchFileHookSlots {
      * 重建 hook class 的 module 字段:
      *   - moduleRecordIdx 指向搬进目标文件的 module record;
      *   - isCommonjs / hasTopLevelAwait / isSharedModule / pkgName@... 原样复制(INT_VALUE);
-     *   - scopeNames 是编译期 AOP 元数据,运行时不读,直接丢弃;
+     *   - scopeNames 是模块的全局名表,tryldglobalbyname 的 imm 会索引它;
      *   - 其余 VALUE 字段(注解等)暂不支持。
      */
 
@@ -255,7 +281,6 @@ export class PandaPatchFileHookImport extends PandaPatchFileHookSlots {
         const fields: Uint8Array[] = [];
         for (const field of hookClass.pandaFields ?? []) {
             const fieldName = field.getName();
-            if (fieldName === "scopeNames") continue; // 编译期 AOP 元数据,运行时不需要
             const typeIdx = fieldTypeIndexes.get(fieldName);
             if (typeIdx === undefined) {
                 throw new PandaPatchError(`hook module field '${fieldName}' has an unknown type index`);
@@ -265,8 +290,10 @@ export class PandaPatchFileHookImport extends PandaPatchFileHookSlots {
             if (fieldName === "moduleRecordIdx") {
                 value = concatBytes([Uint8Array.of(FIELD_TAG_VALUE), u32Bytes(targetModuleRecordOffset)]);
             } else if (field.pandaFieldValue) {
-                throw new PandaPatchError(
-                    `hook module field '${fieldName}' has an unsupported VALUE entity; only moduleRecordIdx is supported`);
+                // scopeNames is the module scope name, not the global-name table.
+                const sourceValueOffset = field.pandaFieldValue.getOffset();
+                const targetValueOffset = this.copyLiteralArrayEntity(hookFile, sourceValueOffset, caches);
+                value = concatBytes([Uint8Array.of(FIELD_TAG_VALUE), u32Bytes(targetValueOffset)]);
             } else {
                 value = concatBytes([Uint8Array.of(FIELD_TAG_INT_VALUE), writeSleb128(field.intValue)]);
             }
@@ -376,6 +403,10 @@ export class PandaPatchFileHookImport extends PandaPatchFileHookSlots {
         const parts: Uint8Array[] = [];
         for (const instruction of decodeInstructions(source.instructions)) {
             const operands = instruction.operands.slice();
+            // tryldglobalbyname's imm is a per-abc GlobalEnv slot index; it is
+            // NOT remapped. Validity relies on the hook module's scopeNames
+            // literal array being copied verbatim (see rebuildModuleFields)
+            // and on importStringId deduplicating strings by content.
             for (const ref of this.hookIdOperands(instruction, sourceRegion)) {
                 if (ref.kind === "string") {
                     const id = caches.stringIds.get(ref.sourceOffset);
@@ -428,7 +459,9 @@ export class PandaPatchFileHookImport extends PandaPatchFileHookSlots {
         return refs;
     }
 
-    /** 把源字符串实体复制到目标文件,并登记到目标类的 region 实体表,返回目标 id */
+    /** 把源字符串实体复制到目标文件,并登记到目标类的 region 实体表,返回目标 id。
+     *  同名内容只导入一次:重复追加会把后续 global-name id 推出目标 abc 的
+     *  GlobalEnv 表范围,tryldglobalbyname 会拿到 null 并崩溃。 */
     protected importStringId(
         sourceFile: PandaFile,
         sourceOffset: number,
@@ -437,8 +470,14 @@ export class PandaPatchFileHookImport extends PandaPatchFileHookSlots {
     ): number {
         let id = caches.stringIds.get(sourceOffset);
         if (id === undefined) {
-            const targetOffset = this.copyStringEntity(sourceFile, sourceOffset, caches);
-            id = this.appendMethodIndex(this.requireClass(className).indexHeader, targetOffset);
+            const content = readStringEntity(sourceFile.data, sourceOffset);
+            let byContent = caches.stringContentIds.get(content);
+            if (byContent === undefined) {
+                const targetOffset = this.copyStringEntity(sourceFile, sourceOffset, caches);
+                byContent = this.appendMethodIndex(this.requireClass(className).indexHeader, targetOffset);
+                caches.stringContentIds.set(content, byContent);
+            }
+            id = byContent;
             caches.stringIds.set(sourceOffset, id);
         }
         return id;

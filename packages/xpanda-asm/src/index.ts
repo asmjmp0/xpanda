@@ -16,6 +16,8 @@ export type {
     CatchBlockInput,
     PatchInitOptions,
     PatchInitResult,
+    PatchInitInPlaceOptions,
+    PatchInitInPlaceResult,
     PatchModuleLoadOptions,
     PatchModuleLoadResult,
     PatchedModuleLoad,

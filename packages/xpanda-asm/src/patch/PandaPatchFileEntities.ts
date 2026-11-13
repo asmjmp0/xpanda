@@ -14,6 +14,33 @@ import type {
 } from "./PatchTypes";
 import { PandaPatchFileBase } from "./PandaPatchFileBase";
 
+/** 方法实体:class_idx(u16) + proto_idx(u16) + name(u32) + access_flags(uleb) + CODE tag + 0 */
+function encodeRawMethodEntity(
+    classIndex: number,
+    protoIdx: number,
+    nameOffset: number,
+    accessFlags: number,
+    codeOffset: number,
+): Uint8Array {
+    const head = new Uint8Array(8);
+    head[0] = classIndex & 0xff;
+    head[1] = (classIndex >>> 8) & 0xff;
+    head[2] = protoIdx & 0xff;
+    head[3] = (protoIdx >>> 8) & 0xff;
+    head[4] = nameOffset & 0xff;
+    head[5] = (nameOffset >>> 8) & 0xff;
+    head[6] = (nameOffset >>> 16) & 0xff;
+    head[7] = (nameOffset >>> 24) & 0xff;
+    return concatBytes([
+        head,
+        writeUleb128(accessFlags),
+        Uint8Array.of(METHOD_TAG_CODE),
+        Uint8Array.of(codeOffset & 0xff, (codeOffset >>> 8) & 0xff,
+            (codeOffset >>> 16) & 0xff, (codeOffset >>> 24) & 0xff),
+        Uint8Array.of(0),
+    ]);
+}
+
 export class PandaPatchFileEntities extends PandaPatchFileBase {
     /** Internal: a fresh patch session used to read the compiled hook abc. */
     protected static createForImport(data: Uint8Array): PandaPatchFileEntities {
@@ -344,6 +371,73 @@ export class PandaPatchFileEntities extends PandaPatchFileBase {
         const methodId = this.appendMethodIndex(clazz.indexHeader, methodOffset);
 
         return { className, methodName: options.name, methodOffset, methodId, codeOffset };
+    }
+
+    /**
+     * 批量追加全新方法实体：所有方法先追加到类副本，最后只重定位一次类实体，
+     * 这样所有方法 id 都指向最终类副本里的方法（多次 addMethod 会让先追加的
+     * 方法留在已被替换的旧类副本里，运行时解析不到）。
+     */
+    addRawMethods(className: string, methods: Array<{
+        name: string;
+        code: MethodCodeInput;
+        accessFlags?: number;
+        protoIdx?: number;
+    }>): AddMethodResult[] {
+        const clazz = this.requireClass(className);
+        const state = this.getClassOverride(clazz);
+        const lastIndexHeader = this.pf.indexHeaders[this.pf.indexHeaders.length - 1];
+        if (clazz.indexHeader !== lastIndexHeader) {
+            throw new PandaPatchError("addRawMethods is not supported for files with multiple index sections (class is not in the last one)");
+        }
+        const classIndex = clazz.indexHeader.pandaClasses.indexOf(clazz);
+        if (classIndex < 0) {
+            throw new PandaPatchError(`class '${className}' is not registered in its region class table`);
+        }
+
+        const results: AddMethodResult[] = [];
+        for (const options of methods) {
+            if (state.methodRelativeOffsets.has(options.name)) {
+                throw new PandaPatchError(`method '${className}::${options.name}' already exists`);
+            }
+            const nameOffset = this.append(encodeStringEntity(options.name));
+            const codeOffset = this.append(encodeMethodCode(options.code));
+            const entry = encodeRawMethodEntity(
+                classIndex,
+                options.protoIdx ?? 0xffff,
+                nameOffset,
+                options.accessFlags ?? 0x8,
+                codeOffset,
+            );
+            this.buildClassWithAppendedMethod(clazz, options.name, entry);
+            results.push({
+                className,
+                methodName: options.name,
+                methodOffset: 0,
+                methodId: -1,
+                codeOffset,
+            });
+        }
+
+        const newClassOffset = this.appendAndRelocateClass(clazz, state.bytes);
+        for (const result of results) {
+            const relativeOffset = state.methodRelativeOffsets.get(result.methodName);
+            if (relativeOffset === undefined) {
+                throw new PandaPatchError("internal error: appended method offset was not recorded");
+            }
+            result.methodOffset = newClassOffset + relativeOffset;
+            result.methodId = this.appendMethodIndex(clazz.indexHeader, result.methodOffset);
+        }
+        return results;
+    }
+
+    addRawMethod(className: string, options: {
+        name: string;
+        code: MethodCodeInput;
+        accessFlags?: number;
+        protoIdx?: number;
+    }): AddMethodResult {
+        return this.addRawMethods(className, [options])[0];
     }
 
     protected buildMethodEntry(

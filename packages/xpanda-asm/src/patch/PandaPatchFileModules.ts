@@ -5,7 +5,7 @@
 import { PandaClass } from "@asm-xpanda/core";
 import { concatBytes, readStringEntity, writeSleb128, writeUleb128 } from "../codec";
 import { encodeImportedField, findFieldValueOffset } from "./EntityCodec";
-import { u32Bytes } from "./PatchBinary";
+import { readU32At, u32Bytes } from "./PatchBinary";
 import { encodeModuleRecord, readModuleRecord } from "../ModuleRecord";
 import type { ModuleRecord } from "../ModuleRecord";
 import { PandaPatchError, FIELD_TAG_INT_VALUE, FIELD_TAG_VALUE } from "./PatchTypes";
@@ -60,23 +60,79 @@ export class PandaPatchFileModules extends PandaPatchFileCode {
                 break;
             }
         }
+        const indexOfRequest = requestIndex;
         if (requestIndex < 0) {
             requestIndex = record.moduleRequests.length;
             record.moduleRequests.push(this.addString(request));
         }
-        const index = record.regularImports.length;
+        const importIndex = record.regularImports.length;
+        const localNameOffset = this.addString(localName);
+        const importNameOffset = this.addString(importName);
+        const requestAdded = indexOfRequest < 0;
         record.regularImports.push({
-            localName: this.addString(localName),
-            importName: this.addString(importName),
+            localName: localNameOffset,
+            importName: importNameOffset,
             moduleRequestIdx: requestIndex,
         });
-        const newOffset = this.append(encodeModuleRecord(record));
+        // Byte-level append-only: keep the original requests/regular entries
+        // and the whole tail (namespace/local/indirect/star sections). Only
+        // counts and the new entry are inserted, so existing import indices
+        // and any unmodelled fields stay byte-identical.
+        const newOffset = this.append(this.appendModuleImportRecord(
+            state.offset, record, localNameOffset, importNameOffset, requestIndex, requestAdded));
         if (!this.patchModuleRecordField(clazz, newOffset)) {
             throw new PandaPatchError(`cannot patch 'moduleRecordIdx' of '${className}'`);
         }
         state.offset = newOffset;
         this.extendRegion(clazz.indexHeader, this.size);
-        return index;
+        return importIndex;
+    }
+
+    /** 按字节重建 module record:只插入新 request/regular import,原有 entry/tail 原样复制 */
+    protected appendModuleImportRecord(
+        recordOffset: number,
+        record: ModuleRecord,
+        localNameOffset: number,
+        importNameOffset: number,
+        requestIndex: number,
+        requestAdded: boolean,
+    ): Uint8Array {
+        const data = this.bytes;
+        const literalNum = readU32At(data, recordOffset);
+        const requestCount = readU32At(data, recordOffset + 4);
+        const requestsStart = recordOffset + 8;
+        const regularCountOffset = requestsStart + requestCount * 4;
+        const regularCount = readU32At(data, regularCountOffset);
+        const regularStart = regularCountOffset + 4;
+        const regularEnd = regularStart + regularCount * 10;
+        // tail = namespace + local exports + indirect exports + star exports
+        const namespaceCount = readU32At(data, regularEnd);
+        const namespaceStart = regularEnd + 4;
+        const namespaceEnd = namespaceStart + namespaceCount * 6;
+        const localCount = readU32At(data, namespaceEnd);
+        const localStart = namespaceEnd + 4;
+        const localEnd = localStart + localCount * 8;
+        const indirectCount = readU32At(data, localEnd);
+        const indirectStart = localEnd + 4;
+        const indirectEnd = indirectStart + indirectCount * 10;
+        const starCount = readU32At(data, indirectEnd);
+        const starStart = indirectEnd + 4;
+        const recordEnd = starStart + starCount * 2;
+        const parts: Uint8Array[] = [
+            u32Bytes(literalNum + 3 + (requestAdded ? 1 : 0)),
+            u32Bytes(requestCount + (requestAdded ? 1 : 0)),
+            data.subarray(requestsStart, regularCountOffset),
+        ];
+        if (requestAdded) {
+            const newRequest = record.moduleRequests[record.moduleRequests.length - 1];
+            parts.push(u32Bytes(newRequest));
+        }
+        parts.push(u32Bytes(regularCount + 1));
+        parts.push(data.subarray(regularStart, regularEnd));
+        parts.push(u32Bytes(localNameOffset), u32Bytes(importNameOffset));
+        parts.push(Uint8Array.of(requestIndex & 0xff, (requestIndex >>> 8) & 0xff));
+        parts.push(data.subarray(regularEnd, recordEnd));
+        return concatBytes(parts);
     }
 
     /** 把 class 的 moduleRecordIdx 字段值改成新的 module record 偏移 */
