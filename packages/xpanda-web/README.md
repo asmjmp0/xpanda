@@ -31,7 +31,7 @@ app package and decompile it **entirely in the browser** (pure frontend, nothing
 - The code pane shows how long the selected class took to decompile (first run, per output mode)
 - Output mode toggle: **Optimized** (full simplify pipeline) or **Raw AST** output
 - Shiki-powered syntax highlighting (VS Code Dark+ theme) with line numbers
-- Topbar shows the `xpanda-core` / `xpanda-web` versions (read from their `package.json`) and links to the GitHub repository
+- Topbar shows the `@asm-xpanda/core` / `@asm-xpanda/web` versions (read from their `package.json`) and links to the GitHub repository
 
 ## Disclaimer / 申明
 
@@ -53,8 +53,8 @@ yarn install         # from the repo root (yarn workspaces)
 yarn web             # vite dev server → http://localhost:5173
 
 # production build / preview
-yarn workspace xpanda-web build
-yarn workspace xpanda-web preview
+yarn workspace @asm-xpanda/web build
+yarn workspace @asm-xpanda/web preview
 ```
 
 ## Structure
@@ -68,7 +68,7 @@ yarn workspace xpanda-web preview
 | `src/components/` | `Topbar` / `BulkBar` / `Sidebar` / `CodePane` |
 | `src/App.tsx` | state wiring: drag & drop, selection, bulk progress |
 
-The decompiler itself lives in `xpanda-core`, whose single entry (`src/index.ts`) is
+The decompiler itself lives in `@asm-xpanda/core`, whose single entry (`src/index.ts`) is
 browser-safe by design (no Node built-ins, no disk IO), so the same code powers the CLI and this UI.
 
 > `index.html` defines a minimal `window.process = { env: {} }` shim: in dev, some

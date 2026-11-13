@@ -1,6 +1,9 @@
 {
-  "name": "xpanda-core",
-  "version": "3.1.1",
+  "name": "@asm-xpanda/core",
+  "version": "3.2.0",
+  "publishConfig": {
+    "access": "public"
+  },
   "description": "xpanda core - HarmonyOS .abc (Panda bytecode) parser, disassembler and decompiler library, pure TypeScript",
   "main": "./src/index.ts",
   "exports": {

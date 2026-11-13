@@ -9,7 +9,7 @@ import {
     HapFile,
     PandaDecompiler,
     PandaFile,
-} from "xpanda-core";
+} from "@asm-xpanda/core";
 import { saveClassFile } from "../../io";
 import { decompileClassesParallel, resolveJobs } from "../../parallel/ParallelDecompiler";
 import { DecompileProgress } from "../../progress";

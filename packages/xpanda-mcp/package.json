@@ -1,7 +1,13 @@
 {
-  "name": "xpanda-mcp",
-  "version": "2.1.1",
+  "name": "@asm-xpanda/mcp",
+  "version": "2.2.0",
+  "publishConfig": {
+    "access": "public"
+  },
   "description": "xpanda MCP Server - lets AI clients analyze HarmonyOS .abc / .hap files via Model Context Protocol",
+  "bin": {
+    "xpanda-mcp": "./bin/xpanda-mcp.js"
+  },
   "main": "./src/server.ts",
   "exports": {
     ".": "./src/server.ts"
@@ -13,7 +19,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",
-    "xpanda-core": "*",
+    "@asm-xpanda/core": "*",
     "zod": "^4.6.7"
   },
   "devDependencies": {

@@ -6,7 +6,7 @@
  */
 import * as fs from "fs";
 import * as path from "path";
-import { PandaClass } from "xpanda-core";
+import { PandaClass } from "@asm-xpanda/core";
 
 /** 按类名落盘(原 PandaDecompiler.saveFile);ext 指定输出扩展名(decompile 为 .js,dump-asm 为 .asm) */
 export function saveClassFile(outDir: string, pandaClass: PandaClass, content: string, ext = ".js"): void {

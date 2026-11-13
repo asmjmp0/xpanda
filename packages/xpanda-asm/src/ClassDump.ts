@@ -16,7 +16,7 @@ import {
     PandaClass,
     PandaFile,
     PandaMethod,
-} from "xpanda-core";
+} from "@asm-xpanda/core";
 import { decodeInstructions, encodeInstructionWithOpcode } from "./Assembler";
 import { concatBytes, encodeStringEntity, readStringEntity, writeSleb128, writeUleb128 } from "./codec";
 import { encodeMethodCode, type CatchBlockInput, type TryBlockInput } from "./MethodCode";

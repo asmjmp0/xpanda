@@ -30,8 +30,8 @@ export function Topbar({ onOpen, mode, onModeChange, disabled }: TopbarProps) {
             </span>
             <span className="logo-sub">HarmonyOS .abc / .hap decompiler — runs fully in your browser, nothing is uploaded</span>
             <div className="topbar-meta">
-                <span className="ver" title="xpanda-core version">xpanda-core v{CORE_VERSION}</span>
-                <span className="ver" title="xpanda-web version">xpanda-web v{WEB_VERSION}</span>
+                <span className="ver" title="@asm-xpanda/core version">@asm-xpanda/core v{CORE_VERSION}</span>
+                <span className="ver" title="@asm-xpanda/web version">@asm-xpanda/web v{WEB_VERSION}</span>
                 <a
                     className="repo-link"
                     href={REPO_URL}

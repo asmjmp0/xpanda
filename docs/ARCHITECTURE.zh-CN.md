@@ -54,7 +54,7 @@ JavaScript 源码(落盘 / stdout / 编程 API)
 | `resources/isa.yaml` | ArkCompiler 指令集描述(v24.0.0.0) |
 | `test/` | 集成测试、样本(`*.abc`、`*.hap`)与快照(`test/expected/*.js`) |
 
-依赖方向:`cli / PandaDecompiler → decompiler → disasm → file → codec`;`decompiler → ast`;`SimplifyExport → simplify`;`parallel → PandaDecompiler / file`;`mcp / hap → res`;`web → PandaDecompiler / hap`。字节码汇编器位于 `packages/xpanda-asm/src/Assembler.ts`;`xpanda-asm` 依赖 core 生成的 opcode 表,反向依赖不存在。
+依赖方向:`cli / PandaDecompiler → decompiler → disasm → file → codec`;`decompiler → ast`;`SimplifyExport → simplify`;`parallel → PandaDecompiler / file`;`mcp / hap → res`;`web → PandaDecompiler / hap`。字节码汇编器位于 `packages/xpanda-asm/src/Assembler.ts`;`@asm-xpanda/asm` 依赖 core 生成的 opcode 表,反向依赖不存在。
 
 ## 3. 文件格式层 —— `src/file/`
 
@@ -317,7 +317,7 @@ yarn tsx packages/xpanda-cli/src/cli.ts unpack-index <resources.index> [-o outDi
 
 导出 `PandaFile`、`PandaClass`、`PandaMethod`、`PandaDecompiler`、`PandaLexical`、`PandaDisAssembler`、`PandaIRCFG` / `PandaIRBasicBlock`、opcode 表、`NodeFactory` / `NodeUtils`、`SimplifyExport`、`ResourceIndexFile` / `ResourceItem` / `ResourceUtils`、`HapFile` / `ZipFile` 以及异常类型。
 
-唯一入口 `src/index.ts` 无 Node 依赖、浏览器安全——浏览器 bundle 解析同一个 `"xpanda-core"` 导入无需任何导出条件。核心(解析 / 反汇编 / 反编译 / 优化器 / hap+zip / res)不做磁盘 IO、不启 worker:ZIP deflate 使用纯 JS 的 `fflate`,文本解码使用标准 `TextDecoder`。Node 专属能力由使用方包实现——文件 IO 在 `xpanda-cli` / `xpanda-mcp`(各自的 `src/io.ts`),并行 simplify worker 池在 `xpanda-cli`(`src/parallel/`)。
+唯一入口 `src/index.ts` 无 Node 依赖、浏览器安全——浏览器 bundle 解析同一个 `"@asm-xpanda/core"` 导入无需任何导出条件。核心(解析 / 反汇编 / 反编译 / 优化器 / hap+zip / res)不做磁盘 IO、不启 worker:ZIP deflate 使用纯 JS 的 `fflate`,文本解码使用标准 `TextDecoder`。Node 专属能力由使用方包实现——文件 IO 在 `@asm-xpanda/cli` / `@asm-xpanda/mcp`(各自的 `src/io.ts`),并行 simplify worker 池在 `@asm-xpanda/cli`(`src/parallel/`)。
 
 约 5.5 MB 样本实测:解析 ≈ 36 ms,串行 simplify ≈ 81 s,`-j 4` ≈ 49 s(≈ 1.66×)。瓶颈是单类 simplify 的内存/GC 带宽,而非解析或反汇编。
 
@@ -333,7 +333,7 @@ yarn tsx packages/xpanda-cli/src/cli.ts unpack-index <resources.index> [-o outDi
 
 ## 13. Web UI —— `packages/xpanda-web/`
 
-React + Vite 单页应用,在**浏览器内**完成全部反编译(纯前端,不上传任何数据)。它与其他使用方一样直接 import 浏览器安全的 `xpanda-core` 单入口;Vite 把 workspace 链接的 TS 源码直接纳入构建(`main` 指向 `src/index.ts`,无需预编译,见 `vite.config.ts`)。设计要点:
+React + Vite 单页应用,在**浏览器内**完成全部反编译(纯前端,不上传任何数据)。它与其他使用方一样直接 import 浏览器安全的 `@asm-xpanda/core` 单入口;Vite 把 workspace 链接的 TS 源码直接纳入构建(`main` 指向 `src/index.ts`,无需预编译,见 `vite.config.ts`)。设计要点:
 
 - **加载**(`src/decompiler.ts` 的 `loadImage`):选择的文件读为 `Uint8Array`;ZIP 容器走 `HapFile` —— 每个 `.abc` 条目成为带独立 `PandaFile` 的 `AbcSource`,并解析 `module.json` 摘要;裸文件按单个 `.abc` 解析。解析失败(校验和 / 魔数)按文件逐个报错。
 - **反编译服务**:`DecompileService` 以 `sourceId::类名|模式` 缓存(`simplify` 与 `raw` 共用一份缓存);单类与全量反编译走同一实例。反编译在主线程同步执行 —— 类与类之间用 `yieldToUI()` 让出主线程刷新界面(这是 CLI `-j` worker 池在 UI 侧的对应物;core 本身保持无 worker)。
@@ -343,8 +343,8 @@ React + Vite 单页应用,在**浏览器内**完成全部反编译(纯前端,不
 
 ```bash
 yarn web                               # vite dev server → http://localhost:5173
-yarn workspace xpanda-web build        # 生产构建
-yarn workspace xpanda-web preview      # 预览构建产物
+yarn workspace @asm-xpanda/web build        # 生产构建
+yarn workspace @asm-xpanda/web preview      # 预览构建产物
 ```
 
 ## 14. 验证与测试

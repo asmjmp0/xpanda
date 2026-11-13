@@ -1,6 +1,6 @@
 // 先注入 process shim,再加载 core / @babel(依赖顺序不能改)
 import "./process-shim";
-import { PandaDecompiler } from "xpanda-core";
+import { PandaDecompiler } from "@asm-xpanda/core";
 import type { SimplifyResultMessage, SimplifyTaskMessage } from "./messages";
 
 /**

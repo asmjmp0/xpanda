@@ -7,8 +7,8 @@
  *   - 操作数顺序与 isa.yaml 的 sig 一致(v1/v2/imm/string_id...)。
  * @Author: jmp0
  */
-import { FORMAT_PARAM_SIZE, LAST_INSTRUCTION_CODE, OPCODE_BY_CODE, OPCODES, OPCODE_FLAG } from "xpanda-core";
-import type { OpcodeInfo, OpcodeOperand } from "xpanda-core";
+import { FORMAT_PARAM_SIZE, LAST_INSTRUCTION_CODE, OPCODE_BY_CODE, OPCODES, OPCODE_FLAG } from "@asm-xpanda/core";
+import type { OpcodeInfo, OpcodeOperand } from "@asm-xpanda/core";
 
 export type OperandInput = Record<string, number> | number[] | number;
 

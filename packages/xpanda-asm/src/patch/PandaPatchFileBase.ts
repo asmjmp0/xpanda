@@ -2,7 +2,7 @@
  * PandaPatchFile base: append-only buffer, index tables and entity lookups.
  * @Author: jmp0
  */
-import { Adler32, PandaClass, PandaFile, PandaMethod } from "xpanda-core";
+import { Adler32, PandaClass, PandaFile, PandaMethod } from "@asm-xpanda/core";
 import { dumpClasses, type DumpClassesResult } from "../ClassDump";
 import { encodeStringEntity, readUleb128 } from "../codec";
 import { writeU32 } from "./PatchBinary";
@@ -24,14 +24,16 @@ export class PandaPatchFileBase {
     /** 可增长的工作缓冲:初始为原文件副本,追加实体写在其后 */
     protected bytes: Uint8Array;
     protected size: number;
+    // Explicit Map annotations keep declaration emit nameable (TS2742) when the
+    // standalone dist package references PandaClass's internal IndexHeader type.
     /** 每个 IndexHeader 的区域终点(追加实体后需要扩展,否则实体落在区域外解析不到) */
-    protected readonly indexHeaderEnds = new Map<PandaClass["indexHeader"], number>();
+    protected readonly indexHeaderEnds: Map<PandaClass["indexHeader"], number> = new Map();
     /** 已被重建过的类实体(addMethod 之后,后续修改必须基于最新副本) */
     protected readonly classOverrides = new Map<PandaClass, ClassOverride>();
     /** 方法代码的内存覆盖(多次编辑时基于最新版本,而不是载入时快照) */
     protected readonly methodCodeOverrides = new Map<PandaMethod, MethodCode>();
     /** 每个 region 的类索引表当前状态(追加新类后 size/off 已过时) */
-    protected readonly classTableState = new Map<PandaClass["indexHeader"], { offset: number; size: number }>();
+    protected readonly classTableState: Map<PandaClass["indexHeader"], { offset: number; size: number }> = new Map();
     /** 文件头全局类索引表当前状态 */
     protected headerClassTableState: { offset: number; size: number } | null = null;
     /** prepareMethodHead 预约的 hook 名 → 目标方法列表(同一个 hook 可挂多个函数) */
@@ -46,9 +48,9 @@ export class PandaPatchFileBase {
     /** 硬加 module record 时,moduleRecordIdx 字段值在新类实体里的绝对偏移 */
     protected readonly moduleRecordValueOffsets = new Map<PandaClass, number>();
     /** hook 协议字段名(arg / res)在 region 里的 string id 缓存 */
-    protected readonly hookProtocolStringIdsByRegion = new Map<PandaClass["indexHeader"], { arg: number; res: number }>();
+    protected readonly hookProtocolStringIdsByRegion: Map<PandaClass["indexHeader"], { arg: number; res: number }> = new Map();
     /** dynamic setter 的全局属性名在 region 里的 string id */
-    protected readonly patchSetterStringIdsByRegion = new Map<PandaClass["indexHeader"], Map<string, number>>();
+    protected readonly patchSetterStringIdsByRegion: Map<PandaClass["indexHeader"], Map<string, number>> = new Map();
     /** hook 名 → 已分配的 GlobalPatch 槽 */
     protected readonly patchSlotsByHook = new Map<string, number>();
     /** 文件里和本次会话里已经占用的槽,避免复用 */
@@ -56,13 +58,13 @@ export class PandaPatchFileBase {
     protected patchSlotCursor = PATCH_SLOT_BASE;
     protected patchSlotsScanned = false;
     /** 每个 IndexHeader 的实体索引表当前状态(多次扩展后 parsed 对象里的 size 已过时) */
-    protected readonly entityTableState = new Map<PandaClass["indexHeader"], { offset: number; size: number }>();
+    protected readonly entityTableState: Map<PandaClass["indexHeader"], { offset: number; size: number }> = new Map();
     /**
      * 本次会话待写入索引表的实体偏移(按 id 顺序)。
      * 追加单个实体时只登记、不复制整张表;toBytes() 时每个 region 一次性展开,
      * 避免 N 次追加产生 O(N × tableSize) 的文件膨胀(500 个模块约 100MB)。
      */
-    protected readonly pendingEntityEntries = new Map<PandaClass["indexHeader"], number[]>();
+    protected readonly pendingEntityEntries: Map<PandaClass["indexHeader"], number[]> = new Map();
 
     protected constructor(data: Uint8Array) {
         this.reset(data);

@@ -17,7 +17,7 @@
  * queue the event and dispatch it on the next event-loop turn.
  * @Author: jmp0
  */
-import type { PandaClass } from "xpanda-core";
+import type { PandaClass } from "@asm-xpanda/core";
 import { assembleInstruction, decodeInstructions } from "../Assembler";
 import { concatBytes } from "../codec";
 import { maxIcSlot } from "./PatchBinary";

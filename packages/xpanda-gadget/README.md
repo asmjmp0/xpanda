@@ -27,7 +27,7 @@ No external process or root is required; re-sign the package before installing.
 
 ```bash
 # 1) Build the gadget .so (uses the LLVM cross toolchain from ~/command-line-tools)
-yarn workspace xpanda-gadget build:so        # → assets/arm64-v8a/libxpanda_gadget.so
+yarn workspace @asm-xpanda/gadget build:so        # → assets/arm64-v8a/libxpanda_gadget.so
 
 # 2) Inject
 yarn xpanda gadget <file.abc|file.hap> -o outDir
@@ -148,7 +148,7 @@ ArkTS.patch.patchMethod(m, "EntryAbility", "onDestroy", function () {
   instead of stacking; `this.__original` always calls the real original;
 - patches are reverted when the VM is reset/destroyed (`.reset` /
   `gadget.stop`). Startup methods such as `onCreate` must be patched before they
-  run; use `xpanda-asm` for guaranteed startup hooks.
+  run; use `@asm-xpanda/asm` for guaranteed startup hooks.
 
 Pass `null` as `className` to patch a module-level function or a system API:
 
@@ -186,7 +186,7 @@ ArkTS.patch.patchMethod(http, null, "createHttp", function () {
 
 ### Module-load events
 
-Injection instruments every module record's `func_main_0` tail (`xpanda-asm`
+Injection instruments every module record's `func_main_0` tail (`@asm-xpanda/asm`
 `patchModuleLoadCallbacks`) and calls a bootstrap listener with the module record name.
 The gadget JSVM exposes the events:
 
@@ -214,7 +214,7 @@ off(); // unsubscribe
 messages) / `info` / `ping` / `probe` (JSVM health check). The gadget also pushes
 `{"type":"console","level":"log","text":"..."}` for every `console.*` call made inside the JSVM
 (`level` is one of `log` / `info` / `debug` / `warn` / `error` / `trace`); the same lines go to
-hilog under the `xpanda-gadget` tag.
+hilog under the `@asm-xpanda/gadget` tag.
 
 ## Why the gadget needs its own JSVM (instead of the host ArkTS runtime)
 
@@ -326,7 +326,7 @@ helpers, including call/conversion rules and limitations.
 ## Tests
 
 ```bash
-yarn workspace xpanda-gadget test
+yarn workspace @asm-xpanda/gadget test
 ```
 
 Coverage: structural checks after abc injection (entry `func_main_0` calls init, every module

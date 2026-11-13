@@ -8,8 +8,8 @@
  * the HAP libs directory on first import.
  * @Author: jmp0
  */
-import { PandaPatchFile } from "xpanda-asm";
-import { PandaFile } from "xpanda-core";
+import { PandaPatchFile } from "@asm-xpanda/asm";
+import { PandaFile } from "@asm-xpanda/core";
 import { buildBootstrapSource, normalizedSoRequest } from "./bootstrap";
 import { DEFAULT_GADGET_PORT, DEFAULT_INIT_NAME, GADGET_SO_NAME, MODULE_LOAD_LISTENER } from "./constants";
 import { findEntryClassCandidates } from "./entry-class";

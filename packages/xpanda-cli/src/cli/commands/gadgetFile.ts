@@ -9,7 +9,7 @@
  */
 import * as fs from "fs";
 import * as path from "path";
-import { DEFAULT_GADGET_PORT } from "xpanda-gadget";
+import { DEFAULT_GADGET_PORT } from "@asm-xpanda/gadget";
 import { takeValue } from "../args";
 import {
     COLOR,

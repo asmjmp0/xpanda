@@ -34,20 +34,45 @@ The project is split into six yarn-workspace packages under `packages/`:
 
 | Package | Purpose |
 |---|---|
-| `xpanda-core` | `.abc` / `.hap` parsing, disassembly, decompilation and the optimizer — the library everything else builds on |
-| `xpanda-cli` | command line interface (`decompile` / `unpack-index` / `dump-asm` / `dump` / `gadget`) |
-| `xpanda-mcp` | MCP server (stdio) for AI client integration |
-| `xpanda-web` | browser UI (React + Vite, pure frontend) |
-| `xpanda-asm` | bytecode assembler plus load, modify (replace method code / add methods, strings), dump classes and re-emit `.abc` files |
-| `xpanda-gadget` | Frida-Gadget-style init injector: bytecode bootstrap + embedded NAPI gadget `.so` (socket messaging + JSVM execution) |
+| `@asm-xpanda/core` | `.abc` / `.hap` parsing, disassembly, decompilation and the optimizer — the library everything else builds on |
+| `@asm-xpanda/cli` | command line interface (`decompile` / `unpack-index` / `dump-asm` / `dump` / `gadget`) |
+| `@asm-xpanda/mcp` | MCP server (stdio) for AI client integration |
+| `@asm-xpanda/web` | browser UI (React + Vite, pure frontend) |
+| `@asm-xpanda/asm` | bytecode assembler plus load, modify (replace method code / add methods, strings), dump classes and re-emit `.abc` files |
+| `@asm-xpanda/gadget` | Frida-Gadget-style init injector: bytecode bootstrap + embedded NAPI gadget `.so` (socket messaging + JSVM execution) |
 
 ## Install and use
 
 ```bash
 yarn install
+
+# Compile the libraries, symlink @asm-xpanda/* into the global prefix, and put
+# `xpanda` / `xpanda-mcp` on PATH. Points at this checkout, does not publish,
+# and will not replace a real (non-symlink) install.
+yarn install:global
 ```
 
-CLI (run from the repository root):
+Remove those links with `yarn install:global -- --remove`.
+
+The library packages are linked from their built `dist` directories (JavaScript +
+`.d.ts`), so another project on this machine can use them from plain Node:
+
+```bash
+cd /path/to/other-project
+npm link @asm-xpanda/core @asm-xpanda/asm @asm-xpanda/gadget
+# or: yarn link @asm-xpanda/core @asm-xpanda/asm @asm-xpanda/gadget
+```
+
+```js
+const { PandaFile, PandaDecompiler } = require("@asm-xpanda/core");
+```
+
+`yarn install:global` builds the libraries before linking. After changing this
+checkout's sources, run `yarn build:local`; the global links point at `dist`,
+so no re-linking is needed. `@asm-xpanda/cli` and `@asm-xpanda/mcp` stay source-linked
+because their bins run through tsx.
+
+CLI (run from the repository root, or as `xpanda` after the global install):
 
 ```bash
 yarn tsx packages/xpanda-cli/src/cli.ts decompile <file.abc|file.hap> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N] [--timeout SEC]
@@ -120,7 +145,7 @@ yarn tsx packages/xpanda-cli/src/cli.ts dump-asm app.abc --stdout
 
 `dump` copies one or more classes (plus the classes/methods they reference) out of a
 `.abc`/`.hap` and writes a new `.abc` — useful for isolating a class
-before inspecting or patching it with `xpanda-asm`. Class names accept `Lpkg/Name;`,
+before inspecting or patching it with `@asm-xpanda/asm`. Class names accept `Lpkg/Name;`,
 `pkg/Name`, or a unique name suffix.
 
 ```bash
@@ -148,7 +173,7 @@ yarn tsx packages/xpanda-cli/src/cli.ts decompile app.abc -o out -j 4 --quiet
 
 ```ts
 import * as fs from "fs";
-import { PandaFile, PandaDecompiler } from "xpanda-core";
+import { PandaFile, PandaDecompiler } from "@asm-xpanda/core";
 
 const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync("app.abc")));
 const decompiler = new PandaDecompiler();
@@ -158,6 +183,9 @@ for (const cls of pandaFile.getAllClasses()) {
     // const js = decompiler.decompileClassRaw(cls); // without simplify
 }
 ```
+
+To import it from another project on this machine, link the built package first
+(see [Install and use](#install-and-use)).
 
 ## MCP Server
 

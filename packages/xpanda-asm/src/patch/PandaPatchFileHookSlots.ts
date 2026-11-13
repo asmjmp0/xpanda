@@ -2,7 +2,7 @@
  * Hook slots and method-head prologues.
  * @Author: jmp0
  */
-import { PandaClass } from "xpanda-core";
+import { PandaClass } from "@asm-xpanda/core";
 import { assemble, assembleInstruction, decodeInstructions } from "../Assembler";
 import { concatBytes } from "../codec";
 import { maxIcSlot } from "./PatchBinary";

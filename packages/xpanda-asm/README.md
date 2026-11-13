@@ -7,7 +7,7 @@ Intended for static AOP, bytecode instrumentation, experimental toolchains, and 
 
 ```ts
 import { readFileSync, writeFileSync } from "fs";
-import { PandaPatchFile, assemble } from "xpanda-asm";
+import { PandaPatchFile, assemble } from "@asm-xpanda/asm";
 
 const patchFile = PandaPatchFile.load(new Uint8Array(readFileSync("app.abc")));
 
@@ -533,11 +533,11 @@ Limitations:
 
 ## Assembler (xpanda-asm)
 
-`src/Assembler.ts` in this library is driven by the operand layouts generated from `xpanda-core`'s
+`src/Assembler.ts` in this library is driven by the operand layouts generated from `@asm-xpanda/core`'s
 `gen-opcodes.ts`:
 
 ```ts
-import { assemble, assembleInstruction, decodeInstructions } from "xpanda-asm";
+import { assemble, assembleInstruction, decodeInstructions } from "@asm-xpanda/asm";
 
 assemble("nop");                                  // -> Uint8Array [0xd5]
 assemble("ldai 1");                               // immediate
@@ -556,5 +556,5 @@ decode → reassemble.
 ## Tests
 
 ```bash
-yarn workspace xpanda-asm test
+yarn workspace @asm-xpanda/asm test
 ```

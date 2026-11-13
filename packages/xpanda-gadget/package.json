@@ -1,6 +1,9 @@
 {
-  "name": "xpanda-gadget",
-  "version": "1.7.0",
+  "name": "@asm-xpanda/gadget",
+  "version": "1.8.0",
+  "publishConfig": {
+    "access": "public"
+  },
   "description": "xpanda-gadget - Frida-Gadget-style init injector for HarmonyOS .abc/.hap: bytecode init inject (xpanda-asm), embedded NAPI gadget .so, TCP socket with message + JS execution",
   "main": "./src/index.ts",
   "exports": {
@@ -13,8 +16,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "xpanda-asm": "*",
-    "xpanda-core": "*"
+    "@asm-xpanda/asm": "*",
+    "@asm-xpanda/core": "*"
   },
   "devDependencies": {
     "@types/node": "^20.19.43",

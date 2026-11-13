@@ -4,7 +4,7 @@
  */
 import * as fs from "fs";
 import * as path from "path";
-import { HapFile, PandaClass, PandaFile } from "xpanda-core";
+import { HapFile, PandaClass, PandaFile } from "@asm-xpanda/core";
 import { saveClassFile } from "../../io";
 import { takeValue } from "../args";
 import { fail } from "../help";

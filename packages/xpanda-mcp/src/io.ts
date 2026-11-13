@@ -5,7 +5,7 @@
  */
 import * as fs from "fs";
 import * as path from "path";
-import { PandaClass, PandaFile } from "xpanda-core";
+import { PandaClass, PandaFile } from "@asm-xpanda/core";
 
 /** 从磁盘读取 .abc 文件并解析 */
 export function loadPandaFile(filePath: string): PandaFile {

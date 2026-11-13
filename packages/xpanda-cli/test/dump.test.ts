@@ -7,7 +7,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { execFileSync } from "child_process";
-import { PandaFile } from "xpanda-core";
+import { PandaFile } from "@asm-xpanda/core";
 
 function assert(condition: unknown, message: string): asserts condition {
     if (!condition) throw new Error("ASSERT FAILED: " + message);

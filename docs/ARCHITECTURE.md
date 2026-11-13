@@ -54,7 +54,7 @@ The main thread always performs parsing, disassembly, lexical analysis, and AST 
 | `resources/isa.yaml` | ArkCompiler instruction set description (v24.0.0.0) |
 | `test/` | Integration tests, samples (`*.abc`, `*.hap`), snapshots (`test/expected/*.js`) |
 
-Dependency direction: `cli / PandaDecompiler → decompiler → disasm → file → codec`; `decompiler → ast`; `SimplifyExport → simplify`; `parallel → PandaDecompiler / file`; `mcp / hap → res`; `web → PandaDecompiler / hap`. The bytecode assembler lives in `packages/xpanda-asm/src/Assembler.ts`; `xpanda-asm` depends on core for the generated opcode table, never the other way around.
+Dependency direction: `cli / PandaDecompiler → decompiler → disasm → file → codec`; `decompiler → ast`; `SimplifyExport → simplify`; `parallel → PandaDecompiler / file`; `mcp / hap → res`; `web → PandaDecompiler / hap`. The bytecode assembler lives in `packages/xpanda-asm/src/Assembler.ts`; `@asm-xpanda/asm` depends on core for the generated opcode table, never the other way around.
 
 ## 3. File Format Layer — `src/file/`
 
@@ -336,7 +336,7 @@ yarn tsx packages/xpanda-cli/src/cli.ts unpack-index <resources.index> [-o outDi
 
 Exports `PandaFile`, `PandaClass`, `PandaMethod`, `PandaDecompiler`, `PandaLexical`, `PandaDisAssembler`, `PandaIRCFG` / `PandaIRBasicBlock`, the opcode tables, `NodeFactory` / `NodeUtils`, `SimplifyExport`, `ResourceIndexFile` / `ResourceItem` / `ResourceUtils`, `HapFile` / `ZipFile`, and the exception types.
 
-The single entry `src/index.ts` is Node-free and browser-safe — browser bundles resolve the same `"xpanda-core"` import without any export conditions. The core (parser / disassembler / decompiler / optimizer / hap+zip / res) does no disk IO and spawns no workers: ZIP deflate uses pure-JS `fflate`, text decoding uses the standard `TextDecoder`. Node-only capabilities live in the consumer packages — file IO in `xpanda-cli` / `xpanda-mcp` (`src/io.ts` each), and the parallel simplify worker pool in `xpanda-cli` (`src/parallel/`).
+The single entry `src/index.ts` is Node-free and browser-safe — browser bundles resolve the same `"@asm-xpanda/core"` import without any export conditions. The core (parser / disassembler / decompiler / optimizer / hap+zip / res) does no disk IO and spawns no workers: ZIP deflate uses pure-JS `fflate`, text decoding uses the standard `TextDecoder`. Node-only capabilities live in the consumer packages — file IO in `@asm-xpanda/cli` / `@asm-xpanda/mcp` (`src/io.ts` each), and the parallel simplify worker pool in `@asm-xpanda/cli` (`src/parallel/`).
 
 Measured on a ~5.5 MB sample: parsing ≈ 36 ms, serial simplify ≈ 81 s, `-j 4` ≈ 49 s (≈ 1.66×). The bottleneck is per-class simplify memory/GC bandwidth, not parsing or disassembly.
 
@@ -352,7 +352,7 @@ Exposes the decompiler to AI agents over stdio (see [MCP.md](./MCP.md) for setup
 
 ## 13. Web UI — `packages/xpanda-web/`
 
-A React + Vite single-page app that runs the decompiler **entirely in the browser** (pure frontend — nothing is uploaded). It imports the same browser-safe `xpanda-core` single entry as Node consumers; Vite bundles the workspace-linked TS source directly (`main` points at `src/index.ts`, no precompile step — see `vite.config.ts`). Design points:
+A React + Vite single-page app that runs the decompiler **entirely in the browser** (pure frontend — nothing is uploaded). It imports the same browser-safe `@asm-xpanda/core` single entry as Node consumers; Vite bundles the workspace-linked TS source directly (`main` points at `src/index.ts`, no precompile step — see `vite.config.ts`). Design points:
 
 - **Loading** (`src/decompiler.ts`, `loadImage`): a picked/dropped file is read as `Uint8Array`; ZIP containers go through `HapFile` — every `.abc` entry becomes an `AbcSource` with its own `PandaFile`, plus a `module.json` summary — bare files are parsed as one `.abc`. Parse failures (checksum / magic) surface as per-file errors.
 - **Decompile service**: `DecompileService` caches by `sourceId::className|mode` (`simplify` and `raw` share one cache); single-class and bulk decompilation go through the same instance. Decompilation runs synchronously on the main thread — `yieldToUI()` yields between classes so React can repaint (this is the UI counterpart of the CLI's `-j` pool; the core stays worker-free).
@@ -362,8 +362,8 @@ A React + Vite single-page app that runs the decompiler **entirely in the browse
 
 ```bash
 yarn web                               # vite dev server → http://localhost:5173
-yarn workspace xpanda-web build        # production build
-yarn workspace xpanda-web preview      # serve the build
+yarn workspace @asm-xpanda/web build        # production build
+yarn workspace @asm-xpanda/web preview      # serve the build
 ```
 
 ## 14. Verification & Testing

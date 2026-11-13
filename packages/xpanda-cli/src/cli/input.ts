@@ -4,7 +4,7 @@
  */
 import * as fs from "fs";
 import * as path from "path";
-import { ZipFile } from "xpanda-core";
+import { ZipFile } from "@asm-xpanda/core";
 
 /** Read the input file as bytes (path resolved against cwd). */
 export function readInputBytes(input: string): Uint8Array {

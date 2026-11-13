@@ -7,7 +7,7 @@
  */
 import * as fs from "fs";
 import * as path from "path";
-import { PandaFile, OPCODE_BY_CODE } from "xpanda-core";
+import { PandaFile, OPCODE_BY_CODE } from "@asm-xpanda/core";
 import { assemble, assembleInstruction, decodeInstructions, instructionSize } from "../src";
 
 function assert(condition: unknown, message: string): asserts condition {

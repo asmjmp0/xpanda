@@ -11,7 +11,7 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { HapFile, PandaDecompiler, PandaFile } from "xpanda-core";
+import { HapFile, PandaDecompiler, PandaFile } from "@asm-xpanda/core";
 import { GADGET_SO_NAME, injectAbcBytes, injectHapBytes, writeZip } from "../src";
 
 function assert(condition: unknown, message: string): asserts condition {

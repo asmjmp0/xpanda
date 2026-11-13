@@ -2,7 +2,7 @@
  * Module-record editing: imports, moduleRecordIdx fields and hard-added records.
  * @Author: jmp0
  */
-import { PandaClass } from "xpanda-core";
+import { PandaClass } from "@asm-xpanda/core";
 import { concatBytes, readStringEntity, writeSleb128, writeUleb128 } from "../codec";
 import { encodeImportedField, findFieldValueOffset } from "./EntityCodec";
 import { u32Bytes } from "./PatchBinary";

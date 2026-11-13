@@ -13,7 +13,7 @@ import {
     InjectHapOptions,
     injectAbcBytes,
     injectHapBytes,
-} from "xpanda-gadget";
+} from "@asm-xpanda/gadget";
 import { takeValue } from "../args";
 import { fail, printUsage } from "../help";
 import { isHapInput, readInputBytes, writeBytesEnsured } from "../input";

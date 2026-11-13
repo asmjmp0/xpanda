@@ -4,8 +4,8 @@
  */
 import * as fs from "fs";
 import * as path from "path";
-import { HapFile, PandaClass, PandaFile } from "xpanda-core";
-import { PandaPatchFile } from "xpanda-asm";
+import { HapFile, PandaClass, PandaFile } from "@asm-xpanda/core";
+import { PandaPatchFile } from "@asm-xpanda/asm";
 import { matchLongOption, takeValue } from "../args";
 import { fail } from "../help";
 import { displayPath, isHapInput, readInputBytes, writeBytesEnsured } from "../input";

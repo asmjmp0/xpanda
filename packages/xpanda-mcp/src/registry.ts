@@ -1,4 +1,4 @@
-import { Adler32, HapFile, PandaDecompiler, PandaFile, ResourceIndexFile } from "xpanda-core";
+import { Adler32, HapFile, PandaDecompiler, PandaFile, ResourceIndexFile } from "@asm-xpanda/core";
 import { loadPandaFile } from "./io";
 
 /**

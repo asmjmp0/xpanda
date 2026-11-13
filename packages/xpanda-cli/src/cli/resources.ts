@@ -2,7 +2,7 @@
  * resources.index → serializable summary (shared by `unpack-index` and hap mode).
  * @Author: jmp0
  */
-import { ResourceIndexFile } from "xpanda-core";
+import { ResourceIndexFile } from "@asm-xpanda/core";
 
 export function resourcesIndexToJson(data: Uint8Array): { indexFile: ResourceIndexFile; json: any } {
     const indexFile = new ResourceIndexFile(data);

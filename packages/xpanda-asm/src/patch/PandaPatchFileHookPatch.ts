@@ -5,7 +5,7 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { PandaClass, PandaFile } from "xpanda-core";
+import { PandaClass, PandaFile } from "@asm-xpanda/core";
 import { assembleInstruction, decodeInstructions } from "../Assembler";
 import { resolveEs2abc, resolveTargetApiVersion, runEs2abc } from "./Es2Abc";
 import { concatBytes } from "../codec";

@@ -7,8 +7,8 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { spawnSync } from "child_process";
-import { ENTRY_FUNCTION_MAIN, PandaDecompiler, PandaFile } from "xpanda-core";
-import type { PandaClass } from "xpanda-core";
+import { ENTRY_FUNCTION_MAIN, PandaDecompiler, PandaFile } from "@asm-xpanda/core";
+import type { PandaClass } from "@asm-xpanda/core";
 import { decompileClassesParallel } from "../src/parallel/ParallelDecompiler";
 
 function assert(condition: unknown, message: string): asserts condition {

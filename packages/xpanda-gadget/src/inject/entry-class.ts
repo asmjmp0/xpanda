@@ -2,7 +2,7 @@
  * Entry-class discovery for the injected bootstrap.
  * @Author: jmp0
  */
-import { PandaPatchFile } from "xpanda-asm";
+import { PandaPatchFile } from "@asm-xpanda/asm";
 
 /**
  * Classes that own a `func_main_0` can act as the patchInit entry.

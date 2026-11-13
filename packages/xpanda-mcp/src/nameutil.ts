@@ -1,4 +1,4 @@
-import type { PandaClass, PandaFile } from "xpanda-core";
+import type { PandaClass, PandaFile } from "@asm-xpanda/core";
 
 /**
  * MCP 层类名工具:L-prefixed mangled 名(Lpkg/Name;)与 demangled 名(pkg/Name)互转

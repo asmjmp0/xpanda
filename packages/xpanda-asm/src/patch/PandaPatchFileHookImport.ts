@@ -2,7 +2,7 @@
  * Moving a compiled hook class, its module record, strings and literals into the target abc.
  * @Author: jmp0
  */
-import { PandaClass, PandaFile } from "xpanda-core";
+import { PandaClass, PandaFile } from "@asm-xpanda/core";
 import {
     assemble, assembleInstruction, decodeInstructions, encodeInstructionWithOpcode,
 } from "../Assembler";

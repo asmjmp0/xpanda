@@ -10,7 +10,7 @@
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { HapFile, ZipEntry } from "xpanda-core";
+import { HapFile, ZipEntry } from "@asm-xpanda/core";
 import { GADGET_SO_NAME, injectAbcBytes } from "../inject";
 import type { InjectAbcOptions, InjectAbcResult } from "../inject";
 import { writeZip, ZipEntryInput } from "./zip-writer";
@@ -193,7 +193,7 @@ export function injectHapBytes(data: Uint8Array, options: InjectHapOptions & { p
         if (soData) {
             options.soData = soData;
         } else {
-            soSkippedReason = `gadget .so not found (build it with: yarn workspace xpanda-gadget build:so; or pass soData/soPath)`;
+            soSkippedReason = `gadget .so not found (build it with: yarn workspace @asm-xpanda/gadget build:so; or pass soData/soPath)`;
             soEntryName = null;
         }
     }

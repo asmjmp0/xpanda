@@ -10,7 +10,7 @@
  * own modules without native reflection.
  * @Author: jmp0
  */
-import { PandaFile } from "xpanda-core";
+import { PandaFile } from "@asm-xpanda/core";
 
 /** One user module record: the record name and the object names it exports. */
 export interface UserModuleInfo {

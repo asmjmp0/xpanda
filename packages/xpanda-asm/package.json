@@ -1,6 +1,9 @@
 {
-  "name": "xpanda-asm",
-  "version": "2.3.0",
+  "name": "@asm-xpanda/asm",
+  "version": "2.4.0",
+  "publishConfig": {
+    "access": "public"
+  },
   "description": "xpanda-asm - load, modify and re-emit HarmonyOS .abc (Panda bytecode) files",
   "main": "./src/index.ts",
   "exports": {
@@ -12,7 +15,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "xpanda-core": "*"
+    "@asm-xpanda/core": "*"
   },
   "devDependencies": {
     "@types/node": "^20.19.43",

@@ -8,7 +8,7 @@
  */
 import * as fs from "fs";
 import * as path from "path";
-import { ENTRY_FUNCTION_MAIN, HapFile, PandaDecompiler, PandaFile } from "xpanda-core";
+import { ENTRY_FUNCTION_MAIN, HapFile, PandaDecompiler, PandaFile } from "@asm-xpanda/core";
 import { decompileClassesParallel } from "../src/parallel/ParallelDecompiler";
 
 function firstDifference(expected: string, actual: string): string {

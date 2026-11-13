@@ -34,19 +34,41 @@
 
 | 子包 | 职责 |
 |---|---|
-| `xpanda-core` | `.abc` / `.hap` 解析、反汇编、反编译与优化器——其余子包依赖的核心库 |
-| `xpanda-cli` | 命令行(`decompile` / `unpack-index` / `dump-asm` / `dump`) |
-| `xpanda-mcp` | MCP Server(stdio,供 AI 客户端接入) |
-| `xpanda-web` | 浏览器 UI(React + Vite,纯前端) |
-| `xpanda-asm` | 加载、修改(替换方法代码 / 新增方法、字符串)、导出 class 并重新写回 `.abc` |
+| `@asm-xpanda/core` | `.abc` / `.hap` 解析、反汇编、反编译与优化器——其余子包依赖的核心库 |
+| `@asm-xpanda/cli` | 命令行(`decompile` / `unpack-index` / `dump-asm` / `dump`) |
+| `@asm-xpanda/mcp` | MCP Server(stdio,供 AI 客户端接入) |
+| `@asm-xpanda/web` | 浏览器 UI(React + Vite,纯前端) |
+| `@asm-xpanda/asm` | 加载、修改(替换方法代码 / 新增方法、字符串)、导出 class 并重新写回 `.abc` |
 
 ## 安装与使用
 
 ```bash
 yarn install
+
+# 先编译库,再把 @asm-xpanda/* 链接到全局前缀,并把 `xpanda` / `xpanda-mcp` 放到 PATH。
+# 指向当前仓库,不会发布,也不会覆盖一个非符号链接的已有安装。
+yarn install:global
 ```
 
-CLI(在仓库根目录执行):
+撤销:`yarn install:global -- --remove`。
+
+库包链接到各自构建后的 `dist`(JavaScript + `.d.ts`),所以本机的其他项目可以直接用普通 Node 引用:
+
+```bash
+cd /path/to/other-project
+npm link @asm-xpanda/core @asm-xpanda/asm @asm-xpanda/gadget
+# 或:yarn link @asm-xpanda/core @asm-xpanda/asm @asm-xpanda/gadget
+```
+
+```js
+const { PandaFile, PandaDecompiler } = require("@asm-xpanda/core");
+```
+
+`yarn install:global` 会先构建库再链接。修改本仓库源码后执行 `yarn build:local` 即可:
+全局链接指向 `dist`,不需要重新链接。`@asm-xpanda/cli` / `@asm-xpanda/mcp` 仍然链接源码,
+因为它们的 bin 通过 tsx 运行。
+
+CLI(在仓库根目录执行,或全局安装后直接用 `xpanda`):
 
 ```bash
 yarn tsx packages/xpanda-cli/src/cli.ts decompile <file.abc|file.hap> [-o outDir] [--no-simplify] [--stdout] [--quiet] [-j N] [--timeout SEC]
@@ -107,7 +129,7 @@ yarn tsx packages/xpanda-cli/src/cli.ts dump-asm app.abc --stdout
 ### 导出单个/多个 class 到新 abc
 
 `dump` 把一个或多个 class(以及它们引用到的 class/方法)从 `.abc` / `.hap` 中复制出来,
-写成新的 `.abc`,适合在丢给 `xpanda-asm` 打补丁前先隔离出目标类。类名支持
+写成新的 `.abc`,适合在丢给 `@asm-xpanda/asm` 打补丁前先隔离出目标类。类名支持
 `Lpkg/Name;`、`pkg/Name` 或唯一的名称后缀。
 
 ```bash
@@ -135,7 +157,7 @@ yarn tsx packages/xpanda-cli/src/cli.ts decompile app.abc -o out -j 4 --quiet
 
 ```ts
 import * as fs from "fs";
-import { PandaFile, PandaDecompiler } from "xpanda-core";
+import { PandaFile, PandaDecompiler } from "@asm-xpanda/core";
 
 const pandaFile = new PandaFile(new Uint8Array(fs.readFileSync("app.abc")));
 const decompiler = new PandaDecompiler();
@@ -145,6 +167,8 @@ for (const cls of pandaFile.getAllClasses()) {
     // const js = decompiler.decompileClassRaw(cls); // 不含 simplify
 }
 ```
+
+要在本机的其他项目中直接引用,先链接编译好的包(见 [安装与使用](#安装与使用))。
 
 ## MCP Server
 

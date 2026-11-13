@@ -2,8 +2,8 @@
  * Low-level byte/instruction helpers shared by the patcher.
  * @Author: jmp0
  */
-import { OPCODE_FLAG } from "xpanda-core";
-import type { OpcodeInfo } from "xpanda-core";
+import { OPCODE_FLAG } from "@asm-xpanda/core";
+import type { OpcodeInfo } from "@asm-xpanda/core";
 import {
     assembleInstruction,
     decodeInstructions,

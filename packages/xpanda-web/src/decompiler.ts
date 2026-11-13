@@ -5,8 +5,8 @@
  * 调用方通过 yieldToUI() 在类与类之间让出主线程刷新进度。
  * @Author: jmp0
  */
-import { ENTRY_FUNCTION_MAIN, HapFile, PandaDecompiler, PandaFile, ZipFile } from "xpanda-core";
-import type { PandaClass } from "xpanda-core";
+import { ENTRY_FUNCTION_MAIN, HapFile, PandaDecompiler, PandaFile, ZipFile } from "@asm-xpanda/core";
+import type { PandaClass } from "@asm-xpanda/core";
 import { DecompileCache } from "./cache";
 import { readError, sanitizeFileName, splitClassName, stripExt } from "./format";
 import { SimplifyWorker } from "./parallel/SimplifyWorker";

@@ -2,7 +2,7 @@
  * Class/method entity rebuilding, relocation and literal-array fixups.
  * @Author: jmp0
  */
-import { PandaClass, PandaMethod } from "xpanda-core";
+import { PandaClass, PandaMethod } from "@asm-xpanda/core";
 import { decodeInstructions } from "../Assembler";
 import { concatBytes, encodeStringEntity, readUleb128, writeUleb128 } from "../codec";
 import { encodeMethodCode, type MethodCodeInput } from "../MethodCode";

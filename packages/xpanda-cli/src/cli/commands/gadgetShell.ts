@@ -8,7 +8,7 @@
  * @Author: jmp0
  */
 import * as readline from "readline";
-import { DEFAULT_GADGET_PORT } from "xpanda-gadget";
+import { DEFAULT_GADGET_PORT } from "@asm-xpanda/gadget";
 import { takeValue } from "../args";
 import {
     COLOR,

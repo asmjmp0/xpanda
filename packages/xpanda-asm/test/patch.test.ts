@@ -11,7 +11,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as vm from "vm";
 import * as crypto from "crypto";
-import { PATCH_VAR_BINDING, PandaDecompiler, PandaFile } from "xpanda-core";
+import { PATCH_VAR_BINDING, PandaDecompiler, PandaFile } from "@asm-xpanda/core";
 import { PandaPatchFile, PATCH_SLOT_BASE, DEFAULT_INIT_FUNCTION, assemble, decodeInstructions, dumpClasses, patchSetterGlobalName } from "../src";
 
 function assert(condition: unknown, message: string): asserts condition {

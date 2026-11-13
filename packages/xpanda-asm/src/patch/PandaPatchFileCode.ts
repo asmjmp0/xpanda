@@ -2,8 +2,8 @@
  * Method body editing: instruction insertion and frame growth.
  * @Author: jmp0
  */
-import { OPCODE_FLAG } from "xpanda-core";
-import type { OpcodeInfo } from "xpanda-core";
+import { OPCODE_FLAG } from "@asm-xpanda/core";
+import type { OpcodeInfo } from "@asm-xpanda/core";
 import { decodeInstructions } from "../Assembler";
 import type { DecodedInstruction } from "../Assembler";
 import { encodeWithFallback, readSignedLE, sameBytes, signedFits, writeSignedLE } from "./PatchBinary";
