@@ -5,6 +5,7 @@ import { PandaDecompilerMethodHandler } from "./decompiler/MethodHandler";
 import { StructureAnalysis } from "./decompiler/StructureAnalysis";
 import { SimpleAnalysis } from "./decompiler/SimpleAnalysis";
 import { runPostProcessPasses } from "./decompiler/post-pass/PostProcessPass";
+import { declarePrivateFields } from "./decompiler/post-pass/DeclarePrivateFields";
 import { NodeFactory } from "./ast/NodeFactory";
 import { NodeUtils } from "./ast/NodeUtils";
 import { SimplifyExport } from "./simplify/SimplifyExport";
@@ -189,6 +190,16 @@ export class PandaDecompiler {
     decompileClassRaw(pandaClass: PandaClass): string {
         const program = this.decompileProgram(pandaClass);
         if (!program) return "";
+        return this.renderRawAst(program);
+    }
+
+    /**
+     * 未 simplify 的 AST → 源码。`--no-simplify` 与 simplify 超时回退共用:
+     * `#fN` 字段声明/类外字符串键改写只在 simplify 末尾补一次,不经过 simplify
+     * 的路径也要在生成前补上,否则裸 private 名不可解析。
+     */
+    renderRawAst(program: any): string {
+        declarePrivateFields(program);
         return NodeFactory.generate(program);
     }
 

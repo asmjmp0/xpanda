@@ -94,6 +94,10 @@ export class NodeFactory {
         return TYPE.booleanLiteral(value);
     }
 
+    public static privateNameNode(name: string): TYPE.PrivateName {
+        return TYPE.privateName(TYPE.identifier(name));
+    }
+
     public static memberExpressionNode(object: TYPE.Expression | TYPE.Super, property: TYPE.Expression | TYPE.Identifier | TYPE.PrivateName, computed?: boolean):TYPE.MemberExpression{
         return TYPE.memberExpression(object,property,computed);
     }

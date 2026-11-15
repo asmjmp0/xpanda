@@ -13,6 +13,7 @@ import { AccCallSimplify } from "./AccCallSimplify";
 import { TailMergeSimplify } from "./TailMergeSimplify";
 import { RepeatedBranchMergeSimplify } from "./RepeatedBranchMergeSimplify";
 import { LoopEnvSimplify } from "./LoopEnvSimplify";
+import { declarePrivateFields } from "../decompiler/post-pass/DeclarePrivateFields";
 
 export class SimplifyExport {
     private static simplifyALL(node: TYPE.Program): boolean {
@@ -212,5 +213,9 @@ export class SimplifyExport {
         // 只能放在 simplify 末尾的一次性收尾:simplify 之前副本还带着各自的
         // acc 中转语句,结构不同;条件折叠/物化清理跑完后两份副本才逐字相同。
         new RepeatedBranchMergeSimplify().simplify(node);
+        // 类方法合并完成之后再处理 `#fN`:类体内补字段声明,类体外
+        // (仍留在 prototype 上的函数)改成 `obj["#fN"]`,输出才能被再次解析。
+        // 必须晚于原型方法并回 class,否则那些方法还在类外面,会被改成括号访问。
+        declarePrivateFields(node);
     }
 }

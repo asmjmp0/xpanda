@@ -1,7 +1,7 @@
 import * as os from "os";
 import * as path from "path";
 import { Worker } from "worker_threads";
-import { ENTRY_FUNCTION_MAIN, NodeFactory } from "@asm-xpanda/core";
+import { ENTRY_FUNCTION_MAIN } from "@asm-xpanda/core";
 import type { PandaClass } from "@asm-xpanda/core";
 import type { PandaDecompiler } from "@asm-xpanda/core";
 
@@ -62,9 +62,9 @@ function isSimplifyTimeout(error: unknown): error is SimplifyTimeoutError {
 }
 
 /** AST 对象 → 未 simplify 的源码,与 decompileClassRaw 同一条生成路径。 */
-function renderRaw(ast: any): string {
+function renderRaw(decompiler: PandaDecompiler, ast: any): string {
     try {
-        return NodeFactory.generate(ast);
+        return decompiler.renderRawAst(ast);
     } catch {
         return "";
     }
@@ -202,7 +202,7 @@ export async function decompileClassesParallel(
         } catch (e) {
             if (!isSimplifyTimeout(e)) throw e;
             options.onSimplifyTimeout?.(className);
-            return renderRaw(ast);
+            return renderRaw(decompiler, ast);
         }
     };
 

@@ -851,6 +851,32 @@ const HANDLES: Record<string, Handle> = {
         return false;
     },
     // ------------------------------------------------ 迭代器/异步/生成器
+    // `#private` fields. The bytecode addresses the key by (lexical level, slot);
+    // this toolchain's createprivateproperty literal is not the source name, so
+    // the field is rendered `#f<slot>` (or `#f<level>_<slot>` when the key table
+    // sits in an outer env). createprivateproperty only installs that table.
+    privateProperty: (ins, _b, mh, _l, node) => {
+        if (ins.privateOp === "create") return false;
+        const factory = NodeFactory;
+        const ident = ins.privateLevel === 0
+            ? "f" + ins.privateSlot
+            : "f" + ins.privateLevel + "_" + ins.privateSlot;
+        const key = factory.privateNameNode(ident);
+        if (ins.privateOp === "load") {
+            const member = factory.memberExpressionNode(factory.identifierNode("acc") as any, key, false);
+            assignAcc(mh, member, node);
+            return false;
+        }
+        if (ins.privateOp === "test") {
+            const test = factory.binaryExpressionNode("in", key, factory.identifierNode("acc") as any);
+            assignAcc(mh, test, node);
+            return false;
+        }
+        const receiver = ins.destObj ? ins.destObj.toString() : "acc";
+        const member = factory.memberExpressionNode(factory.identifierNode(receiver) as any, key, false);
+        assignAcc(mh, factory.identifierNode("acc") as any, node, member);
+        return false;
+    },
     getIterator: (ins, _b, mh, _l, node) => {
         const factory = NodeFactory;
         const utils = NodeUtils;

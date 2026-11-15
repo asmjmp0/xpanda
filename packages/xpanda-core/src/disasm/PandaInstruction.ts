@@ -42,6 +42,8 @@ export type InstructionKind =
     | "newLexEnv" | "storeLex" | "loadLex" | "popLexEnv"
     // 迭代器/异步/生成器
     | "getIterator" | "getNextPropName" | "async" | "generator" | "createGeneratorObj"
+    // `#private` 字段:ld/st/define/testin/createprivateproperty
+    | "privateProperty"
     // 未处理(触发 SimpleAnalysis 降级)
     | "unknown";
 
@@ -258,6 +260,9 @@ function buildKindMap(): Map<string, InstructionKind> {
     put("popLexEnv", "poplexenv", "deprecated.poplexenv");
 
     put("getIterator", "getiterator", "getpropiterator", "getasynciterator");
+    put("privateProperty",
+        "ldprivateproperty", "stprivateproperty", "testin",
+        "callruntime.createprivateproperty", "callruntime.defineprivateproperty");
     put("getNextPropName", "getnextpropname");
     put("async", "asyncfunctionenter", "asyncfunctionresolve", "asyncfunctionreject", "asyncfunctionawaituncaught");
     put("generator", "suspendgenerator", "resumegenerator", "getresumemode");
@@ -382,6 +387,16 @@ export class PandaInstruction {
     readonly isPropIterator = false;
     /** getasynciterator: acc[Symbol.asyncIterator]() — source `for await` loop head. */
     readonly isAsyncIterator = false;
+    /**
+     * Private-name op. `load` reads acc.#slot into acc; `store`/`define` write
+     * acc into v.#slot (acc unchanged); `test` is `#slot in acc`; `create`
+     * installs the key table and has no source statement.
+     */
+    readonly privateOp: "load" | "store" | "define" | "test" | "create" = "load";
+    /** Lexical levels to walk to the env that holds the private key table. */
+    readonly privateLevel = 0;
+    /** Slot in that key table. imm1 on these opcodes is the IC slot, not this. */
+    readonly privateSlot = 0;
     readonly iteratorReg: PandaInstructionVReg | null = null;
     readonly asyncType: string = "";
     readonly generatorType: string = "";
@@ -540,6 +555,7 @@ export class PandaInstruction {
                 (this as any).isPropIterator = opcode.name === "getpropiterator";
                 (this as any).isAsyncIterator = opcode.name === "getasynciterator";
                 break;
+            case "privateProperty": this.initPrivateProperty(opcode); break;
             case "getNextPropName": (this as any).iteratorReg = this.params[0]; break;
             case "async": (this as any).asyncType = opcode.name; break;
             case "generator": (this as any).generatorType = opcode.name; break;
@@ -811,6 +827,37 @@ export class PandaInstruction {
     isConditional(): boolean { return (this.opcode.flags & OPCODE_FLAG.CONDITIONAL) !== 0; }
     isReturnIns(): boolean { return (this.opcode.flags & OPCODE_FLAG.RETURN) !== 0; }
     isThrowIns(): boolean { return this.opcode.name === "throw"; }
+    /**
+     * `#private` field ops. The key table lives in a lexical env: imm2 is how
+     * many envs to walk, imm3 is the slot. imm1 is only an IC slot.
+     *   ldprivateproperty:        acc = acc.#slot
+     *   st/defineprivateproperty: v.#slot = acc (acc kept)
+     *   testin:                   acc = #slot in acc
+     *   createprivateproperty:    install the key table; no source statement
+     */
+    private initPrivateProperty(opcode: OpcodeInfo): void {
+        const name = opcode.name;
+        if (name === "callruntime.createprivateproperty") {
+            (this as any).privateOp = "create";
+            return;
+        }
+        const level = (this.params[1] as PandaInstructionIMM).imm;
+        const slot = (this.params[2] as PandaInstructionIMM).imm;
+        (this as any).privateLevel = level;
+        (this as any).privateSlot = slot;
+        if (name === "ldprivateproperty") {
+            (this as any).privateOp = "load";
+        } else if (name === "testin") {
+            (this as any).privateOp = "test";
+        } else if (name === "callruntime.defineprivateproperty") {
+            (this as any).privateOp = "define";
+            (this as any).destObj = this.params[3];
+        } else {
+            (this as any).privateOp = "store";
+            (this as any).destObj = this.params[3];
+        }
+    }
+
     isTerminator(): boolean { return this.isJump() || this.isReturnIns() || this.isThrowIns(); }
     instructionSize(): number {
         const opcodeSize = this.opcode.code >= LAST_INSTRUCTION_CODE_CONST ? 2 : 1;
