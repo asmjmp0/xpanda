@@ -854,9 +854,12 @@ const HANDLES: Record<string, Handle> = {
     getIterator: (ins, _b, mh, _l, node) => {
         const factory = NodeFactory;
         const utils = NodeUtils;
+        // getasynciterator is the `for await` loop head: acc[Symbol.asyncIterator]()
         const dest = ins.isPropIterator
             ? factory.parse("acc = Object.keys(acc)[Symbol.iterator]()")
-            : factory.parse("acc = acc[Symbol.iterator]()");
+            : ins.isAsyncIterator
+                ? factory.parse("acc = acc[Symbol.asyncIterator]()")
+                : factory.parse("acc = acc[Symbol.iterator]()");
         utils.insertToProgram(dest, node);
         return false;
     },

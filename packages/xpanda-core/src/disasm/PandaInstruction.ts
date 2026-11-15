@@ -257,7 +257,7 @@ function buildKindMap(): Map<string, InstructionKind> {
     put("loadLex", "ldlexvar", "wide.ldlexvar", "callruntime.ldsendablevar", "callruntime.wideldsendablevar");
     put("popLexEnv", "poplexenv", "deprecated.poplexenv");
 
-    put("getIterator", "getiterator", "getpropiterator");
+    put("getIterator", "getiterator", "getpropiterator", "getasynciterator");
     put("getNextPropName", "getnextpropname");
     put("async", "asyncfunctionenter", "asyncfunctionresolve", "asyncfunctionreject", "asyncfunctionawaituncaught");
     put("generator", "suspendgenerator", "resumegenerator", "getresumemode");
@@ -380,6 +380,8 @@ export class PandaInstruction {
     readonly lexImm = 0;
     // 迭代器/异步/生成器
     readonly isPropIterator = false;
+    /** getasynciterator: acc[Symbol.asyncIterator]() — source `for await` loop head. */
+    readonly isAsyncIterator = false;
     readonly iteratorReg: PandaInstructionVReg | null = null;
     readonly asyncType: string = "";
     readonly generatorType: string = "";
@@ -534,7 +536,10 @@ export class PandaInstruction {
                 break;
             }
             case "popLexEnv": break;
-            case "getIterator": (this as any).isPropIterator = opcode.name === "getpropiterator"; break;
+            case "getIterator":
+                (this as any).isPropIterator = opcode.name === "getpropiterator";
+                (this as any).isAsyncIterator = opcode.name === "getasynciterator";
+                break;
             case "getNextPropName": (this as any).iteratorReg = this.params[0]; break;
             case "async": (this as any).asyncType = opcode.name; break;
             case "generator": (this as any).generatorType = opcode.name; break;
