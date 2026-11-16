@@ -5,7 +5,7 @@
  * can link and import them from plain Node.
  *
  * In-repo development is untouched: the workspace package.json files keep
- * `main` pointing at `src/index.ts`, which tsx and Vite consume directly.
+ * `main` pointing at `src/index.ts`, which tsx and the web bundler consume directly.
  * `yarn install:global` links the library packages from these `dist` copies;
  * `xpanda-cli` / `xpanda-mcp` stay source-linked because their bins run
  * through tsx.

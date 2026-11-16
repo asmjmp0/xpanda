@@ -37,7 +37,7 @@
 | `@asm-xpanda/core` | `.abc` / `.hap` 解析、反汇编、反编译与优化器——其余子包依赖的核心库 |
 | `@asm-xpanda/cli` | 命令行(`decompile` / `unpack-index` / `dump-asm` / `dump`) |
 | `@asm-xpanda/mcp` | MCP Server(stdio,供 AI 客户端接入) |
-| `@asm-xpanda/web` | 浏览器 UI(React + Vite,纯前端) |
+| `@asm-xpanda/web` | 浏览器 UI(React + esbuild,纯前端) |
 | `@asm-xpanda/asm` | 加载、修改(替换方法代码 / 新增方法、字符串)、导出 class 并重新写回 `.abc` |
 
 ## 安装与使用
@@ -222,7 +222,7 @@ opencode mcp add xpanda -- npx tsx /absolute/path/to/xpanda/packages/xpanda-mcp/
 xpanda 还带一个浏览器 UI,`.abc` 文件与 `.hap` 应用包**全程在浏览器内**反编译,不向服务器上传任何数据。
 
 ```bash
-yarn web             # vite dev server → http://localhost:5173
+yarn web             # esbuild dev server(watch + live reload)→ http://localhost:5173
 ```
 
 - 任意位置拖拽或选择文件(`.abc` / `.hap`,支持多选);hap 在内存中解包,每个 `.abc` 条目有独立的类列表;

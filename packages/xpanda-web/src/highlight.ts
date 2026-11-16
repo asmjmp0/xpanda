@@ -1,7 +1,7 @@
 /**
  * Shiki-powered JavaScript syntax highlighting (VS Code Dark+ palette).
  * The highlighter is a lazily-created singleton: first call loads the grammar
- * (one-time cost, Vite code-splits it), later calls are fast synchronous
+ * (one-time cost, code-split by the bundler), later calls are fast synchronous
  * tokenization. The pure-JS regex engine keeps the bundle WASM-free.
  * codeToTokens() returns tokens already split per line, so each rendered line
  * stays independently valid HTML for dangerouslySetInnerHTML (same rendering

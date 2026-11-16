@@ -47,7 +47,7 @@ The main thread always performs parsing, disassembly, lexical analysis, and AST 
 | `src/simplify/` | Optimizer pipeline |
 | `src/parallel/` *(moved to xpanda-cli)* | Per-class parallel simplify worker pool (worker_threads / os — Node-only, lives in `packages/xpanda-cli/src/parallel/`) |
 | `packages/xpanda-mcp/src/` | MCP server exposing the decompiler to AI agents (see [MCP.md](./MCP.md)) |
-| `packages/xpanda-web/src/` | Browser UI (React + Vite, pure frontend) decompiling in the browser (see §13) |
+| `packages/xpanda-web/src/` | Browser UI (React + esbuild, pure frontend) decompiling in the browser (see §13) |
 | `src/PandaDecompiler.ts` | Public entry point (per-class orchestration) |
 | `packages/xpanda-cli/src/cli.ts` | CLI entry: `decompile` and `unpack-index` commands |
 | `scripts/gen-opcodes.ts` | Generates `src/disasm/opcodes.ts` from `resources/isa.yaml` |
@@ -352,7 +352,7 @@ Exposes the decompiler to AI agents over stdio (see [MCP.md](./MCP.md) for setup
 
 ## 13. Web UI — `packages/xpanda-web/`
 
-A React + Vite single-page app that runs the decompiler **entirely in the browser** (pure frontend — nothing is uploaded). It imports the same browser-safe `@asm-xpanda/core` single entry as Node consumers; Vite bundles the workspace-linked TS source directly (`main` points at `src/index.ts`, no precompile step — see `vite.config.ts`). Design points:
+A React single-page app that runs the decompiler **entirely in the browser** (pure frontend — nothing is uploaded). It imports the same browser-safe `@asm-xpanda/core` single entry as Node consumers; esbuild resolves the workspace TS source directly (`main` points at `src/index.ts`, no precompile step). esbuild replaced Vite entirely: the Rollup pipeline drove the 2 GiB deploy box into memory-reclaim freezes. One build script (`scripts/build.mjs`) covers everything — `yarn build` (minified production dist), `yarn dev` (watch + static serve with live reload; esbuild has no HMR, a saved file reloads the page), `yarn preview` (plain static serve of dist). The worker referenced as `new Worker(new URL(...))` is an explicit esbuild entry point (esbuild does not auto-bundle that pattern): production patches the URL literal to the hashed output, dev rewrites it in an `onLoad` plugin. Design points:
 
 - **Loading** (`src/decompiler.ts`, `loadImage`): a picked/dropped file is read as `Uint8Array`; ZIP containers go through `HapFile` — every `.abc` entry becomes an `AbcSource` with its own `PandaFile`, plus a `module.json` summary — bare files are parsed as one `.abc`. Parse failures (checksum / magic) surface as per-file errors.
 - **Decompile service**: `DecompileService` caches by `sourceId::className|mode` (`simplify` and `raw` share one cache); single-class and bulk decompilation go through the same instance. Decompilation runs synchronously on the main thread — `yieldToUI()` yields between classes so React can repaint (this is the UI counterpart of the CLI's `-j` pool; the core stays worker-free).
@@ -361,9 +361,9 @@ A React + Vite single-page app that runs the decompiler **entirely in the browse
 - **Highlighting** (`src/highlight.ts`): zero-dependency line-based JavaScript highlighter; `src/format.ts` shares the class-demangle rules with the CLI's `io.ts`.
 
 ```bash
-yarn web                               # vite dev server → http://localhost:5173
-yarn workspace @asm-xpanda/web build        # production build
-yarn workspace @asm-xpanda/web preview      # serve the build
+yarn web                               # dev server (watch + live reload) → http://localhost:5173
+yarn workspace @asm-xpanda/web build        # production build (esbuild)
+yarn workspace @asm-xpanda/web preview      # static serve of dist → http://localhost:8000
 ```
 
 ## 14. Verification & Testing

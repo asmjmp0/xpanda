@@ -7,7 +7,8 @@ interface PendingTask {
 
 /**
  * 单个 simplify Web Worker 的封装:惰性创建、任务编号、崩溃时拒绝在途任务。
- * Vite 会把 `new URL("./simplify-worker.ts", import.meta.url)` 打成独立的 worker 入口。
+ * esbuild 不会自动打包 `new Worker(new URL(...))`:scripts/build.mjs 把 simplify-worker 列为
+ * 显式入口,prod 构建后把 URL 字面量改写为 hash 产物名,dev 由 onLoad 插件改写为固定名。
  * @Author: jmp0
  */
 export class SimplifyWorker {

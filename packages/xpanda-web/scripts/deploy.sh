@@ -2,7 +2,7 @@
 #
 # xpanda-web deploy script (local static hosting):
 #   1) remove packages/xpanda-web/dist
-#   2) build with vite (yarn build)
+#   2) build with esbuild (yarn build)
 #   3) empty /var/www/xpanda (rm -rf of non-hidden entries; the directory itself is kept)
 #  -- only reached after a successful build, so a failed build never touches the live site
 #   4) copy dist contents into /var/www/xpanda
@@ -17,7 +17,7 @@ DIST_DIR="$PKG_DIR/dist"
 DEST_DIR="/var/www/xpanda"
 
 # A git pull refreshes the working tree but not node_modules: the workspace
-# links vite resolves through (@asm-xpanda/*) come from the last `yarn install`.
+# links the build resolves through (@asm-xpanda/*) come from the last `yarn install`.
 # When the package set changed (e.g. the @asm-xpanda scope move) the stale links
 # no longer cover every import and the build fails to resolve @asm-xpanda/core.
 # Re-link in place before building so `git pull && yarn run deploy` just works.
@@ -44,7 +44,7 @@ rm -rf "$DEST_DIR"/*
 mkdir -p "$DEST_DIR"
 
 echo "==> Copying $DIST_DIR -> $DEST_DIR"
-# "/." copies dotfiles too (e.g. .vite/ if present)
+# "/." copies dotfiles too
 cp -R "$DIST_DIR/." "$DEST_DIR/"
 
 echo "==> Done: $DEST_DIR"

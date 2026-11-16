@@ -1,133 +1,190 @@
 /**
- * Production build with a hard V8 old-space cap.
+ * esbuild build & dev server (full replacement for Vite).
  *
- * `vite build` parses all of xpanda-core plus the CommonJS @babel packages
- * for two Rollup entries (the UI and the simplify worker). Node's default heap
- * grows with physical RAM (about 4 GiB on a 16 GiB machine), and a leftover
- * NODE_OPTIONS=--max-old-space-size=8192 (the CLI decompile heap) raises that
- * ceiling to 8 GiB. On a 2 GiB Linux box the kernel then direct-reclaims until
- * sshd stops responding. This wrapper starts Vite under an explicit cap and
- * drops any inherited heap flag so a larger NODE_OPTIONS cannot raise it.
- * A 2 GiB machine gets 768 MiB, which still finishes this build (about 900 MiB
- * RSS) and leaves the rest for the OS. Past the cap, Node exits.
+ * This package used to build with Vite (Rollup underneath). On the 2 GiB
+ * deploy box the Rollup JS pipeline (parsing all of xpanda-core plus the
+ * CommonJS @babel packages for two entries) ran against a 768 MiB V8 old-space
+ * cap and still pushed the kernel into direct reclaim until sshd stopped
+ * responding — deploys appeared frozen. esbuild is a single Go binary: the
+ * same inputs finish in seconds at a few hundred MiB RSS, so Vite is dropped
+ * entirely: `yarn build` produces the production dist, `yarn dev` runs a
+ * watch + static-serve dev loop with live reload (esbuild has no HMR — a
+ * saved file reloads the whole page), and `yarn preview` serves the built
+ * dist without building.
  * @Author: jmp0
  */
-import { spawnSync } from "node:child_process";
-import { createRequire } from "node:module";
-import { fileURLToPath } from "node:url";
-import os from "node:os";
+import { build, context } from "esbuild";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import fsPromises from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-/** Leave this much RAM outside the heap when the machine can spare it, in MiB. */
-const RESERVE_MB = 2048;
-/**
- * Old-space budget when the machine can spare {@link RESERVE_MB}. A higher cap
- * only gives a stray NODE_OPTIONS more room to fill.
- */
-const TARGET_MB = 3072;
-/**
- * Old-space budget for a small machine. 384 MiB aborts this build; 512 MiB
- * finishes at about 850 MiB RSS. 768 MiB is the next step up so a 2 GiB server
- * still has a margin, without letting V8 grow into the memory the OS needs.
- */
-const SMALL_TARGET_MB = 768;
-/** Minimum kept outside the heap on a small machine, in MiB. */
-const MIN_OS_MB = 768;
+const pkgDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const coreDir = path.resolve(pkgDir, "..", "xpanda-core");
+const outDir = path.join(pkgDir, "dist");
+const DEV_PORT = 5173;
+const serve = process.argv.includes("--serve");
+
+/** The worker URL literal esbuild leaves untouched in the emitted main bundle. */
+const workerSourceUrl = "./simplify-worker.ts";
 
 /**
- * Old-space cap for a machine with `totalMb` MiB of physical RAM.
- * Machines that can spare {@link RESERVE_MB} and still reach {@link TARGET_MB}
- * use that. Smaller machines use {@link SMALL_TARGET_MB} when at least
- * {@link MIN_OS_MB} (or half of RAM, whichever is larger) stays outside the
- * heap. Below that the cap shrinks so Node throws instead of exhausting RAM.
+ * Rewrite the worker's new URL(...) literal to the bundled worker entry so the
+ * Worker pool resolves at runtime. The relative URL inside a bundle resolves
+ * against the bundle's own directory, and the main entry and the worker both
+ * live in dist/assets/.
  */
-export function resolveHeapCapMb(totalMb) {
-    if (totalMb - RESERVE_MB >= TARGET_MB) return TARGET_MB;
-    const osMb = Math.min(RESERVE_MB, Math.max(MIN_OS_MB, Math.floor(totalMb / 2)));
-    const roomMb = totalMb - osMb;
-    if (roomMb >= SMALL_TARGET_MB) return SMALL_TARGET_MB;
-    return Math.max(256, roomMb);
+function patchWorkerUrl(mainJsPath, workerFileName) {
+    const file = path.join(pkgDir, mainJsPath);
+    const source = readFileSync(file, "utf8");
+    if (!source.includes(workerSourceUrl)) return;
+    writeFileSync(file, source.split(workerSourceUrl).join("./" + workerFileName));
 }
 
-/** Split NODE_OPTIONS the way Node does: quoted strings stay one argument. */
-export function nodeOptionsArgs(options) {
-    if (!options) return [];
-    return options.match(/"[^"]*"|'[^']*'|\S+/g)?.map((arg) => arg.replace(/^['"]|['"]$/g, "")) ?? [];
+/** Shared esbuild options; per-mode flags (minify / define / names) differ. */
+function esbuildOptions() {
+    return {
+        absWorkingDir: pkgDir,
+        // Two explicit entries. The worker is referenced in source as
+        // new Worker(new URL("./simplify-worker.ts", import.meta.url)),
+        // which esbuild does NOT bundle (unlike Vite) — it leaves the URL
+        // literal untouched. Listing the worker here bundles it (and lets the
+        // two entries share the @babel chunks instead of duplicating them).
+        entryPoints: [
+            path.join(pkgDir, "src", "main.tsx"),
+            path.join(pkgDir, "src", "parallel", "simplify-worker.ts"),
+        ],
+        bundle: true,
+        // shiki's lazy grammar import relies on dynamic-import splitting.
+        splitting: true,
+        format: "esm",
+        target: "es2020",
+        jsx: "automatic",
+        outdir: outDir,
+        // Same alias contract as before: resolve the sibling workspace core by
+        // path so the build depends only on the checked-out sources, never on
+        // node_modules link state. esbuild picks the longest matching alias,
+        // so the "/package.json" subpath (version.ts reads the core version
+        // from it) wins over the bare prefix.
+        alias: {
+            "@asm-xpanda/core/package.json": path.join(coreDir, "package.json"),
+            "@asm-xpanda/core": path.join(coreDir, "src/index.ts"),
+        },
+        logLevel: "info",
+    };
 }
 
-/** Drop `--max-old-space-size` so the child cannot inherit a larger heap. */
-export function stripHeapFlags(args) {
-    const out = [];
-    for (let i = 0; i < args.length; i++) {
-        const arg = args[i];
-        if (arg === "--max-old-space-size") {
-            i += 1;
-            continue;
-        }
-        if (arg.startsWith("--max-old-space-size=")) continue;
-        out.push(arg);
-    }
-    return out;
-}
-
-function formatNodeOptions(args) {
-    return args.map((arg) => (/\s/.test(arg) ? `"${arg}"` : arg)).join(" ");
-}
-
-/** MiB value of the last `--max-old-space-size` flag. Node uses the last one. */
-export function heapFlagMb(args) {
-    let found;
-    for (let i = 0; i < args.length; i++) {
-        const arg = args[i];
-        if (arg === "--max-old-space-size") {
-            const value = Number(args[i + 1]);
-            if (Number.isFinite(value)) found = value;
-            continue;
-        }
-        if (arg.startsWith("--max-old-space-size=")) {
-            const value = Number(arg.slice("--max-old-space-size=".length));
-            if (Number.isFinite(value)) found = value;
-        }
-    }
-    return found;
-}
-
-function viteBin() {
-    const require = createRequire(import.meta.url);
-    return path.join(path.dirname(require.resolve("vite/package.json")), "bin", "vite.js");
-}
-
-function main() {
-    const totalMb = Math.floor(os.totalmem() / (1024 * 1024));
-    const capMb = resolveHeapCapMb(totalMb);
-    const inheritedMb = heapFlagMb(nodeOptionsArgs(process.env.NODE_OPTIONS));
-    const kept = stripHeapFlags(nodeOptionsArgs(process.env.NODE_OPTIONS));
-    const env = { ...process.env };
-    if (kept.length === 0) delete env.NODE_OPTIONS;
-    else env.NODE_OPTIONS = formatNodeOptions(kept);
-
-    const ignored = inheritedMb !== undefined && inheritedMb !== capMb
-        ? ` (ignored NODE_OPTIONS ${inheritedMb} MiB)`
-        : "";
-    console.error(`xpanda-web build: V8 old space ${capMb} MiB, physical ${totalMb} MiB${ignored}`);
-
-    const child = spawnSync(process.execPath, [
-        `--max-old-space-size=${capMb}`,
-        viteBin(),
-        "build",
-        ...process.argv.slice(2),
-    ], { stdio: "inherit", env });
-    if (child.error) {
-        console.error(child.error.message);
+/**
+ * index.html is kept as the template: swap the source script tag for the
+ * bundle and inject the extracted stylesheet (plus dev extras) before
+ * </head>. `extraHead` carries the dev-only live-reload snippet.
+ */
+function renderIndexHtml(mainSrc, cssHrefs, extraHead = "") {
+    const devTag = '<script type="module" src="/src/main.tsx"></script>';
+    let html = readFileSync(path.join(pkgDir, "index.html"), "utf8");
+    if (!html.includes(devTag)) {
+        console.error('error: index.html no longer contains the expected "' + devTag + '" tag');
         process.exit(1);
     }
-    if (child.signal) {
-        process.kill(process.pid, child.signal);
-        return;
-    }
-    process.exit(child.status ?? 1);
+    html = html.replace(devTag, `<script type="module" src="${mainSrc}"></script>`);
+    const links = cssHrefs
+        .map((href) => `    <link rel="stylesheet" href="${href}" />`)
+        .join("\n");
+    return html.replace("</head>", `${links}\n${extraHead}  </head>`);
 }
 
-const invokedDirectly = process.argv[1] !== undefined
-    && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
-if (invokedDirectly) main();
+async function buildProduction() {
+    rmSync(outDir, { recursive: true, force: true });
+
+    const result = await build({
+        ...esbuildOptions(),
+        minify: true,
+        sourcemap: false,
+        // Vite defined this for React's production code path; without it
+        // React ships its slower dev build. Other process.env reads stay
+        // runtime references served by the `window.process` shim in
+        // index.html (and the worker's process-shim.ts import).
+        define: { "process.env.NODE_ENV": '"production"' },
+        entryNames: "assets/[name]-[hash]",
+        chunkNames: "assets/[name]-[hash]",
+        assetNames: "assets/[name]-[hash]",
+        metafile: true,
+    });
+
+    const meta = result.metafile;
+    const outputs = Object.keys(meta.outputs);
+    const workerJs = outputs.find((out) => path.resolve(meta.outputs[out].entryPoint ?? "") === path.join(pkgDir, "src", "parallel", "simplify-worker.ts"));
+    const mainJs = outputs.find((out) => path.resolve(meta.outputs[out].entryPoint ?? "") === path.join(pkgDir, "src", "main.tsx"));
+    const cssFiles = outputs.filter((out) => out.endsWith(".css"));
+    if (mainJs === undefined || workerJs === undefined || cssFiles.length === 0) {
+        console.error("error: build produced no main/worker JS or CSS output");
+        process.exit(1);
+    }
+
+    for (const jsOutput of outputs.filter((out) => out.endsWith(".js"))) {
+        patchWorkerUrl(jsOutput, path.basename(workerJs));
+    }
+
+    /** Relative URL for an output path, so the site also works under /xpanda/. */
+    const relUrl = (outputPath) => {
+        return "./" + path.relative(outDir, path.join(pkgDir, outputPath)).split(path.sep).join("/");
+    };
+    const html = renderIndexHtml(
+        relUrl(mainJs),
+        cssFiles.map(relUrl),
+    );
+    writeFileSync(path.join(outDir, "index.html"), html);
+}
+
+async function runDevServer() {
+    rmSync(outDir, { recursive: true, force: true });
+    mkdirSync(outDir, { recursive: true });
+
+    // Entry names stay unhashed in dev, so the template is written once and
+    // watch rebuilds overwrite the same files without regenerating it.
+    writeFileSync(
+        path.join(outDir, "index.html"),
+        renderIndexHtml(
+            "./assets/main.js",
+            ["./assets/main.css"],
+            // esbuild's serve mode exposes an EventSource stream of rebuild
+            // events at /esbuild — the poor man's HMR: reload the whole page.
+            `    <script type="module">\n` +
+            `      new EventSource("/esbuild").addEventListener("change", () => location.reload());\n` +
+            `    </script>\n`,
+        ),
+    );
+
+    const ctx = await context({
+        ...esbuildOptions(),
+        minify: false,
+        sourcemap: "inline",
+        define: { "process.env.NODE_ENV": '"development"' },
+        // Entry names stay unhashed in dev, so the worker URL is rewritten to
+        // its final name while loading — the emitted bundle is correct by
+        // construction and every rebuild stays correct too (serve mode serves
+        // the build products from memory, so post-build patches of the output
+        // bytes would never be visible to the served files).
+        entryNames: "assets/[name]",
+        chunkNames: "assets/[name]-[hash]",
+        assetNames: "assets/[name]",
+        plugins: [{
+            name: "dev-worker-url",
+            setup(b) {
+                b.onLoad({ filter: /SimplifyWorker\.ts$/ }, async (args) => {
+                    const source = await fsPromises.readFile(args.path, "utf8");
+                    return {
+                        contents: source.split(workerSourceUrl).join("./simplify-worker.js"),
+                        loader: "ts",
+                    };
+                });
+            },
+        }],
+    });
+
+    await ctx.watch();
+    const { host, port } = await ctx.serve({ servedir: outDir, port: DEV_PORT });
+    console.log(`xpanda-web dev server: http://${host ?? "localhost"}:${port} (live reload, no HMR)`);
+}
+
+serve ? await runDevServer() : await buildProduction();

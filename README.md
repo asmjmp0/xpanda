@@ -37,7 +37,7 @@ The project is split into six yarn-workspace packages under `packages/`:
 | `@asm-xpanda/core` | `.abc` / `.hap` parsing, disassembly, decompilation and the optimizer — the library everything else builds on |
 | `@asm-xpanda/cli` | command line interface (`decompile` / `unpack-index` / `dump-asm` / `dump` / `gadget`) |
 | `@asm-xpanda/mcp` | MCP server (stdio) for AI client integration |
-| `@asm-xpanda/web` | browser UI (React + Vite, pure frontend) |
+| `@asm-xpanda/web` | browser UI (React + esbuild, pure frontend) |
 | `@asm-xpanda/asm` | bytecode assembler plus load, modify (replace method code / add methods, strings), dump classes and re-emit `.abc` files |
 | `@asm-xpanda/gadget` | Frida-Gadget-style init injector: bytecode bootstrap + embedded NAPI gadget `.so` (socket messaging + JSVM execution) |
 
@@ -239,7 +239,7 @@ See [docs/MCP.md](docs/MCP.md) for the full tool reference.
 xpanda also ships a browser UI that decompiles `.abc` files and `.hap` app packages **entirely in the browser** — nothing is ever uploaded.
 
 ```bash
-yarn web             # vite dev server → http://localhost:5173
+yarn web             # esbuild dev server (watch + live reload) → http://localhost:5173
 ```
 
 - Drag & drop anywhere or pick files (`.abc` / `.hap`, multiple supported); haps are unpacked in-memory and every `.abc` entry gets its own class list;

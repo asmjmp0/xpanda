@@ -47,7 +47,7 @@ JavaScript 源码(落盘 / stdout / 编程 API)
 | `src/simplify/` | 优化器流水线 |
 | `src/parallel/` *(已移至 xpanda-cli)* | 按类并行的 simplify worker 池(worker_threads / os,仅 Node 可用,现位于 `packages/xpanda-cli/src/parallel/`) |
 | `packages/xpanda-mcp/src/` | 把反编译器暴露给 AI agent 的 MCP Server(见 [MCP.md](./MCP.md)) |
-| `packages/xpanda-web/src/` | 浏览器 UI(React + Vite,纯前端),在浏览器内完成反编译(见 §13) |
+| `packages/xpanda-web/src/` | 浏览器 UI(React + esbuild,纯前端),在浏览器内完成反编译(见 §13) |
 | `src/PandaDecompiler.ts` | 对外总入口(单类编排) |
 | `packages/xpanda-cli/src/cli.ts` | 命令行入口:`decompile` 与 `unpack-index` 命令 |
 | `scripts/gen-opcodes.ts` | 从 `resources/isa.yaml` 生成 `src/disasm/opcodes.ts` |
@@ -333,7 +333,7 @@ yarn tsx packages/xpanda-cli/src/cli.ts unpack-index <resources.index> [-o outDi
 
 ## 13. Web UI —— `packages/xpanda-web/`
 
-React + Vite 单页应用,在**浏览器内**完成全部反编译(纯前端,不上传任何数据)。它与其他使用方一样直接 import 浏览器安全的 `@asm-xpanda/core` 单入口;Vite 把 workspace 链接的 TS 源码直接纳入构建(`main` 指向 `src/index.ts`,无需预编译,见 `vite.config.ts`)。设计要点:
+React 单页应用,在**浏览器内**完成全部反编译(纯前端,不上传任何数据)。它与其他使用方一样直接 import 浏览器安全的 `@asm-xpanda/core` 单入口;esbuild 把 workspace 的 TS 源码直接纳入构建(`main` 指向 `src/index.ts`,无需预编译)。Vite 已完全移除、改用 esbuild(Rollup 管线曾把 2 GiB 部署机压到内核 direct reclaim 卡死):一个构建脚本(`scripts/build.mjs`)覆盖所有场景 —— `yarn build`(生产构建)、`yarn dev`(watch + 静态服务 + live reload;esbuild 无 HMR,保存后整页刷新)、`yarn preview`(纯静态服务 dist)。源码里的 `new Worker(new URL(...))` worker 在 esbuild 中不会自动打包,故列为显式入口:prod 构建后把 URL 字面量改写为 hash 产物名,dev 由 `onLoad` 插件改写为固定名。设计要点:
 
 - **加载**(`src/decompiler.ts` 的 `loadImage`):选择的文件读为 `Uint8Array`;ZIP 容器走 `HapFile` —— 每个 `.abc` 条目成为带独立 `PandaFile` 的 `AbcSource`,并解析 `module.json` 摘要;裸文件按单个 `.abc` 解析。解析失败(校验和 / 魔数)按文件逐个报错。
 - **反编译服务**:`DecompileService` 以 `sourceId::类名|模式` 缓存(`simplify` 与 `raw` 共用一份缓存);单类与全量反编译走同一实例。反编译在主线程同步执行 —— 类与类之间用 `yieldToUI()` 让出主线程刷新界面(这是 CLI `-j` worker 池在 UI 侧的对应物;core 本身保持无 worker)。
@@ -342,9 +342,9 @@ React + Vite 单页应用,在**浏览器内**完成全部反编译(纯前端,不
 - **高亮**(`src/highlight.ts`):零依赖的按行 JavaScript 高亮器;`src/format.ts` 与 CLI 的 `io.ts` 共用类名 demangle 规则。
 
 ```bash
-yarn web                               # vite dev server → http://localhost:5173
-yarn workspace @asm-xpanda/web build        # 生产构建
-yarn workspace @asm-xpanda/web preview      # 预览构建产物
+yarn web                               # esbuild dev server(watch + live reload)→ http://localhost:5173
+yarn workspace @asm-xpanda/web build        # 生产构建(esbuild)
+yarn workspace @asm-xpanda/web preview      # 静态服务 dist → http://localhost:8000
 ```
 
 ## 14. 验证与测试

@@ -50,11 +50,11 @@ Project repository / 项目仓库: <https://github.com/asmjmp0/xpanda>
 
 ```bash
 yarn install         # from the repo root (yarn workspaces)
-yarn web             # vite dev server → http://localhost:5173
+yarn web             # dev server (watch + live reload) → http://localhost:5173
 
-# production build / preview
+# production build (esbuild, low-memory — safe on small deploy boxes) / preview
 yarn workspace @asm-xpanda/web build
-yarn workspace @asm-xpanda/web preview
+yarn workspace @asm-xpanda/web preview   # static serve of dist → http://localhost:8000
 ```
 
 ## Structure
