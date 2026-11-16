@@ -10,13 +10,14 @@ A decompiler for HarmonyOS `.abc` files (Panda / ArkCompiler bytecode), written 
 
 It turns `.abc` files back into readable JavaScript: classes, methods, functions, control flow and module `import`/`export` are restored, and an optimizer pipeline cleans up the register temporaries emitted by the compiler.
 
-Supported bytecode versions: `24.0.0.0` (backward compatible with `13.0.1.0`; ArkTS 12 packages, `12.0.2.0`, decompile as well).
+Supported bytecode versions: `24.0.0.0` (backward compatible with `13.0.1.0`; ArkTS 12 packages, `12.0.2.0`, decompile as well). **ArkTS-Sta** (static runtime) framework bytecode (`0.1.0.7`, `fw_*.abc`) is supported through a separate parser/ISA path.
 
 ![xpanda web UI — decompiling a HarmonyOS app package entirely in the browser](assets/web-ui.png)
 
 ## Features
 
 - **Pure TypeScript, zero native dependencies**: parses `.abc` files and emits readable JavaScript that can run as-is;
+- **Dynamic ArkTS and ArkTS-Sta**: the standard Panda format plus the static runtime's 72-byte header / static ISA (`fw_*.abc`), with shared structure analysis and optimizer; compiler-generated `LambdaN` closure classes are folded back into arrow functions;
 - **Classes and functions**: class fields, accessors, prototype methods, closures and lexical environments (`local` / `sendable` env);
 - **Control flow**: `if/else`, `while/do-while`, `for`, `try/catch/finally`, and more; falls back to labeled linear output when structural analysis fails;
 - **Modules**: ES Module `import` / `export`;

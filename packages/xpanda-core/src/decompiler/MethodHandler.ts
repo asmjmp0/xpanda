@@ -60,6 +60,11 @@ export class PandaDecompilerMethodHandler {
         this.tryBodyEndPC.set(tryNode, endPC);
     }
 
+    /** Handle table; the ArkTS-Sta decompiler overrides this with its own map. */
+    protected getHandles(): Record<string, Handle> {
+        return HANDLES;
+    }
+
     /** 在一个方法体的上下文中运行结构化分析(嵌套函数会压栈/恢复) */
     withFunctionBody<T>(body: any, run: () => T): T {
         this.functionBodies.push(body);
@@ -182,7 +187,8 @@ export class PandaDecompilerMethodHandler {
             }
         };
         for (const instruction of block.pandaInstructions) {
-            const handle = HANDLES[instruction.kind];
+            if ((instruction as any).skip) continue;
+            const handle = this.getHandles()[instruction.kind];
             if (!handle || instruction.kind === "unknown") {
                 throw new PandaDecompileException(instruction.opcode.name + " not handled!");
             }
@@ -320,6 +326,7 @@ type Handle = (
     pandaLexical: PandaLexical,
     node: any,
 ) => boolean; // true = STOP
+export type { Handle };
 
 /** Decompiled name of `GlobalEnv.GlobalPatch`. One array shared by every method. */
 export const PATCH_VAR_BINDING = "xpanda_reserved_patch";

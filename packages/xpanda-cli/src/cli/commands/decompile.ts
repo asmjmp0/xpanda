@@ -7,8 +7,12 @@ import * as path from "path";
 import {
     ENTRY_FUNCTION_MAIN,
     HapFile,
+    PandaClass,
     PandaDecompiler,
     PandaFile,
+    StaticDecompiler,
+    StaticPandaFile,
+    isStaticAbcVersion,
 } from "@asm-xpanda/core";
 import { saveClassFile } from "../../io";
 import { decompileClassesParallel, resolveJobs } from "../../parallel/ParallelDecompiler";
@@ -45,6 +49,9 @@ async function decompileAbcData(
     classOutDir: string,
     label: string,
 ): Promise<string[]> {
+    if (data.length >= 16 && isStaticAbcVersion(data.subarray(12, 16))) {
+        return decompileStaticAbcData(data, options, classOutDir, label);
+    }
     const pandaFile = new PandaFile(data);
     const classes = pandaFile.getAllClasses();
     if (!options.stdout) fs.mkdirSync(classOutDir, { recursive: true });
@@ -109,6 +116,59 @@ async function decompileAbcData(
                 onSimplifyTimeout: (className) => options.simplifyTimeouts.push({ label, className }),
                 onWarning: (message) => options.progress.note(message),
             });
+        }
+    } finally {
+        options.progress.finish(summary());
+    }
+    return outputs ? outputs.filter((out): out is string => out !== undefined) : [];
+}
+
+/**
+ * ArkTS-Sta (.abc produced by the static runtime) decompilation path. The
+ * parser/disassembler are separate from the dynamic PandaFile; the shared
+ * structure analysis and simplify pipeline is reused by StaticDecompiler.
+ */
+function decompileStaticAbcData(
+    data: Uint8Array,
+    options: DecompileOptions,
+    classOutDir: string,
+    label: string,
+): string[] {
+    const pandaFile = new StaticPandaFile(data);
+    const decompiler = new StaticDecompiler();
+    const results = decompiler.decompileFile(pandaFile, !options.raw);
+    if (!options.stdout) fs.mkdirSync(classOutDir, { recursive: true });
+
+    const outputs: Array<string | undefined> | null = options.stdout ? new Array(results.length) : null;
+    let written = 0;
+    const emit = (index: number, result: { clazz: PandaClass; code: string }): void => {
+        if (result.code.length === 0) return;
+        if (outputs) {
+            outputs[index] = "\n/***************************" + result.clazz.name.content + "*************************************\n" + result.code;
+            return;
+        }
+        saveClassFile(classOutDir, result.clazz, result.code);
+        written++;
+        if (!options.progress.live) console.log("written: " + result.clazz.name.content);
+    };
+
+    const noun = results.length === 1 ? "class" : "classes";
+    const summary = (): string => options.stdout
+        ? `${label}  ${results.length} ${noun}`
+        : `${label}  ${results.length} ${noun}, ${written} written  →  ${classOutDir}`;
+    options.progress.begin(label, results.length, 0, !options.raw);
+    try {
+        for (let index = 0; index < results.length; index++) {
+            const result = results[index];
+            options.progress.setDecompiling(result.clazz.name.content);
+            try {
+                emit(index, result);
+            } catch (e) {
+                options.progress.note("decompile failed: " + result.clazz.name.content + " " + e);
+            } finally {
+                options.progress.setDecompiling(null);
+                options.progress.markDone();
+            }
         }
     } finally {
         options.progress.finish(summary());

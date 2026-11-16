@@ -1,6 +1,6 @@
 {
   "name": "@asm-xpanda/core",
-  "version": "3.3.0",
+  "version": "3.4.0",
   "publishConfig": {
     "access": "public"
   },
@@ -12,8 +12,9 @@
   },
   "scripts": {
     "gen:opcodes": "tsx scripts/gen-opcodes.ts",
+    "gen:opcodes:static": "tsx scripts/gen-opcodes-static.ts",
     "typecheck": "tsc --noEmit",
-    "test": "tsx test/decompile.test.ts && tsx test/reserved-param.test.ts"
+    "test": "tsx test/decompile.test.ts && tsx test/static-decompile.test.ts && tsx test/reserved-param.test.ts"
   },
   "dependencies": {
     "@babel/generator": "^7.23.9",

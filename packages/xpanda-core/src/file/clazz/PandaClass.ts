@@ -307,13 +307,15 @@ export class PandaClass extends Offset {
                 this.sourceLang = pandaFile.data[this.offsetValue + this.index];
                 this.index += 1;
             } else if (tag === PandaClassTag.RUNTIME_ANNOTATION) {
-                throw new PandaParseException("PandaClassTag.RUNTIME_ANNOTATION");
+                // Annotation payloads are separate entities; the class record only
+                // carries their 32-bit id. Skipping them is enough for decompilation.
+                this.index += 4;
             } else if (tag === PandaClassTag.ANNOTATION) {
-                throw new PandaParseException("PandaClassTag.ANNOTATION");
+                this.index += 4;
             } else if (tag === PandaClassTag.RUNTIME_TYPE_ANNOTATION) {
-                throw new PandaParseException("PandaClassTag.RUNTIME_TYPE_ANNOTATION");
+                this.index += 4;
             } else if (tag === PandaClassTag.TYPE_ANNOTATION) {
-                throw new PandaParseException("PandaClassTag.TYPE_ANNOTATION");
+                this.index += 4;
             } else if (tag === PandaClassTag.SOURCE_FILE) {
                 // Bytecode 24.0.0.0 stores the source file name as a 32-bit string offset
                 // (the module path, e.g. "entry|entry|1.0.0|.../ResourceTable.js").

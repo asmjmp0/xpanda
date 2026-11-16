@@ -4,7 +4,14 @@
  */
 import * as fs from "fs";
 import * as path from "path";
-import { HapFile, PandaClass, PandaFile } from "@asm-xpanda/core";
+import {
+    HapFile,
+    PandaClass,
+    PandaFile,
+    StaticPandaDisAssembler,
+    StaticPandaFile,
+    isStaticAbcVersion,
+} from "@asm-xpanda/core";
 import { saveClassFile } from "../../io";
 import { takeValue } from "../args";
 import { fail } from "../help";
@@ -39,15 +46,42 @@ function dumpClassAsm(pandaClass: PandaClass): string {
     return builder.join("");
 }
 
+/** Disassemble one ArkTS-Sta class with the static ISA. */
+function dumpStaticClassAsm(pandaClass: PandaClass): string {
+    const builder: string[] = [];
+    builder.push("// class: " + pandaClass.name.content + "\n");
+    builder.push("// methods: " + pandaClass.pandaMethods.size + "\n");
+    for (const method of pandaClass.pandaMethods.values()) {
+        builder.push("\n.function " + method.name.content + "\n");
+        if (method.methodExternal || !method.methodCode) {
+            builder.push("  (external)\n");
+            continue;
+        }
+        const code = method.methodCode;
+        builder.push(`  // vregs: ${code.numVregs}, args: ${code.numArgs}, code: ${code.codeSize} bytes, tries: ${code.triesSize}\n`);
+        try {
+            builder.push(StaticPandaDisAssembler.disAssembly(method).toString());
+        } catch (e) {
+            builder.push("  // disassembly failed: " + e + "\n");
+        }
+    }
+    return builder.join("");
+}
+
 /** Disassemble every class of one abc, writing .asm files to classOutDir; returns stdout segments. */
 function dumpAsmAbcData(data: Uint8Array, options: AsmOptions, classOutDir: string): string[] {
-    const pandaFile = new PandaFile(data);
-    const classes = pandaFile.getAllClasses();
+    const isStatic = data.length >= 16 && isStaticAbcVersion(data.subarray(12, 16));
+    const pandaFile = isStatic ? new StaticPandaFile(data) : new PandaFile(data);
+    const classes = isStatic
+        ? (pandaFile as StaticPandaFile).getAllClasses()
+        : (pandaFile as PandaFile).getAllClasses();
     if (!options.stdout) fs.mkdirSync(classOutDir, { recursive: true });
     console.error(`classes: ${classes.length}`);
     const outputs: string[] = [];
     for (const clazz of classes) {
-        const text = dumpClassAsm(clazz);
+        if (!clazz.name.content) continue;
+        if (isStatic && clazz.pandaMethods.size === 0) continue;
+        const text = isStatic ? dumpStaticClassAsm(clazz) : dumpClassAsm(clazz);
         if (text.length === 0) continue;
         if (options.stdout) {
             outputs.push("\n/***************************" + clazz.name.content + "*************************************/\n" + text);

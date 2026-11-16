@@ -1,0 +1,488 @@
+# Copyright (c) 2021-2026 Huawei Device Co., Ltd.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+prefixes:
+  - name: ets
+    description: Extension for ETS support.
+
+namespaces:
+  - namespace: ets
+    quickening: false
+
+verification:
+  - tag: v2_obj_or_null
+    description: Second operand contains a reference to an object or null.
+
+groups:
+  - title: Get field from object by name
+    description: >
+      Get field value from an object by field name field_id and put it into accumulator.
+      If field type size is less than 32, then loaded value is sign or zero extended to i32 depending on field type.
+    verification:
+      - v1_object
+    properties:
+      - field_id
+    exceptions:
+      - x_null
+    pseudo: |
+      if vs == null then
+        throw NullPointerException
+      end
+      field = resolve_field_by_name(field_id)
+      if field != null then
+        if op == ets.ldobj.name and size(field) < 32 then
+          acc = extendto32(vs.get(field))
+        else
+          acc = vs.get(field)
+        end
+      else
+        getter = resolve_getter_by_name(field_id)
+        if getter != null then
+          acc = getter(vs)
+        else
+          throw_ets_exception(no_such_field_error)
+        end
+      end
+    namespace: ets
+    instructions:
+      - sig: ets.ldobj.name v:in:ref, field_id
+        acc: out:b32
+        format: [pref_op_v_8_id_32]
+        prefix: ets
+        intrinsic_name:
+            - INTRINSIC_COMPILER_ETS_LD_OBJ_BY_NAME_I32
+            - INTRINSIC_COMPILER_ETS_LD_OBJ_BY_NAME_F32
+      - sig: ets.ldobj.name.64 v:in:ref, field_id
+        acc: out:b64
+        format: [pref_op_v_8_id_32]
+        prefix: ets
+        intrinsic_name:
+            - INTRINSIC_COMPILER_ETS_LD_OBJ_BY_NAME_I64
+            - INTRINSIC_COMPILER_ETS_LD_OBJ_BY_NAME_F64
+      - sig: ets.ldobj.name.obj v:in:ref, field_id
+        acc: out:ref
+        format: [pref_op_v_8_id_32]
+        prefix: ets
+        intrinsic_name: INTRINSIC_COMPILER_ETS_LD_OBJ_BY_NAME_OBJ
+
+  - title: Store accumulator content into object field by name
+    description: >
+      Store accumulator content into object field by field name field_id.
+      If field type size is less than 32, accumulator content will be truncated to storage size before storing.
+    verification:
+      - v1_object
+      - acc_type
+    properties:
+      - field_id
+    exceptions:
+      - x_null
+    pseudo: |
+      if v == null then
+        throw NullPointerException
+      end
+      field = resolve_field_by_name(field_id)
+      if field != null then
+        if op == ets.stobj.name and size(field) < 32 then
+          vs.set(field, truncate(field, acc))
+        else
+          vs.set(field, acc)
+        end
+      else
+        setter = resolve_method_by_name(field_id)
+        if setter != null then
+            setter(vs, acc)
+        else
+          throw_ets_exception(no_such_field_error)
+        end
+      end
+    namespace: ets
+    instructions:
+      - sig: ets.stobj.name v:in:ref, field_id
+        acc: in:b32
+        format: [pref_op_v_8_id_32]
+        prefix: ets
+        intrinsic_name:
+            - INTRINSIC_COMPILER_ETS_ST_OBJ_BY_NAME_I32
+            - INTRINSIC_COMPILER_ETS_ST_OBJ_BY_NAME_I16
+            - INTRINSIC_COMPILER_ETS_ST_OBJ_BY_NAME_I8
+            - INTRINSIC_COMPILER_ETS_ST_OBJ_BY_NAME_F32
+      - sig: ets.stobj.name.64 v:in:ref, field_id
+        acc: in:b64
+        format: [pref_op_v_8_id_32]
+        prefix: ets
+        intrinsic_name:
+            - INTRINSIC_COMPILER_ETS_ST_OBJ_BY_NAME_I64
+            - INTRINSIC_COMPILER_ETS_ST_OBJ_BY_NAME_F64
+      - sig: ets.stobj.name.obj v:in:ref, field_id
+        acc: in:ref
+        format: [pref_op_v_8_id_32]
+        prefix: ets
+        intrinsic_name: INTRINSIC_COMPILER_ETS_ST_OBJ_BY_NAME_OBJ
+
+  - title: Call method from object by name
+    description: >
+      Call method from an object by method name method_id, i.e., resolve method and
+      create new frame, pass values of arguments, and continue the execution from the
+      first instruction of a method.
+      Callee must treat the accumulator value as undefined, and cannot use it
+      until accumulator in the new frame is defined.
+      Result (if any) is returned in accumulator.
+      Method, its class, and the number of arguments is resolved by a given
+      method_id in runtime constant-pool based on object reference.
+      Object reference is passed in the first source register, arguments are
+      passed starting from the second source register in the same order as in
+      the method signature.
+      Non-range instructions can be used to pass up to 4 arguments (including
+      object reference).
+      Unused register slot values are discarded, and corresponding registers
+      are not passed to the callee).
+      For methods with more arguments, range kinds of instruction are to be used.
+      The instructions take the required number of arguments starting from
+      'vs' register (including object reference).
+    verification:
+      - v1_object
+    properties:
+      - method_id
+      - call
+      - short_long_range
+      - id_shift
+    exceptions:
+      - x_null
+      - x_abstract
+      - x_call
+    pseudo: |
+      if args[0] == null then
+        throw NullPointerException
+      end
+      method = resolve_method_by_name(method_id)
+      if method != null then
+          if is_abstract(method) then
+            throw AbstractMethodError
+          end
+          acc = call(method, args)
+      else
+          throw_ets_exception(no_such_method_error)
+      end
+    namespace: ets
+    instructions:
+      - sig: ets.call.name.short method_id, v1:in:top, v2:in:top
+        acc: out:top
+        format: [pref_op_v1_4_v2_4_id_16]
+        prefix: ets
+      - sig: ets.call.name method_id, v1:in:top, v2:in:top, v3:in:top, v4:in:top
+        acc: out:top
+        format: [pref_op_v1_4_v2_4_v3_4_v4_4_id_16]
+        prefix: ets
+      - sig: ets.call.name.range method_id, v:in:top
+        acc: out:top
+        format: [pref_op_v_8_id_16]
+        prefix: ets
+
+  - title: Load 'nullvalue' reference into accumulator
+    description: >
+      Load 'nullvalue' reference into accumulator.
+    verification:
+      - acc_type
+    exceptions:
+      - x_none
+    pseudo: |
+      acc = nullvalue
+    namespace: ets
+    instructions:
+      - sig: ets.ldnullvalue
+        prefix: ets
+        acc: out:ref
+        format: [pref_op_none]
+
+  - title: Move 'nullvalue' reference into a register
+    description: >
+      Move 'nullvalue' reference into a register.
+    verification:
+      - none
+    exceptions:
+      - x_none
+    pseudo: |
+      vd = nullvalue_object
+    namespace: ets
+    instructions:
+      - sig: ets.movnullvalue v:out:ref
+        prefix: ets
+        acc: none
+        format: [pref_op_v_8]
+
+  - title: Check if accumulator value is 'nullvalue'
+    description: >
+      Check if accumulator value is 'nullvalue'.
+    verification:
+      - v1_object
+      - acc_type
+    exceptions:
+      - x_none
+    pseudo: |
+      if acc == nullvalue_object then
+        acc = 1
+      else
+        acc = 0
+      end
+    namespace: ets
+    instructions:
+      - sig: ets.isnullvalue
+        prefix: ets
+        acc: inout:ref->i32
+        format: [pref_op_none]
+
+  - title: Check if two references are loosely equal
+    description: >
+      Check if two references are loosely equal.
+    verification:
+      - v1_obj_or_null
+      - v2_obj_or_null
+      - acc_type
+    exceptions:
+      - x_none
+    pseudo:
+      if v1 == v2 then
+        acc = !isnan(v1)
+      else if is_nullish(v1) or is_nullish(v2) then
+        acc = is_nullish(v1) and is_nullish(v2)
+      else
+        if is_value_typed(v1) and is_value_typed(v2) then
+          acc = value_equals(v1, v2) then
+        else
+          acc = 0
+        end
+      end
+    namespace: ets
+    instructions:
+      - sig: ets.equals v1:in:ref, v2:in:ref
+        prefix: ets
+        acc: out:i32
+        format: [pref_op_v1_4_v2_4]
+        intrinsic_name: INTRINSIC_COMPILER_ETS_EQUALS
+
+  - title: Strict check if two references are strictly equal
+    description: >
+      Check if two references are strictly equal.
+    verification:
+      - v1_obj_or_null
+      - v2_obj_or_null
+      - acc_type
+    exceptions:
+      - x_none
+    pseudo:
+      if v1 == v2 then
+        acc = !isnan(v1)
+      else if is_nullish(v1) or is_nullish(v2) then
+        acc = 0
+      else
+        if is_value_typed(v1) and is_value_typed(v2) then
+          acc = value_equals(v1, v2) then
+        else
+          acc = 0
+        end
+      end
+    namespace: ets
+    instructions:
+      - sig: ets.strictequals v1:in:ref, v2:in:ref
+        prefix: ets
+        acc: out:i32
+        format: [pref_op_v1_4_v2_4]
+        intrinsic_name: INTRINSIC_COMPILER_ETS_STRICT_EQUALS
+
+  - title: Evaluate typeof string
+    description: >
+      Evaluate typeof string
+    verification:
+      - v1_obj_or_null
+      - acc_type
+    exceptions:
+      - x_oom
+    namespace: ets
+    instructions:
+      - sig: ets.typeof v1:in:ref
+        prefix: ets
+        acc: out:ref
+        format: [pref_op_v1_8]
+        intrinsic_name: INTRINSIC_COMPILER_ETS_TYPEOF
+
+  - title: Check if value is 'true' in extended conditional semantics
+    description: >
+      Check if the value in the accumulator is considered true in ETS semantics.
+    verification:
+      - v1_obj_or_null
+      - acc_type
+    exceptions:
+      - x_none
+    namespace: ets
+    instructions:
+      - sig: ets.istrue v:in:ref
+        prefix: ets
+        acc: out:i32
+        format: [pref_op_v_8]
+        intrinsic_name: INTRINSIC_COMPILER_ETS_ISTRUE
+
+  - title: Check if the value of reference is null (ets undefined)
+    description: >
+     Throw a NullPointerError if the value in the accumulator is null
+    verification:
+      - v1_obj_or_null
+      - acc_type
+    exceptions:
+      - x_null
+    namespace: ets
+    instructions:
+      - sig: ets.nullcheck
+        prefix: ets
+        acc: in:ref
+        format: [pref_op_none]
+        intrinsic_name: INTRINSIC_COMPILER_ETS_NULLCHECK
+
+  - title: Suspend job and return to the caller
+    description: >
+      Suspend job and return to the caller
+    verification:
+      - none
+    exceptions:
+      - x_null
+    properties:
+      - suspend
+    pseudo: |
+      promise = vs
+      if promise == null then
+       throw NullPointerException
+      end
+      resume_point_id = convert_resume_point_pc_to_id(next_pc)
+      if resume_point_id == INVALID_RESUME_POINT_ID then
+        throw_ets_exception(...)
+      end
+      context = await_promise_completion(promise)
+      if context == null then
+       throw NullPointerException
+      end
+      store_resume_point_id(context, resume_point_id)
+      save_vregs_to(context)
+      acc = load_return_value(context)
+      return acc
+    namespace: ets
+    instructions:
+      - sig: ets.async.await v:in:ref
+        prefix: ets
+        acc: out:ref
+        format: [pref_op_v_8]
+        intrinsic_name: INTRINSIC_COMPILER_ETS_AWAIT_RESOLUTION
+
+  - title: Select a resume point and move to it
+    description: >
+      Select a resume point and move to it
+    verification:
+      - none
+    exceptions:
+      - x_none
+    properties:
+      - dispatch
+    pseudo: |
+      cur_ctx = get_current_async_ctx()
+      if cur_ctx == null then
+        no_op
+      else
+        restore_vregs_from(cur_ctx)
+        resume_point_id = load_resume_point_id(cur_ctx)
+        new_pc = convert_resume_point_id_to_pc(resume_point_id)
+        pc = new_pc
+      end
+    namespace: ets
+    instructions:
+      - sig: ets.async.dispatch
+        prefix: ets
+        acc: none
+        format: [pref_op_none]
+
+  - title: Unpack value from promise
+    description: >
+      Depending on the promise state, unpack the value from the promise
+      and set it to the acc or throw an exception
+    verification:
+      - none
+    exceptions:
+      - x_null
+    pseudo: |
+      promise = vs
+      if promise == null then
+        throw NullPointerException
+      end
+      if promise.is_pending then
+        throw_ets_exception(...)
+      end
+      if promise.is_rejected then
+        throw_ets_exception(promise.value)
+      end
+      acc = promise.value
+    namespace: ets
+    instructions:
+      - sig: ets.async.unpack v:in:ref
+        prefix: ets
+        acc: out:ref
+        format: [pref_op_v_8]
+        intrinsic_name: INTRINSIC_COMPILER_ETS_ASYNC_UNPACK
+
+  - title: Complete async function with resolved promise
+    description: >
+      Complete async function with resolved promise
+    verification:
+      - none
+    exceptions:
+      - x_oom
+    pseudo: |
+      value = vs
+      cur_ctx = get_current_async_ctx()
+      if cur_ctx == null then
+        p = Promise.resolve(value)
+        acc = p
+      else
+        p = load_return_value(cur_ctx)
+        p.resolve(value)
+        acc = p
+      end
+    namespace: ets
+    instructions:
+      - sig: ets.async.resolve v:in:ref
+        prefix: ets
+        acc: out:ref
+        format: [pref_op_v_8]
+        intrinsic_name: INTRINSIC_COMPILER_ETS_ASYNC_RESOLVE
+
+  - title: Complete async function with rejected promise
+    description: >
+      Complete async function with rejected promise
+    verification:
+      - none
+    exceptions:
+      - x_oom
+    pseudo: |
+      error = vs
+      cur_ctx = get_current_async_ctx()
+      if cur_ctx == null then
+        p = Promise.reject(error)
+        acc = p
+      else
+        p = load_return_value(cur_ctx)
+        p.reject(error)
+        acc = p
+      end
+    namespace: ets
+    instructions:
+      - sig: ets.async.reject v:in:ref
+        prefix: ets
+        acc: out:ref
+        format: [pref_op_v_8]
+        intrinsic_name: INTRINSIC_COMPILER_ETS_ASYNC_REJECT

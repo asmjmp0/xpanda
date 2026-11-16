@@ -7,6 +7,7 @@ import { Offset } from "./desc/Offset";
 import { PandaClass } from "./clazz/PandaClass";
 import { PandaString } from "./desc/PandaString";
 import type { IPandaFile } from "./IPandaFile";
+import { isStaticAbcVersion } from "../static/StaticHeader";
 
 export const ENTRY_FUNCTION_MAIN = "func_main_0";
 
@@ -26,6 +27,11 @@ export class PandaFile implements IPandaFile {
     constructor(data: Uint8Array) {
         this.data = data;
         this.leb128 = new Leb128(data);
+        if (data.length >= 16 && isStaticAbcVersion(data.subarray(12, 16))) {
+            throw new PandaParseException(
+                "ArkTS-Sta static abc detected (version " + Array.from(data.subarray(12, 16)).join(".") +
+                "); use StaticPandaFile / StaticDecompiler instead of PandaFile");
+        }
         this.header = new Header(data, 0);
 
         // 校验 checksum

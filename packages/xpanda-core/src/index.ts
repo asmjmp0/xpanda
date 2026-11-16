@@ -28,3 +28,14 @@ export {
     ResourceResType,
 } from "./res/ResourceEnums";
 export { PandaParseException, PandaDecompileException } from "./PandaParseException";
+export { StaticPandaFile } from "./static/StaticPandaFile";
+export { StaticHeader, isStaticAbcVersion } from "./static/StaticHeader";
+export { StaticDecompiler, decompileStaticAbc } from "./static/StaticDecompiler";
+export { StaticPandaDisAssembler } from "./static/StaticPandaDisAssembler";
+export {
+    StaticPandaInstruction,
+    StaticPandaVReg,
+    StaticPandaIMM,
+    StaticPandaID,
+} from "./static/StaticPandaInstruction";
+export { StaticPandaLexical } from "./static/StaticPandaLexical";

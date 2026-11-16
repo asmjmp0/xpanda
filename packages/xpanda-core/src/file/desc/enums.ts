@@ -24,6 +24,7 @@ export enum PandaMethodTag {
     PARAM_ANNOTATION = 0x07,
     TYPE_ANNOTATION = 0x08,
     RUNTIME_TYPE_ANNOTATION = 0x09,
+    PROFILE_INFO = 0x0a,
 }
 
 export enum PandaFieldTag {

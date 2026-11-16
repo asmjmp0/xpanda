@@ -42,6 +42,7 @@ The main thread always performs parsing, disassembly, lexical analysis, and AST 
 | `src/hap/` | HAP application package adapter: read-only ZIP (`ZipFile.ts`) + `.abc` entries / `module.json` / `resources.index` (`HapFile.ts`) |
 | `src/res/` | `resources.index` parsing (Restool & RestoolV2 formats) into queryable resource items |
 | `src/disasm/` | Disassembly: generated opcode table, unified instruction model, CFG, lexical analysis |
+| `src/static/` | ArkTS-Sta (static runtime) support, kept separate from the dynamic parser: 72-byte header / header class table (`StaticPandaFile.ts`), static ISA table generated from `resources/isa-static*.yaml`, static instruction model + CFG (`StaticPandaInstruction.ts` / `StaticPandaDisAssembler.ts`), AST builder, and class/module renderer (`StaticDecompiler.ts`). Structure analysis and simplify are reused. |
 | `src/decompiler/` | Structure analysis (region reduction), statement tree, instruction handlers, dominator graph, reaching-definition value analysis, fallback analysis, try/finally restoration; `ExceptionTable.ts` classifies every try-table entry (user catch / ignored / empty-join / finally epilogue / protocol glue) and drives the CFG exception edges |
 | `src/ast/` | Babel AST construction & text generation (`NodeFactory` / `NodeUtils` / `FormatCode`) |
 | `src/simplify/` | Optimizer pipeline |
@@ -72,12 +73,23 @@ All parse products are cached in `PandaFile.offsets` (a `Map<number, unknown>`) 
 
 ### 3.2 Entities
 
-- `clazz/PandaClass.ts`: name, super class, access flags, fields, methods, and module metadata. Resolution is lazy (`resolve()` guarded by a flag): interface/source-lang tags, fields, methods. Annotation data structures **throw** (not needed). A field named `moduleRecordIdx` triggers `PandaClassModuleData` creation.
+- `clazz/PandaClass.ts`: name, super class, access flags, fields, methods, and module metadata. Resolution is lazy (`resolve()` guarded by a flag): interface/source-lang tags, fields, methods. Annotation tags are skipped (their payload entities are not needed for decompilation). A field named `moduleRecordIdx` triggers `PandaClassModuleData` creation.
   - Module metadata: module paths (`@bundle:` / `@module:` / `@package:` / `@native:` / `@ohos:` / `@hms:` / `@app:` / `@normalized:` prefixes), imports (NAMESPACE / DEFAULT / SPECIFIER / SAME_SPECIFIER), exports (LOCAL / INDIRECT / ALL). The synthetic local name `"*default*"` is renamed to `panda_jmp0_reserved_export_default`.
 - `method/PandaMethod.ts`: tag walk (CODE / SOURCE_LANG / DEBUG_INFO / ANNOTATION), external methods stop after the access flag. `disAssemble()` lazily requires `PandaDisAssembler` to break a circular import. `PandaMethodCode` holds numVregs / numArgs / codeSize / try blocks + raw instruction bytes.
 - `literal/PandaLiteralArray.ts` / `PandaLiteral.ts`: literal arrays (`u32 count` + tag/value pairs). The real pair count is `⌊count / 2⌋`; each tag defines its value width (4B for STRING/METHOD/INTEGER…, 8B for DOUBLE, 1B for BOOL/ACCESSOR/NULLVALUE…, 2B for METHODAFFILIATE). Any `ARRAY_*` tag terminates the loop early. Unknown tags throw.
 - `desc/PandaString.ts`: MUTF-8 strings — leb128 `utf16Size` where bit 0 doubles as an ASCII flag (`isAscii = (utf16Size & 1) === 1`, byte size = `utf16Size >> 1`), NUL-terminated content.
 - `field/PandaField.ts`, `desc/PandaProto.ts`, `type/PandaType.ts`: field/static-value and shorty/proto resolution.
+
+### 3.3 ArkTS-Sta (static runtime) — `src/static/`
+
+HarmonyOS also ships **ArkTS-Sta** bytecode (`static_core`), whose file format and ISA differ from the dynamic ArkTS/Panda format. It is supported in a separate module so the dynamic parser stays untouched:
+
+- **Detection**: `isStaticAbcVersion(version)` mirrors the runtime's `GetFileType()` — `version[1] == 1` (e.g. `0.1.0.7`) or `0.0.0.6` means a static abc. `PandaFile` rejects those with a clear `PandaParseException`; callers use `StaticPandaFile`.
+- **Header**: 72 bytes, with `quickenedFlag`, `numClasses`/`classIdxOff`, `numExportTable`/`exportTableOff` inserted before the lnp/literal/index fields (`StaticHeader.ts`).
+- **Entities**: class/field/method/proto/code records are byte-compatible with the dynamic format, so the shared `PandaClass` / `PandaMethod` / `PandaField` / `PandaProto` / `PandaMethodCode` classes are reused. The header class table is authoritative (`File::GetClasses()`); the region class index also contains primitive type entries (their offset is the field encoding) and is kept for per-method `class_idx`.
+- **ISA**: generated from `resources/isa-static.yaml` (core static ISA) + `resources/isa-static-ets.yaml` (ets plugin, auto-assigned `0xff` prefix) into `src/static/opcodes-static.ts`. Prefixed instructions encode `[prefix][secondary]`; the first 4-bit operand is the **low** nibble (opposite to the dynamic ISA).
+- **Bytecode ids**: `method_id` / `field_id` are 16-bit indexes into the region tables; `string_id` is a 32-bit string entity offset; `lda.str`/`ldc` literal arrays are indexes into the header literal-array table.
+- **Decompilation**: `StaticDecompiler` renders a class (fields, constructor, getters/setters, static block, native method stubs) or the `ETSGLOBAL` module (module variables + `<cctor>` + functions). `StaticPandaDecompilerMethodHandler` maps the static ISA to the same `acc`/register assignment AST used by the dynamic handler; `StructureAnalysis`, `SimpleAnalysis`, the post-process passes and `SimplifyExport` are reused unchanged. `StaticLambdaInliner` reconstructs compiler-generated closures (`%%lambda-lambda_invoke-N`: captured fields + `invokeN` + hoisted `lambda_invoke-N` method) back into arrow functions and removes the generated classes/methods when every construction site was inlined. The CLI (`decompile`, `dump-asm`) detects static abc automatically.
 
 ## 4. Container & Resource Layer — `src/hap/` + `src/res/`
 

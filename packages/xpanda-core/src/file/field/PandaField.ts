@@ -1,4 +1,3 @@
-import { PandaParseException } from "../../PandaParseException";
 import type { IPandaFile } from "../IPandaFile";
 import { PandaFileUtils } from "../PandaFileUtils";
 import { Offset } from "../desc/Offset";
@@ -56,13 +55,13 @@ export class PandaField extends Offset {
                 this.pandaRawValue = new Offset(pandaFile, PandaFileUtils.bytes2UnsignedInteger(pandaFile.data, offset + index));
                 index += 4;
             } else if (tag === PandaFieldTag.RUNTIME_ANNOTATION) {
-                throw new PandaParseException("PandaFieldTag.RUNTIME_ANNOTATION");
+                index += 4;
             } else if (tag === PandaFieldTag.ANNOTATION) {
-                throw new PandaParseException("PandaFieldTag.ANNOTATION");
+                index += 4;
             } else if (tag === PandaFieldTag.RUNTIME_TYPE_ANNOTATION) {
-                throw new PandaParseException("PandaFieldTag.RUNTIME_TYPE_ANNOTATION");
+                index += 4;
             } else if (tag === PandaFieldTag.TYPE_ANNOTATION) {
-                throw new PandaParseException("PandaFieldTag.TYPE_ANNOTATION");
+                index += 4;
             }
             tag = pandaFile.data[this.offsetValue + index];
             this.tagList.push(tag);
@@ -82,14 +81,32 @@ export class PandaField extends Offset {
         const indexHeader = this.pandaFile!.resolveIndexHeaderByOffset(this);
         if (indexHeader) {
             if (this.classIdx < indexHeader.classIdxSize) this.pandaClass = indexHeader.pandaClasses[this.classIdx];
-            if (this.typeIdx < indexHeader.classIdxSize) this.pandaType = new PandaType(indexHeader.pandaClasses[this.typeIdx], true);
+            if (this.typeIdx < indexHeader.classIdxSize) {
+                try {
+                    this.pandaType = new PandaType(indexHeader.pandaClasses[this.typeIdx], true);
+                } catch {
+                    // ArkTS-Sta primitive type entries store the field encoding
+                    // (code - 2) instead of the dynamic raw type code, so the
+                    // dynamic PandaType lookup cannot classify them. Field types
+                    // are not needed for decompilation.
+                    this.pandaType = null;
+                }
+            }
         }
         if (this.pandaType && this.pandaRawValue) {
-            this.pandaFieldValue = PandaFieldValue.create(this.pandaFile!, this.pandaRawValue.getOffset(), toFieldType(this.pandaType.rawType));
-            if (this.pandaType.primitive && this.pandaType.rawType === PandaRawType.U32) {
-                if (this.name.content === "moduleRecordIdx") {
-                    (this.pandaClass!.getParent() as IndexHeader).addModuleLiteral(this.pandaRawValue.getOffset());
+            try {
+                this.pandaFieldValue = PandaFieldValue.create(this.pandaFile!, this.pandaRawValue.getOffset(), toFieldType(this.pandaType.rawType));
+                if (this.pandaType.primitive && this.pandaType.rawType === PandaRawType.U32) {
+                    if (this.name.content === "moduleRecordIdx") {
+                        (this.pandaClass!.getParent() as IndexHeader).addModuleLiteral(this.pandaRawValue.getOffset());
+                    }
                 }
+            } catch {
+                // Static abc fields may carry reference/id initial values that the
+                // dynamic literal decoder does not model. Keep the raw value and
+                // let the static decompiler render the declaration without an
+                // initializer.
+                this.pandaFieldValue = null;
             }
             this.pandaRawValue = null;
         }

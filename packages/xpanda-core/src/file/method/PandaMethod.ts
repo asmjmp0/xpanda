@@ -1,4 +1,3 @@
-import { PandaParseException } from "../../PandaParseException";
 import type { IPandaFile } from "../IPandaFile";
 import { PandaFileUtils } from "../PandaFileUtils";
 import { Offset } from "../desc/Offset";
@@ -58,22 +57,20 @@ export class PandaMethod extends Offset {
             } else if (tag === PandaMethodTag.SOURCE_LANG) {
                 this.sourceLang = pandaFile.data[this.offsetValue + index];
                 index += 1;
-            } else if (tag === PandaMethodTag.RUNTIME_ANNOTATION) {
-                throw new PandaParseException("PandaMethodTag.RUNTIME_ANNOTATION");
-            } else if (tag === PandaMethodTag.RUNTIME_PARAM_ANNOTATION) {
-                throw new PandaParseException("PandaMethodTag.RUNTIME_PARAM_ANNOTATION");
+            } else if (tag === PandaMethodTag.RUNTIME_ANNOTATION
+                || tag === PandaMethodTag.RUNTIME_PARAM_ANNOTATION
+                || tag === PandaMethodTag.ANNOTATION
+                || tag === PandaMethodTag.PARAM_ANNOTATION
+                || tag === PandaMethodTag.TYPE_ANNOTATION
+                || tag === PandaMethodTag.RUNTIME_TYPE_ANNOTATION) {
+                // Annotation payloads are separate entities referenced by a 32-bit id.
+                index += 4;
             } else if (tag === PandaMethodTag.DEBUG_INFO) {
                 this.debugInfoOffset = PandaFileUtils.bytes2UnsignedInteger(pandaFile.data, this.offsetValue + index);
                 index += 4;
-            } else if (tag === PandaMethodTag.ANNOTATION) {
-                this.annotationOffsets.push(PandaFileUtils.bytes2UnsignedInteger(pandaFile.data, this.offsetValue + index));
-                index += 4;
-            } else if (tag === PandaMethodTag.PARAM_ANNOTATION) {
-                throw new PandaParseException("PandaMethodTag.PARAM_ANNOTATION");
-            } else if (tag === PandaMethodTag.TYPE_ANNOTATION) {
-                throw new PandaParseException("PandaMethodTag.TYPE_ANNOTATION");
-            } else if (tag === PandaMethodTag.RUNTIME_TYPE_ANNOTATION) {
-                throw new PandaParseException("PandaMethodTag.RUNTIME_TYPE_ANNOTATION");
+            } else if (tag === PandaMethodTag.PROFILE_INFO) {
+                // PROFILE_INFO: uint16 profile size.
+                index += 2;
             }
             tag = pandaFile.data[this.offsetValue + index];
         }
