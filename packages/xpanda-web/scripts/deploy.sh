@@ -16,6 +16,18 @@ PKG_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 DIST_DIR="$PKG_DIR/dist"
 DEST_DIR="/var/www/xpanda"
 
+# A git pull refreshes the working tree but not node_modules: the workspace
+# links vite resolves through (@asm-xpanda/*) come from the last `yarn install`.
+# When the package set changed (e.g. the @asm-xpanda scope move) the stale links
+# no longer cover every import and the build fails to resolve @asm-xpanda/core.
+# Re-link in place before building so `git pull && yarn run deploy` just works.
+ROOT_DIR="$(cd "$PKG_DIR/../.." && pwd)"
+CORE_LINK="$ROOT_DIR/node_modules/@asm-xpanda/core"
+if [ -f "$ROOT_DIR/package.json" ] && [ ! -e "$CORE_LINK" ]; then
+    echo "==> Workspace link missing ($CORE_LINK), running yarn install at $ROOT_DIR"
+    (cd "$ROOT_DIR" && yarn install)
+fi
+
 echo "==> Cleaning $DIST_DIR"
 rm -rf "$DIST_DIR"
 
