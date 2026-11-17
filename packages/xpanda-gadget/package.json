@@ -1,6 +1,10 @@
 {
   "name": "@asm-xpanda/gadget",
-  "version": "1.8.0",
+  "version": "1.8.1",
+  "files": [
+    "src",
+    "assets"
+  ],
   "publishConfig": {
     "access": "public"
   },

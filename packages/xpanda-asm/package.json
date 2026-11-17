@@ -1,6 +1,9 @@
 {
   "name": "@asm-xpanda/asm",
-  "version": "2.5.0",
+  "version": "2.5.1",
+  "files": [
+    "src"
+  ],
   "publishConfig": {
     "access": "public"
   },

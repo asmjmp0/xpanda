@@ -1,6 +1,10 @@
 {
   "name": "@asm-xpanda/cli",
-  "version": "2.13.0",
+  "version": "2.13.1",
+  "files": [
+    "src",
+    "bin"
+  ],
   "publishConfig": {
     "access": "public"
   },
