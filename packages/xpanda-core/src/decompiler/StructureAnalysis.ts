@@ -39,6 +39,21 @@ const MAX_STRUCTURED_STATEMENTS = 30_000;
 const MAX_TAIL_PRUNE_ROUNDS = 64;
 
 /**
+ * Statement-level shared-tail hoist trigger.
+ *
+ * `reduceSequence` copies a successor region's statements into one predecessor
+ * while the successor stays referenced from another branch, so a chain of
+ * diamonds unfolds exponentially (`2^depth`) even though the tree has very few
+ * unique nodes. The region-level prune cannot see that shape; the
+ * statement-level hoist in `hoistSharedStatementTail` can. Running it on every
+ * method changes output that downstream switch/ternary synthesis would restore
+ * better, so it only runs when the expanded estimate is large and clearly out
+ * of proportion to the unique node count (a linear method has ratio < 1).
+ */
+const STATEMENT_HOIST_MIN_STATEMENTS = 500;
+const STATEMENT_HOIST_MAX_EXPANSION = 4;
+
+/**
  * 单个方法参与结构化归约的基本块数上限。
  *
  * 超过上限的方法按设计降级到 SimpleAnalysis 线性输出:块数越多,归约和后续
@@ -295,6 +310,19 @@ export class StructureAnalysis {
     }
 
     /**
+     * Whether the expanded tree is dominated by shared-tail duplication.
+     *
+     * The estimate counts every reference of a shared node, while
+     * `countEmittedReferences` counts every node once; a ratio above the
+     * threshold means the expansion is exponential rather than linear.
+     */
+    private exceedsSharedTailBudget(root: Region, structuredStatements: number): boolean {
+        if (structuredStatements <= STATEMENT_HOIST_MIN_STATEMENTS) return false;
+        const uniqueNodes = this.countEmittedReferences(root).size;
+        return structuredStatements > uniqueNodes * STATEMENT_HOIST_MAX_EXPANSION;
+    }
+
+    /**
      * 语句图按引用展开后是否成环。
      *
      * `Region.decompile()` 每遇到一个 Region 就再展开它当前的语句,所以只要某个
@@ -396,7 +424,19 @@ export class StructureAnalysis {
         // 位置(amcl n16 trackLaunch 的整个准入后缀被复制了 6 次,finally 只在其中
         // 一份里还原,其余分支留下 `if (hole == v7) return; throw v7` 残渣)。
         this.pruneRedundantTailBranches(root);
-        const structuredStatements = this.estimateStructuredStatements(root, MAX_STRUCTURED_STATEMENTS);
+        let structuredStatements = this.estimateStructuredStatements(root, MAX_STRUCTURED_STATEMENTS);
+        if (structuredStatements > MAX_STRUCTURED_STATEMENTS
+            || this.exceedsSharedTailBudget(root, structuredStatements)) {
+            // Region-level pruning cannot see a fall-through tail that
+            // `reduceSequence` duplicated as shared statement references
+            // (`Region.addRegion` copies them while the successor region stays
+            // referenced from another branch). The statement-level hoist only
+            // fires when the expanded size is out of proportion to the unique
+            // node count, so normal methods keep the shape that downstream
+            // switch/ternary synthesis handles best.
+            this.pruneRedundantTailBranches(root, true);
+            structuredStatements = this.estimateStructuredStatements(root, MAX_STRUCTURED_STATEMENTS);
+        }
         if (structuredStatements > MAX_STRUCTURED_STATEMENTS) {
             throw new PandaDecompileException(
                 this.pandaIRCFG.getPandaMethod().name.content + " structured output too large");
@@ -435,12 +475,14 @@ export class StructureAnalysis {
      * 那条分支继续找 NEXT。共享尾自身带循环时不递归:那通常是 for-of 的 done/close
      * 续接,提前出分支会改变循环体形状,让 for-of 还原退化(amcl k10/v10)。
      */
-    private pruneRedundantTailBranches(root: Region): void {
-        const refCount = this.countEmittedReferences(root);
+    private pruneRedundantTailBranches(root: Region, hoistStatementTails = false): void {
         for (let round = 0; round < MAX_TAIL_PRUNE_ROUNDS; round++) {
-            // 每轮树结构都可能变化(尾块被搬运),循环缓存只在单轮内有效
+            // The tree changes between rounds (tails are moved), so reference
+            // counts must be recomputed every round; the loop cache is only
+            // valid for a single round.
+            const refCount = this.countEmittedReferences(root);
             this.loopPresenceCache.clear();
-            if (!this.pruneTailInNode(root, refCount, new Set<Region>())) break;
+            if (!this.pruneTailInNode(root, refCount, new Set<Region>(), hoistStatementTails)) break;
         }
     }
 
@@ -471,41 +513,43 @@ export class StructureAnalysis {
     }
 
     /** 自底向上处理:先收掉分支深处的重复尾,外层 if 才能看到变成单分支的分支末尾。 */
-    private pruneTailInNode(node: IPandaDecompileAble, refCount: Map<object, number>, visited: Set<Region>): boolean {
+    private pruneTailInNode(node: IPandaDecompileAble, refCount: Map<object, number>, visited: Set<Region>,
+        hoistStatementTails: boolean): boolean {
         if (node instanceof Region) {
             if (visited.has(node)) return false;
             visited.add(node);
-            return this.pruneTailInList(node.getStatements(), refCount, visited);
+            return this.pruneTailInList(node.getStatements(), refCount, visited, hoistStatementTails);
         }
         if (node instanceof IfPandaStatement) {
             let changed = false;
             const consequent = (node as any).consequent;
             const alternate = (node as any).alternate;
-            if (consequent instanceof Region) changed = this.pruneTailInNode(consequent, refCount, visited) || changed;
-            if (alternate instanceof Region) changed = this.pruneTailInNode(alternate, refCount, visited) || changed;
+            if (consequent instanceof Region) changed = this.pruneTailInNode(consequent, refCount, visited, hoistStatementTails) || changed;
+            if (alternate instanceof Region) changed = this.pruneTailInNode(alternate, refCount, visited, hoistStatementTails) || changed;
             return changed;
         }
         if (node instanceof WhileStatement) {
-            let changed = this.pruneTailInList((node as any).headStms ?? [], refCount, visited);
-            changed = this.pruneTailInList((node as any).bodyStms ?? [], refCount, visited) || changed;
+            let changed = this.pruneTailInList((node as any).headStms ?? [], refCount, visited, hoistStatementTails);
+            changed = this.pruneTailInList((node as any).bodyStms ?? [], refCount, visited, hoistStatementTails) || changed;
             return changed;
         }
         if (node instanceof DoWhileStatement) {
-            return this.pruneTailInList((node as any).bodyStms ?? [], refCount, visited);
+            return this.pruneTailInList((node as any).bodyStms ?? [], refCount, visited, hoistStatementTails);
         }
         return false;
     }
 
-    private pruneTailInList(list: IPandaDecompileAble[], refCount: Map<object, number>, visited: Set<Region>): boolean {
+    private pruneTailInList(list: IPandaDecompileAble[], refCount: Map<object, number>, visited: Set<Region>,
+        hoistStatementTails: boolean): boolean {
         let changed = false;
         for (const statement of list) {
             if (statement instanceof Region || statement instanceof IfPandaStatement
                 || statement instanceof WhileStatement || statement instanceof DoWhileStatement) {
-                changed = this.pruneTailInNode(statement, refCount, visited) || changed;
+                changed = this.pruneTailInNode(statement, refCount, visited, hoistStatementTails) || changed;
             }
         }
         for (let index = 0; index < list.length; index++) {
-            if (this.pruneSharedTailOfIf(list, index, refCount)) changed = true;
+            if (this.pruneSharedTailOfIf(list, index, refCount, hoistStatementTails)) changed = true;
         }
         return changed;
     }
@@ -515,7 +559,8 @@ export class StructureAnalysis {
      * 分支末尾的重复尾有两种形态:内层 if 的 else 指向 NEXT,或分支列表最后一项就是
      * NEXT 这个 Region(上一层刚提上来的)。
      */
-    private pruneSharedTailOfIf(list: IPandaDecompileAble[], index: number, refCount: Map<object, number>): boolean {
+    private pruneSharedTailOfIf(list: IPandaDecompileAble[], index: number, refCount: Map<object, number>,
+        hoistStatementTails: boolean): boolean {
         const statement = list[index];
         if (!(statement instanceof IfPandaStatement)) return false;
         const consequent = (statement as any).consequent;
@@ -531,7 +576,78 @@ export class StructureAnalysis {
             list.splice(index + 1, 0, alternate);
             return true;
         }
-        return false;
+        return hoistStatementTails && this.hoistSharedStatementTail(list, index, refCount);
+    }
+
+    /**
+     * Hoist a duplicated fall-through tail out of both branches of an if.
+     *
+     * `reduceSequence` copies a successor region's statement *references* into
+     * the predecessor while the successor itself stays referenced from another
+     * branch (`Region.addRegion`). The region object is not shared but its
+     * statements are, so `detachSharedTail` (which matches a shared Region
+     * object) cannot see it and the tail unfolds twice per branch:
+     *
+     *   if (C) { A; if (D) { X } else { TAIL } } else { B; TAIL }
+     *
+     * Both branch paths run TAIL exactly once, so it can be emitted once after
+     * the if:
+     *
+     *   if (C) { A; if (D) { X } } else { B } TAIL
+     *
+     * `X` must always leave the structure (return/throw/break/continue/goto)
+     * before the inner `else` can be dropped; otherwise that path would start
+     * running TAIL where it previously did not. The statement identity match is
+     * what proves TAIL really is the same code in both places: no structural
+     * comparison is involved, so a rule cannot fire on coincidentally equal
+     * code. Every node that is mutated must be referenced exactly once, or the
+     * change would apply to a copy that has a different continuation.
+     */
+    private hoistSharedStatementTail(list: IPandaDecompileAble[], index: number,
+        refCount: Map<object, number>): boolean {
+        const statement = list[index];
+        if (!(statement instanceof IfPandaStatement)) return false;
+        if ((refCount.get(statement) ?? 0) !== 1) return false;
+        const consequent = (statement as any).consequent;
+        const alternate = (statement as any).alternate;
+        if (!(consequent instanceof Region) || !(alternate instanceof Region)) return false;
+        if (consequent === alternate || alternate.isTryRegion()) return false;
+        if ((refCount.get(consequent) ?? 0) !== 1 || (refCount.get(alternate) ?? 0) !== 1) return false;
+        const alternateStatements = alternate.getStatements();
+        if (alternateStatements.length === 0) return false;
+        const statements = consequent.getStatements();
+        if (statements.length === 0) return false;
+        const last = statements[statements.length - 1];
+        let tail: Region | null = null;
+        let unlink: (() => void) | null = null;
+        if (last instanceof Region) {
+            // The branch itself ends with the shared region.
+            tail = last;
+            unlink = () => { statements.pop(); };
+        } else if (last instanceof IfPandaStatement && (refCount.get(last) ?? 0) === 1) {
+            const innerConsequent = (last as any).consequent as IPandaDecompileAble | null;
+            const innerAlternate = (last as any).alternate as IPandaDecompileAble | null;
+            if (innerAlternate instanceof Region && this.branchAlwaysExits(innerConsequent)) {
+                tail = innerAlternate;
+                unlink = () => { (last as any).alternate = null; };
+            } else if (innerConsequent instanceof Region && this.branchAlwaysExits(innerAlternate)) {
+                tail = innerConsequent;
+                unlink = () => { (last as any).consequent = null; };
+            }
+        }
+        if (!tail || !unlink || tail === alternate || tail === consequent) return false;
+        if ((refCount.get(tail) ?? 0) !== 1) return false;
+        const tailStatements = tail.getStatements();
+        if (tailStatements.length === 0 || tailStatements.length > alternateStatements.length) return false;
+        const offset = alternateStatements.length - tailStatements.length;
+        for (let i = 0; i < tailStatements.length; i++) {
+            if (alternateStatements[offset + i] !== tailStatements[i]) return false;
+        }
+        unlink();
+        alternateStatements.splice(offset, tailStatements.length);
+        if (alternateStatements.length === 0) (statement as any).alternate = null;
+        list.splice(index + 1, 0, tail);
+        return true;
     }
 
     /**

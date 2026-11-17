@@ -1,6 +1,6 @@
 {
   "name": "@asm-xpanda/core",
-  "version": "3.4.0",
+  "version": "3.4.1",
   "publishConfig": {
     "access": "public"
   },

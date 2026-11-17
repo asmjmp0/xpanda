@@ -203,4 +203,26 @@ assertSnapshot("L@ohos/UiTest/Driver;", "static-uitest-driver.js");
     assertContains(codeOf("L@ohos/UiTest/Driver;"), "new lambda_lambda_invoke_442(", "non-inlinable lambda kept");
 }
 
+// 7. Shared statement-reference tail hoist: the optional-argument guard chain in
+//    `%%lambda-lambda_invoke-0` used to estimate 2^16 statements (393,210) and
+//    degrade every R method to SimpleAnalysis (`decompiler_goto`). The chain
+//    must stay structured and keep the per-argument length guard.
+{
+    const data = new Uint8Array(fs.readFileSync(path.join(__dirname, "resources", "linkEnhance_taihe_ani.abc")));
+    const linkFile = new StaticPandaFile(data);
+    const results = new StaticDecompiler().decompileFile(linkFile, true);
+    const lambda = results.find((result) => result.clazz.getClassName().includes("lambda-lambda_invoke-0"));
+    if (!lambda) throw new Error("linkEnhance lambda class not decompiled");
+    assertContains(lambda.code, "invokeR0(p0) {", "linkEnhance invokeR0");
+    assertContains(lambda.code, "if (p0.length > 0) {", "linkEnhance invokeR0 guard");
+    assertNotContains(lambda.code, "SimpleAnalysis", "linkEnhance invokeR0");
+    assertNotContains(lambda.code, "decompiler_goto", "linkEnhance invokeR0");
+    for (const result of results) {
+        if (result.code.includes("SimpleAnalysis") || result.code.includes("decompiler_goto")) {
+            throw new Error("linkEnhance class not structured: " + result.clazz.getClassName());
+        }
+        NodeFactory.parse(result.code);
+    }
+}
+
 console.log("static-decompile.test.ts: ok");
