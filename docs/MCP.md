@@ -66,7 +66,7 @@ Generic JSON config (Claude Desktop / Cursor etc.):
 | `hap_resources` | Parse `resources.index` inside a hap (name/type/qualifier/ID filtering + pagination) | `fileId, name?, type?, limitKey?, id?, offset?, limit?` |
 | `abc_list_classes` | List classes with pagination (name/method count/field count/external), supports substring filtering | `fileId, filter?, offset?, limit?` |
 | `abc_get_class` | Class metadata: superclass, field table, method table (shorty prototypes), import/export | `fileId, className` |
-| `abc_decompile_class` | Decompile a single class to JavaScript source, with the `degraded` flag | `fileId, className, simplify?=true` |
+| `abc_decompile_class` | Decompile a single class to JavaScript source, with the `degraded` flag; over 50KB the output is paged line-by-line (`offset`/`limit`), or written whole to disk via `outFile` | `fileId, className, simplify?=true, outFile?, offset?, limit?` |
 | `abc_disassemble_method` | Method-level disassembly (basic blocks + pc/operands/jump targets/try-catch) | `fileId, className, methodName?=func_main_0` |
 | `abc_search_strings` | String pool search (substring or regex), returns content and file offsets | `fileId, pattern, regex?=` |
 | `abc_export` | Full decompile to disk (equivalent to CLI decompile) | `fileId, outDir, simplify?=` |
@@ -80,11 +80,11 @@ All tools except `abc_load` require an `abc_load` first to get a `fileId`. Class
 abc_load(.abc)
   → abc_list_classes(filter to locate target classes)
   → abc_get_class (confirm method table / import-export)
-  → abc_decompile_class (read source)
+  → abc_decompile_class (read source; over 50KB use offset paging or outFile)
       degraded=false → analyze directly
       degraded=true  → abc_disassemble_method to compare against bytecode
   → abc_search_strings (URL / keys / class names and other clues)
-  → abc_export (when you need the full output or the output was truncated)
+  → abc_export (when you need every class written to disk at once)
   → abc_close (free memory)
 ```
 
@@ -126,7 +126,17 @@ decompile pipeline therefore never leak into the protocol layer.
 
 ### Large Output Protection
 
-`abc_decompile_class` truncates output over 50KB per class and suggests `abc_export` to write to disk instead;
+`abc_decompile_class` returns content inline as a whole while it stays within 50KB. Beyond that it switches to line
+paging: each response carries one page (default 1000 lines, cap 5000, also capped at 50KB per response), and the header
+comment reports `lines` / `offset` / `returned` / `truncated` / `next_offset` so agents keep calling with the next
+`offset` until `truncated=false`. Passing `outFile` instead writes the full source to disk in one call and returns only
+metadata (`outFile` / `lines` / `chars` / `degraded`) — clients with local file tools read it page by page themselves,
+which is the most token-efficient path for very large classes.
+
+Paged and `outFile` calls reuse a per-session decompile cache (LRU, 4 entries, keyed by class + `simplify`), so paging
+through one class does not re-run the pipeline per page; the header's `cached` flag reports whether the result came from
+the cache.
+
 `abc_disassemble_method` outputs at most 1500 instructions by default, adjustable via `maxInstructions` (cap 5000).
 
 ### Degradation Observability

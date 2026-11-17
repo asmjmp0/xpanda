@@ -159,6 +159,33 @@ async function main(): Promise<void> {
     const expectedJs = fs.readFileSync(path.join(coreTest, "expected", "md5.js"), "utf-8");
     check(source === expectedJs, "abc_decompile_class 输出与 expected/md5.js 快照逐字一致");
 
+    // 7b. 分页:limit=5 只返回头注释+5 行并带 next_offset;翻页与整份输出逐字衔接,翻页命中缓存
+    const fullJs = source;
+    const page1 = await call("abc_decompile_class", { fileId, className, limit: 5 });
+    const p1 = page1.raw.split("\n");
+    check(p1[0].includes("offset=0") && p1[0].includes("returned=5")
+        && p1[0].includes("truncated=true") && p1[0].includes("next_offset=5"),
+        "abc_decompile_class limit=5 头注释带 offset=0/returned=5/truncated=true/next_offset=5");
+    check(p1.slice(1, 6).join("\n") === fullJs.split("\n").slice(0, 5).join("\n"),
+        "abc_decompile_class limit=5 本页 5 行与整份输出前 5 行逐字一致");
+    const page2 = await call("abc_decompile_class", { fileId, className, offset: 5, limit: 5 });
+    const p2 = page2.raw.split("\n");
+    check(p2[0].includes("offset=5") && p2[0].includes("cached=true"),
+        "abc_decompile_class 翻页 offset=5 命中会话缓存 cached=true");
+    check(p2.slice(1, 6).join("\n") === fullJs.split("\n").slice(5, 10).join("\n"),
+        "abc_decompile_class 翻页 offset=5 内容与整份输出第 6-10 行逐字一致");
+    const beyond = await call("abc_decompile_class", { fileId, className, offset: 1e9 });
+    const beyondHeader = beyond.raw.split("\n")[0];
+    check(beyondHeader.includes("returned=0") && beyondHeader.includes("truncated=false"),
+        "abc_decompile_class offset 超出总行数返回空页 truncated=false");
+
+    // 7c. outFile 落盘:全量写入且与快照逐字一致,协议内只回元数据
+    const outFile = path.join(os.tmpdir(), "xpanda-mcp-test-decompile-" + Date.now() + ".js");
+    const dumped = await call("abc_decompile_class", { fileId, className, outFile });
+    check(dumped.outFile === outFile && dumped.lines === fullJs.split("\n").length && dumped.chars === fullJs.length,
+        "abc_decompile_class outFile 返回元数据 lines=" + dumped.lines + " chars=" + dumped.chars);
+    check(fs.readFileSync(outFile, "utf-8") === fullJs, "outFile 落盘内容与整份反编译输出逐字一致");
+
     // 8. abc_search_strings
     const strings = await call("abc_search_strings", { fileId, pattern: "admin" });
     check(strings.poolSize > 0 && strings.matched >= 1,

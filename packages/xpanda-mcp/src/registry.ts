@@ -20,6 +20,8 @@ export interface AbcSession {
     path: string;
     pandaFile: PandaFile;
     decompiler: PandaDecompiler;
+    /** 单类反编译结果缓存(key = 类名|simplify;abc_decompile_class 翻页/落盘复用,避免每页重跑流水线) */
+    decompiles: Map<string, string>;
     loadedAt: number;
 }
 
@@ -95,6 +97,7 @@ export class Registry {
             path: syntheticPath,
             pandaFile,
             decompiler: new PandaDecompiler(),
+            decompiles: new Map(),
             loadedAt: Date.now(),
         };
         this.put(session);
@@ -110,6 +113,7 @@ export class Registry {
             path: absPath,
             pandaFile,
             decompiler: new PandaDecompiler(),
+            decompiles: new Map(),
             loadedAt: Date.now(),
         };
         this.put(session);
