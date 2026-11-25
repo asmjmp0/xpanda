@@ -123,8 +123,9 @@ async function main(): Promise<void> {
     // 2. tools/list
     const tools = await request("tools/list", {});
     const names = tools.tools.map((t: any) => t.name).sort();
-    const expected = ["abc_close", "abc_decompile_class", "abc_disassemble_method",
-        "abc_export", "abc_get_class", "abc_list_classes", "abc_load", "abc_search_strings",
+    const expected = ["abc_close", "abc_decompile_class", "abc_decompile_method", "abc_disassemble_method",
+        "abc_export", "abc_get_class", "abc_list_classes", "abc_load", "abc_search_code",
+        "abc_search_strings", "abc_search_symbols", "abc_call_graph", "abc_xrefs",
         "hap_read_abc", "hap_resources"].sort();
     check(JSON.stringify(names) === JSON.stringify(expected), "tools/list 共 " + names.length + " 个工具且名称齐全");
 
@@ -198,6 +199,28 @@ async function main(): Promise<void> {
     check(disasm.raw.includes("func_main_0") && disasm.raw.includes(":"), "abc_disassemble_method 输出包含入口与指令行");
     check(/\b\d+:\w+/.test(disasm.raw), "abc_disassemble_method 含 pc:opcode 指令行");
 
+    // 9b. 符号搜索 / 方法反编译 / 源码搜索 / xref / 调用图(动态 md5.abc)
+    const symbolHit = await call("abc_search_symbols", { fileId, query: "md5cycle", kind: "method" });
+    check(symbolHit.matches.length === 1 && symbolHit.matches[0].name === "md5cycle",
+        "abc_search_symbols 命中方法 md5cycle");
+    const methodSource = await call("abc_decompile_method", { fileId, className, methodName: "md5cycle" });
+    check(methodSource.raw.includes("function md5cycle(p0, p1)"),
+        "abc_decompile_method 提取 md5cycle 源码");
+    const codeSearch = await call("abc_search_code", { fileId, pattern: "md5 of admin", maxClasses: 20 });
+    check(codeSearch.matches.length >= 1 && codeSearch.matches[0].className === "_GLOBAL",
+        "abc_search_code 命中源码 md5 of admin, className=" + codeSearch.matches[0]?.className);
+    const xrefs = await call("abc_xrefs", {
+        fileId, targetType: "method", target: "md5cycle", ownerClass: className, source: true, limit: 100,
+    });
+    check(xrefs.matches.some((m: any) => m.origin === "source" && m.fromMethod === "md51" && m.kind === "call"),
+        "abc_xrefs(source=true) 找到 md51 → md5cycle 调用点");
+    const graph = await call("abc_call_graph", {
+        fileId, className, methodName: "md5cycle", direction: "both", depth: 1,
+    });
+    check(graph.nodes.some((n: any) => n.id === "_GLOBAL#md51")
+        && graph.nodes.some((n: any) => n.id === "_GLOBAL#ff"),
+        "abc_call_graph 同时找到 callers(md51) 与 callees(ff)");
+
     // 10. abc_export 落盘
     const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "xpanda-mcp-test-"));
     const exported = await call("abc_export", { fileId, outDir });
@@ -243,11 +266,55 @@ async function main(): Promise<void> {
         "abc_disassemble_method 使用 static ISA");
     const staticStrings = await call("abc_search_strings", { fileId: staticLoaded.fileId, pattern: "Point counts" });
     check(staticStrings.matched >= 1, "abc_search_strings 在 static abc 上命中字符串,matched=" + staticStrings.matched);
+    const staticSymbol = await call("abc_search_symbols", {
+        fileId: staticLoaded.fileId, query: "create", kind: "method", classFilter: "UiTest/Driver",
+    });
+    check(staticSymbol.matches.length >= 1 && staticSymbol.matches[0].name === "create",
+        "abc_search_symbols 在 static abc 上命中 Driver.create");
+    const staticMethod = await call("abc_decompile_method", {
+        fileId: staticLoaded.fileId, className: "L@ohos/UiTest/Driver;", methodName: "create",
+    });
+    check(staticMethod.raw.includes("static create()"), "abc_decompile_method 在 static abc 上提取 create");
+    const staticXrefs = await call("abc_xrefs", {
+        fileId: staticLoaded.fileId, targetType: "method", target: "doSetupIfNeeded",
+        ownerClass: "L@ohos/UiTest/ETSGLOBAL;", limit: 100,
+    });
+    check(staticXrefs.matches.some((m: any) => m.fromMethod === "create" && m.kind === "call"),
+        "abc_xrefs 在 static abc 上找到 Driver.create → doSetupIfNeeded");
+    const staticGraph = await call("abc_call_graph", {
+        fileId: staticLoaded.fileId, className: "L@ohos/UiTest/Driver;", methodName: "create",
+        direction: "callees", depth: 1,
+    });
+    check(staticGraph.nodes.some((n: any) => n.method === "doSetupIfNeeded"),
+        "abc_call_graph 在 static abc 上找到 create 的 callee doSetupIfNeeded");
+    const staticCodeSearch = await call("abc_search_code", {
+        fileId: staticLoaded.fileId, pattern: "Point counts", classFilter: "UiTest/Driver", maxClasses: 20,
+    });
+    check(staticCodeSearch.matches.length >= 1, "abc_search_code 在 static abc 上命中 Point counts");
     const staticOutDir = fs.mkdtempSync(path.join(os.tmpdir(), "xpanda-mcp-static-"));
     const staticExported = await call("abc_export", { fileId: staticLoaded.fileId, outDir: staticOutDir });
     check(staticExported.written >= 1 && staticExported.failed === 0,
         "abc_export 在 static abc 上落盘 written=" + staticExported.written);
     await call("abc_close", { fileId: staticLoaded.fileId });
+
+    // 11c. 真实应用 yourpipe0.7.0.abc:符号搜索 → 方法反编译 → 动态源码调用图
+    const yourpipeLoaded = await call("abc_load", { path: path.join(coreTest, "resources", "yourpipe0.7.0.abc") });
+    const sabrClass = await call("abc_search_symbols", {
+        fileId: yourpipeLoaded.fileId, query: "SabrResponseDecoder", kind: "class",
+    });
+    check(sabrClass.matches.length === 1, "abc_search_symbols 在 yourpipe 上找到 SabrResponseDecoder");
+    const sabrRaw = sabrClass.matches[0].rawName;
+    const sabrMethod = await call("abc_decompile_method", {
+        fileId: yourpipeLoaded.fileId, className: sabrRaw, methodName: "#*#sabrDecodeBody",
+    });
+    check(sabrMethod.raw.includes("sabrDecodeBody"), "abc_decompile_method 在 yourpipe 上提取 #*#sabrDecodeBody");
+    const sabrGraph = await call("abc_call_graph", {
+        fileId: yourpipeLoaded.fileId, className: sabrRaw, methodName: "#*#sabrDecodeBody",
+        direction: "callees", depth: 1, maxClasses: 20,
+    });
+    check(sabrGraph.nodeCount > 1 && sabrGraph.nodes.some((n: any) => n.method === "sabrDecodeParts"),
+        "abc_call_graph 在 yourpipe 上找到 sabrDecodeBody → sabrDecodeParts");
+    await call("abc_close", { fileId: yourpipeLoaded.fileId });
 
     // 12. 错误路径:不存在的 fileId / 类名 / 方法名 → isError
     await call("abc_list_classes", { fileId: "no-such-id" }, true);

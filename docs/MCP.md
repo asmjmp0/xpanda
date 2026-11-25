@@ -66,7 +66,12 @@ Generic JSON config (Claude Desktop / Cursor etc.):
 | `hap_resources` | Parse `resources.index` inside a hap (name/type/qualifier/ID filtering + pagination) | `fileId, name?, type?, limitKey?, id?, offset?, limit?` |
 | `abc_list_classes` | List classes with pagination (name/method count/field count/external), supports substring filtering | `fileId, filter?, offset?, limit?` |
 | `abc_get_class` | Class metadata: superclass, field table, method table (shorty prototypes), import/export | `fileId, className` |
+| `abc_search_symbols` | Global class / method / field name search (substring or regex, class filter, pagination); no decompilation | `fileId, query, kind?, regex?, classFilter?, offset?, limit?` |
 | `abc_decompile_class` | Decompile a single class to JavaScript source, with the `degraded` flag; over 50KB the output is paged line-by-line (`offset`/`limit`), or written whole to disk via `outFile` | `fileId, className, simplify?=true, outFile?, offset?, limit?` |
+| `abc_decompile_method` | Extract one method / constructor / getter / setter from the class source (same paging and `outFile` options) | `fileId, className, methodName, simplify?, outFile?, offset?, limit?` |
+| `abc_search_code` | Search decompiled JavaScript source (substring or regex), returning class / line / method and optional context lines | `fileId, pattern, regex?, classFilter?, simplify?, maxClasses?, contextLines?, offset?, limit?` |
+| `abc_xrefs` | Cross-references to a class / method / field / string (bytecode operands; dynamic method calls can additionally be scanned from source with `source=true`) | `fileId, targetType, target, ownerClass?, source?, maxClasses?, offset?, limit?` |
+| `abc_call_graph` | Callers / callees / both, N levels deep, JSON or Mermaid; static uses exact bytecode refs, dynamic uses decompiled-source calls | `fileId, className, methodName, direction?, depth?, maxNodes?, maxClasses?, format?` |
 | `abc_disassemble_method` | Method-level disassembly (basic blocks + pc/operands/jump targets/try-catch) | `fileId, className, methodName?=func_main_0` |
 | `abc_search_strings` | String pool search (substring or regex), returns content and file offsets | `fileId, pattern, regex?=` |
 | `abc_export` | Full decompile to disk (equivalent to CLI decompile) | `fileId, outDir, simplify?=` |
@@ -78,12 +83,13 @@ All tools except `abc_load` require an `abc_load` first to get a `fileId`. Class
 
 ```text
 abc_load(.abc)
-  → abc_list_classes(filter to locate target classes)
+  → abc_search_symbols / abc_list_classes (locate target classes and methods)
   → abc_get_class (confirm method table / import-export)
-  → abc_decompile_class (read source; over 50KB use offset paging or outFile)
+  → abc_decompile_method (read one method) or abc_decompile_class (whole class)
       degraded=false → analyze directly
       degraded=true  → abc_disassemble_method to compare against bytecode
-  → abc_search_strings (URL / keys / class names and other clues)
+  → abc_xrefs / abc_call_graph (trace callers, callees and data/field uses)
+  → abc_search_code / abc_search_strings (locate patterns, URLs, keys)
   → abc_export (when you need every class written to disk at once)
   → abc_close (free memory)
 ```
@@ -128,6 +134,17 @@ Static sessions additionally cache the whole-file rendered output per `simplify`
 (`src/staticDecompile.ts`), because ArkTS-Sta lowers every closure to a separate class
 (`%%lambda-lambda_invoke-N`) and the decompiler must inline those across class records before a caller class is readable.
 
+### Symbol and Xref Indexes
+
+`abc_search_symbols` builds a metadata-only `SymbolIndex` from the class table (no disassembly), so it is fast even for large
+packages. `abc_xrefs` builds a lazy `XrefIndex` that disassembles every method once and records class / method / field / string
+operands; on a 7MB sample this takes well under a second. The index is cached per session.
+
+Static ArkTS bytecode carries resolved method/field/class ids, so its xrefs and call graph are exact. Dynamic Panda bytecode
+puts the call target in the accumulator, not in the instruction operands; `abc_call_graph` therefore collects calls from the
+decompiled source for dynamic sessions (`src/sourceRefs.ts`), and `abc_xrefs(..., source=true)` can merge those source call
+sites. Source scanning is bounded by `maxClasses`; use `classFilter` / `abc_export` for exhaustive searches on very large files.
+
 ### stdio Purity
 
 Under the stdio transport, any stdout output corrupts the JSON-RPC stream. The server entry **unconditionally** redirects
@@ -171,13 +188,17 @@ packages/xpanda-mcp/src/
   registry.ts      session registry (fileId → abc/hap session, LRU cap 8)
   io.ts            disk IO: load .abc (auto dynamic/static) and write class files
   nameutil.ts      class name normalization and lookup (Lpkg/Name; ↔ pkg/Name)
+  sourceCache.ts   per-class source cache (dynamic LRU, static whole-file)
+  sourceRefs.ts    dynamic bytecode source-level call/reference collection
   staticDecompile.ts ArkTS-Sta whole-file render cache used by abc_decompile_class / abc_export
   tools/
     util.ts        result wrappers (textResult/jsonResult/errorResult/truncation)
     load.ts        abc_load / abc_close
     hap.ts         hap_read_abc / hap_resources
     browse.ts      abc_list_classes / abc_get_class
-    decompile.ts   abc_decompile_class / abc_export
+    search.ts      abc_search_symbols / abc_search_code
+    xref.ts        abc_xrefs / abc_call_graph
+    decompile.ts   abc_decompile_class / abc_decompile_method / abc_export
     disasm.ts      abc_disassemble_method
     strings.ts     abc_search_strings
 packages/xpanda-mcp/scripts/test-mcp.ts end-to-end test (real subprocess + JSON-RPC)

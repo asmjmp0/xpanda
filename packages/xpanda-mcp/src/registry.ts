@@ -1,4 +1,5 @@
-import { Adler32, HapFile, PandaDecompiler, ResourceIndexFile, StaticDecompiler } from "@asm-xpanda/core";
+import { Adler32, HapFile, PandaDecompiler, ResourceIndexFile, StaticDecompiler, SymbolIndex, XrefIndex } from "@asm-xpanda/core";
+import type { SourceReference } from "@asm-xpanda/core";
 import type { AbcDataFile } from "./io";
 import { loadAbcData, loadAbcFile } from "./io";
 
@@ -27,6 +28,16 @@ export interface AbcSession {
     staticDecompiler: StaticDecompiler;
     /** 单类反编译结果缓存(key = 类名|simplify;abc_decompile_class 翻页/落盘复用,避免每页重跑流水线) */
     decompiles: Map<string, string>;
+    /** 源码搜索缓存(容量更大;搜索多类时避免全部挤掉 decompiles 的翻页缓存) */
+    searchSources: Map<string, string>;
+    /** 方法级反编译缓存(key = 类名|方法名|simplify) */
+    methodSources: Map<string, string>;
+    /** 元数据符号索引(懒构建) */
+    symbolIndex?: SymbolIndex;
+    /** xref / 调用图索引(懒构建) */
+    xrefIndex?: XrefIndex;
+    /** 动态调用目标在字节码里是间接的,按类缓存源码级引用(懒构建) */
+    sourceRefs: Map<string, SourceReference[]>;
     /** static 会话的文件级输出缓存(simplify 标志 → 类名 → 源码) */
     staticOutputs: Map<string, Map<string, string>>;
     loadedAt: number;
@@ -120,6 +131,9 @@ export class Registry {
             decompiler: new PandaDecompiler(),
             staticDecompiler: new StaticDecompiler(),
             decompiles: new Map(),
+            searchSources: new Map(),
+            methodSources: new Map(),
+            sourceRefs: new Map(),
             staticOutputs: new Map(),
             loadedAt: Date.now(),
         };

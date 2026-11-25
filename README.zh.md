@@ -187,7 +187,12 @@ yarn test:mcp        # 端到端测试
 | `hap_resources` | 解析 hap 内 `resources.index`,按名字/类型/限定词/ID 查询资源项 |
 | `abc_list_classes` | 分页列出类(名称/方法数/字段数),支持子串过滤 |
 | `abc_get_class` | 类元数据:父类、字段表、方法表(shorty 原型)、import/export |
+| `abc_search_symbols` | 全局搜索类/方法/字段名(子串或正则,分页,不触发反编译) |
 | `abc_decompile_class` | 单类反编译为 JavaScript 源码,带降级标志 |
+| `abc_decompile_method` | 从类源码中提取单个方法/构造函数/getter/setter |
+| `abc_search_code` | 搜索反编译源码(子串或正则),返回类/行号/方法 |
+| `abc_xrefs` | 查询类/方法/字段/字符串交叉引用(动态方法调用可加 `source=true`) |
+| `abc_call_graph` | 调用者/被调用者/双向调用图,支持多层与 Mermaid |
 | `abc_disassemble_method` | 方法级反汇编(基本块 + 跳转目标 + try-catch 归属) |
 | `abc_search_strings` | 字符串池搜索(子串或正则),定位 URL/密钥等线索 |
 | `abc_export` | 全量反编译落盘(等价 CLI decompile) |

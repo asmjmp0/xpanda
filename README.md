@@ -204,7 +204,12 @@ yarn test:mcp        # end-to-end test
 | `hap_resources` | Parse the hap's `resources.index` and query resources by name / type / limit key / id |
 | `abc_list_classes` | Page through classes (name / method count / field count) with substring filtering |
 | `abc_get_class` | Class metadata: superclass, fields, methods (shorty prototypes), import/export |
+| `abc_search_symbols` | Search class / method / field names globally (substring or regex, paginated, no decompilation) |
 | `abc_decompile_class` | Decompile a single class to JavaScript, with a degradation flag |
+| `abc_decompile_method` | Extract one method / constructor / getter / setter from the class source |
+| `abc_search_code` | Search decompiled JavaScript source (substring or regex) with class / line / method results |
+| `abc_xrefs` | Cross-references to a class / method / field / string (dynamic method calls via `source=true`) |
+| `abc_call_graph` | Callers / callees / both, N levels deep, JSON or Mermaid |
 | `abc_disassemble_method` | Method-level disassembly (basic blocks + jump targets + try-catch membership) |
 | `abc_search_strings` | Search the string pool (substring or regex) to locate URLs, keys and other leads |
 | `abc_export` | Decompile everything to disk (equivalent to the CLI decompile) |

@@ -2,15 +2,17 @@ import * as fs from "fs";
 import * as path from "path";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StaticPandaFile } from "@asm-xpanda/core";
+import { extractMethodFromSource, StaticPandaFile } from "@asm-xpanda/core";
 import { saveClassFile } from "../io";
 import { demangleClassName, findClass } from "../nameutil";
 import type { AbcSession, Registry } from "../registry";
-import { getStaticOutputs, isStaticSession, staticClassSource } from "../staticDecompile";
+import { getClassSource, hasClassSource } from "../sourceCache";
+import { methodNameVariants } from "../sourceRefs";
+import { getStaticOutputs } from "../staticDecompile";
 import { errorResult, jsonResult, MAX_DECOMPILE_OUTPUT, textResult } from "./util";
 
 /**
- * abc_decompile_class / abc_export:反编译输出
+ * abc_decompile_class / abc_decompile_method / abc_export:反编译输出
  * @Author: jmp0
  */
 
@@ -21,41 +23,8 @@ const DEGRADED_MARKER = "decompiler_goto";
 const DEFAULT_PAGE_LINES = 1000;
 /** 单次翻页返回的最大行数(与 zod 上限保持一致) */
 const MAX_PAGE_LINES = 5000;
-/** 单类反编译缓存容量(插入序 LRU;翻页同类命中,避免重跑优化器流水线) */
-const MAX_DECOMPILE_CACHE = 4;
-
-/** 反编译并写入会话缓存(命中时刷新插入序) */
-function decompileCached(session: AbcSession, clazz: ReturnType<typeof findClass>, useSimplify: boolean): string {
-    // ArkTS-Sta 需要文件级流水线才能还原跨类 lambda,使用整份文件缓存。
-    if (isStaticSession(session)) {
-        return staticClassSource(session, clazz, useSimplify);
-    }
-    const key = clazz.name.content + "|" + (useSimplify ? "1" : "0");
-    const cache = session.decompiles;
-    const hit = cache.get(key);
-    if (hit !== undefined) {
-        cache.delete(key);
-        cache.set(key, hit);
-        return hit;
-    }
-    const content = useSimplify
-        ? session.decompiler.decompileClass(clazz)
-        : session.decompiler.decompileClassRaw(clazz);
-    cache.set(key, content);
-    while (cache.size > MAX_DECOMPILE_CACHE) {
-        const oldest = cache.keys().next().value as string;
-        cache.delete(oldest);
-    }
-    return content;
-}
-
-/** 该类在当前 simplify 设置下是否已有缓存 */
-function isDecompileCached(session: AbcSession, clazz: ReturnType<typeof findClass>, useSimplify: boolean): boolean {
-    if (isStaticSession(session)) {
-        return session.staticOutputs.get(useSimplify ? "1" : "0")?.has(clazz.name.content) ?? false;
-    }
-    return session.decompiles.has(clazz.name.content + "|" + (useSimplify ? "1" : "0"));
-}
+/** 方法级反编译缓存容量(插入序 LRU) */
+const MAX_METHOD_CACHE = 64;
 
 /** 按行切出一页;同一页累计不超过 MAX_DECOMPILE_OUTPUT 字符(至少保留一行) */
 function slicePage(lines: string[], start: number, maxLines: number): { page: string[]; next: number } {
@@ -70,6 +39,17 @@ function slicePage(lines: string[], start: number, maxLines: number): { page: st
         i++;
     }
     return { page, next: i };
+}
+
+/** 解析方法名的可能形态(源码名 / <ctor> / getter/setter) */
+function methodNameCandidates(clazz: ReturnType<typeof findClass>, methodName: string): string[] {
+    const keys = new Set(clazz.pandaMethods.keys());
+    const result: string[] = Array.from(methodNameVariants(methodName));
+    if (methodName === "constructor") result.push("<ctor>");
+    if (methodName === "<ctor>") result.push("constructor");
+    if (keys.has("%%get-" + methodName)) result.push("%%get-" + methodName);
+    if (keys.has("%%set-" + methodName)) result.push("%%set-" + methodName);
+    return Array.from(new Set(result));
 }
 
 export function registerDecompileTools(server: McpServer, registry: Registry): void {
@@ -92,8 +72,8 @@ export function registerDecompileTools(server: McpServer, registry: Registry): v
             const session = registry.get(fileId);
             const clazz = findClass(session.pandaFile, className);
             const useSimplify = simplify ?? true;
-            const cached = isDecompileCached(session, clazz, useSimplify);
-            const content = decompileCached(session, clazz, useSimplify);
+            const cached = hasClassSource(session, clazz, useSimplify);
+            const content = getClassSource(session, clazz, useSimplify);
 
             if (content.length === 0) {
                 return textResult("// 反编译结果为空(该类可能没有 func_main_0 入口或反编译失败)");
@@ -132,6 +112,102 @@ export function registerDecompileTools(server: McpServer, registry: Registry): v
             }
 
             // 超长(或显式分页):按行返回一页
+            const start = Math.min(offset ?? 0, lines.length);
+            const { page, next } = slicePage(lines, start, limit ?? DEFAULT_PAGE_LINES);
+            const truncated = next < lines.length;
+            const header = headerBase
+                + " offset=" + start
+                + " returned=" + page.length
+                + " truncated=" + truncated
+                + (truncated ? " next_offset=" + next : "");
+            let text = header + "\n" + page.join("\n");
+            if (truncated) {
+                text += "\n\n// ...输出分页:共 " + lines.length + " 行,本页 " + page.length + " 行;"
+                    + "用 offset=" + next + " 继续读取,或传 outFile 落盘后用本地文件工具读取全量。";
+            }
+            return textResult(text);
+        } catch (e) {
+            return errorResult(e);
+        }
+    });
+
+    server.registerTool("abc_decompile_method", {
+        title: "反编译单个方法",
+        description: "从类源码中提取单个方法/构造函数/getter/setter 的源码,避免把整个类塞进上下文。"
+            + "方法名支持源码名、<ctor> / constructor、%%get-x / %%set-x。"
+            + "输出 ≤50KB 时整份返回;超过时按行分页,也可用 outFile 落盘。"
+            + "degraded=true 表示该类结构化分析降级(含 decompiler_goto),建议改用 abc_disassemble_method。",
+        inputSchema: {
+            fileId: z.string().describe("abc_load 返回的文件 ID"),
+            className: z.string().describe('类名,如 "Lpkg/Name;" 或 "pkg/Name"'),
+            methodName: z.string().describe('方法名,如 "onCreate" / "constructor" / "%%get-title"'),
+            simplify: z.boolean().optional().describe("是否执行优化器流水线(默认 true)"),
+            outFile: z.string().optional().describe("落盘路径:方法源码写入该文件(目录自动创建)"),
+            offset: z.number().int().min(0).optional().describe("分页起始行(0 起)"),
+            limit: z.number().int().min(1).max(MAX_PAGE_LINES).optional().describe("单页行数,默认 1000"),
+        },
+    }, async ({ fileId, className, methodName, simplify, outFile, offset, limit }) => {
+        try {
+            const session = registry.get(fileId);
+            const clazz = findClass(session.pandaFile, className);
+            const useSimplify = simplify ?? true;
+            const key = clazz.name.content + "|" + methodName + "|" + (useSimplify ? "1" : "0");
+            const cached = session.methodSources.has(key);
+            let content = session.methodSources.get(key);
+            if (content === undefined) {
+                const classSource = getClassSource(session, clazz, useSimplify);
+                let extracted = null;
+                for (const candidate of methodNameCandidates(clazz, methodName)) {
+                    extracted = extractMethodFromSource(classSource, candidate);
+                    if (extracted) break;
+                }
+                if (!extracted) {
+                    const names = Array.from(clazz.pandaMethods.keys());
+                    throw new Error("方法未找到: " + methodName
+                        + "\n类 " + clazz.name.content + " 中的方法: \n - " + names.join("\n - ")
+                        + "\n提示: 可用 abc_decompile_class 查看整类源码");
+                }
+                content = extracted.code;
+                session.methodSources.set(key, content);
+                while (session.methodSources.size > MAX_METHOD_CACHE) {
+                    const oldest = session.methodSources.keys().next().value as string;
+                    session.methodSources.delete(oldest);
+                }
+            }
+
+            const demangled = demangleClassName(clazz.name.content);
+            const lines = content.split("\n");
+            const degraded = content.includes(DEGRADED_MARKER);
+
+            if (outFile !== undefined && outFile.length > 0) {
+                const abs = path.resolve(outFile);
+                fs.mkdirSync(path.dirname(abs), { recursive: true });
+                fs.writeFileSync(abs, content);
+                return jsonResult({
+                    fileId,
+                    class: demangled,
+                    method: methodName,
+                    simplified: useSimplify,
+                    degraded,
+                    outFile: abs,
+                    lines: lines.length,
+                    chars: content.length,
+                    hint: "完整方法源码已写入 outFile(无截断),请用本地文件读取工具查看",
+                });
+            }
+
+            const headerBase = "// xpanda-mcp class=" + demangled
+                + " method=" + methodName
+                + " simplified=" + useSimplify
+                + " degraded=" + degraded
+                + " chars=" + content.length
+                + " lines=" + lines.length
+                + " cached=" + cached;
+
+            if (content.length <= MAX_DECOMPILE_OUTPUT && offset === undefined && limit === undefined) {
+                return textResult(headerBase + " offset=0 returned=" + lines.length + " truncated=false\n" + content);
+            }
+
             const start = Math.min(offset ?? 0, lines.length);
             const { page, next } = slicePage(lines, start, limit ?? DEFAULT_PAGE_LINES);
             const truncated = next < lines.length;
