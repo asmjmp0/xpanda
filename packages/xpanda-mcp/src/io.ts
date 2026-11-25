@@ -5,11 +5,24 @@
  */
 import * as fs from "fs";
 import * as path from "path";
-import { PandaClass, PandaFile } from "@asm-xpanda/core";
+import { isStaticAbcVersion, PandaClass, PandaFile, StaticPandaFile } from "@asm-xpanda/core";
 
-/** 从磁盘读取 .abc 文件并解析 */
-export function loadPandaFile(filePath: string): PandaFile {
-    return new PandaFile(new Uint8Array(fs.readFileSync(filePath)));
+/** 动态(Panda)或 ArkTS-Sta(static runtime)的 .abc 文件上下文 */
+export type AbcDataFile = PandaFile | StaticPandaFile;
+
+/** 按头部版本号判断是否为 ArkTS-Sta 字节码(与 CLI 相同的判定) */
+export function isStaticAbcData(data: Uint8Array): boolean {
+    return data.length >= 16 && isStaticAbcVersion(data.subarray(12, 16));
+}
+
+/** 从字节数据解析 .abc,自动选择动态/静态解析器 */
+export function loadAbcData(data: Uint8Array): AbcDataFile {
+    return isStaticAbcData(data) ? new StaticPandaFile(data) : new PandaFile(data);
+}
+
+/** 从磁盘读取 .abc 文件并解析(自动识别 ArkTS-Sta) */
+export function loadAbcFile(filePath: string): AbcDataFile {
+    return loadAbcData(new Uint8Array(fs.readFileSync(filePath)));
 }
 
 /** 按类名落盘(demangle 规则:Lpkg/Name; → outDir/pkg/Name.js,中间段成为目录) */

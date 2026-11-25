@@ -173,7 +173,7 @@ for (const cls of pandaFile.getAllClasses()) {
 
 ## MCP Server
 
-xpanda 内置 [Model Context Protocol](https://modelcontextprotocol.io) Server,可把反编译能力接入 Claude Code、OpenCode、Cursor 等 AI 客户端,让 agent 按需、增量地分析 `.abc` 与 `.hap`(应用包,内含字节码与资源表):加载 → 浏览类 → 查看元数据 → 反编译单类 → 反汇编对照 → 搜索字符串 → 查询资源。
+xpanda 内置 [Model Context Protocol](https://modelcontextprotocol.io) Server,可把反编译能力接入 Claude Code、OpenCode、Cursor 等 AI 客户端,让 agent 按需、增量地分析 `.abc` 与 `.hap`(应用包,内含字节码与资源表):加载 → 浏览类 → 查看元数据 → 反编译单类 → 反汇编对照 → 搜索字符串 → 查询资源。动态 Panda 字节码与 ArkTS-Sta(静态运行时)`.abc` 都会被自动识别并处理。
 
 ```bash
 yarn mcp             # 启动(stdio transport)
@@ -182,7 +182,7 @@ yarn test:mcp        # 端到端测试
 
 | 工具 | 作用 |
 |---|---|
-| `abc_load` | 解析 `.abc` 或 `.hap` 文件,返回 `fileId`;hap 返回包摘要与 `.abc` 条目清单 |
+| `abc_load` | 解析 `.abc` 或 `.hap` 文件,返回 `fileId`;`.abc` 自动识别动态 Panda 与 ArkTS-Sta(静态运行时);hap 返回包摘要与 `.abc` 条目清单 |
 | `hap_read_abc` | 把 hap 内 `.abc` 条目解出为 abc 会话,返回的 `abcFileId` 可用于全部 `abc_*` 工具 |
 | `hap_resources` | 解析 hap 内 `resources.index`,按名字/类型/限定词/ID 查询资源项 |
 | `abc_list_classes` | 分页列出类(名称/方法数/字段数),支持子串过滤 |

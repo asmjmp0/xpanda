@@ -5,9 +5,11 @@ import { PandaClass } from "../file/clazz/PandaClass";
 import type { Header } from "../file/desc/Header";
 import { IndexHeader } from "../file/desc/IndexHeader";
 import { Offset } from "../file/desc/Offset";
+import { PandaString } from "../file/desc/PandaString";
 import type { IPandaFile } from "../file/IPandaFile";
 import { PandaFileUtils } from "../file/PandaFileUtils";
 import { StaticHeader, isStaticAbcVersion } from "./StaticHeader";
+import { StaticPandaDisAssembler } from "./StaticPandaDisAssembler";
 
 /**
  * ArkTS-Sta (.abc produced by the static runtime, version 0.1.0.7 family).
@@ -120,6 +122,33 @@ export class StaticPandaFile implements IPandaFile {
             classes.push(...indexHeader.pandaClasses);
         }
         return classes;
+    }
+
+    /**
+     * Disassemble every method so string/entity references are decoded and
+     * cached, mirroring the dynamic PandaFile.parseAssembly(). One malformed
+     * method must not abort the whole file.
+     */
+    parseAssembly(): void {
+        for (const clazz of this.getAllClasses()) {
+            for (const method of clazz.pandaMethods.values()) {
+                if (!method.methodCode) continue;
+                try {
+                    StaticPandaDisAssembler.disAssembly(method);
+                } catch {
+                    // Keep the entities decoded by the other methods.
+                }
+            }
+        }
+    }
+
+    /** All decoded strings (complete only after parseAssembly). */
+    getAllStrings(): PandaString[] {
+        const strings: PandaString[] = [];
+        for (const value of this.offsets.values()) {
+            if (value instanceof PandaString) strings.push(value);
+        }
+        return strings;
     }
 }
 

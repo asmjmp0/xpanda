@@ -1,5 +1,6 @@
-import { Adler32, HapFile, PandaDecompiler, PandaFile, ResourceIndexFile } from "@asm-xpanda/core";
-import { loadPandaFile } from "./io";
+import { Adler32, HapFile, PandaDecompiler, ResourceIndexFile, StaticDecompiler } from "@asm-xpanda/core";
+import type { AbcDataFile } from "./io";
+import { loadAbcData, loadAbcFile } from "./io";
 
 /**
  * MCP 会话注册表:fileId → 已加载的 abc/hap 会话
@@ -18,10 +19,16 @@ export interface AbcSession {
     fileId: string;
     /** 绝对路径;从 hap 内解出的 abc 为 "<hap路径>!<条目名>" 形态 */
     path: string;
-    pandaFile: PandaFile;
+    /** 动态 Panda 或 ArkTS-Sta(static runtime)文件上下文 */
+    pandaFile: AbcDataFile;
+    /** 动态反编译器(static 会话不使用) */
     decompiler: PandaDecompiler;
+    /** ArkTS-Sta 文件级反编译器(需要跨类还原 lambda) */
+    staticDecompiler: StaticDecompiler;
     /** 单类反编译结果缓存(key = 类名|simplify;abc_decompile_class 翻页/落盘复用,避免每页重跑流水线) */
     decompiles: Map<string, string>;
+    /** static 会话的文件级输出缓存(simplify 标志 → 类名 → 源码) */
+    staticOutputs: Map<string, Map<string, string>>;
     loadedAt: number;
 }
 
@@ -87,37 +94,35 @@ export class Registry {
         }
         const data = hapSession.hap.readEntry(entryName);
         if (!data) throw new Error("hap 条目读取失败: " + entryName);
-        const pandaFile = new PandaFile(data);
+        const pandaFile = loadAbcData(data);
         const hapBase = require("path").basename(hapSession.path).replace(/\.hap$/i, "");
         const entryBase = entryName.replace(/\.abc$/i, "").replace(/\//g, "_");
         const fileId = "hap_" + Registry.makeFileId(hapBase + "_" + entryBase, pandaFile.header.checksum);
-        const session: AbcSession = {
-            kind: "abc",
-            fileId,
-            path: syntheticPath,
-            pandaFile,
-            decompiler: new PandaDecompiler(),
-            decompiles: new Map(),
-            loadedAt: Date.now(),
-        };
+        const session = this.createAbcSession(fileId, syntheticPath, pandaFile);
         this.put(session);
         return { session, cached: false };
     }
 
     private loadAbcPath(absPath: string): { session: AbcSession; cached: boolean } {
-        const pandaFile = loadPandaFile(absPath);
+        const pandaFile = loadAbcFile(absPath);
         const fileId = Registry.makeFileId(absPath, pandaFile.header.checksum);
-        const session: AbcSession = {
-            kind: "abc",
-            fileId,
-            path: absPath,
-            pandaFile,
-            decompiler: new PandaDecompiler(),
-            decompiles: new Map(),
-            loadedAt: Date.now(),
-        };
+        const session = this.createAbcSession(fileId, absPath, pandaFile);
         this.put(session);
         return { session, cached: false };
+    }
+
+    private createAbcSession(fileId: string, path: string, pandaFile: AbcDataFile): AbcSession {
+        return {
+            kind: "abc",
+            fileId,
+            path,
+            pandaFile,
+            decompiler: new PandaDecompiler(),
+            staticDecompiler: new StaticDecompiler(),
+            decompiles: new Map(),
+            staticOutputs: new Map(),
+            loadedAt: Date.now(),
+        };
     }
 
     private loadHap(absPath: string): { session: HapSession; cached: boolean } {

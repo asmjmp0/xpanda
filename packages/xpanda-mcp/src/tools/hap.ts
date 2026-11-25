@@ -3,6 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { demangleClassName } from "../nameutil";
 import type { Registry } from "../registry";
 import { ResourceIndexFile } from "@asm-xpanda/core";
+import { isStaticSession } from "../staticDecompile";
 import { errorResult, jsonResult } from "./util";
 
 /**
@@ -50,6 +51,7 @@ export function registerHapTools(server: McpServer, registry: Registry): void {
                 abcFileId: session.fileId,
                 entry: entryName,
                 cached,
+                runtime: isStaticSession(session) ? "static" : "dynamic",
                 bytecodeVersion: Array.from(session.pandaFile.header.version).join("."),
                 classCount: classNames.length,
                 classesPreview: classNames.slice(0, 50),

@@ -1,8 +1,9 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { PandaParseException } from "@asm-xpanda/core";
+import { PandaParseException, StaticPandaDisAssembler } from "@asm-xpanda/core";
 import { findClass } from "../nameutil";
 import type { Registry } from "../registry";
+import { isStaticSession } from "../staticDecompile";
 import { errorResult, textResult, truncateText } from "./util";
 
 /**
@@ -15,6 +16,7 @@ export function registerDisasmTools(server: McpServer, registry: Registry): void
     server.registerTool("abc_disassemble_method", {
         title: "反汇编方法",
         description: "输出单个方法的字节码反汇编(按基本块分组,含 pc、指令、操作数、跳转目标、try/catch 归属)。"
+            + "动态与 ArkTS-Sta(static runtime)字节码自动使用对应的 ISA。"
             + "methodName 缺省时反汇编类入口 func_main_0。"
             + "注意:包含 jeq/jne 等未实现跳转指令的方法无法反汇编(反编译器对该类方法同样走降级路径)。",
         inputSchema: {
@@ -40,12 +42,17 @@ export function registerDisasmTools(server: McpServer, registry: Registry): void
 
             let cfg;
             try {
-                cfg = method.disAssemble();
+                // ArkTS-Sta 的 ISA 与动态完全不同,必须走静态反汇编器。
+                cfg = isStaticSession(session)
+                    ? (method.methodCode ? StaticPandaDisAssembler.disAssembly(method) : null)
+                    : method.disAssemble();
             } catch (e) {
                 if (e instanceof PandaParseException) {
                     throw new Error("反汇编失败: " + e.message
-                        + "\n该方法包含未实现的指令(通常是 jeq/jne/jstricteq/jnstricteq 家族),"
-                        + "反编译器对该方法同样会降级为线性输出。");
+                        + (isStaticSession(session)
+                            ? "\n该方法包含静态 ISA 未实现的指令。"
+                            : "\n该方法包含未实现的指令(通常是 jeq/jne/jstricteq/jnstricteq 家族),"
+                                + "反编译器对该方法同样会降级为线性输出。"));
                 }
                 throw e;
             }

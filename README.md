@@ -190,7 +190,7 @@ To import it from another project on this machine, link the built package first
 
 ## MCP Server
 
-xpanda ships a built-in [Model Context Protocol](https://modelcontextprotocol.io) server, so AI clients such as Claude Code, OpenCode and Cursor can drive the decompiler — letting an agent analyze `.abc` and `.hap` files (HarmonyOS app packages containing bytecode and resources) on demand: load → browse classes → inspect metadata → decompile a single class → cross-check disassembly → search strings → query resources.
+xpanda ships a built-in [Model Context Protocol](https://modelcontextprotocol.io) server, so AI clients such as Claude Code, OpenCode and Cursor can drive the decompiler — letting an agent analyze `.abc` and `.hap` files (HarmonyOS app packages containing bytecode and resources) on demand: load → browse classes → inspect metadata → decompile a single class → cross-check disassembly → search strings → query resources. Both dynamic Panda bytecode and ArkTS-Sta (static runtime) `.abc` files are detected and handled automatically.
 
 ```bash
 yarn mcp             # start it (stdio transport)
@@ -199,7 +199,7 @@ yarn test:mcp        # end-to-end test
 
 | Tool | Purpose |
 |---|---|
-| `abc_load` | Parse an `.abc` or `.hap` file and return a `fileId`; for haps, a package summary plus the list of `.abc` entries |
+| `abc_load` | Parse an `.abc` or `.hap` file and return a `fileId`; `.abc` auto-detects dynamic Panda vs ArkTS-Sta (static runtime); for haps, a package summary plus the list of `.abc` entries |
 | `hap_read_abc` | Extract an `.abc` entry from a hap into an abc session; the returned `abcFileId` works with every `abc_*` tool |
 | `hap_resources` | Parse the hap's `resources.index` and query resources by name / type / limit key / id |
 | `abc_list_classes` | Page through classes (name / method count / field count) with substring filtering |

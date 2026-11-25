@@ -1,6 +1,6 @@
 # xpanda MCP Server
 
-> Exposes the xpanda decompiler to AI agents via the [Model Context Protocol](https://modelcontextprotocol.io), supporting on-demand, incremental analysis of HarmonyOS `.abc` bytecode files and `.hap` app packages (bytecode + resource tables).
+> Exposes the xpanda decompiler to AI agents via the [Model Context Protocol](https://modelcontextprotocol.io), supporting on-demand, incremental analysis of HarmonyOS `.abc` bytecode files and `.hap` app packages (bytecode + resource tables). Both dynamic Panda bytecode and ArkTS-Sta (static runtime) `.abc` files are supported.
 
 ## Quick Start
 
@@ -61,7 +61,7 @@ Generic JSON config (Claude Desktop / Cursor etc.):
 
 | Tool | Purpose | Key Parameters |
 |---|---|---|
-| `abc_load` | Parse `.abc` or `.hap`; for hap returns the package summary and the `.abc` entry list | `path` |
+| `abc_load` | Parse `.abc` or `.hap`; auto-detects dynamic Panda vs ArkTS-Sta (static runtime) bytecode; for hap returns the package summary and the `.abc` entry list | `path` |
 | `hap_read_abc` | Extract an `.abc` entry inside a hap into an abc session | `fileId, entry?` |
 | `hap_resources` | Parse `resources.index` inside a hap (name/type/qualifier/ID filtering + pagination) | `fileId, name?, type?, limitKey?, id?, offset?, limit?` |
 | `abc_list_classes` | List classes with pagination (name/method count/field count/external), supports substring filtering | `fileId, filter?, offset?, limit?` |
@@ -98,6 +98,12 @@ abc_load(.hap)                     → kind="hap", package summary + .abc entry 
   → abc_close (free the hap session and the abc session)
 ```
 
+ArkTS-Sta (static runtime) bytecode uses the same workflow; `abc_load` reports `runtime: "static"` and the static
+parser/disassembler are selected automatically. `abc_decompile_class` renders the class from a lazily built whole-file
+result (the static decompiler reconstructs compiler-generated lambdas across class boundaries), so the first call is
+slightly slower while later calls for other classes reuse the same cache. `abc_disassemble_method` switches to the
+static ISA, and `abc_search_strings` decodes the static string pool on first use.
+
 ## Design Notes
 
 ### Session Registry
@@ -106,8 +112,8 @@ MCP tool calls are themselves stateless, but `PandaFile` parsing is expensive fo
 
 Two session kinds share one LRU pool:
 
-- `AbcSession`: `.abc` (or an `.abc` extracted from inside a hap) → `PandaFile + PandaDecompiler`,
-  used by all `abc_*` tools;
+- `AbcSession`: `.abc` (or an `.abc` extracted from inside a hap) → `PandaFile`/`StaticPandaFile` + the matching decompiler,
+  used by all `abc_*` tools (the static parser is chosen by the header version);
 - `HapSession`: `.hap` → `HapFile` (entry reading / module.json / resources.index),
   used by `hap_read_abc` / `hap_resources`; at load time only the resource item count is recorded, full parsing is deferred to the
   `hap_resources` call.
@@ -117,6 +123,10 @@ Passing a hap `fileId` to an `abc_*` tool, or an abc `fileId` to a `hap_*` tool,
 `fileId` looks like `md5-5411df7` (file name + Adler32 checksum in hex);
 hap sessions are `hap-<file name>-<checksum>`, and abc sessions extracted from inside a hap are
 `hap_<hap name>_<entry name>-<checksum>` (e.g. `hap_zhihupp0.59_ets_modules-7041b86`).
+
+Static sessions additionally cache the whole-file rendered output per `simplify` flag
+(`src/staticDecompile.ts`), because ArkTS-Sta lowers every closure to a separate class
+(`%%lambda-lambda_invoke-N`) and the decompiler must inline those across class records before a caller class is readable.
 
 ### stdio Purity
 
@@ -149,7 +159,8 @@ unimplemented jeq/jne family instructions, unregistered instruction kind handles
 ### Minimal Changes to Core
 
 The MCP layer only added `PandaFile.getAllStrings()` (a structured version with the same semantics as `dumpAllString()`,
-which was changed to reuse it); everything else reuses existing public APIs from xpanda-core's `src/index.ts`;
+which was changed to reuse it), plus `StaticPandaFile.parseAssembly()` / `getAllStrings()` mirroring that API for
+ArkTS-Sta string searches; everything else reuses existing public APIs from xpanda-core's `src/index.ts`;
 disassembly text rendering directly uses the existing `PandaInstruction.toString()` / `PandaIRBasicBlock.toString()` implementations.
 
 ## Directory Structure
@@ -158,7 +169,9 @@ disassembly text rendering directly uses the existing `PandaInstruction.toString
 packages/xpanda-mcp/src/
   server.ts        entry: stdio transport + unconditional console silencing
   registry.ts      session registry (fileId → abc/hap session, LRU cap 8)
+  io.ts            disk IO: load .abc (auto dynamic/static) and write class files
   nameutil.ts      class name normalization and lookup (Lpkg/Name; ↔ pkg/Name)
+  staticDecompile.ts ArkTS-Sta whole-file render cache used by abc_decompile_class / abc_export
   tools/
     util.ts        result wrappers (textResult/jsonResult/errorResult/truncation)
     load.ts        abc_load / abc_close

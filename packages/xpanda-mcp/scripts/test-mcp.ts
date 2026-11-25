@@ -221,6 +221,34 @@ async function main(): Promise<void> {
     const classSource = classDecompiled.raw.split("\n").slice(1).join("\n");
     check(classSource === classExpected, "class.abc 反编译输出与快照一致");
 
+    // 11b. ArkTS-Sta(static runtime):加载 → 列类 → 反编译 → 反汇编 → 字符串 → 导出
+    const staticPath = path.join(coreTest, "resources", "fw_@ohos.UiTest.abc");
+    const staticLoaded = await call("abc_load", { path: staticPath });
+    check(staticLoaded.kind === "abc" && staticLoaded.runtime === "static" && staticLoaded.classCount > 0,
+        "abc_load(.static.abc) runtime=" + staticLoaded.runtime + " classCount=" + staticLoaded.classCount);
+    const staticList = await call("abc_list_classes", { fileId: staticLoaded.fileId, filter: "UiTest/Driver", limit: 500 });
+    check(staticList.filtered === 1, "abc_list_classes 在 static abc 上可用,filtered=" + staticList.filtered);
+    const staticMeta = await call("abc_get_class", { fileId: staticLoaded.fileId, className: "L@ohos/UiTest/Driver;" });
+    check(staticMeta.name === "@ohos/UiTest/Driver" && staticMeta.methods.length > 0,
+        "abc_get_class 在 static abc 上可用,methods=" + staticMeta.methods.length);
+    const staticDecompiled = await call("abc_decompile_class", { fileId: staticLoaded.fileId, className: "L@ohos/UiTest/Driver;" });
+    check(staticDecompiled.raw.includes("static create()") && !staticDecompiled.raw.includes("decompiler_goto"),
+        "abc_decompile_class 静态字节码输出正常(含 static create(),无降级标记)");
+    const staticDecompiledAgain = await call("abc_decompile_class", { fileId: staticLoaded.fileId, className: "L@ohos/UiTest/Driver;" });
+    check(staticDecompiledAgain.raw.includes("cached=true"), "static 单类反编译复用文件级缓存");
+    const staticDisasm = await call("abc_disassemble_method", {
+        fileId: staticLoaded.fileId, className: "L@ohos/UiTest/Driver;", methodName: "create",
+    });
+    check(staticDisasm.raw.includes("method: create") && /\b\d+:\w+/.test(staticDisasm.raw),
+        "abc_disassemble_method 使用 static ISA");
+    const staticStrings = await call("abc_search_strings", { fileId: staticLoaded.fileId, pattern: "Point counts" });
+    check(staticStrings.matched >= 1, "abc_search_strings 在 static abc 上命中字符串,matched=" + staticStrings.matched);
+    const staticOutDir = fs.mkdtempSync(path.join(os.tmpdir(), "xpanda-mcp-static-"));
+    const staticExported = await call("abc_export", { fileId: staticLoaded.fileId, outDir: staticOutDir });
+    check(staticExported.written >= 1 && staticExported.failed === 0,
+        "abc_export 在 static abc 上落盘 written=" + staticExported.written);
+    await call("abc_close", { fileId: staticLoaded.fileId });
+
     // 12. 错误路径:不存在的 fileId / 类名 / 方法名 → isError
     await call("abc_list_classes", { fileId: "no-such-id" }, true);
     await call("abc_get_class", { fileId, className: "Lno/such/Class;" }, true);

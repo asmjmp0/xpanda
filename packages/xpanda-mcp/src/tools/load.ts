@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { demangleClassName } from "../nameutil";
 import type { Registry } from "../registry";
+import { isStaticSession } from "../staticDecompile";
 import { errorResult, jsonResult } from "./util";
 
 /**
@@ -12,6 +13,7 @@ export function registerLoadTools(server: McpServer, registry: Registry): void {
     server.registerTool("abc_load", {
         title: "加载 .abc / .hap 文件",
         description: "解析鸿蒙 HarmonyOS 文件,支持两种输入:.abc(Panda 字节码)与 .hap(应用包 ZIP 容器)。"
+            + ".abc 自动识别动态(Panda)与 ArkTS-Sta(static runtime)两种字节码,均返回 kind=\"abc\" 会话。"
             + "返回的 fileId 是后续所有工具的必填参数;同一文件重复加载会复用已解析会话。"
             + "加载 .hap 时返回 kind=\"hap\" 与包内 .abc 条目清单,用 hap_read_abc 解出后即可使用全部 abc_* 工具;"
             + "hap_resources 可直接查询包内资源表。",
@@ -47,6 +49,7 @@ export function registerLoadTools(server: McpServer, registry: Registry): void {
                 fileId: session.fileId,
                 path: session.path,
                 cached,
+                runtime: isStaticSession(session) ? "static" : "dynamic",
                 bytecodeVersion: Array.from(header.version).join("."),
                 checksum: "0x" + (header.checksum >>> 0).toString(16),
                 fileSizeBytes: session.pandaFile.data.byteLength,
@@ -55,7 +58,9 @@ export function registerLoadTools(server: McpServer, registry: Registry): void {
                 lnpCount: session.pandaFile.lnpOffsets.length,
                 classesPreview: preview,
                 previewTruncated: classNames.length > preview.length,
-                hint: "使用 abc_list_classes 分页浏览全部类;abc_decompile_class 反编译单个类。",
+                hint: isStaticSession(session)
+                    ? "ArkTS-Sta(static runtime)字节码:使用 abc_list_classes 浏览类;abc_decompile_class 会先从整份文件还原跨类 lambda,首次调用较慢。"
+                    : "使用 abc_list_classes 分页浏览全部类;abc_decompile_class 反编译单个类。",
             });
         } catch (e) {
             return errorResult(e);

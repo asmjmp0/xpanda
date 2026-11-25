@@ -2,10 +2,11 @@ import * as fs from "fs";
 import * as path from "path";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { PandaDecompiler } from "@asm-xpanda/core";
+import { StaticPandaFile } from "@asm-xpanda/core";
 import { saveClassFile } from "../io";
 import { demangleClassName, findClass } from "../nameutil";
 import type { AbcSession, Registry } from "../registry";
+import { getStaticOutputs, isStaticSession, staticClassSource } from "../staticDecompile";
 import { errorResult, jsonResult, MAX_DECOMPILE_OUTPUT, textResult } from "./util";
 
 /**
@@ -25,6 +26,10 @@ const MAX_DECOMPILE_CACHE = 4;
 
 /** 反编译并写入会话缓存(命中时刷新插入序) */
 function decompileCached(session: AbcSession, clazz: ReturnType<typeof findClass>, useSimplify: boolean): string {
+    // ArkTS-Sta 需要文件级流水线才能还原跨类 lambda,使用整份文件缓存。
+    if (isStaticSession(session)) {
+        return staticClassSource(session, clazz, useSimplify);
+    }
     const key = clazz.name.content + "|" + (useSimplify ? "1" : "0");
     const cache = session.decompiles;
     const hit = cache.get(key);
@@ -42,6 +47,14 @@ function decompileCached(session: AbcSession, clazz: ReturnType<typeof findClass
         cache.delete(oldest);
     }
     return content;
+}
+
+/** 该类在当前 simplify 设置下是否已有缓存 */
+function isDecompileCached(session: AbcSession, clazz: ReturnType<typeof findClass>, useSimplify: boolean): boolean {
+    if (isStaticSession(session)) {
+        return session.staticOutputs.get(useSimplify ? "1" : "0")?.has(clazz.name.content) ?? false;
+    }
+    return session.decompiles.has(clazz.name.content + "|" + (useSimplify ? "1" : "0"));
 }
 
 /** 按行切出一页;同一页累计不超过 MAX_DECOMPILE_OUTPUT 字符(至少保留一行) */
@@ -79,7 +92,7 @@ export function registerDecompileTools(server: McpServer, registry: Registry): v
             const session = registry.get(fileId);
             const clazz = findClass(session.pandaFile, className);
             const useSimplify = simplify ?? true;
-            const cached = session.decompiles.has(clazz.name.content + "|" + (useSimplify ? "1" : "0"));
+            const cached = isDecompileCached(session, clazz, useSimplify);
             const content = decompileCached(session, clazz, useSimplify);
 
             if (content.length === 0) {
@@ -158,12 +171,18 @@ export function registerDecompileTools(server: McpServer, registry: Registry): v
             let skipped = 0;
             let failed = 0;
             const degradedClasses: string[] = [];
+            // ArkTS-Sta: 先构建文件级输出(跨类 lambda 还原),再逐类落盘。
+            const staticOutputs = session.pandaFile instanceof StaticPandaFile
+                ? getStaticOutputs(session, useSimplify)
+                : null;
 
             for (const clazz of session.pandaFile.getAllClasses()) {
                 try {
-                    const content = useSimplify
-                        ? session.decompiler.decompileClass(clazz)
-                        : session.decompiler.decompileClassRaw(clazz);
+                    const content = staticOutputs
+                        ? (staticOutputs.get(clazz.name.content) ?? "")
+                        : (useSimplify
+                            ? session.decompiler.decompileClass(clazz)
+                            : session.decompiler.decompileClassRaw(clazz));
                     if (content.length === 0) {
                         skipped++;
                         continue;

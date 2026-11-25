@@ -1,4 +1,5 @@
-import type { PandaClass, PandaFile } from "@asm-xpanda/core";
+import type { PandaClass } from "@asm-xpanda/core";
+import type { AbcDataFile } from "./io";
 
 /**
  * MCP 层类名工具:L-prefixed mangled 名(Lpkg/Name;)与 demangled 名(pkg/Name)互转
@@ -24,7 +25,7 @@ export function demangleClassName(name: string): string {
 /**
  * 按类名查找:精确匹配(两种形态)→ 唯一子串匹配 → 失败时列出候选
  */
-export function findClass(pandaFile: PandaFile, className: string): PandaClass {
+export function findClass(pandaFile: AbcDataFile, className: string): PandaClass {
     const all = pandaFile.getAllClasses();
     const target = normalizeClassName(className);
     const targetDemangled = demangleClassName(target);
